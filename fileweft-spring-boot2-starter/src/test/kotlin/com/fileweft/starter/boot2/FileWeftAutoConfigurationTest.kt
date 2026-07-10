@@ -8,6 +8,7 @@ import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.document.DocumentDraftService
+import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
@@ -116,6 +117,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(WorkflowInstanceRepository::class.java) != null)
             assertTrue(context.getBean(UploadApplicationService::class.java) != null)
             assertTrue(context.getBean(DocumentDraftService::class.java) != null)
+            assertTrue(context.getBean(DocumentDownloadService::class.java) != null)
             assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
             assertTrue(context.getBean(OutboxWorker::class.java) != null)

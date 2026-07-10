@@ -58,7 +58,7 @@ class DevAcceptanceIntegrationTest {
         assertTrue(editor.path("permissions").none { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").none { it.asText() == "document:create" })
-        assertEquals(listOf("document:read"), viewer.path("permissions").map { it.asText() })
+        assertEquals(listOf("document:read", "document:download"), viewer.path("permissions").map { it.asText() })
         assertTrue(admin.path("permissions").any { it.asText() == "system:outbox:process" })
     }
 
@@ -95,6 +95,39 @@ class DevAcceptanceIntegrationTest {
         assertEquals(audit.path("id").asText(), operation.path("id").asText())
         assertEquals(traceId, operation.path("traceId").asText())
         assertEquals("alpha-editor", operation.path("operatorId").asText())
+    }
+
+    @Test
+    fun `authorizes a version stream without exposing storage urls or cross tenant content`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-DOWNLOAD-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+        val detail = getJson("$apiUrl/api/documents/$documentId", editor)
+        val versionId = detail.path("versions").first().path("id").asText()
+
+        val downloaded = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/versions/$versionId/content"))
+                .header("Authorization", "Bearer $editor")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(200, downloaded.statusCode())
+        assertEquals("development acceptance payload", downloaded.body())
+        assertTrue(downloaded.headers().firstValue("Content-Disposition").orElse("").contains("attachment"))
+
+        val betaEditor = login("editor@beta", "dev-editor")
+        val crossTenant = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/content"))
+                .header("Authorization", "Bearer $betaEditor")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(404, crossTenant.statusCode())
+
+        val updated = getJson("$apiUrl/api/documents/$documentId", editor)
+        assertAuditActor(updated, "document:download", "alpha-editor", "Alpha 编辑者")
+        assertTrue(updated.path("operationLogs").any { it.path("action").asText() == "document:download" })
     }
 
     @Test

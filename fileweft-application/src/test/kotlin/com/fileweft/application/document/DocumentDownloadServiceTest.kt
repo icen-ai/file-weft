@@ -1,0 +1,149 @@
+package com.fileweft.application.document
+
+import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.core.context.TenantContext
+import com.fileweft.core.id.Identifier
+import com.fileweft.core.id.IdentifierGenerator
+import com.fileweft.domain.audit.AuditRecord
+import com.fileweft.domain.audit.AuditRecordRepository
+import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentRepository
+import com.fileweft.domain.document.DocumentVersion
+import com.fileweft.domain.file.FileObject
+import com.fileweft.domain.file.FileObjectRepository
+import com.fileweft.spi.authorization.AuthorizationDecision
+import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.authorization.AuthorizationRequest
+import com.fileweft.spi.identity.UserIdentity
+import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.storage.MultipartPart
+import com.fileweft.spi.storage.MultipartUpload
+import com.fileweft.spi.storage.StorageAdapter
+import com.fileweft.spi.storage.StorageDownload
+import com.fileweft.spi.storage.StorageObjectLocation
+import com.fileweft.spi.storage.StorageUploadRequest
+import com.fileweft.spi.storage.StoredObject
+import com.fileweft.spi.tenant.TenantProvider
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.net.URI
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneOffset
+import kotlin.test.assertEquals
+
+class DocumentDownloadServiceTest {
+    @Test
+    fun `authorizes then streams the selected tenant version and audits the intent`() {
+        val storage = RecordingStorage()
+        val audits = RecordingAudits()
+        val service = service(storage = storage, audits = audits)
+
+        val download = service.download(Identifier("document-1"))
+        val bytes = download.use { it.content.readBytes() }
+
+        assertEquals("document content", bytes.decodeToString())
+        assertEquals(StorageObjectLocation("local", "tenant-1/document-1.txt"), storage.requested.single())
+        assertEquals("document:download", audits.records.single().action)
+        assertEquals("version-1", audits.records.single().details["versionId"])
+        assertEquals("file-1", audits.records.single().details["fileObjectId"])
+    }
+
+    @Test
+    fun `rejects a denied download before it reaches storage`() {
+        val storage = RecordingStorage()
+        val service = service(storage = storage, authorized = false)
+
+        assertThrows<SecurityException> { service.download(Identifier("document-1")) }
+
+        assertEquals(emptyList(), storage.requested)
+    }
+
+    @Test
+    fun `does not resolve a document outside the current tenant`() {
+        val storage = RecordingStorage()
+        val service = service(storage = storage, documents = RecordingDocuments(emptyMap()))
+
+        assertThrows<DocumentNotFoundException> { service.download(Identifier("document-1")) }
+
+        assertEquals(emptyList(), storage.requested)
+    }
+
+    private fun service(
+        storage: RecordingStorage,
+        authorized: Boolean = true,
+        documents: RecordingDocuments = RecordingDocuments(mapOf(Identifier("document-1") to document())),
+        audits: RecordingAudits? = null,
+    ): DocumentDownloadService = DocumentDownloadService(
+        tenantProvider = object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
+        },
+        userRealmProvider = object : UserRealmProvider {
+            override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "Alice")
+            override fun findUser(userId: Identifier): UserIdentity? = null
+        },
+        authorizationProvider = object : AuthorizationProvider {
+            override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(authorized)
+        },
+        documentRepository = documents,
+        fileObjectRepository = RecordingFiles(),
+        storageAdapter = storage,
+        transaction = DirectTransaction,
+        auditTrail = audits?.let { repository ->
+            AuditTrail(repository, object : IdentifierGenerator { override fun nextId() = Identifier("audit-1") }, CLOCK)
+        },
+    )
+
+    private fun document() = Document(
+        id = Identifier("document-1"), tenantId = Identifier("tenant-1"), assetId = Identifier("asset-1"),
+        documentNumber = "DOC-1", title = "Document", versions = listOf(
+            DocumentVersion(Identifier("version-1"), Identifier("tenant-1"), Identifier("document-1"), "1.0", Identifier("file-1")),
+        ), currentVersionId = Identifier("version-1"),
+    )
+
+    private class RecordingDocuments(private val documents: Map<Identifier, Document>) : DocumentRepository {
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? = documents[documentId]
+            ?.takeIf { it.tenantId == tenantId }
+        override fun save(document: Document) = Unit
+    }
+
+    private class RecordingFiles : FileObjectRepository {
+        override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? =
+            FileObject(fileObjectId, tenantId, "document-1.txt", 16, "local", "tenant-1/document-1.txt", "text/plain")
+        override fun save(fileObject: FileObject) = Unit
+    }
+
+    private class RecordingStorage : StorageAdapter {
+        val requested = mutableListOf<StorageObjectLocation>()
+        override fun download(location: StorageObjectLocation): StorageDownload {
+            requested += location
+            return StorageDownload(ByteArrayInputStream("document content".encodeToByteArray()), 16, "text/plain")
+        }
+        override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = throw UnsupportedOperationException()
+        override fun delete(location: StorageObjectLocation) = Unit
+        override fun exists(location: StorageObjectLocation): Boolean = true
+        override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI = URI.create("http://example.invalid")
+        override fun beginMultipartUpload(request: StorageUploadRequest): MultipartUpload = throw UnsupportedOperationException()
+        override fun uploadPart(upload: MultipartUpload, partNumber: Int, content: InputStream, contentLength: Long): MultipartPart = throw UnsupportedOperationException()
+        override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject = throw UnsupportedOperationException()
+        override fun abortMultipartUpload(upload: MultipartUpload) = Unit
+    }
+
+    private class RecordingAudits : AuditRecordRepository {
+        val records = mutableListOf<AuditRecord>()
+        override fun append(record: AuditRecord) { records += record }
+        override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
+    }
+
+    private object DirectTransaction : ApplicationTransaction {
+        override fun <T> execute(action: () -> T): T = action()
+    }
+
+    private companion object {
+        val CLOCK: Clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC)
+    }
+}

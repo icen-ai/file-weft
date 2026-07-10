@@ -236,10 +236,14 @@ function renderInspector() {
   $("#selected-state").textContent = localizedState(document.lifecycleState);
   $("#selected-state").className = `state-tag ${document.lifecycleState}`;
   renderDeliveryProfile(document);
-  $("#version-list").innerHTML = detail.versions.map((version) => evidenceItem(
-    version.versionNumber,
-    `${escapeHtml(version.fileName)} · ${escapeHtml(version.contentLength)} bytes · ${escapeHtml(version.contentHash || "—")}`,
-  )).join("") || emptyEvidence("empty.versions");
+  $("#version-list").innerHTML = detail.versions.map((version) => {
+    const download = can("document:download")
+      ? `<button class="evidence-download" type="button" data-version-download="${escapeHtml(version.id)}" data-file-name="${escapeHtml(version.fileName)}">${escapeHtml(t("action.download"))}</button>` : "";
+    return `<div class="evidence-item"><b>${escapeHtml(version.versionNumber)}${download}</b><small>${escapeHtml(version.fileName)} · ${escapeHtml(version.contentLength)} bytes · ${escapeHtml(version.contentHash || "—")}</small></div>`;
+  }).join("") || emptyEvidence("empty.versions");
+  $("#version-list").querySelectorAll("[data-version-download]").forEach((button) => button.addEventListener("click", () => {
+    downloadDocument(button.dataset.versionDownload, button.dataset.fileName);
+  }));
   $("#workflow-list").innerHTML = detail.workflows.map((workflow) => {
     const tasks = workflow.tasks.map((task) => `${escapeHtml(task.assigneeId || t("workflow.unassigned"))} · ${escapeHtml(localizedState(task.state))}${task.comment ? ` · ${escapeHtml(task.comment)}` : ""}`).join("<br />");
     return evidenceItem(`${localized("workflow.type", workflow.type)} / ${localizedState(workflow.state)}`, tasks);
@@ -363,6 +367,29 @@ async function retryDelivery(deliveryId) {
     notice(t("notice.deliveryRetried"));
     await refreshDocuments();
     loadPlatform();
+  } catch (error) {
+    notice(error.message, "error");
+  }
+}
+
+async function downloadDocument(versionId, fileName) {
+  try {
+    const headers = new Headers();
+    if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
+    const response = await fetch(`/api/documents/${state.selectedId}/versions/${versionId}/content`, { headers });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(localizedApiError(text ? safeJson(text) : null, response.status));
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName || "fileweft-download";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    notice(t("notice.download"));
   } catch (error) {
     notice(error.message, "error");
   }

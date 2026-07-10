@@ -10,12 +10,12 @@ import com.fileweft.dev.api.config.DevRole
 object DevRolePolicy {
     private val editorActions = setOf(
         "document:read", "document:create", "document:edit", "document:rename", "document:version:add",
-        "document:submit", "document:revise", "file:upload", "document:doctor",
+        "document:submit", "document:revise", "document:download", "file:upload", "document:doctor",
     )
-    private val reviewerActions = setOf("document:read", "document:audit", "document:doctor")
-    private val viewerActions = setOf("document:read")
+    private val reviewerActions = setOf("document:read", "document:download", "document:audit", "document:doctor")
+    private val viewerActions = setOf("document:read", "document:download")
     private val proofLabActions = linkedSetOf(
-        "document:read", "document:create", "document:rename", "document:version:add", "document:submit",
+        "document:read", "document:download", "document:create", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
         "document:delivery:retry",

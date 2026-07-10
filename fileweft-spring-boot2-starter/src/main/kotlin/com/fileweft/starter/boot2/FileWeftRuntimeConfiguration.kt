@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
+import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.delivery.DocumentDeliveryOutboxEventHandler
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
@@ -243,6 +244,16 @@ class FileWeftRuntimeConfiguration {
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
     ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, documents, transaction, auditTrail)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDownloadService::class)
+    fun fileWeftDocumentDownloadService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
+        transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ): DocumentDownloadService = DocumentDownloadService(
+        tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail,
+    )
 
     @Bean
     @ConditionalOnMissingBean(DocumentDraftService::class)

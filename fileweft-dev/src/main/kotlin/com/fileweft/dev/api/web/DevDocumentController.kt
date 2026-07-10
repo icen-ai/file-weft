@@ -5,6 +5,8 @@ import com.fileweft.application.document.AddDocumentVersionCommand
 import com.fileweft.application.document.CreateDocumentDraftCommand
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDraftService
+import com.fileweft.application.document.DocumentDownload
+import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.offline.OfflineDocumentService
@@ -18,6 +20,9 @@ import com.fileweft.dev.api.service.DevOperationsService
 import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.domain.workflow.WorkflowInstance
 import org.springframework.http.HttpStatus
+import org.springframework.http.ContentDisposition
+import org.springframework.http.MediaType
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -28,6 +33,8 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody
+import java.nio.charset.StandardCharsets
 
 data class DevRenameDocumentRequest(val title: String)
 data class DevSubmitDocumentRequest(val reviewerId: String? = null)
@@ -40,6 +47,7 @@ data class DevDoctorTaskResponse(val taskId: String, val status: String)
 @RequestMapping("/api/documents")
 class DevDocumentController(
     private val drafts: DocumentDraftService,
+    private val downloads: DocumentDownloadService,
     private val catalogDrafts: DevCatalogDocumentService,
     private val commands: DocumentCommandService,
     private val reviews: DevReviewService,
@@ -76,6 +84,16 @@ class DevDocumentController(
 
     @GetMapping("/{documentId}")
     fun detail(@PathVariable documentId: String): DevDocumentDetail = queries.detail(Identifier(documentId))
+
+    @GetMapping("/{documentId}/content")
+    fun downloadCurrent(@PathVariable documentId: String): ResponseEntity<StreamingResponseBody> =
+        downloadResponse(downloads.download(Identifier(documentId)))
+
+    @GetMapping("/{documentId}/versions/{versionId}/content")
+    fun downloadVersion(
+        @PathVariable documentId: String,
+        @PathVariable versionId: String,
+    ): ResponseEntity<StreamingResponseBody> = downloadResponse(downloads.download(Identifier(documentId), Identifier(versionId)))
 
     @PatchMapping("/{documentId}")
     fun rename(@PathVariable documentId: String, @RequestBody request: DevRenameDocumentRequest): DevDocumentDetail {
@@ -171,4 +189,16 @@ class DevDocumentController(
 
     private fun requiredFileName(file: MultipartFile): String = file.originalFilename?.takeIf { it.isNotBlank() }
         ?: throw IllegalArgumentException("上传文件必须包含文件名。")
+
+    private fun downloadResponse(download: DocumentDownload): ResponseEntity<StreamingResponseBody> {
+        val contentType = download.contentType?.let { candidate ->
+            runCatching { MediaType.parseMediaType(candidate) }.getOrNull()
+        } ?: MediaType.APPLICATION_OCTET_STREAM
+        val disposition = ContentDisposition.attachment().filename(download.fileName, StandardCharsets.UTF_8).build().toString()
+        return ResponseEntity.ok()
+            .contentType(contentType)
+            .contentLength(download.contentLength)
+            .header("Content-Disposition", disposition)
+            .body(StreamingResponseBody { output -> download.use { it.content.copyTo(output) } })
+    }
 }
