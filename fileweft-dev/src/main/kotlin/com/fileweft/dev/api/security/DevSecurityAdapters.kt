@@ -29,24 +29,10 @@ class DevAuthorizationProvider : AuthorizationProvider {
         if (request.subject.id != principal.id || request.resource.tenantId != principal.tenantId) {
             return AuthorizationDecision(false, "Cross-user or cross-tenant access is forbidden.")
         }
-        return if (principal.role.allows(request.action.name)) {
+        return if (DevRolePolicy.allows(principal.role, request.action.name)) {
             AuthorizationDecision(true)
         } else {
             AuthorizationDecision(false, "Role ${principal.role.name} cannot perform ${request.action.name}.")
         }
     }
 }
-
-private fun com.fileweft.dev.api.config.DevRole.allows(action: String): Boolean = when (this) {
-    com.fileweft.dev.api.config.DevRole.ADMIN -> true
-    com.fileweft.dev.api.config.DevRole.EDITOR -> action in EDITOR_ACTIONS
-    com.fileweft.dev.api.config.DevRole.REVIEWER -> action in REVIEWER_ACTIONS
-    com.fileweft.dev.api.config.DevRole.VIEWER -> action in VIEWER_ACTIONS
-}
-
-private val EDITOR_ACTIONS = setOf(
-    "document:read", "document:create", "document:edit", "document:rename", "document:version:add",
-    "document:submit", "document:revise", "file:upload", "document:doctor",
-)
-private val REVIEWER_ACTIONS = setOf("document:read", "document:audit", "document:doctor")
-private val VIEWER_ACTIONS = setOf("document:read")

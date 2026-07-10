@@ -1,5 +1,34 @@
-const state = { token: null, user: null, documents: [], selectedId: null, detail: null };
+import { DEFAULT_LOCALE, translate } from "./i18n.js";
+
+const FIXTURES = [
+  { id: "contract", path: "./fixtures/supply-contract.txt", fileName: "supply-contract.txt", contentType: "text/plain" },
+  { id: "handbook", path: "./fixtures/operations-handbook.md", fileName: "operations-handbook.md", contentType: "text/markdown" },
+  { id: "inventory", path: "./fixtures/inventory-register.csv", fileName: "inventory-register.csv", contentType: "text/csv" },
+  { id: "incident", path: "./fixtures/incident-report.json", fileName: "incident-report.json", contentType: "application/json" },
+];
+
+const state = {
+  token: null,
+  user: null,
+  permissions: new Set(),
+  documents: [],
+  selectedId: null,
+  detail: null,
+  locale: localStorage.getItem("fileweft.locale") || DEFAULT_LOCALE,
+};
 const $ = (selector) => document.querySelector(selector);
+const t = (key) => translate(state.locale, key);
+const can = (action) => state.permissions.has(action);
+const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+const safeJson = (text) => { try { return JSON.parse(text); } catch { return text; } };
+const localized = (prefix, value) => {
+  const key = `${prefix}.${value}`;
+  const label = t(key);
+  return label === key ? value : label;
+};
+const localizedState = (value) => localized("state", value);
+const localizedAudit = (value) => localized("audit", value);
+const formatTime = (value) => value ? new Date(Number(value)).toLocaleString(state.locale === "zh" ? "zh-CN" : "en-GB", { hour12: false }) : "—";
 
 const api = async (path, options = {}) => {
   const headers = new Headers(options.headers || {});
@@ -7,72 +36,113 @@ const api = async (path, options = {}) => {
   const response = await fetch(path, { ...options, headers });
   const text = await response.text();
   const payload = text ? safeJson(text) : null;
-  if (!response.ok) throw new Error(payload?.message || `请求失败（${response.status}）`);
+  if (!response.ok) throw new Error(payload?.message || `Request failed (${response.status})`);
   return payload;
 };
-const safeJson = (text) => { try { return JSON.parse(text); } catch { return text; } };
-const escapeHtml = (value = "") => String(value).replace(/[&<>"]/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[char]));
-const time = (value) => value ? new Date(Number(value)).toLocaleString("zh-CN", { hour12: false }) : "—";
+
+function interpolate(key, values) {
+  return Object.entries(values).reduce((message, [name, value]) => message.replace(`{${name}}`, String(value)), t(key));
+}
 
 function notice(message, type = "") {
   const element = $("#notice");
   element.textContent = message;
   element.className = `notice ${type}`;
-  setTimeout(() => element.classList.add("hidden"), 5000);
+  window.clearTimeout(notice.timer);
+  notice.timer = window.setTimeout(() => element.classList.add("hidden"), 5000);
+}
+
+function applyTranslations() {
+  document.documentElement.lang = state.locale === "zh" ? "zh-CN" : "en";
+  document.title = t("document.title");
+  document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = t(element.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-html]").forEach((element) => { element.innerHTML = t(element.dataset.i18nHtml); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => { element.placeholder = t(element.dataset.i18nPlaceholder); });
+  document.querySelectorAll("[data-i18n-aria]").forEach((element) => { element.setAttribute("aria-label", t(element.dataset.i18nAria)); });
+  document.querySelectorAll("[data-locale]").forEach((element) => { element.setAttribute("aria-pressed", String(element.dataset.locale === state.locale)); });
+  if (state.user) {
+    $("#identity-role").textContent = t(`role.${state.user.role}`);
+    renderDocuments();
+    renderFixtures();
+    if (state.detail) renderInspector();
+  }
+}
+
+function setLocale(locale) {
+  state.locale = locale;
+  localStorage.setItem("fileweft.locale", locale);
+  applyTranslations();
+}
+
+function syncPermissionSurface() {
+  document.querySelectorAll("[data-permission]").forEach((element) => {
+    element.classList.toggle("hidden", !can(element.dataset.permission));
+  });
 }
 
 async function login(username, password) {
   const result = await api("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
   state.token = result.token;
   state.user = result;
+  state.permissions = new Set(result.permissions || []);
   $("#login-view").classList.add("hidden");
   $("#app-view").classList.remove("hidden");
   $("#identity-name").textContent = result.displayName;
   $("#identity-meta").textContent = `${result.tenantId} / ${result.username}`;
-  $("#identity-role").textContent = result.role;
+  $("#identity-role").textContent = t(`role.${result.role}`);
   $("#metric-tenant").textContent = result.tenantId;
+  syncPermissionSurface();
   await refreshDocuments();
-  notice("身份已接入，开始验收文档链路。");
+  renderFixtures();
+  notice(t("notice.login"));
 }
 
 async function refreshDocuments() {
   state.documents = await api("/api/documents?limit=60");
   renderDocuments();
   updateMetrics();
-  if (state.selectedId && state.documents.some((doc) => doc.id === state.selectedId)) await selectDocument(state.selectedId);
+  if (state.selectedId && state.documents.some((document) => document.id === state.selectedId)) await selectDocument(state.selectedId, false);
 }
 
 function updateMetrics() {
   $("#metric-documents").textContent = state.documents.length;
-  $("#metric-review").textContent = state.documents.filter((doc) => doc.lifecycleState === "PENDING_REVIEW").length;
-  $("#metric-sync").textContent = state.documents.filter((doc) => doc.lifecycleState === "SYNC_ERROR").length;
+  $("#metric-review").textContent = state.documents.filter((document) => document.lifecycleState === "PENDING_REVIEW").length;
+  $("#metric-sync").textContent = state.documents.filter((document) => document.lifecycleState === "SYNC_ERROR").length;
 }
 
 function renderDocuments() {
   const list = $("#document-list");
   if (!state.documents.length) {
-    list.innerHTML = `<div class="evidence-item"><b>尚无文档</b><small>从“新建草稿”开始一条完整的上传、审批与同步链路。</small></div>`;
+    list.innerHTML = `<div class="evidence-item"><b>${escapeHtml(t("empty.documents.title"))}</b><small>${escapeHtml(t("empty.documents.detail"))}</small></div>`;
     return;
   }
-  list.innerHTML = state.documents.map((doc) => `
-    <button class="document-row ${doc.id === state.selectedId ? "selected" : ""}" data-document-id="${doc.id}">
-      <span><b>${escapeHtml(doc.documentNumber)}</b><small>${escapeHtml(doc.title)}</small></span>
-      <span class="state-tag ${doc.lifecycleState}">${doc.lifecycleState}</span>
-      <span><small>${time(doc.updatedTime)}</small></span>
-      <span><small>${escapeHtml(doc.currentVersionId || "—")}</small></span>
+  list.innerHTML = state.documents.map((document) => `
+    <button class="document-row ${document.id === state.selectedId ? "selected" : ""}" type="button" data-document-id="${escapeHtml(document.id)}">
+      <span><b>${escapeHtml(document.documentNumber)}</b><small>${escapeHtml(document.title)}</small></span>
+      <span class="state-tag ${document.lifecycleState}">${escapeHtml(localizedState(document.lifecycleState))}</span>
+      <span><small>${escapeHtml(formatTime(document.updatedTime))}</small></span>
+      <span><small>${escapeHtml(document.currentVersionId || "—")}</small></span>
     </button>`).join("");
   list.querySelectorAll("[data-document-id]").forEach((button) => button.addEventListener("click", () => selectDocument(button.dataset.documentId)));
 }
 
-async function selectDocument(documentId) {
+async function selectDocument(documentId, refreshPanels = true) {
   state.selectedId = documentId;
   state.detail = await api(`/api/documents/${documentId}`);
   $("#empty-inspector").classList.add("hidden");
   $("#document-inspector").classList.remove("hidden");
-  $("#selection-count").textContent = "已选择";
+  $("#selection-count").textContent = t("inspector.title");
   renderDocuments();
   renderInspector();
-  loadPlatform();
+  if (refreshPanels) loadPlatform();
+}
+
+function evidenceItem(title, content) {
+  return `<div class="evidence-item"><b>${escapeHtml(title)}</b><small>${content}</small></div>`;
+}
+
+function emptyEvidence(key) {
+  return `<div class="evidence-item"><small>${escapeHtml(t(key))}</small></div>`;
 }
 
 function renderInspector() {
@@ -80,64 +150,183 @@ function renderInspector() {
   const document = detail.document;
   $("#selected-number").textContent = document.documentNumber;
   $("#selected-title").textContent = document.title;
-  $("#selected-state").textContent = document.lifecycleState;
+  $("#selected-state").textContent = localizedState(document.lifecycleState);
   $("#selected-state").className = `state-tag ${document.lifecycleState}`;
-  $("#version-list").innerHTML = detail.versions.map((version) => item(version.versionNumber, `${escapeHtml(version.fileName)} · ${escapeHtml(version.contentLength)} bytes · ${escapeHtml(version.contentHash || "无摘要")}`)).join("") || empty("尚无版本");
-  $("#workflow-list").innerHTML = detail.workflows.map((workflow) => item(`${workflow.type} / ${workflow.state}`, workflow.tasks.map((task) => `${escapeHtml(task.assigneeId || "未指派")} · ${escapeHtml(task.state)}${task.comment ? ` · ${escapeHtml(task.comment)}` : ""}`).join("<br />"))).join("") || empty("尚无审批流");
-  $("#sync-list").innerHTML = detail.syncRecords.map((sync) => item(`${sync.status} / ${sync.connectorName}`, `${escapeHtml(sync.externalId || "无外部 ID")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`)).join("") || empty("尚无同步记录");
+  $("#version-list").innerHTML = detail.versions.map((version) => evidenceItem(
+    version.versionNumber,
+    `${escapeHtml(version.fileName)} · ${escapeHtml(version.contentLength)} bytes · ${escapeHtml(version.contentHash || "—")}`,
+  )).join("") || emptyEvidence("empty.versions");
+  $("#workflow-list").innerHTML = detail.workflows.map((workflow) => {
+    const tasks = workflow.tasks.map((task) => `${escapeHtml(task.assigneeId || t("workflow.unassigned"))} · ${escapeHtml(localizedState(task.state))}${task.comment ? ` · ${escapeHtml(task.comment)}` : ""}`).join("<br />");
+    return evidenceItem(`${localized("workflow.type", workflow.type)} / ${localizedState(workflow.state)}`, tasks);
+  }).join("") || emptyEvidence("empty.workflow");
+  $("#sync-list").innerHTML = detail.syncRecords.map((sync) => evidenceItem(
+    `${localizedState(sync.status)} / ${sync.connectorName}`,
+    `${escapeHtml(sync.externalId || "—")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`,
+  )).join("") || emptyEvidence("empty.sync");
   $("#audit-list").innerHTML = detail.audits.map((audit) => {
-    const actorName = audit.operatorName || (audit.operatorId ? "未命名用户" : "SYSTEM");
+    const actorName = audit.operatorName || (audit.operatorId ? t("actor.unnamed") : t("actor.system"));
     const actorId = audit.operatorId ? ` · ${escapeHtml(audit.operatorId)}` : "";
-    return item(audit.action, `${escapeHtml(actorName)}${actorId} · ${time(audit.createdTime)}`);
-  }).join("") || empty("尚无审计记录");
+    return evidenceItem(localizedAudit(audit.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(audit.createdTime))}`);
+  }).join("") || emptyEvidence("empty.audit");
   renderActions();
 }
-const item = (title, text) => `<div class="evidence-item"><b>${escapeHtml(title)}</b><small>${text}</small></div>`;
-const empty = (text) => `<div class="evidence-item"><small>${text}</small></div>`;
+
+function actionButton(key, action) {
+  return `<button type="button" data-action="${action}">${escapeHtml(t(key))}</button>`;
+}
 
 function renderActions() {
   const document = state.detail.document;
-  const isEditor = state.user.role === "EDITOR" || state.user.role === "ADMIN";
-  const isReviewer = state.user.role === "REVIEWER" || state.user.role === "ADMIN";
-  const actions = [button("诊断 Doctor", "doctor"), button("重命名", "rename")];
-  if (["DRAFT", "REJECTED"].includes(document.lifecycleState) && isEditor) actions.push(button("追加版本", "version"));
-  if (document.lifecycleState === "DRAFT" && isEditor) actions.push(button("提交审批", "submit"));
+  const actions = [];
+  if (can("document:doctor")) actions.push(actionButton("action.doctor", "doctor"));
+  if (can("document:rename")) actions.push(actionButton("action.rename", "rename"));
+  if (["DRAFT", "REJECTED"].includes(document.lifecycleState) && can("document:version:add")) actions.push(actionButton("action.addVersion", "version"));
+  if (document.lifecycleState === "DRAFT" && can("document:submit")) actions.push(actionButton("action.submit", "submit"));
   const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
-  if (document.lifecycleState === "PENDING_REVIEW" && workflow && isReviewer) { actions.push(button("通过", "approve"), button("驳回", "reject")); }
-  if (document.lifecycleState === "REJECTED" && isEditor) actions.push(button("修订为草稿", "revise"));
-  if (document.lifecycleState === "PUBLISHED" && state.user.role === "ADMIN") { actions.push(button("下线", "offline"), button("归档", "archive")); }
+  const task = workflow?.tasks.find((item) => item.state === "PENDING");
+  const isAssignedReviewer = task && (!task.assigneeId || task.assigneeId === state.user.userId);
+  if (document.lifecycleState === "PENDING_REVIEW" && isAssignedReviewer && can("document:audit")) {
+    actions.push(actionButton("action.approve", "approve"), actionButton("action.reject", "reject"));
+  }
+  if (document.lifecycleState === "REJECTED" && can("document:revise")) actions.push(actionButton("action.revise", "revise"));
+  if (document.lifecycleState === "PUBLISHED" && can("document:offline")) actions.push(actionButton("action.offline", "offline"));
+  if (document.lifecycleState === "PUBLISHED" && can("document:archive")) actions.push(actionButton("action.archive", "archive"));
   $("#document-actions").innerHTML = actions.join("");
-  $("#document-actions").querySelectorAll("button").forEach((button) => button.addEventListener("click", () => runAction(button.dataset.action)));
+  $("#document-actions").querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => runAction(button.dataset.action)));
 }
-const button = (label, action) => `<button data-action="${action}">${label}</button>`;
 
 async function runAction(action) {
   const id = state.selectedId;
   try {
     if (action === "rename") return $("#rename-form").classList.toggle("hidden");
     if (action === "version") return $("#version-form").classList.toggle("hidden");
-    if (action === "doctor") { const report = await api(`/api/documents/${id}/doctor`); $("#doctor-output").textContent = JSON.stringify(report, null, 2); activatePanel("doctor"); return; }
-    if (action === "submit") { await api(`/api/documents/${id}/submit`, json({ reviewerId: "alpha-reviewer" })); notice("已提交给 alpha-reviewer。", ""); }
+    if (action === "doctor") {
+      const report = await api(`/api/documents/${id}/doctor`);
+      $("#doctor-output").textContent = JSON.stringify(report, null, 2);
+      activatePanel("doctor");
+      return;
+    }
+    if (action === "submit") {
+      await api(`/api/documents/${id}/submit`, json({ reviewerId: "alpha-reviewer" }));
+      notice(t("notice.submitted"));
+    }
     if (["approve", "reject"].includes(action)) {
       const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
-      const task = workflow.tasks.find((item) => item.state === "PENDING");
-      await api(`/api/documents/workflows/${workflow.id}/tasks/${task.id}/${action}`, json({ comment: action === "approve" ? "开发验收通过" : "需要修订" }));
-      notice(action === "approve" ? "审批已通过，等待 Outbox 同步。" : "已驳回，文档回到修订路径。", "");
+      const task = workflow?.tasks.find((item) => item.state === "PENDING");
+      if (!workflow || !task) throw new Error("No pending review task is available.");
+      await api(`/api/documents/workflows/${workflow.id}/tasks/${task.id}/${action}`, json({ comment: action === "approve" ? "Development proof approved" : "Development proof requires revision" }));
+      notice(t(action === "approve" ? "notice.approved" : "notice.rejected"));
     }
     if (["revise", "offline", "archive"].includes(action)) await api(`/api/documents/${id}/${action}`, { method: "POST" });
     await refreshDocuments();
-  } catch (error) { notice(error.message, "error"); }
+  } catch (error) {
+    notice(error.message, "error");
+  }
 }
-const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+function renderFixtures() {
+  if (!state.user) return;
+  const route = routeFor(state.user.role);
+  const permissions = [...state.permissions].filter((permission) => permission !== "document:read");
+  $("#role-route").innerHTML = `
+    <div class="route-index">${escapeHtml(t(`role.${state.user.role}`))}</div>
+    <div><span class="eyebrow">${escapeHtml(t("route.permissions"))}</span><h3>${escapeHtml(t(route.title))}</h3><p>${escapeHtml(t(route.detail))}</p>
+      <div class="permission-chips">${permissions.map((permission) => `<span>${escapeHtml(permission)}</span>`).join("") || `<span>document:read</span>`}</div>
+      <button class="primary" type="button" data-role-route="${route.action}">${escapeHtml(t(route.button))}<span>→</span></button>
+    </div>`;
+  $("#role-route [data-role-route]").addEventListener("click", () => runRoleRoute(route.action));
+  const canCreate = can("document:create");
+  $("#fixture-grid").innerHTML = FIXTURES.map((fixture) => `
+    <article class="fixture-card">
+      <span class="fixture-type">${escapeHtml(fixture.fileName.split(".").pop().toUpperCase())}</span>
+      <h3>${escapeHtml(t(`fixture.${fixture.id}.name`))}</h3>
+      <p>${escapeHtml(t(`fixture.${fixture.id}.detail`))}</p>
+      <div class="fixture-actions"><a href="${fixture.path}" download="${fixture.fileName}">${escapeHtml(t("fixture.download"))}</a>
+      ${canCreate ? `<button type="button" data-fixture-id="${fixture.id}">${escapeHtml(t("fixture.upload"))}</button>` : `<span class="fixture-locked">${escapeHtml(t("fixture.locked"))}</span>`}</div>
+    </article>`).join("");
+  $("#fixture-grid").querySelectorAll("[data-fixture-id]").forEach((button) => button.addEventListener("click", () => createFixture(button.dataset.fixtureId)));
+}
+
+function routeFor(role) {
+  return {
+    ADMIN: { title: "route.ADMIN.title", detail: "route.ADMIN.detail", button: "route.ADMIN.button", action: "outbox" },
+    EDITOR: { title: "route.EDITOR.title", detail: "route.EDITOR.detail", button: "route.EDITOR.button", action: "fixtures" },
+    REVIEWER: { title: "route.REVIEWER.title", detail: "route.REVIEWER.detail", button: "route.REVIEWER.button", action: "review" },
+    VIEWER: { title: "route.VIEWER.title", detail: "route.VIEWER.detail", button: "route.VIEWER.button", action: "readonly" },
+  }[role];
+}
+
+async function runRoleRoute(action) {
+  if (action === "fixtures") return activatePanel("fixtures");
+  if (action === "outbox") return processOutbox();
+  if (action === "readonly") {
+    activatePanel("documents");
+    notice(t("notice.readOnly"));
+    return;
+  }
+  const pending = state.documents.find((document) => document.lifecycleState === "PENDING_REVIEW");
+  if (!pending) {
+    notice(t("notice.noPending"));
+    return;
+  }
+  await selectDocument(pending.id);
+  activatePanel("documents");
+}
+
+async function createFixture(fixtureId) {
+  if (!can("document:create")) return;
+  const fixture = FIXTURES.find((item) => item.id === fixtureId);
+  try {
+    const response = await fetch(fixture.path);
+    if (!response.ok) throw new Error(`Fixture download failed (${response.status})`);
+    const blob = await response.blob();
+    const form = new FormData();
+    const suffix = Date.now().toString(36).toUpperCase();
+    form.append("documentNumber", `LAB-${fixture.id.toUpperCase()}-${suffix}`);
+    form.append("title", t(`fixture.${fixture.id}.title`));
+    form.append("file", new File([blob], fixture.fileName, { type: fixture.contentType }));
+    const detail = await api("/api/documents", { method: "POST", body: form });
+    state.selectedId = detail.document.id;
+    await refreshDocuments();
+    activatePanel("documents");
+    notice(t("notice.fixtureCreated"));
+  } catch (error) {
+    notice(error.message, "error");
+  }
+}
 
 async function loadPlatform() {
-  if (!state.selectedId) return;
+  if (!state.selectedId || !state.user) return;
   try {
     const response = await fetch(`/platform/v1/documents/${state.user.tenantId}/${state.selectedId}`);
     const text = await response.text();
-    $("#platform-output").textContent = response.ok ? JSON.stringify(safeJson(text), null, 2) : "下游暂未收到该文档。发布并处理 Outbox 后会出现镜像记录。";
-  } catch (error) { $("#platform-output").textContent = `下游不可达：${error.message}`; }
+    $("#platform-output").textContent = response.ok ? JSON.stringify(safeJson(text), null, 2) : t("platform.empty");
+  } catch (error) {
+    $("#platform-output").textContent = error.message;
+  }
 }
+
+function activatePanel(panel) {
+  const target = panel === "doctor" && !can("document:doctor") ? "documents" : panel;
+  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === target));
+  ["documents", "fixtures", "platform", "doctor"].forEach((name) => $(`#${name}-panel`).classList.toggle("hidden", name !== target));
+  if (target === "platform") loadPlatform();
+  if (target === "fixtures") renderFixtures();
+}
+
+async function processOutbox() {
+  try {
+    const result = await api("/api/outbox/process?limit=20", { method: "POST" });
+    notice(interpolate("notice.outbox", result));
+    await refreshDocuments();
+    loadPlatform();
+  } catch (error) {
+    notice(error.message, "error");
+  }
+}
+
+const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -145,19 +334,43 @@ $("#login-form").addEventListener("submit", async (event) => {
   try { await login(form.get("username"), form.get("password")); } catch (error) { notice(error.message, "error"); }
 });
 document.querySelectorAll(".preset").forEach((button) => button.addEventListener("click", () => { $("#username").value = button.dataset.user; $("#password").value = button.dataset.password; }));
+document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
 $("#refresh").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
+$("#process-outbox").addEventListener("click", processOutbox);
 $("#open-create").addEventListener("click", () => $("#create-drawer").classList.remove("hidden"));
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));
 $("#create-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const detail = await api("/api/documents", { method: "POST", body: new FormData(event.currentTarget) });
-    $("#create-drawer").classList.add("hidden"); event.currentTarget.reset(); state.selectedId = detail.document.id; await refreshDocuments(); notice("草稿和首个版本已写入。", "");
+    $("#create-drawer").classList.add("hidden");
+    event.currentTarget.reset();
+    state.selectedId = detail.document.id;
+    await refreshDocuments();
   } catch (error) { notice(error.message, "error"); }
 });
-$("#rename-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await api(`/api/documents/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(event.currentTarget).get("title") }) }); event.currentTarget.reset(); await refreshDocuments(); } catch (error) { notice(error.message, "error"); } });
-$("#version-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await api(`/api/documents/${state.selectedId}/versions`, { method: "POST", body: new FormData(event.currentTarget) }); event.currentTarget.reset(); await refreshDocuments(); } catch (error) { notice(error.message, "error"); } });
-$("#process-outbox").addEventListener("click", async () => { try { const result = await api("/api/outbox/process?limit=20", { method: "POST" }); notice(`Outbox：认领 ${result.claimed}，成功 ${result.succeeded}，重试 ${result.retried}，失败 ${result.failed}`); await refreshDocuments(); loadPlatform(); } catch (error) { notice(error.message, "error"); } });
-$("#logout").addEventListener("click", async () => { try { await api("/api/auth/logout", { method: "POST" }); } finally { state.token = null; state.user = null; state.selectedId = null; $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); } });
+$("#rename-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await api(`/api/documents/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(event.currentTarget).get("title") }) });
+    event.currentTarget.reset();
+    await refreshDocuments();
+  } catch (error) { notice(error.message, "error"); }
+});
+$("#version-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await api(`/api/documents/${state.selectedId}/versions`, { method: "POST", body: new FormData(event.currentTarget) });
+    event.currentTarget.reset();
+    await refreshDocuments();
+  } catch (error) { notice(error.message, "error"); }
+});
+$("#logout").addEventListener("click", async () => {
+  try { await api("/api/auth/logout", { method: "POST" }); } finally {
+    state.token = null; state.user = null; state.permissions = new Set(); state.selectedId = null; state.detail = null;
+    $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
+  }
+});
 document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", () => activatePanel(button.dataset.panel)));
-function activatePanel(panel) { document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === panel)); $("#documents-panel").classList.toggle("hidden", panel !== "documents"); $("#platform-panel").classList.toggle("hidden", panel !== "platform"); $("#doctor-panel").classList.toggle("hidden", panel !== "doctor"); if (panel === "platform") loadPlatform(); }
+
+applyTranslations();

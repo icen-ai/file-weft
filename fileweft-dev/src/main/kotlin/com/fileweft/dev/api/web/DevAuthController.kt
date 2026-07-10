@@ -1,6 +1,7 @@
 package com.fileweft.dev.api.web
 
 import com.fileweft.dev.api.security.DevRequestIdentityContext
+import com.fileweft.dev.api.security.DevRolePolicy
 import com.fileweft.dev.api.service.DevAuthService
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.GetMapping
@@ -19,6 +20,7 @@ data class DevLoginResponse(
     val displayName: String,
     val tenantId: String,
     val role: String,
+    val permissions: List<String>,
 )
 data class DevCurrentUserResponse(
     val userId: String,
@@ -26,6 +28,7 @@ data class DevCurrentUserResponse(
     val displayName: String,
     val tenantId: String,
     val role: String,
+    val permissions: List<String>,
 )
 
 @RestController
@@ -54,6 +57,7 @@ class DevAuthController(
             principal.displayName,
             principal.tenantId.value,
             principal.role.name,
+            DevRolePolicy.proofLabPermissions(principal.role),
         )
     }
 
@@ -64,6 +68,7 @@ class DevAuthController(
         displayName,
         tenantId.value,
         role.name,
+        DevRolePolicy.proofLabPermissions(role),
     )
 
     private companion object {

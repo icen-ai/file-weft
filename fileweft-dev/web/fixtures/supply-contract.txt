@@ -1,0 +1,8 @@
+FileWeft Development Fixture: Supply Contract Acceptance
+
+Document number: SC-DEV-2026-001
+Supplier: Northwind Industrial Services
+Scope: Equipment delivery and acceptance evidence
+Status: Draft fixture for real S3 upload, review and downstream synchronization.
+
+This UTF-8 text file is intentionally safe to upload repeatedly in the local proof lab.

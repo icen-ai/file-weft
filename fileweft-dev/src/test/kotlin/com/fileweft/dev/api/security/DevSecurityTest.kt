@@ -64,6 +64,16 @@ class DevSecurityTest {
         assertTrue(DevAuthorizationProvider().authorize(request("alpha", "document:audit")).allowed)
     }
 
+    @Test
+    fun `exposes only proof lab actions granted to each role`() {
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:create"))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:audit"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:audit"))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:create"))
+        assertEquals(listOf("document:read"), DevRolePolicy.proofLabPermissions(DevRole.VIEWER))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:outbox:process"))
+    }
+
     private fun request(tenantId: String, action: String) = AuthorizationRequest(
         subject = AuthorizationSubject(DevRequestIdentityContext.current()!!.id, "USER"),
         resource = AuthorizationResource(Identifier("document-1"), "DOCUMENT", Identifier(tenantId)),

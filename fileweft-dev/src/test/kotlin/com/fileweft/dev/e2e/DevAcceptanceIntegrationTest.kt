@@ -46,6 +46,21 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `returns a role scoped capability surface for the proof lab`() {
+        val editor = loginResponse("editor@alpha", "dev-editor")
+        val reviewer = loginResponse("reviewer@alpha", "dev-reviewer")
+        val viewer = loginResponse("viewer@alpha", "dev-viewer")
+        val admin = loginResponse("admin@alpha", "dev-admin")
+
+        assertTrue(editor.path("permissions").any { it.asText() == "document:create" })
+        assertTrue(editor.path("permissions").none { it.asText() == "document:audit" })
+        assertTrue(reviewer.path("permissions").any { it.asText() == "document:audit" })
+        assertTrue(reviewer.path("permissions").none { it.asText() == "document:create" })
+        assertEquals(listOf("document:read"), viewer.path("permissions").map { it.asText() })
+        assertTrue(admin.path("permissions").any { it.asText() == "system:outbox:process" })
+    }
+
+    @Test
     fun `uploads reviews publishes and delivers a document through the development stack`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentNumber = "E2E-${UUID.randomUUID().toString().take(12)}"
@@ -143,11 +158,13 @@ class DevAcceptanceIntegrationTest {
         assertTrue(recovered.path("syncRecords").any { it.path("status").asText() == "SUCCESS" })
     }
 
-    private fun login(username: String, password: String): String = postJson(
+    private fun login(username: String, password: String): String = loginResponse(username, password).path("token").asText()
+
+    private fun loginResponse(username: String, password: String): JsonNode = postJson(
         "$apiUrl/api/auth/login",
         mapper.writeValueAsString(mapOf("username" to username, "password" to password)),
         null,
-    ).path("token").asText().also { token -> assertTrue(token.isNotBlank()) }
+    ).also { response -> assertTrue(response.path("token").asText().isNotBlank()) }
 
     private fun createDraft(token: String, documentNumber: String): JsonNode {
         return uploadFile(

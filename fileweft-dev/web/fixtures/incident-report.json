@@ -1,0 +1,7 @@
+{
+  "reportId": "INC-DEV-2026-001",
+  "severity": "LOW",
+  "summary": "Development proof-lab fixture",
+  "observedAt": "2026-07-10T12:00:00Z",
+  "actions": ["capture evidence", "review workflow", "verify downstream delivery"]
+}
