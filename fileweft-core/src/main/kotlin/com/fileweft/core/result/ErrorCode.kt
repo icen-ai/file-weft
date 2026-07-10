@@ -1,0 +1,13 @@
+package com.fileweft.core.result
+
+enum class ErrorCode {
+    INVALID_ARGUMENT,
+    TENANT_CONTEXT_MISSING,
+    UNAUTHORIZED,
+    FORBIDDEN,
+    NOT_FOUND,
+    CONFLICT,
+    STATE_TRANSITION_NOT_ALLOWED,
+    EXTERNAL_SYSTEM_FAILURE,
+    INTERNAL_ERROR,
+}
