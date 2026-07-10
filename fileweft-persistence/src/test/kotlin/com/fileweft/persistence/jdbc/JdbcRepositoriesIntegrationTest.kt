@@ -8,6 +8,8 @@ import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
+import com.fileweft.domain.file.FileAsset
+import com.fileweft.domain.file.FileObject
 import com.fileweft.persistence.migration.FlywayMigrationRunner
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -85,6 +87,32 @@ class JdbcRepositoriesIntegrationTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `persists file metadata and prevents cross tenant asset lookup`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val fileObjects = JdbcFileObjectRepository(clock)
+        val assets = JdbcFileAssetRepository(ObjectMapper(), clock)
+        val fileObject = FileObject(
+            Identifier("file-1"), Identifier("tenant-1"), "contract.pdf", 7,
+            "local", "tenant-1/contract.pdf", "application/pdf", "hash-1",
+        )
+        val asset = FileAsset(
+            Identifier("asset-1"), Identifier("tenant-1"), fileObject.id, "DOCUMENT", mapOf("source" to "upload"),
+        )
+
+        transaction.execute {
+            fileObjects.save(fileObject)
+            assets.save(asset)
+        }
+        val restored = transaction.execute { assets.findById(Identifier("tenant-1"), asset.id) }
+        val leaked = transaction.execute { assets.findById(Identifier("tenant-2"), asset.id) }
+
+        requireNotNull(restored)
+        assertEquals("upload", restored.metadata["source"])
+        assertEquals(fileObject.id, restored.fileObjectId)
+        assertNull(leaked)
     }
 
     private fun document(): Document {
