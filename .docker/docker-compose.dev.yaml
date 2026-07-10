@@ -18,5 +18,25 @@ services:
       timeout: 3s
       retries: 12
 
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: fw-dev-rustfs
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: ChangeMe123!
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - fw-dev-rustfs:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health/live >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
 volumes:
   fw-dev-postgres:
+  fw-dev-rustfs:

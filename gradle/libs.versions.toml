@@ -7,6 +7,7 @@ jackson = "2.17.3"
 spring-boot2 = "2.7.18"
 spring-boot3 = "3.5.16"
 assertj = "3.26.3"
+aws-sdk = "2.47.4"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
@@ -21,6 +22,9 @@ spring-boot2-test = { module = "org.springframework.boot:spring-boot-test", vers
 spring-boot3-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot3" }
 spring-boot3-test = { module = "org.springframework.boot:spring-boot-test", version.ref = "spring-boot3" }
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+aws-sdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3" }
+aws-sdk-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

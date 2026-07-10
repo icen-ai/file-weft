@@ -29,6 +29,7 @@ include(
     ":fileweft-spring-boot2-starter",
     ":fileweft-spring-boot3-starter",
     ":fileweft-adapter",
+    ":fileweft-adapter-s3",
     ":fileweft-agent",
     ":fileweft-testkit",
 )
