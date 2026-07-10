@@ -3,6 +3,7 @@ kotlin = "2.1.21"
 junit = "5.11.4"
 flyway = "9.22.3"
 postgresql = "42.7.4"
+jackson = "2.17.3"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
@@ -11,6 +12,7 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

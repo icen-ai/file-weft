@@ -7,6 +7,7 @@ dependencies {
     implementation(project(":fileweft-application"))
     implementation(project(":fileweft-core"))
     implementation(libs.flyway.core)
+    implementation(libs.jackson.databind)
     runtimeOnly(libs.postgresql)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
