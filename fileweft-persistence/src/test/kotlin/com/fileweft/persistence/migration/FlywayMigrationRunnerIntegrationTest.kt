@@ -42,19 +42,24 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `applies the initial schema migration`() {
+    fun `applies the schema migrations including outbox processing hardening`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(1, migrations)
+        assertEquals(2, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
             assertTrue(tableExists(connection, "fw_document"))
             assertTrue(tableExists(connection, "fw_document_version"))
             assertTrue(tableExists(connection, "fw_outbox_event"))
+            assertTrue(columnExists(connection, "fw_outbox_event", "next_attempt_time"))
+            assertTrue(columnExists(connection, "fw_outbox_event", "last_error"))
         }
     }
 
     private fun tableExists(connection: Connection, tableName: String): Boolean =
         connection.metaData.getTables(null, "public", tableName, arrayOf("TABLE")).use { it.next() }
+
+    private fun columnExists(connection: Connection, tableName: String, columnName: String): Boolean =
+        connection.metaData.getColumns(null, "public", tableName, columnName).use { it.next() }
 }
