@@ -272,6 +272,56 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `opens one downstream circuit after repeated failures then admits a recovery delivery`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        val admin = login("admin@alpha", "dev-admin")
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE","targetId":"compliance"}""", null)
+
+        val failedDocuments = (1..4).map { index ->
+            val documentId = createDraft(editor, "E2E-CIRCUIT-$index-${UUID.randomUUID().toString().take(8)}")
+                .path("document").path("id").asText()
+            val workflow = postJson(
+                "$apiUrl/api/documents/$documentId/submit",
+                """{"reviewerId":"alpha-reviewer"}""",
+                editor,
+            )
+            postJson(
+                "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+                """{"comment":"验证连接器熔断","deliveryProfileId":"regulated"}""",
+                reviewer,
+            )
+            documentId
+        }
+        post("$apiUrl/api/outbox/process?limit=100", null, admin, "application/json")
+
+        val failedDetails = failedDocuments.map { documentId -> awaitLifecycle(documentId, admin, "SYNC_ERROR") }
+        assertTrue(
+            failedDetails.any { detail ->
+                delivery(detail, "compliance").path("errorMessage").asText().contains("circuit is open")
+            },
+            "At least one delivery must be rejected locally once the compliance circuit opens.",
+        )
+
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""", null)
+        Thread.sleep(1_100)
+        val recoveryDocumentId = createDraft(editor, "E2E-CIRCUIT-RECOVERY-${UUID.randomUUID().toString().take(8)}")
+            .path("document").path("id").asText()
+        val recoveryWorkflow = postJson(
+            "$apiUrl/api/documents/$recoveryDocumentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+        postJson(
+            "$apiUrl/api/documents/workflows/${recoveryWorkflow.path("workflowId").asText()}/tasks/${recoveryWorkflow.path("taskId").asText()}/approve",
+            """{"comment":"验证熔断恢复","deliveryProfileId":"regulated"}""",
+            reviewer,
+        )
+        post("$apiUrl/api/outbox/process?limit=100", null, admin, "application/json")
+        assertEquals("SUCCEEDED", delivery(awaitPublished(recoveryDocumentId, admin), "compliance").path("status").asText())
+    }
+
+    @Test
     fun `keeps a regulated document published when only its optional search target fails`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentId = createDraft(editor, "E2E-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()

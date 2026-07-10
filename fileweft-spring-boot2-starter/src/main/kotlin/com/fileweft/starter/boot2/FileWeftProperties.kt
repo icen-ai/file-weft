@@ -21,6 +21,16 @@ class FileWeftProperties {
     class SyncProperties {
         var connectorName: String = "default"
         var defaultProfileId: String = "default"
+        /** Hard upper bound for one downstream connector invocation. */
+        var connectorTimeoutMillis: Long = 30_000
+        /** Consecutive retryable outcomes before the connector circuit opens. */
+        var circuitBreakerFailureThreshold: Int = 3
+        /** How long an open connector circuit rejects work before one recovery probe. */
+        var circuitBreakerOpenDurationMillis: Long = 30_000
+        /** Shared process-wide upper bound for concurrently executing connector calls. */
+        var connectorMaxConcurrentInvocations: Int = 16
+        /** Bounded queue used when all connector invocation threads are busy. */
+        var connectorInvocationQueueCapacity: Int = 256
         var profiles: MutableList<DeliveryProfileProperties> = mutableListOf()
     }
 

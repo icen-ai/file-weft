@@ -1,6 +1,9 @@
 package com.fileweft.starter.boot3
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fileweft.adapter.connector.ConnectorInvocationExecutor
+import com.fileweft.adapter.connector.ConnectorResiliencePolicy
+import com.fileweft.adapter.connector.ConnectorResilienceRegistry
 import com.fileweft.agent.AgentTaskHandler
 import com.fileweft.agent.AgentDoctorChecker
 import com.fileweft.agent.AgentTaskOrchestrator
@@ -174,11 +177,36 @@ class FileWeftRuntimeConfiguration {
         clock: Clock,
     ) = AuditTrail(repository, identifiers, clock, operationLogs, traceContextProvider)
 
+    @Bean(destroyMethod = "close")
+    @ConditionalOnMissingBean(ConnectorInvocationExecutor::class)
+    fun connectorInvocationExecutor(properties: FileWeftProperties) = ConnectorInvocationExecutor(
+        maxConcurrentInvocations = properties.sync.connectorMaxConcurrentInvocations,
+        queueCapacity = properties.sync.connectorInvocationQueueCapacity,
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(ConnectorResiliencePolicy::class)
+    fun connectorResiliencePolicy(properties: FileWeftProperties) = ConnectorResiliencePolicy(
+        timeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
+        failureThreshold = properties.sync.circuitBreakerFailureThreshold,
+        circuitOpenDuration = Duration.ofMillis(properties.sync.circuitBreakerOpenDurationMillis),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(ConnectorResilienceRegistry::class)
+    fun connectorResilienceRegistry(
+        policy: ConnectorResiliencePolicy, executor: ConnectorInvocationExecutor, clock: Clock,
+    ) = ConnectorResilienceRegistry(policy, executor, clock)
+
     @Bean
     @ConditionalOnMissingBean(DeliveryConnectorResolver::class)
     fun deliveryConnectorResolver(
         connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, properties: FileWeftProperties,
-    ): DeliveryConnectorResolver = MapDeliveryConnectorResolver(plugins.mergeConnectors(connectors), properties.sync.connectorName)
+        resilience: ConnectorResilienceRegistry,
+    ): DeliveryConnectorResolver = MapDeliveryConnectorResolver(
+        resilience.protectAll(plugins.mergeConnectors(connectors)),
+        properties.sync.connectorName,
+    )
 
     @Bean
     @ConditionalOnMissingBean(DocumentDeliveryProfileProvider::class)
@@ -230,8 +258,12 @@ class FileWeftRuntimeConfiguration {
     fun documentDeliverySyncService(
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
         connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
-        transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ) = DocumentDeliverySyncService(documents, fileObjects, storage, connectors, deliveries, transaction, auditTrail = auditTrail)
+        transaction: ApplicationTransaction, auditTrail: AuditTrail, properties: FileWeftProperties,
+    ) = DocumentDeliverySyncService(
+        documents, fileObjects, storage, connectors, deliveries, transaction,
+        connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
+        auditTrail = auditTrail,
+    )
 
     @Bean
     @ConditionalOnMissingBean(DocumentDeliveryOutboxEventHandler::class)
@@ -324,8 +356,9 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(ConnectorDoctorChecker::class)
-    fun connectorDoctor(connectors: List<FileConnector>, plugins: FileWeftPluginRegistry) =
-        ConnectorDoctorChecker(connectors + plugins.connectors().values)
+    fun connectorDoctor(
+        connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, resilience: ConnectorResilienceRegistry,
+    ) = ConnectorDoctorChecker(resilience.protectAll(plugins.mergeConnectors(connectors)).values.toList())
 
     @Bean
     @ConditionalOnMissingBean(DoctorApplicationService::class)
@@ -367,10 +400,12 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DocumentSyncService::class)
     fun documentSyncService(
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
-        connector: FileConnector, properties: FileWeftProperties, records: SyncRecordRepository,
+        connector: FileConnector, properties: FileWeftProperties, resilience: ConnectorResilienceRegistry, records: SyncRecordRepository,
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
     ) = DocumentSyncService(
-        documents, fileObjects, storage, connector, properties.sync.connectorName, records, identifiers, transaction,
+        documents, fileObjects, storage, resilience.protect(properties.sync.connectorName, connector),
+        properties.sync.connectorName, records, identifiers, transaction,
+        connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,
         metrics = metrics,
     )
