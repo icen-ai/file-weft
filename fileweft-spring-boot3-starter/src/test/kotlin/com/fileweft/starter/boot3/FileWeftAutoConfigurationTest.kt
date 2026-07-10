@@ -144,6 +144,15 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `enables a scheduler only for the explicit worker deployment role`() {
+        contextRunner().withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.worker.enabled=true")
+            .run { context ->
+                assertTrue(context.getBean(FileWeftWorkerScheduler::class.java) != null)
+            }
+    }
+
+    @Test
     fun `does not replace a customer document repository when assembling runtime services`() {
         contextRunner().withUserConfiguration(DatabaseWithDocumentRepositoryConfiguration::class.java).run { context ->
             assertSame(context.getBean("customerDocumentRepository"), context.getBean(DocumentRepository::class.java))

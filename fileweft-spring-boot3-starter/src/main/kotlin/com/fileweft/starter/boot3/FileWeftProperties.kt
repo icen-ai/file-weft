@@ -12,6 +12,8 @@ class FileWeftProperties {
 
     var task: TaskProperties = TaskProperties()
 
+    var worker: WorkerProperties = WorkerProperties()
+
     class StorageProperties {
         var localRoot: String = "./fileweft-data"
     }
@@ -42,5 +44,15 @@ class FileWeftProperties {
         var maxRetryDelayMillis: Long = 300_000
         var leaseDurationMillis: Long = 60_000
         var workerId: String? = null
+    }
+
+    /** Explicitly opt-in polling configuration for a separately deployed worker role. */
+    class WorkerProperties {
+        var enabled: Boolean = false
+        var fixedDelayMillis: Long = 1_000
+        var outboxBatchSize: Int = 50
+        var taskBatchSize: Int = 50
+        var processOutbox: Boolean = true
+        var processTasks: Boolean = true
     }
 }

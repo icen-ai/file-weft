@@ -30,7 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 
 @AutoConfiguration(after = [DataSourceAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
-@Import(FileWeftRuntimeConfiguration::class)
+@Import(FileWeftRuntimeConfiguration::class, FileWeftWorkerSchedulingConfiguration::class)
 class FileWeftAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(TenantProvider::class)
