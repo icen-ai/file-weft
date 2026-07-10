@@ -20,6 +20,7 @@ class Jvm17LibraryConventionPlugin : Plugin<Project> {
         }
         tasks.withType(KotlinCompile::class.java).configureEach {
             compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
+            compilerOptions.javaParameters.set(true)
         }
         tasks.withType(Test::class.java).configureEach {
             useJUnitPlatform()

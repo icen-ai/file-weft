@@ -1,0 +1,106 @@
+package com.fileweft.dev.api.config
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fileweft.adapter.s3.S3StorageAdapter
+import com.fileweft.adapter.s3.S3StorageConfiguration
+import com.fileweft.application.outbox.OutboxWorker
+import com.fileweft.application.doctor.DoctorApplicationService
+import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.dev.api.connector.DevPlatformConnector
+import com.fileweft.dev.api.security.DevAuthorizationProvider
+import com.fileweft.dev.api.security.DevSessionStore
+import com.fileweft.dev.api.security.DevTenantProvider
+import com.fileweft.dev.api.security.DevUserDirectory
+import com.fileweft.dev.api.security.DevUserRealmProvider
+import com.fileweft.dev.api.service.DevAccessService
+import com.fileweft.dev.api.service.DevDocumentQueryService
+import com.fileweft.dev.api.service.DevAuthService
+import com.fileweft.dev.api.service.DevOperationsService
+import com.fileweft.dev.api.service.DevReviewService
+import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.connector.FileConnector
+import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.storage.StorageAdapter
+import com.fileweft.spi.tenant.TenantProvider
+import org.springframework.boot.ApplicationRunner
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.jdbc.core.JdbcTemplate
+import java.net.URI
+
+@Configuration(proxyBeanMethods = false)
+class DevApiConfiguration {
+    @Bean
+    fun devUserDirectory(properties: FileWeftDevProperties): DevUserDirectory = DevUserDirectory(properties)
+
+    @Bean
+    fun devSessionStore(): DevSessionStore = DevSessionStore()
+
+    @Bean
+    fun devAuthService(users: DevUserDirectory, sessions: DevSessionStore): DevAuthService = DevAuthService(users, sessions)
+
+    @Bean
+    fun devTenantProvider(): TenantProvider = DevTenantProvider()
+
+    @Bean
+    fun devUserRealmProvider(users: DevUserDirectory): UserRealmProvider = DevUserRealmProvider(users)
+
+    @Bean
+    fun devAuthorizationProvider(): AuthorizationProvider = DevAuthorizationProvider()
+
+    @Bean
+    fun devAccessService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+    ): DevAccessService = DevAccessService(tenants, users, authorization)
+
+    @Bean
+    fun devDocumentQueryService(
+        jdbcTemplate: JdbcTemplate,
+        access: DevAccessService,
+        tenants: TenantProvider,
+    ): DevDocumentQueryService = DevDocumentQueryService(jdbcTemplate, access, tenants)
+
+    @Bean(destroyMethod = "close")
+    fun devS3StorageAdapter(properties: FileWeftDevProperties): S3StorageAdapter = S3StorageAdapter(
+        S3StorageConfiguration(
+            endpoint = URI(properties.storage.endpoint),
+            region = properties.storage.region,
+            accessKey = properties.storage.accessKey,
+            secretKey = properties.storage.secretKey,
+            bucket = properties.storage.bucket,
+        ),
+    )
+
+    @Bean
+    fun devPlatformConnector(properties: FileWeftDevProperties, objectMapper: ObjectMapper): FileConnector = DevPlatformConnector(
+        baseUrl = URI(properties.platform.baseUrl),
+        objectMapper = objectMapper,
+        connectTimeoutMillis = properties.platform.connectTimeoutMillis,
+        readTimeoutMillis = properties.platform.readTimeoutMillis,
+    )
+
+    @Bean
+    fun devBucketInitializer(storage: S3StorageAdapter): ApplicationRunner = ApplicationRunner {
+        storage.ensureBucket()
+    }
+
+    @Bean
+    fun devOutboxRunner(properties: FileWeftDevProperties, worker: OutboxWorker): DevOutboxRunner =
+        DevOutboxRunner(properties.outbox.fixedDelayMillis, properties.outbox.batchSize, worker)
+
+    @Bean
+    fun devOperationsService(
+        access: DevAccessService,
+        worker: OutboxWorker,
+        doctor: DoctorApplicationService,
+    ): DevOperationsService = DevOperationsService(access, worker, doctor)
+
+    @Bean
+    fun devReviewService(
+        users: DevUserDirectory,
+        tenants: TenantProvider,
+        workflows: DocumentReviewWorkflowService,
+    ): DevReviewService = DevReviewService(users, tenants, workflows)
+}

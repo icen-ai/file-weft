@@ -20,6 +20,7 @@ class Jvm8LibraryConventionPlugin : Plugin<Project> {
         }
         tasks.withType(KotlinCompile::class.java).configureEach {
             compilerOptions.jvmTarget.set(JvmTarget.JVM_1_8)
+            compilerOptions.javaParameters.set(true)
         }
         tasks.withType(Test::class.java).configureEach {
             useJUnitPlatform()

@@ -32,4 +32,5 @@ include(
     ":fileweft-adapter-s3",
     ":fileweft-agent",
     ":fileweft-testkit",
+    ":fileweft-dev",
 )

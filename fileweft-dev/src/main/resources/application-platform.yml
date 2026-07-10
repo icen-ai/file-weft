@@ -1,0 +1,15 @@
+spring:
+  config:
+    activate:
+      on-profile: platform
+  application:
+    name: fileweft-dev-platform
+  datasource:
+    url: ${FILEWEFT_PLATFORM_DB_URL:jdbc:postgresql://127.0.0.1:5432/fileweft?currentSchema=fileweft_dev_platform}
+    username: ${FILEWEFT_PLATFORM_DB_USERNAME:fileweft}
+    password: ${FILEWEFT_PLATFORM_DB_PASSWORD:fileweft-dev}
+  flyway:
+    enabled: false
+
+server:
+  port: ${FILEWEFT_PLATFORM_PORT:8081}

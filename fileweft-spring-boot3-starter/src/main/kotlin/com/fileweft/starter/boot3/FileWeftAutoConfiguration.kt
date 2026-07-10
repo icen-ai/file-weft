@@ -14,6 +14,8 @@ import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
@@ -22,7 +24,7 @@ import java.nio.file.Paths
 import java.time.Clock
 import com.fasterxml.jackson.databind.ObjectMapper
 
-@AutoConfiguration
+@AutoConfiguration(after = [DataSourceAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
 @Import(FileWeftRuntimeConfiguration::class)
 class FileWeftAutoConfiguration {

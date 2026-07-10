@@ -1,0 +1,66 @@
+server:
+  port: ${FILEWEFT_DEV_PORT:8080}
+
+spring:
+  application:
+    name: fileweft-dev
+  datasource:
+    url: ${FILEWEFT_DEV_DB_URL:jdbc:postgresql://127.0.0.1:5432/fileweft?currentSchema=fileweft_dev}
+    username: ${FILEWEFT_DEV_DB_USERNAME:fileweft}
+    password: ${FILEWEFT_DEV_DB_PASSWORD:fileweft-dev}
+  flyway:
+    enabled: true
+    clean-disabled: true
+    schemas: fileweft_dev
+    default-schema: fileweft_dev
+    create-schemas: true
+
+fileweft:
+  default-tenant-id: alpha
+  sync:
+    connector-name: dev-platform
+  dev:
+    storage:
+      endpoint: ${FILEWEFT_DEV_S3_ENDPOINT:http://127.0.0.1:9000}
+      region: ${FILEWEFT_DEV_S3_REGION:us-east-1}
+      access-key: ${FILEWEFT_DEV_S3_ACCESS_KEY:rustfsadmin}
+      secret-key: ${FILEWEFT_DEV_S3_SECRET_KEY:ChangeMe123!}
+      bucket: ${FILEWEFT_DEV_S3_BUCKET:fileweft-dev}
+    platform:
+      base-url: ${FILEWEFT_DEV_PLATFORM_URL:http://127.0.0.1:8081/}
+      connect-timeout-millis: 3000
+      read-timeout-millis: 10000
+    outbox:
+      fixed-delay-millis: 1000
+      batch-size: 20
+    users:
+      - id: alpha-admin
+        username: admin@alpha
+        password: dev-admin
+        display-name: Alpha 管理员
+        tenant-id: alpha
+        role: ADMIN
+      - id: alpha-editor
+        username: editor@alpha
+        password: dev-editor
+        display-name: Alpha 编辑者
+        tenant-id: alpha
+        role: EDITOR
+      - id: alpha-reviewer
+        username: reviewer@alpha
+        password: dev-reviewer
+        display-name: Alpha 审批者
+        tenant-id: alpha
+        role: REVIEWER
+      - id: alpha-viewer
+        username: viewer@alpha
+        password: dev-viewer
+        display-name: Alpha 只读用户
+        tenant-id: alpha
+        role: VIEWER
+      - id: beta-admin
+        username: admin@beta
+        password: dev-admin
+        display-name: Beta 管理员
+        tenant-id: beta
+        role: ADMIN
