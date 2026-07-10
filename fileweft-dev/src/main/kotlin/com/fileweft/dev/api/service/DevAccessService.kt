@@ -2,6 +2,7 @@ package com.fileweft.dev.api.service
 
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.authorization.AuthorizationAction
+import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.authorization.AuthorizationEnvironment
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
@@ -18,10 +19,20 @@ class DevAccessService(
 ) {
     fun requireDocumentAction(documentId: Identifier, action: String) = requireAction(documentId, "DOCUMENT", action)
 
+    fun allowsDocumentAction(documentId: Identifier, action: String): Boolean = allowsAction(documentId, "DOCUMENT", action)
+
     fun requireAction(resourceId: Identifier, resourceType: String, action: String) {
+        val decision = authorize(resourceId, resourceType, action)
+        if (!decision.allowed) throw SecurityException(decision.reason ?: "Access denied for $action.")
+    }
+
+    private fun allowsAction(resourceId: Identifier, resourceType: String, action: String): Boolean =
+        authorize(resourceId, resourceType, action).allowed
+
+    private fun authorize(resourceId: Identifier, resourceType: String, action: String): AuthorizationDecision {
         val tenant = tenants.currentTenant()
         val user = users.currentUser() ?: throw SecurityException("An authenticated development user is required.")
-        val decision = authorization.authorize(
+        return authorization.authorize(
             AuthorizationRequest(
                 subject = AuthorizationSubject(user.id, "USER", user.attributes),
                 resource = AuthorizationResource(resourceId, resourceType, tenant.tenantId),
@@ -29,6 +40,5 @@ class DevAccessService(
                 environment = AuthorizationEnvironment(),
             ),
         )
-        if (!decision.allowed) throw SecurityException(decision.reason ?: "Access denied for $action.")
     }
 }

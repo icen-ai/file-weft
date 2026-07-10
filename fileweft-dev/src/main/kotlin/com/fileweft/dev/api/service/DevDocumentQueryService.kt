@@ -179,7 +179,11 @@ class DevDocumentQueryService(
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
             doctorRecords = jdbcTemplate.query(DOCTOR_RECORDS_SQL, DOCTOR_RECORD_MAPPER, tenantId, documentId.value),
-            agentResults = loadAgentResults(tenantId, documentId.value),
+            agentResults = if (access.allowsDocumentAction(documentId, AGENT_SUGGESTION_READ_ACTION)) {
+                loadAgentResults(tenantId, documentId.value)
+            } else {
+                emptyList()
+            },
             syncRecords = jdbcTemplate.query(SYNC_SQL, SYNC_MAPPER, tenantId, documentId.value),
             outboxEvents = jdbcTemplate.query(OUTBOX_SQL, OUTBOX_MAPPER, tenantId, documentId.value),
         )
@@ -209,6 +213,7 @@ class DevDocumentQueryService(
     }
 
     private companion object {
+        const val AGENT_SUGGESTION_READ_ACTION = "agent:suggestion:read"
         val SUMMARY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentSummary> { result, _ ->
             DevDocumentSummary(
                 result.getString("id"), result.getString("doc_no"), result.getString("title"),

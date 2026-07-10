@@ -79,6 +79,7 @@ class DevSecurityTest {
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:create"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:audit"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:audit"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("agent:suggestion:read"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:create"))
         assertEquals(listOf("document:read", "document:download"), DevRolePolicy.proofLabPermissions(DevRole.VIEWER))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:outbox:process"))

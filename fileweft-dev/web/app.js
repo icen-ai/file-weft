@@ -261,6 +261,7 @@ function renderInspector() {
     `${localizedTaskStatus(task.status)} / ${task.type}`,
     `${formatTime(task.createdTime)}${task.retryCount ? ` · ${escapeHtml(interpolate("task.retries", { count: task.retryCount }))}` : ""}${task.lastError ? ` · ${escapeHtml(task.lastError)}` : ""}`,
   )).join("") || emptyEvidence("empty.tasks");
+  $("#agent-results-section").classList.toggle("hidden", !can("agent:suggestion:read"));
   $("#agent-result-list").innerHTML = detail.agentResults.map((result) => {
     const payload = safeJson(result.result);
     const suggestions = (payload.suggestions || []).map((suggestion) => {

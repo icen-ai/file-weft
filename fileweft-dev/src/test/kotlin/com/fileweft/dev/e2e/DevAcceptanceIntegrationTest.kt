@@ -57,9 +57,11 @@ class DevAcceptanceIntegrationTest {
         assertTrue(editor.path("permissions").any { it.asText() == "document:create" })
         assertTrue(editor.path("permissions").none { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "document:audit" })
+        assertTrue(reviewer.path("permissions").any { it.asText() == "agent:suggestion:read" })
         assertTrue(reviewer.path("permissions").none { it.asText() == "document:create" })
         assertEquals(listOf("document:read", "document:download"), viewer.path("permissions").map { it.asText() })
         assertTrue(admin.path("permissions").any { it.asText() == "system:outbox:process" })
+        assertTrue(admin.path("permissions").any { it.asText() == "agent:suggestion:confirm" })
     }
 
     @Test
@@ -362,6 +364,12 @@ class DevAcceptanceIntegrationTest {
 
         post("$apiUrl/api/documents/agent-results/$taskId/suggestions/$suggestionId/confirm", null, admin, "application/json")
         assertTrue(awaitAgentResult(documentId, admin).path("confirmations").any { it.path("suggestionId").asText() == suggestionId })
+
+        val reviewerDetail = getJson("$apiUrl/api/documents/$documentId", reviewer)
+        val viewer = login("viewer@alpha", "dev-viewer")
+        val viewerDetail = getJson("$apiUrl/api/documents/$documentId", viewer)
+        assertTrue(reviewerDetail.path("agentResults").size() > 0)
+        assertEquals(0, viewerDetail.path("agentResults").size())
     }
 
     private fun login(username: String, password: String): String = loginResponse(username, password).path("token").asText()
