@@ -1,0 +1,72 @@
+package com.fileweft.application.agent
+
+import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.security.ApplicationAuthorization
+import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.core.id.Identifier
+import com.fileweft.core.id.IdentifierGenerator
+import com.fileweft.spi.ai.AgentExecutionStatus
+import com.fileweft.spi.ai.AgentSuggestionConfirmation
+import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.tenant.TenantProvider
+import java.time.Clock
+
+/**
+ * User-facing boundary for accepting an agent suggestion. This records consent
+ * only; a separate explicit application use case must apply any domain change.
+ */
+class ConfirmAgentSuggestionService(
+    private val tenantProvider: TenantProvider,
+    private val userRealmProvider: UserRealmProvider,
+    authorizationProvider: AuthorizationProvider,
+    private val results: AgentResultRepository,
+    private val identifiers: IdentifierGenerator,
+    private val transaction: ApplicationTransaction,
+    private val clock: Clock,
+    private val auditTrail: AuditTrail? = null,
+) {
+    private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
+
+    fun confirm(taskId: Identifier, suggestionId: Identifier): AgentSuggestionConfirmation {
+        val tenant = tenantProvider.currentTenant()
+        val operator = userRealmProvider.currentUser()
+        authorization.requireAction(tenant.tenantId, taskId, RESOURCE_TYPE, CONFIRM_ACTION)
+        return transaction.execute {
+            val result = results.findByTask(tenant.tenantId, taskId)
+                ?: throw NoSuchElementException("Agent result ${taskId.value} was not found in the current tenant.")
+            require(result.result.status == AgentExecutionStatus.SUCCEEDED) {
+                "Only successful agent results can be confirmed."
+            }
+            require(result.result.suggestions.any { it.id == suggestionId }) {
+                "Suggestion does not belong to the supplied agent result."
+            }
+            val confirmedAt = clock.millis()
+            val persisted = results.saveConfirmation(
+                PersistedAgentSuggestionConfirmation(
+                    id = identifiers.nextId(),
+                    tenantId = tenant.tenantId,
+                    taskId = taskId,
+                    suggestionId = suggestionId,
+                    confirmedBy = requireNotNull(operator).id,
+                    confirmedAt = confirmedAt,
+                ),
+            )
+            auditTrail?.record(
+                tenantId = tenant.tenantId,
+                resourceType = RESOURCE_TYPE,
+                resourceId = taskId,
+                action = CONFIRM_ACTION,
+                operatorId = operator.id,
+                operatorName = operator.displayName,
+                details = mapOf("suggestionId" to suggestionId.value),
+            )
+            AgentSuggestionConfirmation(persisted.taskId, persisted.suggestionId, persisted.confirmedBy, persisted.confirmedAt)
+        }
+    }
+
+    companion object {
+        const val RESOURCE_TYPE = "AGENT_RESULT"
+        const val CONFIRM_ACTION = "agent:suggestion:confirm"
+    }
+}

@@ -7,6 +7,7 @@ import com.fileweft.agent.AgentTaskOutboxEventHandler
 import com.fileweft.agent.AgentTaskScheduler
 import com.fileweft.agent.PersistedAgentSuggestionConfirmationService
 import com.fileweft.application.agent.AgentResultRepository
+import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
@@ -116,6 +117,14 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(AgentResultRepository::class)
     fun agentResults(objectMapper: ObjectMapper, clock: Clock): AgentResultRepository = JdbcAgentResultRepository(objectMapper, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
+    fun confirmAgentSuggestionService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        results: AgentResultRepository, identifiers: IdentifierGenerator, transaction: ApplicationTransaction,
+        clock: Clock, auditTrail: AuditTrail,
+    ) = ConfirmAgentSuggestionService(tenants, users, authorization, results, identifiers, transaction, clock, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(AgentTaskOrchestrator::class)
