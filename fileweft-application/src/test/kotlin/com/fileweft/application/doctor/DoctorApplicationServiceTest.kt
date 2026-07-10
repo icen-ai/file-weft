@@ -7,6 +7,8 @@ import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.connector.ConnectorHealth
 import com.fileweft.spi.connector.ConnectorHealthStatus
 import com.fileweft.spi.doctor.DoctorChecker
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Instant
@@ -101,10 +103,40 @@ class DoctorApplicationServiceTest {
         }
     }
 
+    @Test
+    fun `records doctor failure without allowing metrics backend failures to change report`() {
+        val metrics = RecordingMetrics()
+        val report = DoctorApplicationService(
+            FixedTenantProvider(),
+            permissionChecker(AuthorizationDecision(false, "missing permission")),
+            emptyList(),
+            fixedClock(),
+            metrics,
+        ).inspectDocument(Identifier("document-1"))
+
+        assertEquals(DoctorStatus.ERROR, report.status)
+        assertEquals(listOf(FileWeftMetric.DOCTOR_FAILURE), metrics.metrics)
+
+        val unaffected = DoctorApplicationService(
+            FixedTenantProvider(), permissionChecker(AuthorizationDecision(false, "missing permission")),
+            emptyList(), fixedClock(), ThrowingMetrics,
+        ).inspectDocument(Identifier("document-1"))
+        assertEquals(DoctorStatus.ERROR, unaffected.status)
+    }
+
     private fun permissionChecker(decision: AuthorizationDecision) = PermissionDoctorChecker(
         FixedUserRealmProvider(),
         FixedAuthorizationProvider(decision),
     )
 
     private fun fixedClock(): Clock = Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC)
+
+    private class RecordingMetrics : FileWeftMetrics {
+        val metrics = mutableListOf<FileWeftMetric>()
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) { metrics += metric }
+    }
+
+    private object ThrowingMetrics : FileWeftMetrics {
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) = throw IllegalStateException("metrics offline")
+    }
 }

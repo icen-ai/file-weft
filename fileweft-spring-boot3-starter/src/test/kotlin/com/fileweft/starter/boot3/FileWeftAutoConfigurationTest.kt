@@ -3,6 +3,7 @@ package com.fileweft.starter.boot3
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
+import com.fileweft.adapter.observability.NoOpFileWeftMetrics
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.outbox.OutboxWorker
@@ -11,6 +12,7 @@ import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.tenant.TenantProvider
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.spi.authorization.AuthorizationAction
@@ -81,6 +83,7 @@ class FileWeftAutoConfigurationTest {
             assertEquals(DefaultAuthorizationProvider.REASON, decision.reason)
             assertTrue(context.getBean(AuthorizationProvider::class.java) is DefaultAuthorizationProvider)
             assertTrue(context.getBean(StorageAdapter::class.java) is LocalStorageAdapter)
+            assertTrue(context.getBean(FileWeftMetrics::class.java) is NoOpFileWeftMetrics)
         }
     }
 

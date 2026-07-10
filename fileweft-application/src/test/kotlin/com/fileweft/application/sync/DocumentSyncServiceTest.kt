@@ -22,6 +22,8 @@ import com.fileweft.spi.connector.ConnectorSyncResult
 import com.fileweft.spi.connector.ConnectorSyncStatus
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.MultipartPart
 import com.fileweft.spi.storage.MultipartUpload
 import com.fileweft.spi.storage.StorageAdapter
@@ -82,6 +84,7 @@ class DocumentSyncServiceTest {
             ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "remote unavailable"),
             ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, "external-1"),
         ))
+        val metrics = RecordingMetrics()
         val service = service(
             documents,
             records,
@@ -93,18 +96,21 @@ class DocumentSyncServiceTest {
                 keys += request.invocation.idempotencyKey
                 outcomes.removeFirst()
             },
+            metrics = metrics,
         )
 
         val first = service.synchronize(event())
         assertEquals(OutboxHandlingStatus.RETRYABLE_FAILURE, first.status)
         assertEquals(LifecycleState.SYNC_ERROR, documents.document?.lifecycleState)
         assertEquals(1, records.record?.retryCount)
+        assertEquals(listOf(FileWeftMetric.SYNC_FAILURE), metrics.metrics)
 
         val second = service.synchronize(event())
         assertEquals(OutboxHandlingStatus.SUCCEEDED, second.status)
         assertEquals(LifecycleState.PUBLISHED, documents.document?.lifecycleState)
         assertEquals(1, records.record?.retryCount)
         assertEquals(listOf("event-1", "event-1"), keys)
+        assertEquals(listOf(FileWeftMetric.SYNC_FAILURE, FileWeftMetric.SYNC_SUCCESS), metrics.metrics)
     }
 
     @Test
@@ -163,6 +169,28 @@ class DocumentSyncServiceTest {
         assertTrue(audits.appendedInTransaction)
     }
 
+    @Test
+    fun `records sync outcomes without changing connector result when metrics fail`() {
+        val metrics = RecordingMetrics()
+        val service = service(
+            InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+            object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+            connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+            metrics = metrics,
+        )
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, service.synchronize(event()).status)
+        assertEquals(listOf(FileWeftMetric.SYNC_SUCCESS), metrics.metrics)
+
+        val unaffected = service(
+            InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+            object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+            connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+            metrics = ThrowingMetrics,
+        ).synchronize(event())
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, unaffected.status)
+    }
+
     private fun service(
         documents: InMemoryDocuments,
         records: InMemorySyncRecords,
@@ -170,6 +198,7 @@ class DocumentSyncServiceTest {
         storage: StorageAdapter,
         connector: FileConnector,
         auditTrail: AuditTrail? = null,
+        metrics: FileWeftMetrics? = null,
     ) = DocumentSyncService(
         documents,
         InMemoryFiles(fileObject()),
@@ -180,6 +209,7 @@ class DocumentSyncServiceTest {
         object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("sync-1") },
         transaction,
         auditTrail = auditTrail,
+        metrics = metrics,
     )
 
     private fun event() = OutboxEvent(
@@ -235,6 +265,15 @@ class DocumentSyncServiceTest {
             records += record
         }
         override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
+    }
+
+    private class RecordingMetrics : FileWeftMetrics {
+        val metrics = mutableListOf<FileWeftMetric>()
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) { metrics += metric }
+    }
+
+    private object ThrowingMetrics : FileWeftMetrics {
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) = throw IllegalStateException("metrics offline")
     }
 
     private abstract class StorageStub : StorageAdapter {

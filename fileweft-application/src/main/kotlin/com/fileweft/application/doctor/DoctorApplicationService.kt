@@ -6,6 +6,8 @@ import com.fileweft.core.result.DoctorCheckResult
 import com.fileweft.core.result.DoctorReport
 import com.fileweft.core.result.DoctorStatus
 import com.fileweft.spi.doctor.DoctorChecker
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.tenant.TenantProvider
 import java.time.Clock
 
@@ -15,6 +17,7 @@ class DoctorApplicationService(
     private val permissionChecker: PermissionDoctorChecker,
     checkers: List<DoctorChecker>,
     private val clock: Clock,
+    private val metrics: FileWeftMetrics? = null,
 ) {
     private val checkers: List<DoctorChecker> = ArrayList(checkers)
 
@@ -28,12 +31,12 @@ class DoctorApplicationService(
         val context = DoctorCheckContext(tenant.tenantId, documentId)
         val permission = runChecker(permissionChecker, context)
         if (permission.status == DoctorStatus.ERROR) {
-            return DoctorReport(tenant.tenantId, documentId, listOf(permission), clock.millis())
+            return observe(DoctorReport(tenant.tenantId, documentId, listOf(permission), clock.millis()))
         }
         val results = ArrayList<DoctorCheckResult>(checkers.size + 1)
         results += permission
         checkers.forEach { results += runChecker(it, context) }
-        return DoctorReport(tenant.tenantId, documentId, results, clock.millis())
+        return observe(DoctorReport(tenant.tenantId, documentId, results, clock.millis()))
     }
 
     private fun runChecker(checker: DoctorChecker, context: DoctorCheckContext): DoctorCheckResult {
@@ -60,5 +63,16 @@ class DoctorApplicationService(
                 repairSuggestion = "Inspect the checker dependency and its logs, then run diagnosis again.",
             )
         }
+    }
+
+    private fun observe(report: DoctorReport): DoctorReport {
+        if (report.status == DoctorStatus.ERROR) {
+            try {
+                metrics?.increment(FileWeftMetric.DOCTOR_FAILURE, mapOf("tenantId" to report.tenantId.value))
+            } catch (_: Exception) {
+                // Diagnostics must remain available when a metrics backend fails.
+            }
+        }
+        return report
     }
 }

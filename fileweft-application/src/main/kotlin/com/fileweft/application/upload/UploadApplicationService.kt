@@ -11,8 +11,11 @@ import com.fileweft.domain.file.FileObject
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.storage.StorageUploadRequest
+import com.fileweft.spi.storage.StoredObject
 import com.fileweft.spi.tenant.TenantProvider
 import java.io.InputStream
 import java.time.Clock
@@ -28,6 +31,7 @@ class UploadApplicationService(
     private val identifierGenerator: IdentifierGenerator,
     private val transaction: ApplicationTransaction,
     private val clock: Clock,
+    private val metrics: FileWeftMetrics? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
@@ -37,19 +41,20 @@ class UploadApplicationService(
         val fileAssetId = identifierGenerator.nextId()
         authorization.requireAction(tenant.tenantId, fileObjectId, "FILE_OBJECT", "file:upload")
 
-        val storedObject = storageAdapter.upload(
-            StorageUploadRequest(
-                tenantId = tenant.tenantId,
-                objectName = command.fileName,
-                contentLength = command.contentLength,
-                contentType = command.contentType,
-                contentHash = command.contentHash,
-                metadata = command.metadata,
-            ),
-            content,
-        )
-        return try {
-            transaction.execute {
+        var storedObject: StoredObject? = null
+        try {
+            storedObject = storageAdapter.upload(
+                StorageUploadRequest(
+                    tenantId = tenant.tenantId,
+                    objectName = command.fileName,
+                    contentLength = command.contentLength,
+                    contentType = command.contentType,
+                    contentHash = command.contentHash,
+                    metadata = command.metadata,
+                ),
+                content,
+            )
+            val result = transaction.execute {
                 val fileObject = FileObject(
                     id = fileObjectId,
                     tenantId = tenant.tenantId,
@@ -80,13 +85,26 @@ class UploadApplicationService(
                 )
                 UploadFileResult(fileObject, fileAsset)
             }
+            recordMetric(FileWeftMetric.UPLOAD_COUNT, tenant.tenantId.value)
+            return result
         } catch (failure: Throwable) {
-            try {
-                storageAdapter.delete(storedObject.location)
-            } catch (cleanupFailure: Throwable) {
-                failure.addSuppressed(cleanupFailure)
+            storedObject?.let { stored ->
+                try {
+                    storageAdapter.delete(stored.location)
+                } catch (cleanupFailure: Throwable) {
+                    failure.addSuppressed(cleanupFailure)
+                }
             }
+            recordMetric(FileWeftMetric.UPLOAD_FAILURE, tenant.tenantId.value)
             throw failure
+        }
+    }
+
+    private fun recordMetric(metric: FileWeftMetric, tenantId: String) {
+        try {
+            metrics?.increment(metric, mapOf("tenantId" to tenantId))
+        } catch (_: Exception) {
+            // Metrics are intentionally non-blocking for business execution.
         }
     }
 }

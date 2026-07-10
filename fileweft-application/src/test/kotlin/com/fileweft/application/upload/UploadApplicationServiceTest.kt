@@ -15,6 +15,8 @@ import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.MultipartPart
 import com.fileweft.spi.storage.MultipartUpload
 import com.fileweft.spi.storage.StorageAdapter
@@ -56,12 +58,28 @@ class UploadApplicationServiceTest {
     @Test
     fun `cleans up storage when metadata transaction fails`() {
         val storage = FakeStorage()
-        val service = service(storage, RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), FailingTransaction)
+        val metrics = RecordingMetrics()
+        val service = service(storage, RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), FailingTransaction, metrics)
 
         assertThrows<IllegalStateException> {
             service.upload(command(), ByteArrayInputStream(byteArrayOf(1)))
         }
         assertEquals(listOf(storage.location), storage.deleted)
+        assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.metrics)
+    }
+
+    @Test
+    fun `records committed upload and does not let metrics failures change success`() {
+        val metrics = RecordingMetrics()
+        val result = service(FakeStorage(), RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), DirectTransaction, metrics)
+            .upload(command(), ByteArrayInputStream("content".toByteArray()))
+
+        assertEquals("file-1", result.fileObject.id.value)
+        assertEquals(listOf(FileWeftMetric.UPLOAD_COUNT), metrics.metrics)
+
+        val unaffected = service(FakeStorage(), RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), DirectTransaction, ThrowingMetrics)
+            .upload(command(), ByteArrayInputStream("content".toByteArray()))
+        assertEquals("file-1", unaffected.fileObject.id.value)
     }
 
     private fun service(
@@ -70,6 +88,7 @@ class UploadApplicationServiceTest {
         assets: RecordingAssets,
         outbox: RecordingOutbox,
         transaction: ApplicationTransaction,
+        metrics: FileWeftMetrics? = null,
     ) = UploadApplicationService(
         tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(Identifier("tenant-1")) },
         userRealmProvider = object : UserRealmProvider {
@@ -87,6 +106,7 @@ class UploadApplicationServiceTest {
         },
         transaction = transaction,
         clock = Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC),
+        metrics = metrics,
     )
 
     private fun command() = UploadFileCommand("contract.pdf", 7, "DOCUMENT", "application/pdf")
@@ -120,4 +140,11 @@ class UploadApplicationServiceTest {
     }
     private object DirectTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = action() }
     private object FailingTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = throw IllegalStateException("metadata failed") }
+    private class RecordingMetrics : FileWeftMetrics {
+        val metrics = mutableListOf<FileWeftMetric>()
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) { metrics += metric }
+    }
+    private object ThrowingMetrics : FileWeftMetrics {
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) = throw IllegalStateException("metrics offline")
+    }
 }

@@ -41,6 +41,7 @@ import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.doctor.DoctorChecker
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -100,9 +101,9 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftUploadService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider, storage: StorageAdapter,
         fileObjects: FileObjectRepository, assets: FileAssetRepository, outbox: OutboxEventRepository,
-        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, metrics: FileWeftMetrics,
     ): UploadApplicationService = UploadApplicationService(
-        tenants, users, authorization, storage, fileObjects, assets, outbox, identifiers, transaction, clock,
+        tenants, users, authorization, storage, fileObjects, assets, outbox, identifiers, transaction, clock, metrics,
     )
 
     @Bean
@@ -167,7 +168,7 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun fileWeftDoctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, clock: Clock,
+        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, clock: Clock, metrics: FileWeftMetrics,
     ): DoctorApplicationService = DoctorApplicationService(
         tenants,
         permission,
@@ -178,6 +179,7 @@ class FileWeftRuntimeConfiguration {
             UnavailableDoctorChecker("agent", "No agent runtime checker is configured.", "Register an agent DoctorChecker when an agent runtime is enabled."),
         ),
         clock,
+        metrics,
     )
 
     @Bean
@@ -186,10 +188,11 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftDocumentSyncService(
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
         connector: FileConnector, properties: FileWeftProperties, records: SyncRecordRepository,
-        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
     ): DocumentSyncService = DocumentSyncService(
         documents, fileObjects, storage, connector, properties.sync.connectorName, records, identifiers, transaction,
         auditTrail = auditTrail,
+        metrics = metrics,
     )
 
     @Bean

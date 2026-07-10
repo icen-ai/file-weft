@@ -2,11 +2,13 @@ package com.fileweft.adapter
 
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.id.UuidIdentifierGenerator
+import com.fileweft.adapter.observability.NoOpFileWeftMetrics
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.authorization.AuthorizationAction
 import com.fileweft.spi.authorization.AuthorizationEnvironment
 import com.fileweft.spi.authorization.AuthorizationRequest
+import com.fileweft.spi.observability.FileWeftMetric
 import com.fileweft.spi.authorization.AuthorizationResource
 import com.fileweft.spi.authorization.AuthorizationSubject
 import org.junit.jupiter.api.Test
@@ -48,5 +50,10 @@ class DefaultAdapterTest {
         assertEquals(32, first.value.length)
         assertEquals(32, second.value.length)
         kotlin.test.assertNotEquals(first, second)
+    }
+
+    @Test
+    fun `default metrics implementation has no business side effects`() {
+        NoOpFileWeftMetrics().increment(FileWeftMetric.UPLOAD_COUNT, mapOf("tenantId" to "tenant-1"))
     }
 }

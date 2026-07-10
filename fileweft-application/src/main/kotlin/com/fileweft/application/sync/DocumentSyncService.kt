@@ -20,6 +20,8 @@ import com.fileweft.spi.connector.ConnectorSyncStatus
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.event.OutboxHandlingResult
 import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.storage.StorageObjectLocation
 import java.time.Duration
@@ -40,6 +42,7 @@ class DocumentSyncService(
     private val transaction: ApplicationTransaction,
     private val connectorTimeout: Duration = Duration.ofSeconds(30),
     private val auditTrail: AuditTrail? = null,
+    private val metrics: FileWeftMetrics? = null,
 ) {
     init {
         require(connectorName.isNotBlank()) { "Connector name must not be blank." }
@@ -49,7 +52,7 @@ class DocumentSyncService(
     fun synchronize(sourceEvent: OutboxEvent): OutboxHandlingResult {
         val documentId = sourceEvent.payload[DOCUMENT_ID_PAYLOAD_KEY]?.takeIf { it.isNotBlank() }?.let(::Identifier)
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Published document event does not contain documentId.")
-        return when (val preparation = transaction.execute { prepare(sourceEvent.tenantId, documentId) }) {
+        val handling = when (val preparation = transaction.execute { prepare(sourceEvent.tenantId, documentId) }) {
             is Preparation.AlreadyPublished -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Document is already published.")
             is Preparation.Failure -> complete(sourceEvent, documentId, preparation.status, null, preparation.message)
             is Preparation.Ready -> {
@@ -57,6 +60,8 @@ class DocumentSyncService(
                 complete(sourceEvent, documentId, result.status, result.externalId, result.message)
             }
         }
+        recordMetric(handling.status, sourceEvent.tenantId.value)
+        return handling
     }
 
     private fun prepare(tenantId: Identifier, documentId: Identifier): Preparation {
@@ -165,6 +170,15 @@ class DocumentSyncService(
             OutboxHandlingStatus.PERMANENT_FAILURE,
             message ?: "Connector synchronization cannot succeed without intervention.",
         )
+    }
+
+    private fun recordMetric(status: OutboxHandlingStatus, tenantId: String) {
+        val metric = if (status == OutboxHandlingStatus.SUCCEEDED) FileWeftMetric.SYNC_SUCCESS else FileWeftMetric.SYNC_FAILURE
+        try {
+            metrics?.increment(metric, mapOf("tenantId" to tenantId, "connector" to connectorName))
+        } catch (_: Exception) {
+            // Metrics must not alter outbox acknowledgement semantics.
+        }
     }
 
     private sealed class Preparation {
