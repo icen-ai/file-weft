@@ -3,6 +3,7 @@ package com.fileweft.starter.boot2
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.id.UuidIdentifierGenerator
 import com.fileweft.adapter.observability.NoOpFileWeftMetrics
+import com.fileweft.adapter.micrometer.MicrometerFileWeftMetrics
 import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
@@ -21,12 +22,14 @@ import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
 import java.nio.file.Paths
 import java.time.Clock
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.micrometer.core.instrument.MeterRegistry
 
 @AutoConfiguration(after = [DataSourceAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
@@ -76,6 +79,11 @@ class FileWeftAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(FileWeftMetrics::class)
+    @ConditionalOnBean(MeterRegistry::class)
+    fun fileWeftMicrometerMetrics(meterRegistry: MeterRegistry): FileWeftMetrics = MicrometerFileWeftMetrics(meterRegistry)
+
+    @Bean
+    @ConditionalOnMissingBean(value = [FileWeftMetrics::class, MeterRegistry::class])
     fun fileWeftMetrics(): FileWeftMetrics = NoOpFileWeftMetrics()
 
     @Bean

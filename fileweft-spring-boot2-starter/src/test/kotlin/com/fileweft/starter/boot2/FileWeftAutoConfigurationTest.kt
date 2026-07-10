@@ -9,6 +9,7 @@ import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.adapter.observability.NoOpFileWeftMetrics
+import com.fileweft.adapter.micrometer.MicrometerFileWeftMetrics
 import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.doctor.DoctorApplicationService
@@ -59,6 +60,8 @@ import java.sql.Connection
 import java.sql.SQLFeatureNotSupportedException
 import java.util.logging.Logger
 import javax.sql.DataSource
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertFalse
@@ -121,6 +124,13 @@ class FileWeftAutoConfigurationTest {
 
             assertTrue(storage.accessUrl(stored.location, Duration.ofMinutes(1)).toString().startsWith(storageRoot.toUri().toString()))
             storage.delete(stored.location)
+        }
+    }
+
+    @Test
+    fun `adapts the host Micrometer registry without replacing a customer metrics bean`() {
+        contextRunner().withUserConfiguration(MicrometerConfiguration::class.java).run { context ->
+            assertTrue(context.getBean(FileWeftMetrics::class.java) is MicrometerFileWeftMetrics)
         }
     }
 
@@ -207,6 +217,12 @@ class FileWeftAutoConfigurationTest {
             override fun id(): String = "test-storage-plugin"
             override fun storageAdapters(): List<StorageAdapter> = listOf(CustomerStorageAdapter)
         }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class MicrometerConfiguration {
+        @Bean
+        fun meterRegistry(): MeterRegistry = SimpleMeterRegistry()
     }
 
     @Configuration(proxyBeanMethods = false)
