@@ -1,0 +1,221 @@
+package com.fileweft.application.sync
+
+import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.core.event.OutboxEvent
+import com.fileweft.core.id.Identifier
+import com.fileweft.core.id.IdentifierGenerator
+import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentRepository
+import com.fileweft.domain.document.DocumentVersion
+import com.fileweft.domain.document.LifecycleCommand
+import com.fileweft.domain.document.LifecycleState
+import com.fileweft.domain.file.FileObject
+import com.fileweft.domain.file.FileObjectRepository
+import com.fileweft.spi.connector.ConnectorHealth
+import com.fileweft.spi.connector.ConnectorHealthStatus
+import com.fileweft.spi.connector.ConnectorRemoveRequest
+import com.fileweft.spi.connector.ConnectorSyncRequest
+import com.fileweft.spi.connector.ConnectorSyncResult
+import com.fileweft.spi.connector.ConnectorSyncStatus
+import com.fileweft.spi.connector.FileConnector
+import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.storage.MultipartPart
+import com.fileweft.spi.storage.MultipartUpload
+import com.fileweft.spi.storage.StorageAdapter
+import com.fileweft.spi.storage.StorageDownload
+import com.fileweft.spi.storage.StorageObjectLocation
+import com.fileweft.spi.storage.StorageUploadRequest
+import com.fileweft.spi.storage.StoredObject
+import org.junit.jupiter.api.Test
+import java.io.InputStream
+import java.net.URI
+import java.time.Duration
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class DocumentSyncServiceTest {
+    @Test
+    fun `syncs published event outside transactions and records connector success`() {
+        val transaction = TrackingTransaction()
+        val documents = InMemoryDocuments(publishingDocument())
+        val records = InMemorySyncRecords()
+        var invokedOutsideTransaction = true
+        var idempotencyKey: String? = null
+        val service = service(
+            documents,
+            records,
+            transaction,
+            storage = object : StorageStub() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI {
+                    invokedOutsideTransaction = invokedOutsideTransaction && !transaction.active
+                    return URI.create("https://storage.example/document-1")
+                }
+            },
+            connector = connector { request ->
+                invokedOutsideTransaction = !transaction.active
+                idempotencyKey = request.invocation.idempotencyKey
+                ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, "external-1")
+            },
+        )
+
+        val result = service.synchronize(event())
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+        assertEquals(LifecycleState.PUBLISHED, documents.document?.lifecycleState)
+        assertTrue(invokedOutsideTransaction)
+        assertEquals("event-1", idempotencyKey)
+        assertEquals(ConnectorSyncStatus.SUCCESS, records.record?.status)
+        assertEquals("external-1", records.record?.externalId)
+    }
+
+    @Test
+    fun `records retryable failure and resumes from sync error using the same idempotency key`() {
+        val transaction = TrackingTransaction()
+        val documents = InMemoryDocuments(publishingDocument())
+        val records = InMemorySyncRecords()
+        val keys = mutableListOf<String>()
+        val outcomes = ArrayDeque(listOf(
+            ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "remote unavailable"),
+            ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, "external-1"),
+        ))
+        val service = service(
+            documents,
+            records,
+            transaction,
+            storage = object : StorageStub() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI = URI.create("https://storage.example/document-1")
+            },
+            connector = connector { request ->
+                keys += request.invocation.idempotencyKey
+                outcomes.removeFirst()
+            },
+        )
+
+        val first = service.synchronize(event())
+        assertEquals(OutboxHandlingStatus.RETRYABLE_FAILURE, first.status)
+        assertEquals(LifecycleState.SYNC_ERROR, documents.document?.lifecycleState)
+        assertEquals(1, records.record?.retryCount)
+
+        val second = service.synchronize(event())
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, second.status)
+        assertEquals(LifecycleState.PUBLISHED, documents.document?.lifecycleState)
+        assertEquals(1, records.record?.retryCount)
+        assertEquals(listOf("event-1", "event-1"), keys)
+    }
+
+    @Test
+    fun `rejects malformed event payload before external interaction`() {
+        var invoked = false
+        val service = service(
+            InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+            storage = object : StorageStub() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI {
+                    invoked = true
+                    return URI.create("https://storage.example/document-1")
+                }
+            },
+            connector = connector { invoked = true; ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+        )
+
+        val result = service.synchronize(OutboxEvent(Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested", emptyMap(), 1))
+
+        assertEquals(OutboxHandlingStatus.PERMANENT_FAILURE, result.status)
+        assertFalse(invoked)
+    }
+
+    @Test
+    fun `routes only document publish requested events through the handler`() {
+        val handler = DocumentPublishOutboxEventHandler(
+            service(
+                InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+                object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+                connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+            ),
+        )
+
+        assertTrue(handler.supports(event()))
+        assertFalse(handler.supports(OutboxEvent(Identifier("event-2"), Identifier("tenant-1"), "file.uploaded", emptyMap(), 1)))
+    }
+
+    private fun service(
+        documents: InMemoryDocuments,
+        records: InMemorySyncRecords,
+        transaction: TrackingTransaction,
+        storage: StorageAdapter,
+        connector: FileConnector,
+    ) = DocumentSyncService(
+        documents,
+        InMemoryFiles(fileObject()),
+        storage,
+        connector,
+        "test-connector",
+        records,
+        object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("sync-1") },
+        transaction,
+    )
+
+    private fun event() = OutboxEvent(
+        Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested", mapOf("documentId" to "document-1"), 1,
+    )
+
+    private fun publishingDocument(): Document = Document(
+        Identifier("document-1"), Identifier("tenant-1"), Identifier("asset-1"), "DOC-001", "Contract",
+        versions = listOf(DocumentVersion(Identifier("version-1"), Identifier("tenant-1"), Identifier("document-1"), "1.0", Identifier("file-1"))),
+        currentVersionId = Identifier("version-1"),
+    ).also {
+        it.transition(LifecycleCommand.SUBMIT)
+        it.transition(LifecycleCommand.APPROVE)
+    }
+
+    private fun fileObject() = FileObject(
+        Identifier("file-1"), Identifier("tenant-1"), "contract.pdf", 10,
+        "local", "objects/test/file", "application/pdf", "sha256:test",
+    )
+
+    private fun connector(sync: (ConnectorSyncRequest) -> ConnectorSyncResult): FileConnector = object : FileConnector {
+        override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult = sync(request)
+        override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult = throw UnsupportedOperationException()
+        override fun health(): ConnectorHealth = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+    }
+
+    private class InMemoryDocuments(var document: Document?) : DocumentRepository {
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
+            document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun save(document: Document) { this.document = document }
+    }
+
+    private class InMemoryFiles(private val file: FileObject) : FileObjectRepository {
+        override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? =
+            file.takeIf { it.tenantId == tenantId && it.id == fileObjectId }
+        override fun save(fileObject: FileObject) = Unit
+    }
+
+    private class InMemorySyncRecords : SyncRecordRepository {
+        var record: SyncRecord? = null
+        override fun findBySourceEvent(tenantId: Identifier, sourceEventId: Identifier, connectorName: String): SyncRecord? =
+            record?.takeIf { it.tenantId == tenantId && it.sourceEventId == sourceEventId && it.connectorName == connectorName }
+        override fun save(record: SyncRecord) { this.record = record }
+    }
+
+    private abstract class StorageStub : StorageAdapter {
+        override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = unsupported()
+        override fun download(location: StorageObjectLocation): StorageDownload = unsupported()
+        override fun delete(location: StorageObjectLocation) = unsupported<Unit>()
+        override fun exists(location: StorageObjectLocation): Boolean = unsupported()
+        override fun beginMultipartUpload(request: StorageUploadRequest): MultipartUpload = unsupported()
+        override fun uploadPart(upload: MultipartUpload, partNumber: Int, content: InputStream, contentLength: Long): MultipartPart = unsupported()
+        override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject = unsupported()
+        override fun abortMultipartUpload(upload: MultipartUpload) = unsupported<Unit>()
+        protected fun <T> unsupported(): T = throw UnsupportedOperationException()
+    }
+
+    private class TrackingTransaction : ApplicationTransaction {
+        var active = false
+        override fun <T> execute(action: () -> T): T {
+            check(!active)
+            active = true
+            return try { action() } finally { active = false }
+        }
+    }
+}
