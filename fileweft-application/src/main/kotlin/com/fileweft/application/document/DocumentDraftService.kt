@@ -6,6 +6,7 @@ import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.file.FileAsset
@@ -47,10 +48,15 @@ class DocumentDraftService(
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         val documentId = identifierGenerator.nextId()
+        authorization.requireDocumentAction(tenant.tenantId, documentId, CREATE_ACTION)
+        transaction.execute {
+            if (documentRepository.findByDocumentNumber(tenant.tenantId, command.documentNumber) != null) {
+                throw DocumentNumberAlreadyExistsException(command.documentNumber)
+            }
+        }
         val fileObjectId = identifierGenerator.nextId()
         val assetId = identifierGenerator.nextId()
         val versionId = identifierGenerator.nextId()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, CREATE_ACTION)
         var stored: StoredObject? = null
         try {
             stored = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)

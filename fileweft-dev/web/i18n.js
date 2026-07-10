@@ -22,7 +22,7 @@ export const messages = {
     "evidence.versions": "Version evidence", "evidence.workflow": "Review trail", "evidence.sync": "Sync records", "evidence.audit": "Audit trail", "form.newTitle": "New title", "form.version": "Version, for example 1.1", "form.file": "New version file",
     "action.doctor": "Run Doctor", "action.rename": "Rename", "action.addVersion": "Add version", "action.submit": "Submit for review", "action.approve": "Approve", "action.reject": "Reject", "action.revise": "Return to draft", "action.offline": "Take offline", "action.archive": "Archive",
     "empty.documents.title": "No documents yet", "empty.documents.detail": "Start a real upload, review and sync path from the proof lab.", "empty.versions": "No versions", "empty.workflow": "No review workflow", "empty.sync": "No sync record", "empty.audit": "No audit record",
-    "actor.unnamed": "Unnamed user", "actor.system": "SYSTEM", "workflow.unassigned": "Unassigned", "workflow.type.DOCUMENT_REVIEW": "Document review",
+    "actor.unnamed": "Unnamed user", "actor.system": "SYSTEM", "workflow.unassigned": "Unassigned", "workflow.type.DOCUMENT_REVIEW": "Document review", "error.documentNumberConflict": "This document number already exists in the current tenant. Use a different number.",
     "route.ADMIN.title": "Operations route", "route.ADMIN.detail": "Process eligible outbox events, inspect downstream delivery, then verify the audit evidence.", "route.ADMIN.button": "Process eligible events",
     "route.EDITOR.title": "Authoring route", "route.EDITOR.detail": "Pick a built-in fixture, create a real draft, then rename, version and submit it for review.", "route.EDITOR.button": "Open file fixtures",
     "route.REVIEWER.title": "Review route", "route.REVIEWER.detail": "Open a pending review assigned to you, approve or reject it, then inspect the named audit record.", "route.REVIEWER.button": "Open pending review",
@@ -35,6 +35,7 @@ export const messages = {
     "state.DRAFT": "Draft", "state.PENDING_REVIEW": "Pending review", "state.REJECTED": "Rejected", "state.PUBLISHING": "Publishing", "state.PUBLISHED": "Published", "state.SYNC_ERROR": "Sync error", "state.HISTORY": "Archived", "state.OFFLINE": "Offline",
   },
   zh: {
+    "error.documentNumberConflict": "当前租户中已存在此文档编号，请换一个编号。",
     "document.title": "FileWeft / 开发验收实验室",
     "login.eyebrow": "01 / 开发验收实验室", "login.heroLead": "文件的秩序，", "login.heroEmphasis": "在流转中被验证。",
     "login.description": "用真实用户、真实 S3 与真实下游连接，验证 FileWeft 的每一条文档链路。", "login.heading": "身份接入",

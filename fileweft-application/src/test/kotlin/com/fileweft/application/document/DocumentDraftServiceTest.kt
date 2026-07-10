@@ -8,6 +8,7 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecord
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.file.FileAsset
@@ -76,7 +77,7 @@ class DocumentDraftServiceTest {
         val metrics = RecordingMetrics()
         val service = service(
             storage = storage,
-            transaction = FailingTransaction,
+            documents = FailingDocuments,
             identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
             metrics = metrics,
         )
@@ -87,6 +88,23 @@ class DocumentDraftServiceTest {
 
         assertEquals(listOf(storage.location), storage.deleted)
         assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.recorded)
+    }
+
+    @Test
+    fun `rejects a duplicate document number before uploading content`() {
+        val storage = RecordingStorage()
+        val service = service(
+            storage = storage,
+            documents = RecordingDocuments(draftDocument()),
+            identifiers = listOf("document-2"),
+        )
+
+        assertThrows(DocumentNumberAlreadyExistsException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertTrue(storage.uploads.isEmpty())
+        assertTrue(storage.deleted.isEmpty())
     }
 
     @Test
@@ -157,7 +175,7 @@ class DocumentDraftServiceTest {
 
     private fun service(
         storage: RecordingStorage = RecordingStorage(),
-        documents: RecordingDocuments = RecordingDocuments(),
+        documents: DocumentRepository = RecordingDocuments(),
         fileObjects: RecordingFileObjects = RecordingFileObjects(),
         assets: RecordingAssets = RecordingAssets(),
         identifiers: List<String>,
@@ -214,10 +232,18 @@ class DocumentDraftServiceTest {
         val saved = mutableListOf<Document>()
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? =
+            document?.takeIf { it.tenantId == tenantId && it.documentNumber == documentNumber }
         override fun save(document: Document) {
             this.document = document
             saved += document
         }
+    }
+
+    private object FailingDocuments : DocumentRepository {
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? = null
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+        override fun save(document: Document): Nothing = throw IllegalStateException("database failed")
     }
 
     private class RecordingFileObjects : FileObjectRepository {
@@ -266,5 +292,4 @@ class DocumentDraftServiceTest {
     }
 
     private object DirectTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = action() }
-    private object FailingTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = throw IllegalStateException("database failed") }
 }

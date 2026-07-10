@@ -5,6 +5,7 @@ import com.fileweft.core.context.TenantContext
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
@@ -22,6 +23,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import javax.sql.DataSource
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class JdbcRepositoriesIntegrationTest {
@@ -67,6 +69,33 @@ class JdbcRepositoriesIntegrationTest {
         val updated = transaction.execute { repository.findById(Identifier("tenant-1"), document.id) }
         requireNotNull(updated)
         assertEquals(LifecycleState.PUBLISHING, updated.lifecycleState)
+    }
+
+    @Test
+    fun `finds documents by tenant scoped number and translates duplicate insert conflicts`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcDocumentRepository(clock)
+        val original = document()
+        transaction.execute { repository.save(original) }
+
+        val found = transaction.execute { repository.findByDocumentNumber(original.tenantId, original.documentNumber) }
+        val leaked = transaction.execute { repository.findByDocumentNumber(Identifier("tenant-2"), original.documentNumber) }
+
+        assertEquals(original.id, found?.id)
+        assertNull(leaked)
+        assertFailsWith<DocumentNumberAlreadyExistsException> {
+            transaction.execute {
+                repository.save(
+                    Document(
+                        id = Identifier("document-2"),
+                        tenantId = original.tenantId,
+                        assetId = Identifier("asset-2"),
+                        documentNumber = original.documentNumber,
+                        title = "Duplicate",
+                    ),
+                )
+            }
+        }
     }
 
     @Test

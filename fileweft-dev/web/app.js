@@ -30,13 +30,18 @@ const localizedState = (value) => localized("state", value);
 const localizedAudit = (value) => localized("audit", value);
 const formatTime = (value) => value ? new Date(Number(value)).toLocaleString(state.locale === "zh" ? "zh-CN" : "en-GB", { hour12: false }) : "—";
 
+const localizedApiError = (payload, status) => {
+  const key = payload?.code === "DOCUMENT_NUMBER_CONFLICT" ? "error.documentNumberConflict" : null;
+  return key ? t(key) : (payload?.message || `Request failed (${status})`);
+};
+
 const api = async (path, options = {}) => {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   const response = await fetch(path, { ...options, headers });
   const text = await response.text();
   const payload = text ? safeJson(text) : null;
-  if (!response.ok) throw new Error(payload?.message || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(localizedApiError(payload, response.status));
   return payload;
 };
 

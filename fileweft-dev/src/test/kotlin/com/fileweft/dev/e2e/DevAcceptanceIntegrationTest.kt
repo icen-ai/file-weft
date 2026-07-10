@@ -61,6 +61,23 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `returns a conflict when an editor reuses a document number`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentNumber = "E2E-DUPLICATE-${UUID.randomUUID().toString().take(8)}"
+        val first = createDraft(editor, documentNumber)
+        assertTrue(first.path("document").path("id").asText().isNotBlank())
+
+        val duplicate = uploadFileResponse(
+            "$apiUrl/api/documents",
+            mapOf("documentNumber" to documentNumber, "title" to "Duplicate document number"),
+            editor,
+        )
+
+        assertEquals(409, duplicate.statusCode())
+        assertEquals("DOCUMENT_NUMBER_CONFLICT", mapper.readTree(duplicate.body()).path("code").asText())
+    }
+
+    @Test
     fun `uploads reviews publishes and delivers a document through the development stack`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentNumber = "E2E-${UUID.randomUUID().toString().take(12)}"
@@ -181,6 +198,12 @@ class DevAcceptanceIntegrationTest {
     )
 
     private fun uploadFile(url: String, fields: Map<String, String>, token: String): JsonNode {
+        val response = uploadFileResponse(url, fields, token)
+        assertTrue(response.statusCode() in 200..299, "HTTP ${response.statusCode()}: ${response.body()}")
+        return mapper.readTree(response.body().ifBlank { "{}" })
+    }
+
+    private fun uploadFileResponse(url: String, fields: Map<String, String>, token: String): HttpResponse<String> {
         val boundary = "FileWeft-${UUID.randomUUID()}"
         val content = "development acceptance payload".toByteArray(StandardCharsets.UTF_8)
         val body = ByteArrayOutputStream().apply {
@@ -191,11 +214,13 @@ class DevAcceptanceIntegrationTest {
             write(content)
             writeText("\r\n--$boundary--\r\n")
         }.toByteArray()
-        return post(
-            url,
-            body,
-            token,
-            "multipart/form-data; boundary=$boundary",
+        return client.send(
+            HttpRequest.newBuilder(URI(url))
+                .header("Content-Type", "multipart/form-data; boundary=$boundary")
+                .header("Authorization", "Bearer $token")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
         )
     }
 

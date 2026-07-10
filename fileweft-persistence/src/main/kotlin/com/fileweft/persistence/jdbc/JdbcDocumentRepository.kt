@@ -2,6 +2,7 @@ package com.fileweft.persistence.jdbc
 
 import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleState
@@ -25,6 +26,21 @@ class JdbcDocumentRepository(
         }
     }
 
+    override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? {
+        val connection = JdbcConnectionContext.requireCurrent()
+        connection.prepareStatement(
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id FROM fw_document WHERE tenant_id = ? AND doc_no = ?",
+        ).use { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, documentNumber)
+            statement.executeQuery().use { result ->
+                if (!result.next()) return null
+                val documentId = Identifier(result.getString("id"))
+                return mapDocument(result, loadVersions(tenantId, documentId))
+            }
+        }
+    }
+
     override fun save(document: Document) {
         val connection = JdbcConnectionContext.requireCurrent()
         val now = clock.millis()
@@ -35,11 +51,21 @@ class JdbcDocumentRepository(
             statement.executeUpdate()
         }
         if (updated == 0) {
-            connection.prepareStatement(
-                "INSERT INTO fw_document(id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ).use { statement ->
-                bindDocument(statement, document, now, true)
-                statement.executeUpdate()
+            try {
+                connection.prepareStatement(
+                    "INSERT INTO fw_document(id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ).use { statement ->
+                    bindDocument(statement, document, now, true)
+                    statement.executeUpdate()
+                }
+            } catch (failure: java.sql.SQLException) {
+                if (
+                    failure.sqlState == UNIQUE_VIOLATION_SQL_STATE &&
+                    failure.message?.contains(DOCUMENT_NUMBER_UNIQUE_CONSTRAINT) == true
+                ) {
+                    throw DocumentNumberAlreadyExistsException(document.documentNumber)
+                }
+                throw failure
             }
         }
         document.versions.forEach { version -> saveVersion(version, now) }
@@ -117,4 +143,9 @@ class JdbcDocumentRepository(
         versionNumber = result.getString("version_no"),
         fileObjectId = Identifier(result.getString("file_id")),
     )
+
+    private companion object {
+        const val UNIQUE_VIOLATION_SQL_STATE = "23505"
+        const val DOCUMENT_NUMBER_UNIQUE_CONSTRAINT = "fw_document_tenant_id_doc_no_key"
+    }
 }

@@ -1,5 +1,6 @@
 package com.fileweft.dev.api.web
 
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -9,6 +10,12 @@ data class DevApiError(val code: String, val message: String)
 
 @RestControllerAdvice
 class DevApiExceptionHandler {
+    @ExceptionHandler(DocumentNumberAlreadyExistsException::class)
+    fun documentNumberConflict(failure: DocumentNumberAlreadyExistsException): ResponseEntity<DevApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            DevApiError("DOCUMENT_NUMBER_CONFLICT", failure.message ?: "Document number already exists in the current tenant."),
+        )
+
     @ExceptionHandler(SecurityException::class)
     fun forbidden(failure: SecurityException): ResponseEntity<DevApiError> =
         ResponseEntity.status(HttpStatus.FORBIDDEN).body(DevApiError("FORBIDDEN", failure.message ?: "无权执行该操作。"))
