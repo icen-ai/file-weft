@@ -2,6 +2,7 @@ package com.fileweft.starter.boot2
 
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.agent.AgentTaskHandler
+import com.fileweft.agent.AgentDoctorChecker
 import com.fileweft.agent.AgentTaskOutboxEventHandler
 import com.fileweft.agent.PersistedAgentSuggestionConfirmationService
 import com.fileweft.application.agent.AgentResultRepository
@@ -152,6 +153,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(AgentTaskHandler::class.java) != null)
             assertTrue(context.getBean(AgentTaskOutboxEventHandler::class.java) != null)
             assertTrue(context.getBean(PersistedAgentSuggestionConfirmationService::class.java) != null)
+            assertTrue(context.getBean(AgentDoctorChecker::class.java) != null)
         }
     }
 

@@ -2,6 +2,7 @@ package com.fileweft.starter.boot3
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.agent.AgentTaskHandler
+import com.fileweft.agent.AgentDoctorChecker
 import com.fileweft.agent.AgentTaskOrchestrator
 import com.fileweft.agent.AgentTaskOutboxEventHandler
 import com.fileweft.agent.AgentTaskScheduler
@@ -131,6 +132,12 @@ class FileWeftRuntimeConfiguration {
     fun agentTaskOrchestrator(
         agents: List<com.fileweft.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry, clock: Clock,
     ) = AgentTaskOrchestrator(agents + plugins.agents(), clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentDoctorChecker::class)
+    fun agentDoctorChecker(
+        agents: List<com.fileweft.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry,
+    ) = AgentDoctorChecker(agents + plugins.agents())
 
     @Bean
     @ConditionalOnMissingBean(AgentTaskScheduler::class)
@@ -324,7 +331,7 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun doctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, transaction: ApplicationTransaction,
+        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, agent: AgentDoctorChecker, transaction: ApplicationTransaction,
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
     ) = DoctorApplicationService(
         tenants, permission,
@@ -332,7 +339,7 @@ class FileWeftRuntimeConfiguration {
             TransactionalDoctorChecker(lifecycle, transaction),
             storage,
             connector,
-            UnavailableDoctorChecker("agent", "No agent runtime checker is configured.", "Register an agent DoctorChecker when an agent runtime is enabled."),
+            agent,
         ) + plugins.doctorCheckers(),
         clock,
         metrics,
