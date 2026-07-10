@@ -6,6 +6,8 @@ import com.fileweft.spi.task.FileWeftTaskHandler
 import com.fileweft.spi.task.TaskExecution
 import com.fileweft.spi.task.TaskHandlingResult
 import com.fileweft.spi.task.TaskHandlingStatus
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Duration
@@ -78,14 +80,37 @@ class TaskWorkerTest {
         assertFailsWith<IllegalArgumentException> { worker(RecordingRepository(), TrackingTransaction(), emptyList()).processAvailable(0) }
     }
 
+    @Test
+    fun `emits safe success and failure metrics with task context`() {
+        val metrics = RecordingMetrics()
+        worker(
+            RecordingRepository(listOf(lease())),
+            TrackingTransaction(),
+            listOf(handler { TaskHandlingResult(TaskHandlingStatus.SUCCEEDED) }),
+            metrics = metrics,
+        ).processAvailable(1)
+        worker(
+            RecordingRepository(listOf(lease())),
+            TrackingTransaction(),
+            emptyList(),
+            metrics = metrics,
+        ).processAvailable(1)
+
+        assertEquals(FileWeftMetric.TASK_SUCCESS, metrics.events[0].first)
+        assertEquals(FileWeftMetric.TASK_FAILURE, metrics.events[1].first)
+        assertEquals("tenant-1", metrics.events[0].second["tenantId"])
+        assertEquals("document.doctor", metrics.events[0].second["taskType"])
+    }
+
     private fun worker(
         repository: RecordingRepository,
         transaction: TrackingTransaction,
         handlers: List<FileWeftTaskHandler>,
         maxAttempts: Int = 3,
+        metrics: FileWeftMetrics? = null,
     ) = TaskWorker(
         repository, transaction, handlers, Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC), "worker-a", maxAttempts,
-        Duration.ofMillis(10), Duration.ofMillis(40), Duration.ofMillis(60),
+        Duration.ofMillis(10), Duration.ofMillis(40), Duration.ofMillis(60), metrics,
     )
 
     private fun handler(handle: () -> TaskHandlingResult): FileWeftTaskHandler = object : FileWeftTaskHandler {
@@ -132,4 +157,9 @@ class TaskWorkerTest {
 
     private data class Retry(val nextAttemptAt: Long, val message: String)
     private data class Failure(val message: String)
+
+    private class RecordingMetrics : FileWeftMetrics {
+        val events = mutableListOf<Pair<FileWeftMetric, Map<String, String>>>()
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) { events += metric to tags }
+    }
 }

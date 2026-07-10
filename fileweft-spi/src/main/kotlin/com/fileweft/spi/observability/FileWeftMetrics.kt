@@ -8,6 +8,8 @@ enum class FileWeftMetric(
     SYNC_SUCCESS("sync_success"),
     SYNC_FAILURE("sync_failure"),
     DOCTOR_FAILURE("doctor_failure"),
+    TASK_SUCCESS("task_success"),
+    TASK_FAILURE("task_failure"),
 }
 
 /**

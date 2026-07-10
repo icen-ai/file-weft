@@ -3,6 +3,8 @@ package com.fileweft.application.task
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.spi.task.FileWeftTaskHandler
 import com.fileweft.spi.task.TaskHandlingStatus
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import java.time.Clock
 import java.time.Duration
 import java.util.ArrayList
@@ -23,6 +25,7 @@ class TaskWorker(
     initialRetryDelay: Duration = Duration.ofSeconds(10),
     maxRetryDelay: Duration = Duration.ofMinutes(5),
     leaseDuration: Duration = Duration.ofMinutes(1),
+    private val metrics: FileWeftMetrics? = null,
 ) {
     private val handlers = ArrayList(handlers)
     private val initialRetryDelayMillis = durationMillis(initialRetryDelay, "Initial task retry delay")
@@ -47,11 +50,13 @@ class TaskWorker(
         var retried = 0
         var failed = 0
         leases.forEach { lease ->
-            when (process(lease)) {
+            val outcome = process(lease)
+            when (outcome) {
                 ProcessingOutcome.SUCCEEDED -> succeeded++
                 ProcessingOutcome.RETRIED -> retried++
                 ProcessingOutcome.FAILED -> failed++
             }
+            recordMetric(lease, outcome)
         }
         return TaskProcessingSummary(leases.size, succeeded, retried, failed)
     }
@@ -135,6 +140,15 @@ class TaskWorker(
     private fun truncateMessage(message: String): String = message.take(MAX_ERROR_MESSAGE_LENGTH)
 
     private fun safeAdd(value: Long, increment: Long): Long = if (value > Long.MAX_VALUE - increment) Long.MAX_VALUE else value + increment
+
+    private fun recordMetric(lease: BackgroundTaskLease, outcome: ProcessingOutcome) {
+        val metric = if (outcome == ProcessingOutcome.SUCCEEDED) FileWeftMetric.TASK_SUCCESS else FileWeftMetric.TASK_FAILURE
+        try {
+            metrics?.increment(metric, mapOf("tenantId" to lease.task.tenantId.value, "taskType" to lease.task.type))
+        } catch (_: Exception) {
+            // Metrics must not affect task acknowledgement or lease recovery.
+        }
+    }
 
     private enum class ProcessingOutcome { SUCCEEDED, RETRIED, FAILED }
 

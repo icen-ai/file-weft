@@ -356,7 +356,7 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(TaskWorker::class)
     fun fileWeftTaskWorker(
         repository: TaskProcessingRepository, transaction: ApplicationTransaction,
-        handlers: List<FileWeftTaskHandler>, clock: Clock, properties: FileWeftProperties,
+        handlers: List<FileWeftTaskHandler>, clock: Clock, properties: FileWeftProperties, metrics: FileWeftMetrics,
     ): TaskWorker = TaskWorker(
         repository = repository,
         transaction = transaction,
@@ -367,6 +367,7 @@ class FileWeftRuntimeConfiguration {
         initialRetryDelay = Duration.ofMillis(properties.task.initialRetryDelayMillis),
         maxRetryDelay = Duration.ofMillis(properties.task.maxRetryDelayMillis),
         leaseDuration = Duration.ofMillis(properties.task.leaseDurationMillis),
+        metrics = metrics,
     )
 
     private companion object {
