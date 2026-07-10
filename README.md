@@ -2,7 +2,7 @@
 
 FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
-当前仓库从实施手册定义的第一阶段启动：Gradle 多模块骨架已就位，后续按 `core → spi → domain → application → persistence → starter → adapter → doctor → agent` 的顺序推进。
+当前实现已完成任务书定义的基础链路：`core → spi → domain → application → persistence → starter → adapter → doctor → agent`，并提供本地存储、诊断、确认式 Agent 任务与可重试 Outbox Worker 基线。
 
 ## 构建要求
 
@@ -17,3 +17,26 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 ```
 
 依赖版本通过 `gradle/libs.versions.toml` 管理，所有配置启用依赖锁定。
+
+## 本地开发
+
+启动开发 PostgreSQL：
+
+```powershell
+docker compose -f .docker\docker-compose.dev.yaml up -d postgres
+```
+
+Spring Boot Starter 默认使用本地存储；可通过以下配置修改根目录：
+
+```properties
+fileweft.storage.local-root=./fileweft-data
+```
+
+运行 PostgreSQL 集成测试：
+
+```powershell
+$env:FILEWEFT_RUN_POSTGRES_TESTS='true'
+.\gradlew.bat :fileweft-persistence:test
+```
+
+> 集成测试会重置开发库的 `public` schema，只能连接专用开发/测试数据库，不能指向任何生产数据库。
