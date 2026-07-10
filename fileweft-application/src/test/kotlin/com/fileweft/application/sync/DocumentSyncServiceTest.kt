@@ -1,5 +1,6 @@
 package com.fileweft.application.sync
 
+import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
@@ -9,6 +10,8 @@ import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
+import com.fileweft.domain.audit.AuditRecord
+import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.file.FileObject
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.connector.ConnectorHealth
@@ -138,12 +141,35 @@ class DocumentSyncServiceTest {
         assertFalse(handler.supports(OutboxEvent(Identifier("event-2"), Identifier("tenant-1"), "file.uploaded", emptyMap(), 1)))
     }
 
+    @Test
+    fun `appends connector outcome audit within the final persistence transaction`() {
+        val transaction = TrackingTransaction()
+        val audits = RecordingAudits(transaction)
+        val service = service(
+            InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), transaction,
+            object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+            connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, "external-1") },
+            AuditTrail(
+                audits,
+                object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("audit-1") },
+                java.time.Clock.fixed(java.time.Instant.ofEpochMilli(10), java.time.ZoneOffset.UTC),
+            ),
+        )
+
+        service.synchronize(event())
+
+        assertEquals("document.sync", audits.records.single().action)
+        assertEquals("SUCCESS", audits.records.single().details["status"])
+        assertTrue(audits.appendedInTransaction)
+    }
+
     private fun service(
         documents: InMemoryDocuments,
         records: InMemorySyncRecords,
         transaction: TrackingTransaction,
         storage: StorageAdapter,
         connector: FileConnector,
+        auditTrail: AuditTrail? = null,
     ) = DocumentSyncService(
         documents,
         InMemoryFiles(fileObject()),
@@ -153,6 +179,7 @@ class DocumentSyncServiceTest {
         records,
         object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("sync-1") },
         transaction,
+        auditTrail = auditTrail,
     )
 
     private fun event() = OutboxEvent(
@@ -196,6 +223,18 @@ class DocumentSyncServiceTest {
         override fun findBySourceEvent(tenantId: Identifier, sourceEventId: Identifier, connectorName: String): SyncRecord? =
             record?.takeIf { it.tenantId == tenantId && it.sourceEventId == sourceEventId && it.connectorName == connectorName }
         override fun save(record: SyncRecord) { this.record = record }
+    }
+
+    private class RecordingAudits(
+        private val transaction: TrackingTransaction,
+    ) : AuditRecordRepository {
+        val records = mutableListOf<AuditRecord>()
+        var appendedInTransaction = false
+        override fun append(record: AuditRecord) {
+            appendedInTransaction = transaction.active
+            records += record
+        }
+        override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
     }
 
     private abstract class StorageStub : StorageAdapter {

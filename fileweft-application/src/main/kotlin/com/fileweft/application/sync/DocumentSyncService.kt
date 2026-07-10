@@ -1,5 +1,6 @@
 package com.fileweft.application.sync
 
+import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
@@ -38,6 +39,7 @@ class DocumentSyncService(
     private val identifierGenerator: IdentifierGenerator,
     private val transaction: ApplicationTransaction,
     private val connectorTimeout: Duration = Duration.ofSeconds(30),
+    private val auditTrail: AuditTrail? = null,
 ) {
     init {
         require(connectorName.isNotBlank()) { "Connector name must not be blank." }
@@ -132,6 +134,19 @@ class DocumentSyncService(
                 errorMessage = message,
                 retryCount = (previous?.retryCount ?: 0) + if (status == ConnectorSyncStatus.SUCCESS) 0 else 1,
             ),
+        )
+        auditTrail?.record(
+            tenantId = sourceEvent.tenantId,
+            resourceType = "DOCUMENT",
+            resourceId = documentId,
+            action = "document.sync",
+            details = linkedMapOf<String, String>().apply {
+                put("sourceEventId", sourceEvent.id.value)
+                put("connector", connectorName)
+                put("status", status.name)
+                externalId?.let { put("externalId", it) }
+                message?.let { put("message", it) }
+            },
         )
         status.toOutboxHandlingResult(message)
     }
