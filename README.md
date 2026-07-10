@@ -103,6 +103,12 @@ fileweft:
 
 开发验收台预置 `regulated`（合规、协作必达；搜索可选）和 `internal`（协作必达）两个档案；文档检视器会展示每个目标的责任组、状态、错误和重试次数，并按服务端权限显示人工重试控件。
 
+## 持久化后台任务与 Doctor
+
+`fw_task` 是独立于 Outbox 的通用后台任务表，适用于 Doctor、AI、索引、转码等可恢复工作。它采用 PostgreSQL `SKIP LOCKED` 领取任务，并使用带所有者的过期租约：Worker 宕机后，超过租约的 `RUNNING` 任务会重新变为可领取状态。处理器通过 `FileWeftTaskHandler` SPI 注册，必须以任务 ID 实现幂等；框架统一处理退避重试、重试耗尽和本地失败投影。
+
+Doctor 提供两条受控路径：即时检查用于交互式请求；异步检查在请求时先完成 `document:doctor` 授权，随后由无用户会话的后台 Worker 仅执行只读技术检查。结果写入 `fw_doctor_record`，因此运营者可保留诊断历史，而不会让后台线程绕过用户权限。开发验收台可排队 Doctor、查看任务状态与打开历史报告；仅管理员可手动处理任务队列。
+
 Spring Boot Starter 默认使用本地存储；可通过以下配置修改根目录：
 
 ```properties

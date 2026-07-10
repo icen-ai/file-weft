@@ -14,9 +14,12 @@ import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.delivery.StaticDocumentDeliveryProfileProvider
 import com.fileweft.application.doctor.ConnectorDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
+import com.fileweft.application.doctor.DoctorReportRepository
+import com.fileweft.application.doctor.DocumentDoctorTaskHandler
 import com.fileweft.application.doctor.LifecycleDoctorChecker
 import com.fileweft.application.doctor.PermissionDoctorChecker
 import com.fileweft.application.doctor.StorageDoctorChecker
+import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.doctor.TransactionalDoctorChecker
 import com.fileweft.application.doctor.UnavailableDoctorChecker
 import com.fileweft.application.offline.OfflineDocumentService
@@ -28,6 +31,9 @@ import com.fileweft.application.sync.DocumentPublishOutboxEventHandler
 import com.fileweft.application.sync.DocumentSyncService
 import com.fileweft.application.sync.SyncRecordRepository
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.application.task.TaskProcessingRepository
+import com.fileweft.application.task.TaskRepository
+import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.IdentifierGenerator
@@ -39,12 +45,14 @@ import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.persistence.jdbc.JdbcApplicationTransaction
 import com.fileweft.persistence.jdbc.JdbcAuditRecordRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentRepository
+import com.fileweft.persistence.jdbc.JdbcDoctorReportRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentDeliveryTargetRepository
 import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
 import com.fileweft.persistence.jdbc.JdbcFileObjectRepository
 import com.fileweft.persistence.jdbc.JdbcOutboxEventRepository
 import com.fileweft.persistence.jdbc.JdbcOutboxProcessingRepository
 import com.fileweft.persistence.jdbc.JdbcSyncRecordRepository
+import com.fileweft.persistence.jdbc.JdbcTaskRepository
 import com.fileweft.persistence.jdbc.JdbcWorkflowInstanceRepository
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.connector.FileConnector
@@ -58,12 +66,15 @@ import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
+import com.fileweft.spi.task.FileWeftTaskHandler
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
+import java.time.Duration
+import java.util.UUID
 import javax.sql.DataSource
 
 @Configuration(proxyBeanMethods = false)
@@ -94,6 +105,11 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftAuditRepository(objectMapper: ObjectMapper): AuditRecordRepository = JdbcAuditRecordRepository(objectMapper)
 
     @Bean
+    @ConditionalOnMissingBean(DoctorReportRepository::class)
+    fun fileWeftDoctorReportRepository(objectMapper: ObjectMapper, clock: Clock): DoctorReportRepository =
+        JdbcDoctorReportRepository(objectMapper, clock)
+
+    @Bean
     @ConditionalOnMissingBean(SyncRecordRepository::class)
     fun fileWeftSyncRecordRepository(clock: Clock): SyncRecordRepository = JdbcSyncRecordRepository(clock)
 
@@ -109,6 +125,10 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(OutboxProcessingRepository::class)
     fun fileWeftOutboxProcessingRepository(objectMapper: ObjectMapper): OutboxProcessingRepository = JdbcOutboxProcessingRepository(objectMapper)
+
+    @Bean
+    @ConditionalOnMissingBean(value = [TaskRepository::class, TaskProcessingRepository::class])
+    fun fileWeftTaskRepository(objectMapper: ObjectMapper, clock: Clock): JdbcTaskRepository = JdbcTaskRepository(objectMapper, clock)
 
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)
@@ -289,6 +309,23 @@ class FileWeftRuntimeConfiguration {
     )
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDoctorTaskHandler::class)
+    fun fileWeftDocumentDoctorTaskHandler(
+        doctor: DoctorApplicationService, reports: DoctorReportRepository,
+        transaction: ApplicationTransaction, clock: Clock,
+    ): DocumentDoctorTaskHandler = DocumentDoctorTaskHandler(doctor, reports, transaction, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(ScheduleDocumentDoctorService::class)
+    fun fileWeftScheduleDocumentDoctorService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        documents: DocumentRepository, tasks: TaskRepository, identifiers: IdentifierGenerator,
+        transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
+    ): ScheduleDocumentDoctorService = ScheduleDocumentDoctorService(
+        tenants, users, authorization, documents, tasks, identifiers, transaction, clock, auditTrail,
+    )
+
+    @Bean
     @ConditionalOnSingleCandidate(FileConnector::class)
     @ConditionalOnMissingBean(DocumentSyncService::class)
     fun fileWeftDocumentSyncService(
@@ -313,6 +350,24 @@ class FileWeftRuntimeConfiguration {
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,
         handlers: List<OutboxEventHandler>, clock: Clock,
     ): OutboxWorker = OutboxWorker(repository, transaction, handlers, clock)
+
+    @Bean
+    @ConditionalOnBean(TaskProcessingRepository::class)
+    @ConditionalOnMissingBean(TaskWorker::class)
+    fun fileWeftTaskWorker(
+        repository: TaskProcessingRepository, transaction: ApplicationTransaction,
+        handlers: List<FileWeftTaskHandler>, clock: Clock, properties: FileWeftProperties,
+    ): TaskWorker = TaskWorker(
+        repository = repository,
+        transaction = transaction,
+        handlers = handlers,
+        clock = clock,
+        workerId = properties.task.workerId?.takeIf { it.isNotBlank() } ?: "fileweft-${UUID.randomUUID()}",
+        maxAttempts = properties.task.maxAttempts,
+        initialRetryDelay = Duration.ofMillis(properties.task.initialRetryDelayMillis),
+        maxRetryDelay = Duration.ofMillis(properties.task.maxRetryDelayMillis),
+        leaseDuration = Duration.ofMillis(properties.task.leaseDurationMillis),
+    )
 
     private companion object {
         const val DEFAULT_DELIVERY_PROFILE_ID = "default"

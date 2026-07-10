@@ -268,6 +268,22 @@ class DevAcceptanceIntegrationTest {
         assertEquals("SUCCEEDED", delivery(recovered, "compliance").path("status").asText())
     }
 
+    @Test
+    fun `queues and persists an asynchronous Doctor report through the durable task worker`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+
+        val scheduled = post("$apiUrl/api/documents/$documentId/doctor/tasks", null, editor, "application/json")
+        assertEquals("PENDING", scheduled.path("status").asText())
+        val admin = login("admin@alpha", "dev-admin")
+        post("$apiUrl/api/tasks/process?limit=20", null, admin, "application/json")
+
+        val detail = awaitDoctorRecord(documentId, admin)
+        assertTrue(detail.path("tasks").any { it.path("id").asText() == scheduled.path("taskId").asText() && it.path("status").asText() == "SUCCESS" })
+        assertTrue(detail.path("doctorRecords").any { it.path("taskId").asText() == scheduled.path("taskId").asText() })
+        assertAuditActor(detail, "document:doctor:schedule", "alpha-editor", "Alpha 编辑者")
+    }
+
     private fun login(username: String, password: String): String = loginResponse(username, password).path("token").asText()
 
     private fun loginResponse(username: String, password: String): JsonNode = postJson(
@@ -328,6 +344,15 @@ class DevAcceptanceIntegrationTest {
             Thread.sleep(200)
         }
         throw AssertionError("Document $documentId did not reach lifecycle state $expected within the expected window.")
+    }
+
+    private fun awaitDoctorRecord(documentId: String, token: String): JsonNode {
+        repeat(50) {
+            val detail = getJson("$apiUrl/api/documents/$documentId", token)
+            if (detail.path("doctorRecords").size() > 0) return detail
+            Thread.sleep(200)
+        }
+        throw AssertionError("Document $documentId did not receive a persisted Doctor report within the expected window.")
     }
 
     private fun assertAuditActor(detail: JsonNode, action: String, operatorId: String?, operatorName: String) {

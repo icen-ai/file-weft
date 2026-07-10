@@ -6,6 +6,7 @@ import com.fileweft.application.document.CreateDocumentDraftCommand
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
+import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
@@ -33,6 +34,7 @@ data class DevSubmitDocumentRequest(val reviewerId: String? = null)
 data class DevWorkflowDecisionRequest(val comment: String? = null, val deliveryProfileId: String? = null)
 data class DevPublishDocumentRequest(val deliveryProfileId: String? = null)
 data class DevWorkflowResponse(val workflowId: String, val state: String, val taskId: String)
+data class DevDoctorTaskResponse(val taskId: String, val status: String)
 
 @RestController
 @RequestMapping("/api/documents")
@@ -48,6 +50,7 @@ class DevDocumentController(
     private val queries: DevDocumentQueryService,
     private val operations: DevOperationsService,
     private val retryDeliveries: RetryDocumentDeliveryService,
+    private val doctorScheduler: ScheduleDocumentDoctorService,
 ) {
     @PostMapping(consumes = ["multipart/form-data"])
     @ResponseStatus(HttpStatus.CREATED)
@@ -127,6 +130,12 @@ class DevDocumentController(
 
     @GetMapping("/{documentId}/doctor")
     fun doctor(@PathVariable documentId: String) = operations.inspectDocument(Identifier(documentId))
+
+    @PostMapping("/{documentId}/doctor/tasks")
+    fun scheduleDoctor(@PathVariable documentId: String): DevDoctorTaskResponse {
+        val task = doctorScheduler.schedule(Identifier(documentId))
+        return DevDoctorTaskResponse(task.id.value, task.status.name)
+    }
 
     @PostMapping("/workflows/{workflowId}/tasks/{taskId}/approve")
     fun approve(

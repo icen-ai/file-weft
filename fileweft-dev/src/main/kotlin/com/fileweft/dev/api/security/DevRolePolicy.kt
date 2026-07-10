@@ -17,7 +17,7 @@ object DevRolePolicy {
     private val proofLabActions = linkedSetOf(
         "document:read", "document:create", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:audit", "document:doctor", "document:publish", "document:offline",
-        "document:archive", "system:outbox:process",
+        "document:archive", "system:outbox:process", "system:task:process",
         "document:delivery:retry",
     )
 

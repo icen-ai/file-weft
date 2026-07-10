@@ -17,4 +17,7 @@ class DevOperationsController(
 
     @PostMapping("/outbox/process")
     fun processOutbox(@RequestParam(defaultValue = "20") limit: Int) = operations.processOutbox(limit)
+
+    @PostMapping("/tasks/process")
+    fun processTasks(@RequestParam(defaultValue = "20") limit: Int) = operations.processTasks(limit)
 }

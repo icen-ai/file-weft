@@ -7,6 +7,7 @@ class FileWeftDevProperties {
     var storage: Storage = Storage()
     var platform: Platform = Platform()
     var outbox: Outbox = Outbox()
+    var task: Task = Task()
     var users: MutableList<User> = mutableListOf()
 
     class Storage {
@@ -24,6 +25,11 @@ class FileWeftDevProperties {
     }
 
     class Outbox {
+        var fixedDelayMillis: Long = 1_000
+        var batchSize: Int = 20
+    }
+
+    class Task {
         var fixedDelayMillis: Long = 1_000
         var batchSize: Int = 20
     }

@@ -39,6 +39,17 @@ class DoctorApplicationService(
         return observe(DoctorReport(tenant.tenantId, documentId, results, clock.millis()))
     }
 
+    /**
+     * Background tasks run without an authenticated user. Authorization is
+     * performed before queuing; this path executes only the read-only technical
+     * checks and deliberately excludes the interactive permission checker.
+     */
+    fun inspectDocumentAsSystem(tenantId: Identifier, documentId: Identifier): DoctorReport {
+        val context = DoctorCheckContext(tenantId, documentId)
+        val results = checkers.map { checker -> runChecker(checker, context) }
+        return observe(DoctorReport(tenantId, documentId, results, clock.millis()))
+    }
+
     private fun runChecker(checker: DoctorChecker, context: DoctorCheckContext): DoctorCheckResult {
         val name = checker.name()
         return try {

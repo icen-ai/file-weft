@@ -33,6 +33,9 @@ fileweft:
     outbox:
       fixed-delay-millis: 1000
       batch-size: 20
+    task:
+      fixed-delay-millis: 1000
+      batch-size: 20
     users:
       - id: alpha-admin
         username: admin@alpha

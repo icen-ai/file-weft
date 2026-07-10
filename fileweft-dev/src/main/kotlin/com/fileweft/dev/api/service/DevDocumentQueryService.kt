@@ -84,12 +84,34 @@ data class DevDeliveryView(
     val updatedTime: Long,
 )
 
+data class DevBackgroundTaskView(
+    val id: String,
+    val type: String,
+    val status: String,
+    val retryCount: Int,
+    val nextAttemptTime: Long,
+    val lastError: String?,
+    val createdTime: Long,
+    val updatedTime: Long,
+)
+
+data class DevDoctorRecordView(
+    val id: String,
+    val taskId: String,
+    val status: String,
+    val report: String,
+    val createdTime: Long,
+    val updatedTime: Long,
+)
+
 data class DevDocumentDetail(
     val document: DevDocumentSummary,
     val versions: List<DevDocumentVersionView>,
     val workflows: List<DevWorkflowView>,
     val audits: List<DevAuditView>,
     val deliveries: List<DevDeliveryView>,
+    val tasks: List<DevBackgroundTaskView>,
+    val doctorRecords: List<DevDoctorRecordView>,
     val syncRecords: List<DevSyncView>,
     val outboxEvents: List<DevOutboxView>,
 )
@@ -124,6 +146,8 @@ class DevDocumentQueryService(
             workflows = loadWorkflows(tenantId, documentId.value),
             audits = jdbcTemplate.query(AUDITS_SQL, AUDIT_MAPPER, tenantId, documentId.value),
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
+            tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
+            doctorRecords = jdbcTemplate.query(DOCTOR_RECORDS_SQL, DOCTOR_RECORD_MAPPER, tenantId, documentId.value),
             syncRecords = jdbcTemplate.query(SYNC_SQL, SYNC_MAPPER, tenantId, documentId.value),
             outboxEvents = jdbcTemplate.query(OUTBOX_SQL, OUTBOX_MAPPER, tenantId, documentId.value),
         )
@@ -139,7 +163,7 @@ class DevDocumentQueryService(
             workflowId,
             type,
             state,
-            jdbcTemplate.query(WORKFLOW_TASKS_SQL, TASK_MAPPER, tenantId, workflowId),
+            jdbcTemplate.query(WORKFLOW_TASKS_SQL, WORKFLOW_TASK_MAPPER, tenantId, workflowId),
         )
     }
 
@@ -157,7 +181,7 @@ class DevDocumentQueryService(
                 result.getString("file_name"), result.getString("content_type"), result.getLong("file_size"), result.getString("content_hash"),
             )
         }
-        val TASK_MAPPER = org.springframework.jdbc.core.RowMapper<DevWorkflowTaskView> { result, _ ->
+        val WORKFLOW_TASK_MAPPER = org.springframework.jdbc.core.RowMapper<DevWorkflowTaskView> { result, _ ->
             DevWorkflowTaskView(result.getString("id"), result.getString("assignee_id"), result.getString("task_state"), result.getString("comment_text"))
         }
         val AUDIT_MAPPER = org.springframework.jdbc.core.RowMapper<DevAuditView> { result, _ ->
@@ -185,6 +209,19 @@ class DevDocumentQueryService(
                 result.getString("target_name"), result.getString("connector_id"), result.getString("delivery_requirement"),
                 result.getString("owner_ref"), result.getString("delivery_status"), result.getString("external_id"),
                 result.getString("error_message"), result.getInt("retry_count"), result.getLong("updated_time"),
+            )
+        }
+        val BACKGROUND_TASK_MAPPER = org.springframework.jdbc.core.RowMapper<DevBackgroundTaskView> { result, _ ->
+            DevBackgroundTaskView(
+                result.getString("id"), result.getString("task_type"), result.getString("task_status"),
+                result.getInt("retry_count"), result.getLong("next_attempt_time"), result.getString("last_error"),
+                result.getLong("created_time"), result.getLong("updated_time"),
+            )
+        }
+        val DOCTOR_RECORD_MAPPER = org.springframework.jdbc.core.RowMapper<DevDoctorRecordView> { result, _ ->
+            DevDoctorRecordView(
+                result.getString("id"), result.getString("task_id"), result.getString("doctor_status"),
+                result.getString("report_json"), result.getLong("created_time"), result.getLong("updated_time"),
             )
         }
 
@@ -238,6 +275,14 @@ class DevDocumentQueryService(
             SELECT id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref,
                    delivery_status, external_id, error_message, retry_count, updated_time
             FROM fw_document_delivery_target WHERE tenant_id = ? AND document_id = ? ORDER BY created_time, id
+        """
+        const val TASKS_SQL = """
+            SELECT id, task_type, task_status, retry_count, next_attempt_time, last_error, created_time, updated_time
+            FROM fw_task WHERE tenant_id = ? AND business_id = ? ORDER BY created_time DESC, id DESC
+        """
+        const val DOCTOR_RECORDS_SQL = """
+            SELECT id, task_id, doctor_status, report_json::text AS report_json, created_time, updated_time
+            FROM fw_doctor_record WHERE tenant_id = ? AND document_id = ? ORDER BY created_time DESC, id DESC
         """
         const val OUTBOX_SQL = """
             SELECT id, event_type, event_status, retry_count, last_error, created_time, updated_time

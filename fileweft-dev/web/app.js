@@ -31,6 +31,7 @@ const localized = (prefix, value) => {
 };
 const localizedState = (value) => localized("state", value);
 const localizedAudit = (value) => localized("audit", value);
+const localizedTaskStatus = (value) => localized("task.status", value);
 const formatTime = (value) => value ? new Date(Number(value)).toLocaleString(state.locale === "zh" ? "zh-CN" : "en-GB", { hour12: false }) : "—";
 
 const localizedApiError = (payload, status) => {
@@ -252,6 +253,20 @@ function renderInspector() {
     return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${manualRetry}</div></article>`;
   }).join("") || emptyEvidence("empty.delivery");
   $("#delivery-list").querySelectorAll("[data-delivery-retry]").forEach((button) => button.addEventListener("click", () => retryDelivery(button.dataset.deliveryRetry)));
+  $("#task-list").innerHTML = detail.tasks.map((task) => evidenceItem(
+    `${localizedTaskStatus(task.status)} / ${task.type}`,
+    `${formatTime(task.createdTime)}${task.retryCount ? ` · ${escapeHtml(interpolate("task.retries", { count: task.retryCount }))}` : ""}${task.lastError ? ` · ${escapeHtml(task.lastError)}` : ""}`,
+  )).join("") || emptyEvidence("empty.tasks");
+  $("#doctor-record-list").innerHTML = detail.doctorRecords.map((record) => `
+    <div class="evidence-item doctor-record"><b>${escapeHtml(record.status)} / ${escapeHtml(formatTime(record.createdTime))}</b>
+      <small>${escapeHtml(record.taskId)}</small><button type="button" data-doctor-record="${escapeHtml(record.id)}">${escapeHtml(t("action.openDoctorRecord"))}</button></div>`
+  ).join("") || emptyEvidence("empty.doctorHistory");
+  $("#doctor-record-list").querySelectorAll("[data-doctor-record]").forEach((button) => button.addEventListener("click", () => {
+    const record = detail.doctorRecords.find((item) => item.id === button.dataset.doctorRecord);
+    if (!record) return;
+    $("#doctor-output").textContent = JSON.stringify(safeJson(record.report), null, 2);
+    activatePanel("doctor");
+  }));
   $("#sync-list").innerHTML = detail.syncRecords.map((sync) => evidenceItem(
     `${localizedState(sync.status)} / ${sync.connectorName}`,
     `${escapeHtml(sync.externalId || "—")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`,
@@ -280,7 +295,7 @@ function actionButton(key, action) {
 function renderActions() {
   const document = state.detail.document;
   const actions = [];
-  if (can("document:doctor")) actions.push(actionButton("action.doctor", "doctor"));
+  if (can("document:doctor")) actions.push(actionButton("action.doctor", "doctor"), actionButton("action.scheduleDoctor", "scheduleDoctor"));
   if (can("document:rename")) actions.push(actionButton("action.rename", "rename"));
   if (["DRAFT", "REJECTED"].includes(document.lifecycleState) && can("document:version:add")) actions.push(actionButton("action.addVersion", "version"));
   if (document.lifecycleState === "DRAFT" && can("document:submit")) actions.push(actionButton("action.submit", "submit"));
@@ -306,6 +321,12 @@ async function runAction(action) {
       const report = await api(`/api/documents/${id}/doctor`);
       $("#doctor-output").textContent = JSON.stringify(report, null, 2);
       activatePanel("doctor");
+      return;
+    }
+    if (action === "scheduleDoctor") {
+      await api(`/api/documents/${id}/doctor/tasks`, { method: "POST" });
+      notice(t("notice.doctorScheduled"));
+      await refreshDocuments();
       return;
     }
     if (action === "submit") {
@@ -450,6 +471,16 @@ async function processOutbox() {
   }
 }
 
+async function processTasks() {
+  try {
+    const result = await api("/api/tasks/process?limit=20", { method: "POST" });
+    notice(interpolate("notice.tasks", result));
+    await refreshDocuments();
+  } catch (error) {
+    notice(error.message, "error");
+  }
+}
+
 const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 $("#login-form").addEventListener("submit", async (event) => {
@@ -461,6 +492,7 @@ document.querySelectorAll(".preset").forEach((button) => button.addEventListener
 document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
 $("#refresh").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
 $("#process-outbox").addEventListener("click", processOutbox);
+$("#process-tasks").addEventListener("click", processTasks);
 $("#open-create").addEventListener("click", () => $("#create-drawer").classList.remove("hidden"));
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));
 $("#create-form").addEventListener("submit", async (event) => {
