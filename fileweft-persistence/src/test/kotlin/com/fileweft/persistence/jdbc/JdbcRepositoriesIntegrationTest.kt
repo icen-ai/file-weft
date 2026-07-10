@@ -61,6 +61,12 @@ class JdbcRepositoriesIntegrationTest {
         assertEquals(document.currentVersionId, restored.currentVersionId)
         assertEquals(1, restored.versions.size)
         assertNull(leaked)
+
+        restored.transition(LifecycleCommand.APPROVE)
+        transaction.execute { repository.save(restored) }
+        val updated = transaction.execute { repository.findById(Identifier("tenant-1"), document.id) }
+        requireNotNull(updated)
+        assertEquals(LifecycleState.PUBLISHING, updated.lifecycleState)
     }
 
     @Test
@@ -113,6 +119,15 @@ class JdbcRepositoriesIntegrationTest {
         assertEquals("upload", restored.metadata["source"])
         assertEquals(fileObject.id, restored.fileObjectId)
         assertNull(leaked)
+
+        val updatedAsset = FileAsset(
+            asset.id, asset.tenantId, asset.fileObjectId, asset.assetType, mapOf("source" to "reviewed"),
+        )
+        transaction.execute { assets.save(updatedAsset) }
+        val updated = transaction.execute { assets.findById(Identifier("tenant-1"), asset.id) }
+        requireNotNull(updated)
+        assertEquals("reviewed", updated.metadata["source"])
+        assertEquals(1, countRows("fw_asset"))
     }
 
     private fun document(): Document {
@@ -134,6 +149,15 @@ class JdbcRepositoriesIntegrationTest {
         it.createStatement().use { statement ->
             statement.execute("DROP SCHEMA public CASCADE")
             statement.execute("CREATE SCHEMA public")
+        }
+    }
+
+    private fun countRows(table: String): Int = dataSource.connection.use { connection ->
+        connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT COUNT(*) FROM $table").use { result ->
+                result.next()
+                result.getInt(1)
+            }
         }
     }
 }
