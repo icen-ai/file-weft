@@ -5,6 +5,7 @@ import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.doctor.*
+import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.outbox.*
 import com.fileweft.application.publish.PublishDocumentService
@@ -92,6 +93,16 @@ class FileWeftRuntimeConfiguration {
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction,
     ) = DocumentCommandService(tenants, users, authorization, documents, transaction)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDraftService::class)
+    fun documentDraftService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider, storage: StorageAdapter,
+        documents: DocumentRepository, fileObjects: FileObjectRepository, assets: FileAssetRepository,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
+    ) = DocumentDraftService(
+        tenants, users, authorization, storage, documents, fileObjects, assets, identifiers, transaction, auditTrail, metrics,
+    )
 
     @Bean
     @ConditionalOnMissingBean(PublishDocumentService::class)
