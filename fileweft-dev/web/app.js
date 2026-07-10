@@ -12,6 +12,8 @@ const state = {
   user: null,
   permissions: new Set(),
   documents: [],
+  folders: [],
+  selectedFolderId: null,
   selectedId: null,
   detail: null,
   locale: localStorage.getItem("fileweft.locale") || DEFAULT_LOCALE,
@@ -67,7 +69,9 @@ function applyTranslations() {
   document.querySelectorAll("[data-locale]").forEach((element) => { element.setAttribute("aria-pressed", String(element.dataset.locale === state.locale)); });
   if (state.user) {
     $("#identity-role").textContent = t(`role.${state.user.role}`);
+    renderCatalog();
     renderDocuments();
+    syncFolderOptions();
     renderFixtures();
     if (state.detail) renderInspector();
   }
@@ -96,6 +100,7 @@ async function login(username, password) {
   $("#identity-meta").textContent = `${result.tenantId} / ${result.username}`;
   $("#identity-role").textContent = t(`role.${result.role}`);
   $("#metric-tenant").textContent = result.tenantId;
+  $("#catalog-tenant-mark").textContent = result.tenantId.toUpperCase();
   syncPermissionSurface();
   await refreshDocuments();
   renderFixtures();
@@ -103,8 +108,16 @@ async function login(username, password) {
 }
 
 async function refreshDocuments() {
-  state.documents = await api("/api/documents?limit=60");
+  const [documents, folders] = await Promise.all([
+    api("/api/documents?limit=60"),
+    api("/api/catalog/folders"),
+  ]);
+  state.documents = documents;
+  state.folders = folders;
+  ensureSelectedFolder();
+  renderCatalog();
   renderDocuments();
+  syncFolderOptions();
   updateMetrics();
   if (state.selectedId && state.documents.some((document) => document.id === state.selectedId)) await selectDocument(state.selectedId, false);
 }
@@ -115,13 +128,68 @@ function updateMetrics() {
   $("#metric-sync").textContent = state.documents.filter((document) => document.lifecycleState === "SYNC_ERROR").length;
 }
 
-function renderDocuments() {
-  const list = $("#document-list");
-  if (!state.documents.length) {
-    list.innerHTML = `<div class="evidence-item"><b>${escapeHtml(t("empty.documents.title"))}</b><small>${escapeHtml(t("empty.documents.detail"))}</small></div>`;
+function folderLabel(folder) {
+  const key = `catalog.${state.user?.tenantId}.${folder.id}`;
+  const translated = t(key);
+  return translated === key ? folder.displayName : translated;
+}
+
+function folderById(folderId) {
+  return state.folders.find((folder) => folder.id === folderId);
+}
+
+function ensureSelectedFolder() {
+  if (state.folders.some((folder) => folder.id === state.selectedFolderId)) return;
+  state.selectedFolderId = state.folders.find((folder) => folder.id === "inbox")?.id || state.folders[0]?.id || null;
+}
+
+function documentsInSelectedFolder() {
+  if (state.selectedFolderId === "root") return state.documents;
+  return state.documents.filter((document) => document.folderId === state.selectedFolderId);
+}
+
+function renderCatalog() {
+  const tree = $("#catalog-tree");
+  if (!tree || !state.user) return;
+  if (!state.folders.length) {
+    tree.innerHTML = `<div class="tree-empty">${escapeHtml(t("catalog.empty"))}</div>`;
     return;
   }
-  list.innerHTML = state.documents.map((document) => `
+  const children = (parentFolderId) => state.folders.filter((folder) => folder.parentFolderId === parentFolderId);
+  const renderBranch = (folder, level) => {
+    const directCount = state.documents.filter((document) => document.folderId === folder.id).length;
+    return `<button class="tree-node ${folder.id === state.selectedFolderId ? "selected" : ""}" type="button" role="treeitem" aria-level="${level}" aria-selected="${folder.id === state.selectedFolderId}" data-folder-id="${escapeHtml(folder.id)}" style="--tree-level:${level}">
+      <span class="tree-branch">${children(folder.id).length ? "⌄" : "·"}</span><span class="tree-folder">${escapeHtml(folderLabel(folder))}</span><small>${directCount}</small>
+    </button>${children(folder.id).map((child) => renderBranch(child, level + 1)).join("")}`;
+  };
+  tree.innerHTML = children(null).map((folder) => renderBranch(folder, 1)).join("");
+  tree.querySelectorAll("[data-folder-id]").forEach((button) => button.addEventListener("click", () => {
+    state.selectedFolderId = button.dataset.folderId;
+    renderCatalog();
+    renderDocuments();
+    syncFolderOptions();
+  }));
+}
+
+function syncFolderOptions() {
+  const field = $("#folder-id");
+  if (!field || !state.user) return;
+  const selectable = state.folders.filter((folder) => folder.parentFolderId !== null);
+  field.innerHTML = selectable.map((folder) => `<option value="${escapeHtml(folder.id)}">${escapeHtml(folderLabel(folder))}</option>`).join("");
+  if (selectable.some((folder) => folder.id === state.selectedFolderId)) field.value = state.selectedFolderId;
+}
+
+function renderDocuments() {
+  const list = $("#document-list");
+  const folder = folderById(state.selectedFolderId);
+  const documents = documentsInSelectedFolder();
+  $("#catalog-folder-title").textContent = folder ? folderLabel(folder) : t("catalog.empty");
+  $("#catalog-folder-meta").textContent = interpolate("catalog.documentCount", { count: documents.length });
+  if (!documents.length) {
+    list.innerHTML = `<div class="catalog-empty"><span>∅</span><b>${escapeHtml(t("empty.documents.title"))}</b><small>${escapeHtml(t("catalog.emptyFolder"))}</small></div>`;
+    return;
+  }
+  list.innerHTML = documents.map((document) => `
     <button class="document-row ${document.id === state.selectedId ? "selected" : ""}" type="button" data-document-id="${escapeHtml(document.id)}">
       <span><b>${escapeHtml(document.documentNumber)}</b><small>${escapeHtml(document.title)}</small></span>
       <span class="state-tag ${document.lifecycleState}">${escapeHtml(localizedState(document.lifecycleState))}</span>
@@ -134,10 +202,13 @@ function renderDocuments() {
 async function selectDocument(documentId, refreshPanels = true) {
   state.selectedId = documentId;
   state.detail = await api(`/api/documents/${documentId}`);
+  state.selectedFolderId = state.detail.document.folderId || state.selectedFolderId;
   $("#empty-inspector").classList.add("hidden");
   $("#document-inspector").classList.remove("hidden");
   $("#selection-count").textContent = t("inspector.title");
+  renderCatalog();
   renderDocuments();
+  syncFolderOptions();
   renderInspector();
   if (refreshPanels) loadPlatform();
 }
@@ -213,7 +284,7 @@ async function runAction(action) {
       return;
     }
     if (action === "submit") {
-      await api(`/api/documents/${id}/submit`, json({ reviewerId: "alpha-reviewer" }));
+      await api(`/api/documents/${id}/submit`, json({ reviewerId: `${state.user.tenantId}-reviewer` }));
       notice(t("notice.submitted"));
     }
     if (["approve", "reject"].includes(action)) {
@@ -290,6 +361,7 @@ async function createFixture(fixtureId) {
     const suffix = Date.now().toString(36).toUpperCase();
     form.append("documentNumber", `LAB-${fixture.id.toUpperCase()}-${suffix}`);
     form.append("title", t(`fixture.${fixture.id}.title`));
+    form.append("folderId", state.selectedFolderId === "root" ? "inbox" : (state.selectedFolderId || "inbox"));
     form.append("file", new File([blob], fixture.fileName, { type: fixture.contentType }));
     const detail = await api("/api/documents", { method: "POST", body: form });
     state.selectedId = detail.document.id;
@@ -372,7 +444,7 @@ $("#version-form").addEventListener("submit", async (event) => {
 });
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.selectedId = null; state.detail = null;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

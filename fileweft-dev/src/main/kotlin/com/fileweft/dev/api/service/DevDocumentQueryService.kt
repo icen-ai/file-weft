@@ -10,6 +10,7 @@ data class DevDocumentSummary(
     val title: String,
     val lifecycleState: String,
     val currentVersionId: String?,
+    val folderId: String,
     val createdTime: Long,
     val updatedTime: Long,
 )
@@ -129,7 +130,7 @@ class DevDocumentQueryService(
         val SUMMARY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentSummary> { result, _ ->
             DevDocumentSummary(
                 result.getString("id"), result.getString("doc_no"), result.getString("title"),
-                result.getString("lifecycle_state"), result.getString("current_version_id"),
+                result.getString("lifecycle_state"), result.getString("current_version_id"), result.getString("folder_id"),
                 result.getLong("created_time"), result.getLong("updated_time"),
             )
         }
@@ -163,16 +164,28 @@ class DevDocumentQueryService(
         }
 
         const val PAGE_SQL = """
-            SELECT id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time
-            FROM fw_document WHERE tenant_id = ? ORDER BY updated_time DESC, id DESC LIMIT ?
+            SELECT document.id, document.doc_no, document.title, document.lifecycle_state, document.current_version_id,
+                   COALESCE(asset.metadata_json ->> 'catalog.folder-id', 'inbox') AS folder_id,
+                   document.created_time, document.updated_time
+            FROM fw_document document
+            JOIN fw_asset asset ON asset.id = document.asset_id AND asset.tenant_id = document.tenant_id
+            WHERE document.tenant_id = ? ORDER BY document.updated_time DESC, document.id DESC LIMIT ?
         """
         const val PAGE_SQL_WITH_STATE = """
-            SELECT id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time
-            FROM fw_document WHERE tenant_id = ? AND lifecycle_state = ? ORDER BY updated_time DESC, id DESC LIMIT ?
+            SELECT document.id, document.doc_no, document.title, document.lifecycle_state, document.current_version_id,
+                   COALESCE(asset.metadata_json ->> 'catalog.folder-id', 'inbox') AS folder_id,
+                   document.created_time, document.updated_time
+            FROM fw_document document
+            JOIN fw_asset asset ON asset.id = document.asset_id AND asset.tenant_id = document.tenant_id
+            WHERE document.tenant_id = ? AND document.lifecycle_state = ? ORDER BY document.updated_time DESC, document.id DESC LIMIT ?
         """
         const val DETAIL_SQL = """
-            SELECT id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time
-            FROM fw_document WHERE tenant_id = ? AND id = ?
+            SELECT document.id, document.doc_no, document.title, document.lifecycle_state, document.current_version_id,
+                   COALESCE(asset.metadata_json ->> 'catalog.folder-id', 'inbox') AS folder_id,
+                   document.created_time, document.updated_time
+            FROM fw_document document
+            JOIN fw_asset asset ON asset.id = document.asset_id AND asset.tenant_id = document.tenant_id
+            WHERE document.tenant_id = ? AND document.id = ?
         """
         const val VERSIONS_SQL = """
             SELECT version.id, version.version_no, version.file_id, file.file_name, file.content_type, file.file_size, file.content_hash

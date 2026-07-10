@@ -56,6 +56,16 @@ class DevSecurityTest {
     }
 
     @Test
+    fun `equivalent roles remain isolated when their tenant ids differ`() {
+        val betaEditor = directory().authenticate("editor@beta", "dev-editor")!!
+        DevRequestIdentityContext.bind(betaEditor)
+        val provider = DevAuthorizationProvider()
+
+        assertTrue(provider.authorize(request("beta", "document:create")).allowed)
+        assertFalse(provider.authorize(request("alpha", "document:create")).allowed)
+    }
+
+    @Test
     fun `reviewer cannot edit a document`() {
         val reviewer = directory().authenticate("reviewer@alpha", "dev-reviewer")!!
         DevRequestIdentityContext.bind(reviewer)
@@ -85,6 +95,7 @@ class DevSecurityTest {
         users += user("alpha-admin", "admin@alpha", "dev-admin", "alpha", DevRole.ADMIN)
         users += user("alpha-editor", "editor@alpha", "dev-editor", "alpha", DevRole.EDITOR)
         users += user("alpha-reviewer", "reviewer@alpha", "dev-reviewer", "alpha", DevRole.REVIEWER)
+        users += user("beta-editor", "editor@beta", "dev-editor", "beta", DevRole.EDITOR)
     })
 
     private fun user(id: String, username: String, password: String, tenantId: String, role: DevRole) = FileWeftDevProperties.User().apply {

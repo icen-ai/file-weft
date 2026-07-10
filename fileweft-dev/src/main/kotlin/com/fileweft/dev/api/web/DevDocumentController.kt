@@ -9,6 +9,7 @@ import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.Identifier
+import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.service.DevDocumentDetail
 import com.fileweft.dev.api.service.DevDocumentQueryService
 import com.fileweft.dev.api.service.DevOperationsService
@@ -35,6 +36,7 @@ data class DevWorkflowResponse(val workflowId: String, val state: String, val ta
 @RequestMapping("/api/documents")
 class DevDocumentController(
     private val drafts: DocumentDraftService,
+    private val catalogDrafts: DevCatalogDocumentService,
     private val commands: DocumentCommandService,
     private val reviews: DevReviewService,
     private val reviewWorkflow: DocumentReviewWorkflowService,
@@ -49,10 +51,12 @@ class DevDocumentController(
     fun createDraft(
         @RequestParam documentNumber: String,
         @RequestParam title: String,
+        @RequestParam(required = false) folderId: String?,
         @RequestParam file: MultipartFile,
     ): DevDocumentDetail = file.inputStream.use { content ->
-        val document = drafts.create(
+        val document = catalogDrafts.create(
             CreateDocumentDraftCommand(documentNumber, title, requiredFileName(file), file.size, file.contentType),
+            folderId,
             content,
         )
         queries.detail(document.id)

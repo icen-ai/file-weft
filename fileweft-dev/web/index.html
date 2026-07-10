@@ -28,11 +28,25 @@
             <button class="primary wide" type="submit"><span data-i18n="login.submit">Enter proof lab</span><span>→</span></button>
           </form>
           <div class="preset-label" data-i18n="login.presets">Preset identities / permission proof</div>
-          <div class="preset-grid">
-            <button class="preset" type="button" data-user="admin@alpha" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
-            <button class="preset" type="button" data-user="editor@alpha" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
-            <button class="preset" type="button" data-user="reviewer@alpha" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
-            <button class="preset" type="button" data-user="viewer@alpha" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
+          <div class="tenant-presets">
+            <section class="tenant-preset-group alpha">
+              <header><span>α</span><b data-i18n="tenant.alpha">Alpha tenant</b></header>
+              <div class="preset-grid">
+                <button class="preset" type="button" data-user="admin@alpha" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
+                <button class="preset" type="button" data-user="editor@alpha" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
+                <button class="preset" type="button" data-user="reviewer@alpha" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
+                <button class="preset" type="button" data-user="viewer@alpha" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
+              </div>
+            </section>
+            <section class="tenant-preset-group beta">
+              <header><span>β</span><b data-i18n="tenant.beta">Beta tenant</b></header>
+              <div class="preset-grid">
+                <button class="preset" type="button" data-user="admin@beta" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
+                <button class="preset" type="button" data-user="editor@beta" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
+                <button class="preset" type="button" data-user="reviewer@beta" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
+                <button class="preset" type="button" data-user="viewer@beta" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
+              </div>
+            </section>
           </div>
           <p class="dev-note" data-i18n="login.note">For local Docker development only. Sessions disappear when the development service restarts.</p>
         </div>
@@ -81,14 +95,23 @@
             <form id="create-form" class="draft-form">
               <label><span data-i18n="drawer.number">Document number</span><input name="documentNumber" required placeholder="DOC-2026-001" /></label>
               <label><span data-i18n="drawer.name">Document title</span><input name="title" required data-i18n-placeholder="drawer.namePlaceholder" placeholder="For example: Supply contract acceptance" /></label>
+              <label><span data-i18n="drawer.folder">Folder</span><select id="folder-id" name="folderId" required></select></label>
               <label class="file-field"><span data-i18n="drawer.file">Initial version</span><input name="file" type="file" required /><span data-i18n="drawer.pickFile">Choose file</span></label>
               <button class="primary" type="submit"><span data-i18n="drawer.submit">Write draft and upload</span><span>→</span></button>
             </form>
           </div>
 
-          <section id="documents-panel" class="ledger">
-            <div class="ledger-head"><span data-i18n="ledger.document">Number / title</span><span data-i18n="ledger.state">State</span><span data-i18n="ledger.updated">Updated</span><span data-i18n="ledger.version">Current version</span></div>
-            <div id="document-list" class="document-list"></div>
+          <section id="documents-panel" class="catalog-panel">
+            <aside class="catalog-tree-panel">
+              <div class="catalog-tree-head"><span data-i18n="catalog.tree">Tenant file tree</span><small id="catalog-tenant-mark">—</small></div>
+              <div id="catalog-tree" class="catalog-tree" role="tree"></div>
+              <div class="catalog-spi-note"><span>SPI</span><small data-i18n="catalog.spiNote">Folder topology is supplied by the host catalog provider.</small></div>
+            </aside>
+            <div class="catalog-content">
+              <div class="catalog-content-head"><div><span class="eyebrow" data-i18n="catalog.location">Current location</span><h3 id="catalog-folder-title">—</h3></div><small id="catalog-folder-meta">—</small></div>
+              <div class="ledger-head"><span data-i18n="ledger.document">Number / title</span><span data-i18n="ledger.state">State</span><span data-i18n="ledger.updated">Updated</span><span data-i18n="ledger.version">Current version</span></div>
+              <div id="document-list" class="document-list"></div>
+            </div>
           </section>
 
           <section id="fixtures-panel" class="proof-lab hidden">

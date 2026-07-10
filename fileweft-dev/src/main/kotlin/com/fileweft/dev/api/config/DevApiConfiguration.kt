@@ -3,9 +3,13 @@ package com.fileweft.dev.api.config
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.adapter.s3.S3StorageAdapter
 import com.fileweft.adapter.s3.S3StorageConfiguration
+import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.dev.api.catalog.DevCatalogDocumentService
+import com.fileweft.dev.api.catalog.DevCatalogQueryService
+import com.fileweft.dev.api.catalog.DevDocumentCatalogProvider
 import com.fileweft.dev.api.connector.DevPlatformConnector
 import com.fileweft.dev.api.security.DevAuthorizationProvider
 import com.fileweft.dev.api.security.DevSessionStore
@@ -18,6 +22,7 @@ import com.fileweft.dev.api.service.DevAuthService
 import com.fileweft.dev.api.service.DevOperationsService
 import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.storage.StorageAdapter
@@ -54,6 +59,23 @@ class DevApiConfiguration {
         users: UserRealmProvider,
         authorization: AuthorizationProvider,
     ): DevAccessService = DevAccessService(tenants, users, authorization)
+
+    @Bean
+    fun devDocumentCatalogProvider(): DocumentCatalogProvider = DevDocumentCatalogProvider()
+
+    @Bean
+    fun devCatalogQueryService(
+        catalog: DocumentCatalogProvider,
+        access: DevAccessService,
+        tenants: TenantProvider,
+    ): DevCatalogQueryService = DevCatalogQueryService(catalog, access, tenants)
+
+    @Bean
+    fun devCatalogDocumentService(
+        drafts: DocumentDraftService,
+        catalog: DocumentCatalogProvider,
+        tenants: TenantProvider,
+    ): DevCatalogDocumentService = DevCatalogDocumentService(drafts, catalog, tenants)
 
     @Bean
     fun devDocumentQueryService(

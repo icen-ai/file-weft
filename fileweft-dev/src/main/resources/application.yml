@@ -64,3 +64,21 @@ fileweft:
         display-name: Beta 管理员
         tenant-id: beta
         role: ADMIN
+      - id: beta-editor
+        username: editor@beta
+        password: dev-editor
+        display-name: Beta 编辑者
+        tenant-id: beta
+        role: EDITOR
+      - id: beta-reviewer
+        username: reviewer@beta
+        password: dev-reviewer
+        display-name: Beta 审批者
+        tenant-id: beta
+        role: REVIEWER
+      - id: beta-viewer
+        username: viewer@beta
+        password: dev-viewer
+        display-name: Beta 只读用户
+        tenant-id: beta
+        role: VIEWER

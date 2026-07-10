@@ -78,6 +78,39 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `keeps catalog folders and bound documents isolated between tenants`() {
+        val alphaEditor = login("editor@alpha", "dev-editor")
+        val betaEditor = login("editor@beta", "dev-editor")
+        val alphaNumber = "E2E-ALPHA-${UUID.randomUUID().toString().take(8)}"
+        val betaNumber = "E2E-BETA-${UUID.randomUUID().toString().take(8)}"
+        val alphaDocument = createDraft(alphaEditor, alphaNumber, "contracts").path("document").path("id").asText()
+        val betaDocument = createDraft(betaEditor, betaNumber, "projects").path("document").path("id").asText()
+
+        val alphaFolders = getJson("$apiUrl/api/catalog/folders", alphaEditor)
+        val betaFolders = getJson("$apiUrl/api/catalog/folders", betaEditor)
+        assertTrue(alphaFolders.any { it.path("id").asText() == "contracts" })
+        assertTrue(alphaFolders.none { it.path("id").asText() == "projects" })
+        assertTrue(betaFolders.any { it.path("id").asText() == "projects" })
+        assertTrue(betaFolders.none { it.path("id").asText() == "contracts" })
+
+        val alphaDocuments = getJson("$apiUrl/api/documents?limit=100", alphaEditor)
+        val betaDocuments = getJson("$apiUrl/api/documents?limit=100", betaEditor)
+        assertEquals("contracts", alphaDocuments.first { it.path("id").asText() == alphaDocument }.path("folderId").asText())
+        assertEquals("projects", betaDocuments.first { it.path("id").asText() == betaDocument }.path("folderId").asText())
+        assertTrue(alphaDocuments.none { it.path("id").asText() == betaDocument })
+        assertTrue(betaDocuments.none { it.path("id").asText() == alphaDocument })
+
+        val crossTenantDetail = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$betaDocument"))
+                .header("Authorization", "Bearer $alphaEditor")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(404, crossTenantDetail.statusCode())
+    }
+
+    @Test
     fun `uploads reviews publishes and delivers a document through the development stack`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentNumber = "E2E-${UUID.randomUUID().toString().take(12)}"
@@ -183,10 +216,10 @@ class DevAcceptanceIntegrationTest {
         null,
     ).also { response -> assertTrue(response.path("token").asText().isNotBlank()) }
 
-    private fun createDraft(token: String, documentNumber: String): JsonNode {
+    private fun createDraft(token: String, documentNumber: String, folderId: String = "inbox"): JsonNode {
         return uploadFile(
             "$apiUrl/api/documents",
-            mapOf("documentNumber" to documentNumber, "title" to "Compose 验收文档"),
+            mapOf("documentNumber" to documentNumber, "title" to "Compose 验收文档", "folderId" to folderId),
             token,
         )
     }

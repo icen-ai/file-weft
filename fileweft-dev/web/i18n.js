@@ -3,6 +3,10 @@ export const DEFAULT_LOCALE = "en";
 export const messages = {
   en: {
     "document.title": "FileWeft / Development Proof Lab",
+    "tenant.alpha": "Alpha tenant", "tenant.beta": "Beta tenant", "drawer.folder": "Folder",
+    "catalog.tree": "Tenant file tree", "catalog.spiNote": "Folder topology is supplied by the host catalog provider.", "catalog.location": "Current location", "catalog.empty": "No catalog folders", "catalog.emptyFolder": "This location is empty. Create a draft here or upload a built-in fixture.", "catalog.documentCount": "{count} documents",
+    "catalog.alpha.root": "Alpha workspace", "catalog.alpha.inbox": "Incoming", "catalog.alpha.contracts": "Contracts", "catalog.alpha.finance": "Finance", "catalog.alpha.operations": "Operations",
+    "catalog.beta.root": "Beta workspace", "catalog.beta.inbox": "Incoming", "catalog.beta.projects": "Projects", "catalog.beta.governance": "Governance", "catalog.beta.delivery": "Delivery",
     "login.eyebrow": "01 / DEVELOPMENT PROOF LAB", "login.heroLead": "File order,", "login.heroEmphasis": "proved in motion.",
     "login.description": "A real-user, real-S3 acceptance lab for exercising every FileWeft document path.", "login.heading": "Identity gateway",
     "login.username": "Username", "login.password": "Development password", "login.submit": "Enter proof lab", "login.presets": "Preset identities / permission proof",
@@ -35,6 +39,10 @@ export const messages = {
     "state.DRAFT": "Draft", "state.PENDING_REVIEW": "Pending review", "state.REJECTED": "Rejected", "state.PUBLISHING": "Publishing", "state.PUBLISHED": "Published", "state.SYNC_ERROR": "Sync error", "state.HISTORY": "Archived", "state.OFFLINE": "Offline",
   },
   zh: {
+    "tenant.alpha": "Alpha 租户", "tenant.beta": "Beta 租户", "drawer.folder": "目录",
+    "catalog.tree": "租户文件树", "catalog.spiNote": "目录拓扑由业务系统的目录 SPI 提供。", "catalog.location": "当前位置", "catalog.empty": "没有可用目录", "catalog.emptyFolder": "该目录暂时为空。可在此创建草稿或上传内置样例。", "catalog.documentCount": "{count} 份文档",
+    "catalog.alpha.root": "Alpha 工作区", "catalog.alpha.inbox": "收件箱", "catalog.alpha.contracts": "合同", "catalog.alpha.finance": "财务", "catalog.alpha.operations": "运营",
+    "catalog.beta.root": "Beta 工作区", "catalog.beta.inbox": "收件箱", "catalog.beta.projects": "项目", "catalog.beta.governance": "治理", "catalog.beta.delivery": "交付",
     "error.documentNumberConflict": "当前租户中已存在此文档编号，请换一个编号。",
     "document.title": "FileWeft / 开发验收实验室",
     "login.eyebrow": "01 / 开发验收实验室", "login.heroLead": "文件的秩序，", "login.heroEmphasis": "在流转中被验证。",
