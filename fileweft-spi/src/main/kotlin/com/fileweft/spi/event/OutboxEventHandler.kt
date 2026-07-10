@@ -27,4 +27,11 @@ interface OutboxEventHandler {
     fun supports(event: OutboxEvent): Boolean
 
     fun handle(event: OutboxEvent): OutboxHandlingResult
+
+    /**
+     * Invoked after the worker has permanently failed this event, including
+     * retry exhaustion. Implementations should only persist local state and
+     * must not start a new external side effect from this callback.
+     */
+    fun onExhausted(event: OutboxEvent, message: String) = Unit
 }

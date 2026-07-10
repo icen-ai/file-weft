@@ -1,6 +1,9 @@
 package com.fileweft.application.workflow
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.delivery.DocumentDeliveryPlanner
+import com.fileweft.application.delivery.DocumentDeliveryTarget
+import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
@@ -20,6 +23,17 @@ import com.fileweft.domain.workflow.WorkflowTask
 import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
+import com.fileweft.spi.connector.ConnectorHealth
+import com.fileweft.spi.connector.ConnectorHealthStatus
+import com.fileweft.spi.connector.ConnectorRemoveRequest
+import com.fileweft.spi.connector.ConnectorSyncRequest
+import com.fileweft.spi.connector.ConnectorSyncResult
+import com.fileweft.spi.connector.FileConnector
+import com.fileweft.spi.delivery.DeliveryConnectorResolver
+import com.fileweft.spi.delivery.DeliveryRequirement
+import com.fileweft.spi.delivery.DocumentDeliveryProfile
+import com.fileweft.spi.delivery.DocumentDeliveryProfileProvider
+import com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
@@ -50,7 +64,7 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     @Test
-    fun `approval publishes document and emits one outbox event`() {
+    fun `approval publishes document and emits one per target delivery event`() {
         val document = pendingReviewDocument()
         val workflow = pendingWorkflow(document.id)
         val documents = InMemoryDocuments(document)
@@ -62,8 +76,8 @@ class DocumentReviewWorkflowServiceTest {
 
         assertEquals(LifecycleState.PUBLISHING, published.lifecycleState)
         assertEquals(WorkflowState.APPROVED, workflows.workflow?.state)
-        assertEquals("document.publish.requested", outbox.events.single().type)
-        assertEquals(workflow.id.value, outbox.events.single().payload["workflowId"])
+        assertEquals("document.delivery.target.requested", outbox.events.single().type)
+        assertEquals(document.id.value, outbox.events.single().payload["documentId"])
     }
 
     @Test
@@ -131,10 +145,9 @@ class DocumentReviewWorkflowServiceTest {
             authorizationProvider = object : AuthorizationProvider { override fun authorize(request: AuthorizationRequest) = authorization(request) },
             documentRepository = documents,
             workflowRepository = workflows,
-            outboxEventRepository = outbox,
+            deliveryPlanner = deliveryPlanner(outbox),
             identifierGenerator = object : IdentifierGenerator { override fun nextId() = Identifier(ids.removeFirst()) },
             transaction = DirectTransaction,
-            clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
             auditTrail = auditTrail,
         )
     }
@@ -185,4 +198,34 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     private object DirectTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = action() }
+
+    private fun deliveryPlanner(outbox: RecordingOutbox): DocumentDeliveryPlanner {
+        val ids = ArrayDeque(listOf("delivery-1", "delivery-event-1"))
+        return DocumentDeliveryPlanner(
+            profiles = object : DocumentDeliveryProfileProvider {
+                override fun listProfiles(tenantId: Identifier) = listOf(
+                    DocumentDeliveryProfile(
+                        "default", "Default", listOf(
+                            DocumentDeliveryTargetDefinition("main", "Main", "main", DeliveryRequirement.REQUIRED),
+                        ),
+                    ),
+                )
+            },
+            connectors = object : DeliveryConnectorResolver {
+                override fun findConnector(connectorId: String): FileConnector = object : FileConnector {
+                    override fun sync(request: ConnectorSyncRequest) = ConnectorSyncResult(com.fileweft.spi.connector.ConnectorSyncStatus.SUCCESS)
+                    override fun remove(request: ConnectorRemoveRequest) = ConnectorSyncResult(com.fileweft.spi.connector.ConnectorSyncStatus.SUCCESS)
+                    override fun health() = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+                }
+            },
+            deliveries = object : DocumentDeliveryTargetRepository {
+                override fun findById(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? = null
+                override fun findByDocument(tenantId: Identifier, documentId: Identifier): List<DocumentDeliveryTarget> = emptyList()
+                override fun save(target: DocumentDeliveryTarget) = Unit
+            },
+            outbox = outbox,
+            identifiers = object : IdentifierGenerator { override fun nextId() = Identifier(ids.removeFirst()) },
+            clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+        )
+    }
 }

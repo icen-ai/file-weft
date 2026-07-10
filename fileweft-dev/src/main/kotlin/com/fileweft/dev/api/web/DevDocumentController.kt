@@ -5,6 +5,7 @@ import com.fileweft.application.document.AddDocumentVersionCommand
 import com.fileweft.application.document.CreateDocumentDraftCommand
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDraftService
+import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
@@ -29,7 +30,8 @@ import org.springframework.web.multipart.MultipartFile
 
 data class DevRenameDocumentRequest(val title: String)
 data class DevSubmitDocumentRequest(val reviewerId: String? = null)
-data class DevWorkflowDecisionRequest(val comment: String? = null)
+data class DevWorkflowDecisionRequest(val comment: String? = null, val deliveryProfileId: String? = null)
+data class DevPublishDocumentRequest(val deliveryProfileId: String? = null)
 data class DevWorkflowResponse(val workflowId: String, val state: String, val taskId: String)
 
 @RestController
@@ -45,6 +47,7 @@ class DevDocumentController(
     private val archive: ArchiveDocumentService,
     private val queries: DevDocumentQueryService,
     private val operations: DevOperationsService,
+    private val retryDeliveries: RetryDocumentDeliveryService,
 ) {
     @PostMapping(consumes = ["multipart/form-data"])
     @ResponseStatus(HttpStatus.CREATED)
@@ -102,8 +105,11 @@ class DevDocumentController(
     }
 
     @PostMapping("/{documentId}/publish")
-    fun publish(@PathVariable documentId: String): DevDocumentDetail {
-        val document = publish.publish(Identifier(documentId))
+    fun publish(
+        @PathVariable documentId: String,
+        @RequestBody(required = false) request: DevPublishDocumentRequest?,
+    ): DevDocumentDetail {
+        val document = publish.publish(Identifier(documentId), request?.deliveryProfileId)
         return queries.detail(document.id)
     }
 
@@ -128,7 +134,7 @@ class DevDocumentController(
         @PathVariable taskId: String,
         @RequestBody request: DevWorkflowDecisionRequest,
     ): DevDocumentDetail {
-        val document = reviewWorkflow.approve(Identifier(workflowId), Identifier(taskId), request.comment)
+        val document = reviewWorkflow.approve(Identifier(workflowId), Identifier(taskId), request.comment, request.deliveryProfileId)
         return queries.detail(document.id)
     }
 
@@ -140,6 +146,12 @@ class DevDocumentController(
     ): DevDocumentDetail {
         val document = reviewWorkflow.reject(Identifier(workflowId), Identifier(taskId), request.comment)
         return queries.detail(document.id)
+    }
+
+    @PostMapping("/delivery-targets/{deliveryId}/retry")
+    fun retryDelivery(@PathVariable deliveryId: String): DevDocumentDetail {
+        val delivery = retryDeliveries.retry(Identifier(deliveryId))
+        return queries.detail(delivery.documentId)
     }
 
     private fun WorkflowInstance.toResponse(): DevWorkflowResponse = DevWorkflowResponse(

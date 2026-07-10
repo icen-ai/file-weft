@@ -28,7 +28,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d postgres
 
 ## 开发验收台
 
-仓库内的 `fileweft-dev` 是开发专用的可运行验收应用，不会被核心、领域或 SPI 依赖。它通过真实 PostgreSQL、RustFS（S3 兼容）、Outbox Worker 和独立 HTTP 下游平台覆盖上传、版本、审批、发布、同步、审计与 Doctor。
+仓库内的 `fileweft-dev` 是开发专用的可运行验收应用，不会被核心、领域或 SPI 依赖。它通过真实 PostgreSQL、RustFS（S3 兼容）、Outbox Worker 和独立 HTTP 下游平台覆盖上传、版本、审批、发布、多下游交付、审计与 Doctor。
 
 启动完整编排：
 
@@ -65,7 +65,43 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 .\gradlew.bat :fileweft-dev:test
 ```
 
-该测试会创建唯一编号文档，验证编辑者上传和提交、审批者通过、管理员处理 Outbox、下游平台下载 RustFS 对象并记录同步结果。
+该测试会创建唯一编号文档，验证编辑者上传和提交、审批者通过、管理员处理 Outbox、下游平台下载 RustFS 对象，并覆盖可选下游失败与必达下游人工恢复。
+
+## 多下游交付
+
+发布不再把“所有下游”折叠成一个同步结果。接入方通过 `DocumentDeliveryProfileProvider` 为租户提供可选交付档案；每个档案由多个 `DocumentDeliveryTargetDefinition` 组成，目标使用不透明字符串 `id`、`connectorId` 和可选 `ownerRef`，并声明为 `REQUIRED` 或 `OPTIONAL`。`DeliveryConnectorResolver` 将 `connectorId` 解析为实际的 `FileConnector`，不把 Spring 或厂商 SDK 泄漏到 SPI。
+
+审批或直接发布时，FileWeft 在同一业务事务中冻结目标快照，并为每个目标写入独立 Outbox 事件。目标记录含状态、外部 ID、失败原因与重试次数，因此一个目标重试不会重复推送已成功的目标。
+
+- 全部必达目标成功：文档成为 `PUBLISHED`。
+- 必达目标重试中或失败：文档显示 `SYNC_ERROR`，Outbox 继续按策略重试；恢复成功后自动回到 `PUBLISHED`。
+- 可选目标失败：文档仍可 `PUBLISHED`，但交付记录保留“待处理”、责任引用和错误原因。
+- 不执行默认分布式回滚：成功下游不会因为另一个下游失败而被自动删除。删除/撤回必须由业务显式发起，避免误删已生效的外部记录。
+- 重试耗尽后，拥有 `document:delivery:retry` 权限的管理员可只重排失败目标；原目标 ID 同时作为连接器幂等键。
+
+Starter 可直接使用单连接器兼容默认档案；多连接器可在配置中声明档案，或替换下列 SPI 实现以接入租户自己的策略中心：
+
+```yaml
+fileweft:
+  sync:
+    default-profile-id: regulated
+    profiles:
+      - id: regulated
+        display-name: 受监管发布
+        targets:
+          - id: compliance
+            display-name: 合规归档
+            connector-id: complianceConnector
+            required: true
+            owner-ref: compliance-ops
+          - id: search
+            display-name: 检索索引
+            connector-id: searchConnector
+            required: false
+            owner-ref: search-ops
+```
+
+开发验收台预置 `regulated`（合规、协作必达；搜索可选）和 `internal`（协作必达）两个档案；文档检视器会展示每个目标的责任组、状态、错误和重试次数，并按服务端权限显示人工重试控件。
 
 Spring Boot Starter 默认使用本地存储；可通过以下配置修改根目录：
 

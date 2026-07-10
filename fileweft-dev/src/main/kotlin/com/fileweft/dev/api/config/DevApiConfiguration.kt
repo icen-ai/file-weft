@@ -24,6 +24,10 @@ import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.connector.FileConnector
+import com.fileweft.spi.delivery.DeliveryRequirement
+import com.fileweft.spi.delivery.DocumentDeliveryProfile
+import com.fileweft.spi.delivery.DocumentDeliveryProfileProvider
+import com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
@@ -96,12 +100,57 @@ class DevApiConfiguration {
     )
 
     @Bean
-    fun devPlatformConnector(properties: FileWeftDevProperties, objectMapper: ObjectMapper): FileConnector = DevPlatformConnector(
+    fun complianceConnector(properties: FileWeftDevProperties, objectMapper: ObjectMapper): FileConnector = DevPlatformConnector(
         baseUrl = URI(properties.platform.baseUrl),
         objectMapper = objectMapper,
         connectTimeoutMillis = properties.platform.connectTimeoutMillis,
         readTimeoutMillis = properties.platform.readTimeoutMillis,
+        targetId = "compliance",
     )
+
+    @Bean("collaborationConnector")
+    fun collaborationConnector(properties: FileWeftDevProperties, objectMapper: ObjectMapper): FileConnector = DevPlatformConnector(
+        baseUrl = URI(properties.platform.baseUrl),
+        objectMapper = objectMapper,
+        connectTimeoutMillis = properties.platform.connectTimeoutMillis,
+        readTimeoutMillis = properties.platform.readTimeoutMillis,
+        targetId = "collaboration",
+    )
+
+    @Bean("searchConnector")
+    fun searchConnector(properties: FileWeftDevProperties, objectMapper: ObjectMapper): FileConnector = DevPlatformConnector(
+        baseUrl = URI(properties.platform.baseUrl),
+        objectMapper = objectMapper,
+        connectTimeoutMillis = properties.platform.connectTimeoutMillis,
+        readTimeoutMillis = properties.platform.readTimeoutMillis,
+        targetId = "search",
+    )
+
+    @Bean
+    fun devDocumentDeliveryProfiles(): DocumentDeliveryProfileProvider = object : DocumentDeliveryProfileProvider {
+        private val profiles = listOf(
+            DocumentDeliveryProfile(
+                id = "regulated",
+                displayName = "Regulated release",
+                targets = listOf(
+                    DocumentDeliveryTargetDefinition("compliance", "Compliance archive", "complianceConnector", DeliveryRequirement.REQUIRED, "compliance-ops"),
+                    DocumentDeliveryTargetDefinition("collaboration", "Collaboration workspace", "collaborationConnector", DeliveryRequirement.REQUIRED, "workspace-ops"),
+                    DocumentDeliveryTargetDefinition("search", "Search index", "searchConnector", DeliveryRequirement.OPTIONAL, "search-ops"),
+                ),
+            ),
+            DocumentDeliveryProfile(
+                id = "internal",
+                displayName = "Internal workspace",
+                targets = listOf(
+                    DocumentDeliveryTargetDefinition("collaboration", "Collaboration workspace", "collaborationConnector", DeliveryRequirement.REQUIRED, "workspace-ops"),
+                ),
+            ),
+        )
+
+        override fun listProfiles(tenantId: com.fileweft.core.id.Identifier): List<DocumentDeliveryProfile> = profiles
+
+        override fun defaultProfile(tenantId: com.fileweft.core.id.Identifier): DocumentDeliveryProfile = profiles.first()
+    }
 
     @Bean
     fun devBucketInitializer(storage: S3StorageAdapter): ApplicationRunner = ApplicationRunner {

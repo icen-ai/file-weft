@@ -63,10 +63,11 @@ class OutboxWorker(
             markFailed(lease, message)
             return ProcessingOutcome.FAILED
         }
+        val handler = matchingHandlers.single()
         val result = try {
-            matchingHandlers.single().handle(lease.event)
+            handler.handle(lease.event)
         } catch (failure: Exception) {
-            return retryOrFail(lease, "Outbox handler failed: ${failure.javaClass.name}")
+            return retryOrFail(lease, "Outbox handler failed: ${failure.javaClass.name}", handler)
         }
         return when (result.status) {
             OutboxHandlingStatus.SUCCEEDED -> {
@@ -77,19 +78,24 @@ class OutboxWorker(
             OutboxHandlingStatus.RETRYABLE_FAILURE -> retryOrFail(
                 lease,
                 result.message ?: "Outbox handler requested a retry.",
+                handler,
             )
 
             OutboxHandlingStatus.PERMANENT_FAILURE -> {
-                markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.")
+                markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.", handler)
                 ProcessingOutcome.FAILED
             }
         }
     }
 
-    private fun retryOrFail(lease: OutboxEventLease, message: String): ProcessingOutcome {
+    private fun retryOrFail(
+        lease: OutboxEventLease,
+        message: String,
+        handler: OutboxEventHandler? = null,
+    ): ProcessingOutcome {
         val attemptsAfterCurrent = lease.retryCount + 1
         if (attemptsAfterCurrent >= maxAttempts) {
-            markFailed(lease, message)
+            markFailed(lease, message, handler)
             return ProcessingOutcome.FAILED
         }
         val now = now()
@@ -99,9 +105,14 @@ class OutboxWorker(
         return ProcessingOutcome.RETRIED
     }
 
-    private fun markFailed(lease: OutboxEventLease, message: String) {
+    private fun markFailed(lease: OutboxEventLease, message: String, handler: OutboxEventHandler? = null) {
         val now = now()
         transaction.execute { repository.markFailed(lease, truncateMessage(message), now) }
+        try {
+            handler?.onExhausted(lease.event, truncateMessage(message))
+        } catch (_: Exception) {
+            // A local failure projection cannot change the durable outbox result.
+        }
     }
 
     private fun nextAttemptAt(now: Long, attemptsAfterCurrent: Int): Long {

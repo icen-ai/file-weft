@@ -21,12 +21,14 @@ class DevPlatformConnector(
     private val objectMapper: ObjectMapper,
     private val connectTimeoutMillis: Int,
     private val readTimeoutMillis: Int,
+    private val targetId: String,
 ) : FileConnector {
     init {
         require(baseUrl.isAbsolute) { "Development platform URL must be absolute." }
         require(baseUrl.scheme == "http" || baseUrl.scheme == "https") { "Development platform URL must use HTTP or HTTPS." }
         require(connectTimeoutMillis > 0) { "Development platform connect timeout must be positive." }
         require(readTimeoutMillis > 0) { "Development platform read timeout must be positive." }
+        require(targetId.isNotBlank()) { "Development platform target id must not be blank." }
     }
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
@@ -58,6 +60,7 @@ class DevPlatformConnector(
     override fun health(): ConnectorHealth = try {
         val connection = connection("platform/v1/health", "GET", min(connectTimeoutMillis, readTimeoutMillis))
         try {
+            connection.setRequestProperty(TARGET_HEADER, targetId)
             if (connection.responseCode in 200..299) ConnectorHealth(ConnectorHealthStatus.HEALTHY)
             else ConnectorHealth(ConnectorHealthStatus.UNHEALTHY, "Development platform returned HTTP ${connection.responseCode}.")
         } finally {
@@ -73,6 +76,7 @@ class DevPlatformConnector(
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty(TARGET_HEADER, targetId)
             BufferedOutputStream(connection.outputStream).use { output -> output.write(body) }
             val status = connection.responseCode
             when {
@@ -117,4 +121,8 @@ class DevPlatformConnector(
     }
 
     private fun pathSegment(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+
+    private companion object {
+        const val TARGET_HEADER = "X-FileWeft-Target"
+    }
 }

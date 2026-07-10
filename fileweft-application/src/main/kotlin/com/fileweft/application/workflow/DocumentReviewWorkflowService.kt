@@ -1,12 +1,11 @@
 package com.fileweft.application.workflow
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.document.DocumentNotFoundException
-import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.security.ApplicationAuthorizationException
 import com.fileweft.application.transaction.ApplicationTransaction
-import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
@@ -18,7 +17,6 @@ import com.fileweft.domain.workflow.WorkflowTask
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
-import java.time.Clock
 
 /** Local, persistent review workflow that gates document publication. */
 class DocumentReviewWorkflowService(
@@ -27,10 +25,9 @@ class DocumentReviewWorkflowService(
     authorizationProvider: AuthorizationProvider,
     private val documentRepository: DocumentRepository,
     private val workflowRepository: WorkflowInstanceRepository,
-    private val outboxEventRepository: OutboxEventRepository,
+    private val deliveryPlanner: DocumentDeliveryPlanner,
     private val identifierGenerator: IdentifierGenerator,
     private val transaction: ApplicationTransaction,
-    private val clock: Clock,
     private val auditTrail: AuditTrail? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
@@ -77,12 +74,21 @@ class DocumentReviewWorkflowService(
     }
 
     fun approve(workflowId: Identifier, taskId: Identifier, comment: String? = null): Document =
-        decide(workflowId, taskId, comment, approved = true)
+        approve(workflowId, taskId, comment, null)
+
+    fun approve(workflowId: Identifier, taskId: Identifier, comment: String?, deliveryProfileId: String?): Document =
+        decide(workflowId, taskId, comment, approved = true, deliveryProfileId = deliveryProfileId)
 
     fun reject(workflowId: Identifier, taskId: Identifier, comment: String? = null): Document =
-        decide(workflowId, taskId, comment, approved = false)
+        decide(workflowId, taskId, comment, approved = false, deliveryProfileId = null)
 
-    private fun decide(workflowId: Identifier, taskId: Identifier, comment: String?, approved: Boolean): Document {
+    private fun decide(
+        workflowId: Identifier,
+        taskId: Identifier,
+        comment: String?,
+        approved: Boolean,
+        deliveryProfileId: String?,
+    ): Document {
         val tenant = tenantProvider.currentTenant()
         val workflowSnapshot = transaction.execute {
             workflowRepository.findById(tenant.tenantId, workflowId) ?: throw WorkflowNotFoundException(workflowId)
@@ -97,15 +103,7 @@ class DocumentReviewWorkflowService(
             if (approved) {
                 workflow.approve(taskId, operator.id, comment)
                 document.transition(LifecycleCommand.APPROVE)
-                outboxEventRepository.append(
-                    OutboxEvent(
-                        id = identifierGenerator.nextId(),
-                        tenantId = tenant.tenantId,
-                        type = PUBLISH_REQUESTED_EVENT_TYPE,
-                        payload = mapOf("documentId" to document.id.value, "workflowId" to workflow.id.value),
-                        timestamp = clock.millis(),
-                    ),
-                )
+                deliveryPlanner.plan(document, deliveryProfileId)
             } else {
                 workflow.reject(taskId, operator.id, comment)
                 document.transition(LifecycleCommand.REJECT)
@@ -133,7 +131,6 @@ class DocumentReviewWorkflowService(
         const val REVIEW_WORKFLOW_TYPE = "DOCUMENT_REVIEW"
         const val SUBMIT_ACTION = "document:submit"
         const val AUDIT_ACTION = "document:audit"
-        const val PUBLISH_REQUESTED_EVENT_TYPE = "document.publish.requested"
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val SUBMITTED_AUDIT_ACTION = "document:review:submit"
         const val APPROVED_AUDIT_ACTION = "document:review:approve"

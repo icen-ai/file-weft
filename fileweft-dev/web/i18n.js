@@ -20,7 +20,7 @@ export const messages = {
     "drawer.title": "Create document draft", "drawer.number": "Document number", "drawer.name": "Document title", "drawer.namePlaceholder": "For example: Supply contract acceptance", "drawer.file": "Initial version", "drawer.pickFile": "Choose file", "drawer.submit": "Write draft and upload",
     "ledger.document": "Number / title", "ledger.state": "State", "ledger.updated": "Updated", "ledger.version": "Current version",
     "lab.title": "Role proof lab", "lab.subtitle": "Real sample files, real permissions, real document lifecycle.", "lab.fixtures": "Built-in file fixtures", "lab.fixtureHint": "Upload creates a real RustFS-backed draft.",
-    "platform.title": "Downstream mirror", "platform.subtitle": "Shows the actual receiving record for the selected document.", "platform.empty": "Select a document.",
+    "platform.title": "Downstream mirror", "platform.subtitle": "Shows every selected delivery target and its receiving record.", "platform.empty": "No delivery target has been planned yet.",
     "doctor.title": "Doctor report", "doctor.subtitle": "Permission, storage, lifecycle and connector evidence.", "doctor.empty": "Select a document, then run Doctor.",
     "inspector.title": "Inspector", "inspector.none": "No selection", "inspector.empty": "Select a document to inspect<br />evidence, review and sync history.",
     "evidence.versions": "Version evidence", "evidence.workflow": "Review trail", "evidence.sync": "Sync records", "evidence.audit": "Audit trail", "form.newTitle": "New title", "form.version": "Version, for example 1.1", "form.file": "New version file",
@@ -37,6 +37,7 @@ export const messages = {
     "notice.login": "Identity connected. Start proving the document path.", "notice.fixtureCreated": "Fixture uploaded as a real RustFS-backed draft.", "notice.submitted": "Submitted to alpha-reviewer.", "notice.approved": "Review approved. Waiting for Outbox synchronization.", "notice.rejected": "Review rejected. The document can now be revised.", "notice.readOnly": "Read-only surface verified: mutation controls are filtered by the server-issued permission set.", "notice.noPending": "No pending review document is available in this tenant.", "notice.outbox": "Outbox: claimed {claimed}, succeeded {succeeded}, retried {retried}, failed {failed}.",
     "audit.document:create": "Document created", "audit.document:rename": "Document renamed", "audit.document:version:add": "Version added", "audit.document:review:submit": "Submitted for review", "audit.document:review:approve": "Review approved", "audit.document:review:reject": "Review rejected", "audit.document:revise": "Returned to draft", "audit.document:publish:request": "Publish requested", "audit.document:offline": "Taken offline", "audit.document:archive": "Archived", "audit.document.sync": "Downstream synchronized",
     "state.DRAFT": "Draft", "state.PENDING_REVIEW": "Pending review", "state.REJECTED": "Rejected", "state.PUBLISHING": "Publishing", "state.PUBLISHED": "Published", "state.SYNC_ERROR": "Sync error", "state.HISTORY": "Archived", "state.OFFLINE": "Offline",
+    "evidence.delivery": "Downstream delivery", "empty.delivery": "No downstream delivery has been planned", "delivery.profile": "Delivery profile", "delivery.profileHint": "The selected policy is frozen when this document is approved or published.", "delivery.retries": "{count} retries", "delivery.requirement.REQUIRED": "REQUIRED", "delivery.requirement.OPTIONAL": "OPTIONAL", "delivery.status.PENDING": "QUEUED", "delivery.status.RETRYING": "RETRYING", "delivery.status.SUCCEEDED": "DELIVERED", "delivery.status.FAILED": "ACTION NEEDED", "action.retryDelivery": "Retry target", "notice.deliveryRetried": "A new delivery event was queued for the failed target.",
   },
   zh: {
     "tenant.alpha": "Alpha 租户", "tenant.beta": "Beta 租户", "drawer.folder": "目录",
@@ -58,7 +59,7 @@ export const messages = {
     "drawer.title": "新建文档草稿", "drawer.number": "文档编号", "drawer.name": "文档标题", "drawer.namePlaceholder": "例如：采购合同验收稿", "drawer.file": "首个版本文件", "drawer.pickFile": "选择文件", "drawer.submit": "写入草稿并上传",
     "ledger.document": "编号 / 标题", "ledger.state": "状态", "ledger.updated": "更新时间", "ledger.version": "当前版本",
     "lab.title": "角色验收实验室", "lab.subtitle": "真实样例文件、真实权限、真实文档生命周期。", "lab.fixtures": "内置文件样例", "lab.fixtureHint": "上传后会在 RustFS 创建真实草稿。",
-    "platform.title": "下游平台镜像", "platform.subtitle": "展示当前选择文档的真实接收记录。", "platform.empty": "请选择文档。",
+    "platform.title": "下游平台镜像", "platform.subtitle": "展示当前文档每个交付目标及其真实接收记录。", "platform.empty": "尚未规划下游交付目标。",
     "doctor.title": "Doctor 诊断报告", "doctor.subtitle": "权限、存储、生命周期与连接器证据。", "doctor.empty": "请选择文档后执行 Doctor。",
     "inspector.title": "检视器", "inspector.none": "未选择", "inspector.empty": "选择一份文档<br />查看证据、审批与同步轨迹。",
     "evidence.versions": "版本证据", "evidence.workflow": "审批轨迹", "evidence.sync": "同步记录", "evidence.audit": "审计日志", "form.newTitle": "新标题", "form.version": "版本号，例如 1.1", "form.file": "新版文件",
@@ -75,6 +76,7 @@ export const messages = {
     "notice.login": "身份已接入，开始验证文档链路。", "notice.fixtureCreated": "样例文件已作为 RustFS 支撑的真实草稿上传。", "notice.submitted": "已提交给 alpha-reviewer。", "notice.approved": "审批已通过，等待 Outbox 同步。", "notice.rejected": "已驳回，文档现在可修订。", "notice.readOnly": "只读视图已验证：变更控件由服务端下发的权限集过滤。", "notice.noPending": "当前租户没有可打开的待审批文档。", "notice.outbox": "Outbox：认领 {claimed}，成功 {succeeded}，重试 {retried}，失败 {failed}。",
     "audit.document:create": "创建文档", "audit.document:rename": "重命名文档", "audit.document:version:add": "追加版本", "audit.document:review:submit": "提交审批", "audit.document:review:approve": "审批通过", "audit.document:review:reject": "审批驳回", "audit.document:revise": "修订为草稿", "audit.document:publish:request": "请求发布", "audit.document:offline": "文档下线", "audit.document:archive": "文档归档", "audit.document.sync": "下游同步完成",
     "state.DRAFT": "草稿", "state.PENDING_REVIEW": "待审批", "state.REJECTED": "已驳回", "state.PUBLISHING": "发布中", "state.PUBLISHED": "已发布", "state.SYNC_ERROR": "同步异常", "state.HISTORY": "已归档", "state.OFFLINE": "已下线",
+    "evidence.delivery": "下游交付", "empty.delivery": "尚未规划下游交付", "delivery.profile": "交付档案", "delivery.profileHint": "文档通过审批或直接发布时，所选策略会被冻结为独立交付目标。", "delivery.retries": "已重试 {count} 次", "delivery.requirement.REQUIRED": "必达", "delivery.requirement.OPTIONAL": "可选", "delivery.status.PENDING": "待投递", "delivery.status.RETRYING": "重试中", "delivery.status.SUCCEEDED": "已交付", "delivery.status.FAILED": "待处理", "action.retryDelivery": "重试此目标", "notice.deliveryRetried": "已为失败目标创建新的交付事件。",
   },
 };
 

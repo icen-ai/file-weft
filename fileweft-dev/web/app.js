@@ -13,6 +13,7 @@ const state = {
   permissions: new Set(),
   documents: [],
   folders: [],
+  deliveryProfiles: [],
   selectedFolderId: null,
   selectedId: null,
   detail: null,
@@ -102,7 +103,8 @@ async function login(username, password) {
   $("#metric-tenant").textContent = result.tenantId;
   $("#catalog-tenant-mark").textContent = result.tenantId.toUpperCase();
   syncPermissionSurface();
-  await refreshDocuments();
+  await Promise.all([refreshDocuments(), loadDeliveryProfiles()]);
+  if (state.detail) renderInspector();
   renderFixtures();
   notice(t("notice.login"));
 }
@@ -120,6 +122,10 @@ async function refreshDocuments() {
   syncFolderOptions();
   updateMetrics();
   if (state.selectedId && state.documents.some((document) => document.id === state.selectedId)) await selectDocument(state.selectedId, false);
+}
+
+async function loadDeliveryProfiles() {
+  state.deliveryProfiles = await api("/api/delivery-profiles");
 }
 
 function updateMetrics() {
@@ -228,6 +234,7 @@ function renderInspector() {
   $("#selected-title").textContent = document.title;
   $("#selected-state").textContent = localizedState(document.lifecycleState);
   $("#selected-state").className = `state-tag ${document.lifecycleState}`;
+  renderDeliveryProfile(document);
   $("#version-list").innerHTML = detail.versions.map((version) => evidenceItem(
     version.versionNumber,
     `${escapeHtml(version.fileName)} · ${escapeHtml(version.contentLength)} bytes · ${escapeHtml(version.contentHash || "—")}`,
@@ -236,6 +243,15 @@ function renderInspector() {
     const tasks = workflow.tasks.map((task) => `${escapeHtml(task.assigneeId || t("workflow.unassigned"))} · ${escapeHtml(localizedState(task.state))}${task.comment ? ` · ${escapeHtml(task.comment)}` : ""}`).join("<br />");
     return evidenceItem(`${localized("workflow.type", workflow.type)} / ${localizedState(workflow.state)}`, tasks);
   }).join("") || emptyEvidence("empty.workflow");
+  $("#delivery-list").innerHTML = detail.deliveries.map((delivery) => {
+    const responsibility = delivery.ownerRef ? ` · ${escapeHtml(delivery.ownerRef)}` : "";
+    const error = delivery.errorMessage ? `<small class="delivery-error">${escapeHtml(delivery.errorMessage)}</small>` : "";
+    const retry = delivery.retryCount ? ` · ${escapeHtml(interpolate("delivery.retries", { count: delivery.retryCount }))}` : "";
+    const manualRetry = delivery.status === "FAILED" && can("document:delivery:retry")
+      ? `<button class="delivery-retry" type="button" data-delivery-retry="${escapeHtml(delivery.id)}">${escapeHtml(t("action.retryDelivery"))}</button>` : "";
+    return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${manualRetry}</div></article>`;
+  }).join("") || emptyEvidence("empty.delivery");
+  $("#delivery-list").querySelectorAll("[data-delivery-retry]").forEach((button) => button.addEventListener("click", () => retryDelivery(button.dataset.deliveryRetry)));
   $("#sync-list").innerHTML = detail.syncRecords.map((sync) => evidenceItem(
     `${localizedState(sync.status)} / ${sync.connectorName}`,
     `${escapeHtml(sync.externalId || "—")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`,
@@ -246,6 +262,15 @@ function renderInspector() {
     return evidenceItem(localizedAudit(audit.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(audit.createdTime))}`);
   }).join("") || emptyEvidence("empty.audit");
   renderActions();
+}
+
+function renderDeliveryProfile(document) {
+  const section = $("#delivery-profile-section");
+  const selector = $("#delivery-profile");
+  const mayChoose = state.deliveryProfiles.length && ["DRAFT", "PENDING_REVIEW"].includes(document.lifecycleState);
+  section.classList.toggle("hidden", !mayChoose);
+  if (!mayChoose) return;
+  selector.innerHTML = state.deliveryProfiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.displayName)} · ${profile.targets.map((target) => target.displayName).join(" / ")}</option>`).join("");
 }
 
 function actionButton(key, action) {
@@ -291,11 +316,25 @@ async function runAction(action) {
       const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
       const task = workflow?.tasks.find((item) => item.state === "PENDING");
       if (!workflow || !task) throw new Error("No pending review task is available.");
-      await api(`/api/documents/workflows/${workflow.id}/tasks/${task.id}/${action}`, json({ comment: action === "approve" ? "Development proof approved" : "Development proof requires revision" }));
+      await api(`/api/documents/workflows/${workflow.id}/tasks/${task.id}/${action}`, json({
+        comment: action === "approve" ? "Development proof approved" : "Development proof requires revision",
+        deliveryProfileId: action === "approve" ? $("#delivery-profile").value || null : null,
+      }));
       notice(t(action === "approve" ? "notice.approved" : "notice.rejected"));
     }
     if (["revise", "offline", "archive"].includes(action)) await api(`/api/documents/${id}/${action}`, { method: "POST" });
     await refreshDocuments();
+  } catch (error) {
+    notice(error.message, "error");
+  }
+}
+
+async function retryDelivery(deliveryId) {
+  try {
+    await api(`/api/documents/delivery-targets/${deliveryId}/retry`, { method: "POST" });
+    notice(t("notice.deliveryRetried"));
+    await refreshDocuments();
+    loadPlatform();
   } catch (error) {
     notice(error.message, "error");
   }
@@ -376,9 +415,17 @@ async function createFixture(fixtureId) {
 async function loadPlatform() {
   if (!state.selectedId || !state.user) return;
   try {
-    const response = await fetch(`/platform/v1/documents/${state.user.tenantId}/${state.selectedId}`);
-    const text = await response.text();
-    $("#platform-output").textContent = response.ok ? JSON.stringify(safeJson(text), null, 2) : t("platform.empty");
+    const deliveries = state.detail?.deliveries || [];
+    if (!deliveries.length) {
+      $("#platform-output").textContent = t("platform.empty");
+      return;
+    }
+    const records = await Promise.all(deliveries.map(async (delivery) => {
+      const response = await fetch(`/platform/v1/documents/${state.user.tenantId}/${state.selectedId}`, { headers: { "X-FileWeft-Target": delivery.targetId } });
+      const text = await response.text();
+      return { targetId: delivery.targetId, deliveryStatus: delivery.status, platform: response.ok ? safeJson(text) : null };
+    }));
+    $("#platform-output").textContent = JSON.stringify(records, null, 2);
   } catch (error) {
     $("#platform-output").textContent = error.message;
   }
@@ -444,7 +491,7 @@ $("#version-form").addEventListener("submit", async (event) => {
 });
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

@@ -69,11 +69,27 @@ data class DevOutboxView(
     val updatedTime: Long,
 )
 
+data class DevDeliveryView(
+    val id: String,
+    val profileId: String,
+    val targetId: String,
+    val displayName: String,
+    val connectorId: String,
+    val requirement: String,
+    val ownerRef: String?,
+    val status: String,
+    val externalId: String?,
+    val errorMessage: String?,
+    val retryCount: Int,
+    val updatedTime: Long,
+)
+
 data class DevDocumentDetail(
     val document: DevDocumentSummary,
     val versions: List<DevDocumentVersionView>,
     val workflows: List<DevWorkflowView>,
     val audits: List<DevAuditView>,
+    val deliveries: List<DevDeliveryView>,
     val syncRecords: List<DevSyncView>,
     val outboxEvents: List<DevOutboxView>,
 )
@@ -107,6 +123,7 @@ class DevDocumentQueryService(
             versions = jdbcTemplate.query(VERSIONS_SQL, VERSION_MAPPER, tenantId, documentId.value),
             workflows = loadWorkflows(tenantId, documentId.value),
             audits = jdbcTemplate.query(AUDITS_SQL, AUDIT_MAPPER, tenantId, documentId.value),
+            deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             syncRecords = jdbcTemplate.query(SYNC_SQL, SYNC_MAPPER, tenantId, documentId.value),
             outboxEvents = jdbcTemplate.query(OUTBOX_SQL, OUTBOX_MAPPER, tenantId, documentId.value),
         )
@@ -162,6 +179,14 @@ class DevDocumentQueryService(
                 result.getString("last_error"), result.getLong("created_time"), result.getLong("updated_time"),
             )
         }
+        val DELIVERY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDeliveryView> { result, _ ->
+            DevDeliveryView(
+                result.getString("id"), result.getString("profile_id"), result.getString("target_id"),
+                result.getString("target_name"), result.getString("connector_id"), result.getString("delivery_requirement"),
+                result.getString("owner_ref"), result.getString("delivery_status"), result.getString("external_id"),
+                result.getString("error_message"), result.getInt("retry_count"), result.getLong("updated_time"),
+            )
+        }
 
         const val PAGE_SQL = """
             SELECT document.id, document.doc_no, document.title, document.lifecycle_state, document.current_version_id,
@@ -208,6 +233,11 @@ class DevDocumentQueryService(
         const val SYNC_SQL = """
             SELECT id, source_event_id, connector_name, sync_status, external_id, error_message, retry_count, updated_time
             FROM fw_sync_record WHERE tenant_id = ? AND document_id = ? ORDER BY updated_time DESC
+        """
+        const val DELIVERIES_SQL = """
+            SELECT id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref,
+                   delivery_status, external_id, error_message, retry_count, updated_time
+            FROM fw_document_delivery_target WHERE tenant_id = ? AND document_id = ? ORDER BY created_time, id
         """
         const val OUTBOX_SQL = """
             SELECT id, event_type, event_status, retry_count, last_error, created_time, updated_time

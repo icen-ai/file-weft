@@ -16,5 +16,21 @@ class FileWeftProperties {
 
     class SyncProperties {
         var connectorName: String = "default"
+        var defaultProfileId: String = "default"
+        var profiles: MutableList<DeliveryProfileProperties> = mutableListOf()
+    }
+
+    class DeliveryProfileProperties {
+        var id: String = ""
+        var displayName: String = ""
+        var targets: MutableList<DeliveryTargetProperties> = mutableListOf()
+    }
+
+    class DeliveryTargetProperties {
+        var id: String = ""
+        var displayName: String = ""
+        var connectorId: String = ""
+        var required: Boolean = true
+        var ownerRef: String? = null
     }
 }

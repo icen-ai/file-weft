@@ -83,6 +83,28 @@ class OutboxWorkerTest {
     }
 
     @Test
+    fun `notifies the selected handler when a retry is exhausted but never for ambiguous routing`() {
+        var exhausted: String? = null
+        val selectedHandler = object : OutboxEventHandler {
+            override fun supports(event: OutboxEvent): Boolean = true
+            override fun handle(event: OutboxEvent) = OutboxHandlingResult(OutboxHandlingStatus.RETRYABLE_FAILURE, "remote down")
+            override fun onExhausted(event: OutboxEvent, message: String) { exhausted = message }
+        }
+
+        worker(RecordingRepository(listOf(lease(retryCount = 1))), TrackingTransaction(), listOf(selectedHandler), maxAttempts = 2)
+            .processAvailable(1)
+        assertEquals("remote down", exhausted)
+
+        exhausted = null
+        worker(
+            RecordingRepository(listOf(lease())),
+            TrackingTransaction(),
+            listOf(selectedHandler, handler { OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED) }),
+        ).processAvailable(1)
+        assertEquals(null, exhausted)
+    }
+
+    @Test
     fun `rejects invalid worker configuration and processing limit`() {
         assertFailsWith<IllegalArgumentException> {
             worker(RecordingRepository(), TrackingTransaction(), emptyList(), maxAttempts = 0)

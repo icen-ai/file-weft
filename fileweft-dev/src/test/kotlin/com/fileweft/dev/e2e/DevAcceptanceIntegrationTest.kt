@@ -42,7 +42,9 @@ class DevAcceptanceIntegrationTest {
 
     @AfterEach
     fun restoreDevelopmentPlatform() {
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE"}""", null)
+        listOf("default", "compliance", "collaboration", "search").forEach { targetId ->
+            postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"$targetId"}""", null)
+        }
     }
 
     @Test
@@ -111,7 +113,7 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
-    fun `uploads reviews publishes and delivers a document through the development stack`() {
+    fun `uploads reviews and delivers a document to every regulated downstream target`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentNumber = "E2E-${UUID.randomUUID().toString().take(12)}"
         val documentId = createDraft(editor, documentNumber).path("document").path("id").asText()
@@ -125,7 +127,7 @@ class DevAcceptanceIntegrationTest {
         val reviewer = login("reviewer@alpha", "dev-reviewer")
         postJson(
             "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
-            """{"comment":"Compose acceptance approved"}""",
+            """{"comment":"Compose acceptance approved","deliveryProfileId":"regulated"}""",
             reviewer,
         )
         val admin = login("admin@alpha", "dev-admin")
@@ -133,17 +135,20 @@ class DevAcceptanceIntegrationTest {
 
         val detail = awaitPublished(documentId, admin)
         assertEquals("PUBLISHED", detail.path("document").path("lifecycleState").asText())
-        assertTrue(detail.path("syncRecords").any { it.path("status").asText() == "SUCCESS" })
-        assertTrue(detail.path("outboxEvents").any { it.path("status").asText() == "SUCCESS" })
+        assertEquals(3, detail.path("deliveries").size())
+        assertTrue(detail.path("deliveries").all { it.path("status").asText() == "SUCCEEDED" })
+        assertEquals(3, detail.path("outboxEvents").count { it.path("status").asText() == "SUCCESS" })
         assertAuditActor(detail, "document:create", "alpha-editor", "Alpha 编辑者")
         assertAuditActor(detail, "document:review:submit", "alpha-editor", "Alpha 编辑者")
         assertAuditActor(detail, "document:review:approve", "alpha-reviewer", "Alpha 审批者")
-        assertAuditActor(detail, "document.sync", null, "SYSTEM")
+        assertEquals(3, detail.path("audits").count { it.path("action").asText() == "document:delivery:succeeded" })
 
-        val mirror = getJson("$platformUrl/platform/v1/documents/alpha/$documentId")
-        assertEquals("alpha:$documentId", mirror.path("externalId").asText())
-        assertEquals("acceptance.txt", mirror.path("fileName").asText())
-        assertTrue(mirror.path("downloadedBytes").asLong() > 0)
+        listOf("compliance", "collaboration", "search").forEach { targetId ->
+            val mirror = getPlatform(targetId, documentId)
+            assertEquals("$targetId:alpha:$documentId", mirror.path("externalId").asText())
+            assertEquals("acceptance.txt", mirror.path("fileName").asText())
+            assertTrue(mirror.path("downloadedBytes").asLong() > 0)
+        }
     }
 
     @Test
@@ -190,22 +195,77 @@ class DevAcceptanceIntegrationTest {
             """{"reviewerId":"alpha-reviewer"}""",
             editor,
         )
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE"}""", null)
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE","targetId":"compliance"}""", null)
         val reviewer = login("reviewer@alpha", "dev-reviewer")
         postJson(
             "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
-            """{"comment":"触发可重试故障"}""",
+            """{"comment":"触发可重试故障","deliveryProfileId":"regulated"}""",
             reviewer,
         )
         val admin = login("admin@alpha", "dev-admin")
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
         awaitLifecycle(documentId, admin, "SYNC_ERROR")
 
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE"}""", null)
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""", null)
         Thread.sleep(10_500)
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
         val recovered = awaitPublished(documentId, admin)
-        assertTrue(recovered.path("syncRecords").any { it.path("status").asText() == "SUCCESS" })
+        assertTrue(recovered.path("deliveries").any { it.path("targetId").asText() == "compliance" && it.path("status").asText() == "SUCCEEDED" })
+    }
+
+    @Test
+    fun `keeps a regulated document published when only its optional search target fails`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+        val workflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"search"}""", null)
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+            """{"comment":"验证可选下游失败","deliveryProfileId":"regulated"}""",
+            reviewer,
+        )
+        val admin = login("admin@alpha", "dev-admin")
+        post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
+
+        val detail = awaitPublished(documentId, admin)
+        assertEquals("SUCCEEDED", delivery(detail, "compliance").path("status").asText())
+        assertEquals("SUCCEEDED", delivery(detail, "collaboration").path("status").asText())
+        assertEquals("FAILED", delivery(detail, "search").path("status").asText())
+        assertTrue(delivery(detail, "search").path("errorMessage").asText().isNotBlank())
+    }
+
+    @Test
+    fun `allows an administrator to manually requeue a permanently failed required target`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+        val workflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"compliance"}""", null)
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+            """{"comment":"验证必达下游人工恢复","deliveryProfileId":"regulated"}""",
+            reviewer,
+        )
+        val admin = login("admin@alpha", "dev-admin")
+        post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
+        val failed = awaitLifecycle(documentId, admin, "SYNC_ERROR")
+        val compliance = delivery(failed, "compliance")
+        assertEquals("FAILED", compliance.path("status").asText())
+
+        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""", null)
+        post("$apiUrl/api/documents/delivery-targets/${compliance.path("id").asText()}/retry", null, admin, "application/json")
+        post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
+        val recovered = awaitPublished(documentId, admin)
+        assertEquals("SUCCEEDED", delivery(recovered, "compliance").path("status").asText())
     }
 
     private fun login(username: String, password: String): String = loginResponse(username, password).path("token").asText()
@@ -276,6 +336,17 @@ class DevAcceptanceIntegrationTest {
         assertEquals(operatorId, audit.path("operatorId").takeUnless { it.isNull }?.asText())
         assertEquals(operatorName, audit.path("operatorName").asText())
     }
+
+    private fun delivery(detail: JsonNode, targetId: String): JsonNode =
+        detail.path("deliveries").firstOrNull { it.path("targetId").asText() == targetId }
+            ?: throw AssertionError("Delivery target $targetId was not found.")
+
+    private fun getPlatform(targetId: String, documentId: String): JsonNode = response(
+        HttpRequest.newBuilder(URI("$platformUrl/platform/v1/documents/alpha/$documentId"))
+            .header("X-FileWeft-Target", targetId)
+            .GET()
+            .build(),
+    )
 
     private fun getJson(url: String, token: String? = null): JsonNode {
         val request = HttpRequest.newBuilder(URI(url)).GET().apply { token?.let { header("Authorization", "Bearer $it") } }.build()

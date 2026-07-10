@@ -5,6 +5,7 @@ import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.doctor.*
+import com.fileweft.application.delivery.*
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.outbox.*
@@ -22,6 +23,10 @@ import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.persistence.jdbc.*
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.connector.FileConnector
+import com.fileweft.spi.delivery.DeliveryConnectorResolver
+import com.fileweft.spi.delivery.DeliveryRequirement
+import com.fileweft.spi.delivery.DocumentDeliveryProfile
+import com.fileweft.spi.delivery.DocumentDeliveryProfileProvider
 import com.fileweft.spi.doctor.DoctorChecker
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
@@ -68,6 +73,10 @@ class FileWeftRuntimeConfiguration {
     fun syncRecords(clock: Clock): SyncRecordRepository = JdbcSyncRecordRepository(clock)
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryTargetRepository::class)
+    fun documentDeliveryTargets(clock: Clock): DocumentDeliveryTargetRepository = JdbcDocumentDeliveryTargetRepository(clock)
+
+    @Bean
     @ConditionalOnMissingBean(OutboxEventRepository::class)
     fun outboxEvents(objectMapper: ObjectMapper): OutboxEventRepository = JdbcOutboxEventRepository(objectMapper)
 
@@ -78,6 +87,76 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)
     fun auditTrail(repository: AuditRecordRepository, identifiers: IdentifierGenerator, clock: Clock) = AuditTrail(repository, identifiers, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(DeliveryConnectorResolver::class)
+    fun deliveryConnectorResolver(connectors: Map<String, FileConnector>, properties: FileWeftProperties): DeliveryConnectorResolver =
+        MapDeliveryConnectorResolver(connectors, properties.sync.connectorName)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryProfileProvider::class)
+    fun documentDeliveryProfiles(properties: FileWeftProperties): DocumentDeliveryProfileProvider {
+        val configured = properties.sync.profiles.map { profile ->
+            DocumentDeliveryProfile(
+                id = profile.id,
+                displayName = profile.displayName,
+                targets = profile.targets.map { target ->
+                    com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition(
+                        id = target.id,
+                        displayName = target.displayName,
+                        connectorId = target.connectorId,
+                        requirement = if (target.required) DeliveryRequirement.REQUIRED else DeliveryRequirement.OPTIONAL,
+                        ownerRef = target.ownerRef,
+                    )
+                },
+            )
+        }.ifEmpty {
+            listOf(
+                DocumentDeliveryProfile(
+                    id = DEFAULT_DELIVERY_PROFILE_ID,
+                    displayName = "Default delivery",
+                    targets = listOf(
+                        com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition(
+                            id = DEFAULT_DELIVERY_TARGET_ID,
+                            displayName = "Default downstream",
+                            connectorId = properties.sync.connectorName,
+                            requirement = DeliveryRequirement.REQUIRED,
+                        ),
+                    ),
+                ),
+            )
+        }
+        val defaultProfileId = properties.sync.defaultProfileId.takeIf { configured.any { profile -> profile.id == it } }
+        return StaticDocumentDeliveryProfileProvider(configured, defaultProfileId)
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryPlanner::class)
+    fun documentDeliveryPlanner(
+        profiles: DocumentDeliveryProfileProvider, connectors: DeliveryConnectorResolver,
+        deliveries: DocumentDeliveryTargetRepository, outbox: OutboxEventRepository,
+        identifiers: IdentifierGenerator, clock: Clock,
+    ) = DocumentDeliveryPlanner(profiles, connectors, deliveries, outbox, identifiers, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDeliverySyncService::class)
+    fun documentDeliverySyncService(
+        documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
+        connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
+        transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ) = DocumentDeliverySyncService(documents, fileObjects, storage, connectors, deliveries, transaction, auditTrail = auditTrail)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryOutboxEventHandler::class)
+    fun documentDeliveryHandler(sync: DocumentDeliverySyncService) = DocumentDeliveryOutboxEventHandler(sync)
+
+    @Bean
+    @ConditionalOnMissingBean(RetryDocumentDeliveryService::class)
+    fun retryDocumentDeliveryService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        deliveries: DocumentDeliveryTargetRepository, outbox: OutboxEventRepository,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
+    ) = RetryDocumentDeliveryService(tenants, users, authorization, deliveries, outbox, identifiers, transaction, clock, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(UploadApplicationService::class)
@@ -108,9 +187,9 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(PublishDocumentService::class)
     fun publishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, outbox: OutboxEventRepository, identifiers: IdentifierGenerator,
-        transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
-    ) = PublishDocumentService(tenants, users, authorization, documents, outbox, identifiers, transaction, clock, auditTrail)
+        documents: DocumentRepository, planner: DocumentDeliveryPlanner,
+        transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ) = PublishDocumentService(tenants, users, authorization, documents, planner, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(OfflineDocumentService::class)
@@ -130,9 +209,9 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DocumentReviewWorkflowService::class)
     fun reviewWorkflowService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, workflows: WorkflowInstanceRepository, outbox: OutboxEventRepository,
-        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
-    ) = DocumentReviewWorkflowService(tenants, users, authorization, documents, workflows, outbox, identifiers, transaction, clock, auditTrail)
+        documents: DocumentRepository, workflows: WorkflowInstanceRepository, planner: DocumentDeliveryPlanner,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ) = DocumentReviewWorkflowService(tenants, users, authorization, documents, workflows, planner, identifiers, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(PermissionDoctorChecker::class)
@@ -194,4 +273,9 @@ class FileWeftRuntimeConfiguration {
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,
         handlers: List<OutboxEventHandler>, clock: Clock,
     ) = OutboxWorker(repository, transaction, handlers, clock)
+
+    private companion object {
+        const val DEFAULT_DELIVERY_PROFILE_ID = "default"
+        const val DEFAULT_DELIVERY_TARGET_ID = "default"
+    }
 }

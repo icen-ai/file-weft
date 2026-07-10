@@ -122,7 +122,7 @@
           </section>
 
           <section id="platform-panel" class="aux-panel hidden">
-            <div class="aux-title"><span data-i18n="platform.title">Downstream mirror</span><small data-i18n="platform.subtitle">Shows the actual receiving record for the selected document.</small></div>
+            <div class="aux-title"><span data-i18n="platform.title">Downstream mirror</span><small data-i18n="platform.subtitle">Shows every selected delivery target and its receiving record.</small></div>
             <pre id="platform-output" data-i18n="platform.empty">Select a document.</pre>
           </section>
 
@@ -137,11 +137,13 @@
           <div id="empty-inspector" class="empty-inspector"><span class="empty-glyph">↘</span><p data-i18n-html="inspector.empty">Select a document to inspect<br />evidence, review and sync history.</p></div>
           <div id="document-inspector" class="hidden">
             <div class="document-title-block"><span id="selected-number" class="eyebrow">—</span><h3 id="selected-title">—</h3><span id="selected-state" class="state-tag">—</span></div>
+            <section id="delivery-profile-section" class="delivery-profile-section hidden"><label><span data-i18n="delivery.profile">Delivery profile</span><select id="delivery-profile"></select></label><small data-i18n="delivery.profileHint">The selected policy is frozen when this document is approved or published.</small></section>
             <div id="document-actions" class="action-grid"></div>
             <form id="rename-form" class="compact-form hidden"><input name="title" required data-i18n-placeholder="form.newTitle" placeholder="New title" /><button class="ghost" type="submit" data-i18n="action.rename">Rename</button></form>
             <form id="version-form" class="compact-form hidden"><input name="versionNumber" required data-i18n-placeholder="form.version" placeholder="Version, for example 1.1" /><input name="file" type="file" required data-i18n-aria="form.file" aria-label="New version file" /><button class="ghost" type="submit" data-i18n="action.addVersion">Add version</button></form>
             <section class="evidence-section"><h4 data-i18n="evidence.versions">Version evidence</h4><div id="version-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.workflow">Review trail</h4><div id="workflow-list"></div></section>
+            <section class="evidence-section"><h4 data-i18n="evidence.delivery">Downstream delivery</h4><div id="delivery-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.sync">Sync records</h4><div id="sync-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.audit">Audit trail</h4><div id="audit-list"></div></section>
           </div>
