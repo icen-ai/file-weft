@@ -91,8 +91,8 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DocumentCommandService::class)
     fun documentCommands(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, transaction: ApplicationTransaction,
-    ) = DocumentCommandService(tenants, users, authorization, documents, transaction)
+        documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ) = DocumentCommandService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(DocumentDraftService::class)
@@ -109,30 +109,30 @@ class FileWeftRuntimeConfiguration {
     fun publishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, outbox: OutboxEventRepository, identifiers: IdentifierGenerator,
-        transaction: ApplicationTransaction, clock: Clock,
-    ) = PublishDocumentService(tenants, users, authorization, documents, outbox, identifiers, transaction, clock)
+        transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
+    ) = PublishDocumentService(tenants, users, authorization, documents, outbox, identifiers, transaction, clock, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(OfflineDocumentService::class)
     fun offlineService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, transaction: ApplicationTransaction,
-    ) = OfflineDocumentService(tenants, users, authorization, documents, transaction)
+        documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ) = OfflineDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(ArchiveDocumentService::class)
     fun archiveService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, transaction: ApplicationTransaction,
-    ) = ArchiveDocumentService(tenants, users, authorization, documents, transaction)
+        documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ) = ArchiveDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(DocumentReviewWorkflowService::class)
     fun reviewWorkflowService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, workflows: WorkflowInstanceRepository, outbox: OutboxEventRepository,
-        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock,
-    ) = DocumentReviewWorkflowService(tenants, users, authorization, documents, workflows, outbox, identifiers, transaction, clock)
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
+    ) = DocumentReviewWorkflowService(tenants, users, authorization, documents, workflows, outbox, identifiers, transaction, clock, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(PermissionDoctorChecker::class)

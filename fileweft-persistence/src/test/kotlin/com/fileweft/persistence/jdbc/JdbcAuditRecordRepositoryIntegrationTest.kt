@@ -54,12 +54,13 @@ class JdbcAuditRecordRepositoryIntegrationTest {
         assertEquals(listOf("audit-2"), latest.map { it.id.value })
         assertEquals(listOf("audit-2", "audit-1"), all.map { it.id.value })
         assertEquals("SUCCESS", all.last().details["status"])
+        assertEquals("Operator 1", all.last().operatorName)
         assertTrue(all.none { it.tenantId.value == "tenant-2" })
     }
 
     private fun record(id: String, tenantId: String, action: String, time: Long) = AuditRecord(
         Identifier(id), Identifier(tenantId), "DOCUMENT", Identifier("document-1"), action,
-        Identifier("operator-1"), mapOf("status" to "SUCCESS"), time,
+        Identifier("operator-1"), mapOf("status" to "SUCCESS"), time, "Operator 1",
     )
 
     private fun reset(connection: Connection) = connection.use {

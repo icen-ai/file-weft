@@ -45,6 +45,7 @@ class DocumentDraftService(
 
     fun create(command: CreateDocumentDraftCommand, content: InputStream): Document {
         val tenant = tenantProvider.currentTenant()
+        val operator = userRealmProvider.currentUser()
         val documentId = identifierGenerator.nextId()
         val fileObjectId = identifierGenerator.nextId()
         val assetId = identifierGenerator.nextId()
@@ -75,7 +76,8 @@ class DocumentDraftService(
                     resourceType = DOCUMENT_RESOURCE_TYPE,
                     resourceId = created.id,
                     action = CREATE_ACTION,
-                    operatorId = currentUserId(),
+                    operatorId = operator?.id,
+                    operatorName = operator?.displayName,
                     details = mapOf("documentNumber" to created.documentNumber, "version" to INITIAL_VERSION),
                 )
                 created
@@ -91,6 +93,7 @@ class DocumentDraftService(
 
     fun addVersion(documentId: Identifier, command: AddDocumentVersionCommand, content: InputStream): Document {
         val tenant = tenantProvider.currentTenant()
+        val operator = userRealmProvider.currentUser()
         val fileObjectId = identifierGenerator.nextId()
         val versionId = identifierGenerator.nextId()
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
@@ -112,7 +115,8 @@ class DocumentDraftService(
                     resourceType = DOCUMENT_RESOURCE_TYPE,
                     resourceId = existing.id,
                     action = ADD_VERSION_ACTION,
-                    operatorId = currentUserId(),
+                    operatorId = operator?.id,
+                    operatorName = operator?.displayName,
                     details = mapOf("version" to command.versionNumber, "fileObjectId" to fileObject.id.value),
                 )
                 existing
@@ -128,6 +132,7 @@ class DocumentDraftService(
 
     fun rename(documentId: Identifier, title: String): Document {
         val tenant = tenantProvider.currentTenant()
+        val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
         return transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId)
@@ -139,7 +144,8 @@ class DocumentDraftService(
                 resourceType = DOCUMENT_RESOURCE_TYPE,
                 resourceId = document.id,
                 action = RENAME_ACTION,
-                operatorId = currentUserId(),
+                operatorId = operator?.id,
+                operatorName = operator?.displayName,
                 details = mapOf("title" to document.title),
             )
             document
@@ -176,8 +182,6 @@ class DocumentDraftService(
             failure.addSuppressed(cleanupFailure)
         }
     }
-
-    private fun currentUserId(): Identifier? = userRealmProvider.currentUser()?.id
 
     private fun recordMetric(metric: FileWeftMetric, tenantId: String) {
         try {

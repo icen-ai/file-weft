@@ -67,6 +67,7 @@ class DocumentDraftServiceTest {
         assertEquals("asset-1", assets.saved.single().id.value)
         assertEquals(DocumentDraftService.CREATE_ACTION, audits.records.single().action)
         assertEquals("user-1", audits.records.single().operatorId?.value)
+        assertEquals("测试编辑者", audits.records.single().operatorName)
     }
 
     @Test
@@ -167,7 +168,7 @@ class DocumentDraftServiceTest {
     ): DocumentDraftService = DocumentDraftService(
         tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(Identifier("tenant-1")) },
         userRealmProvider = object : UserRealmProvider {
-            override fun currentUser() = UserIdentity(Identifier("user-1"))
+            override fun currentUser() = UserIdentity(Identifier("user-1"), "测试编辑者")
             override fun findUser(userId: Identifier): UserIdentity? = null
         },
         authorizationProvider = object : AuthorizationProvider {

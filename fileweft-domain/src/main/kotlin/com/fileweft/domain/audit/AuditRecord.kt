@@ -14,8 +14,11 @@ class AuditRecord(
     val operatorId: Identifier? = null,
     details: Map<String, String> = emptyMap(),
     val createdAt: Long,
+    operatorName: String? = null,
 ) {
     val details: Map<String, String> = Collections.unmodifiableMap(LinkedHashMap(details))
+    /** Immutable display-name snapshot supplied by the owning user realm. */
+    val operatorName: String? = operatorName?.takeIf { it.isNotBlank() }
 
     init {
         require(resourceType.isNotBlank()) { "Audit resource type must not be blank." }

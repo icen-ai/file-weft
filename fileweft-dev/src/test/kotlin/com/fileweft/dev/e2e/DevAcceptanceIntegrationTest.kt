@@ -70,6 +70,10 @@ class DevAcceptanceIntegrationTest {
         assertEquals("PUBLISHED", detail.path("document").path("lifecycleState").asText())
         assertTrue(detail.path("syncRecords").any { it.path("status").asText() == "SUCCESS" })
         assertTrue(detail.path("outboxEvents").any { it.path("status").asText() == "SUCCESS" })
+        assertAuditActor(detail, "document:create", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(detail, "document:review:submit", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(detail, "document:review:approve", "alpha-reviewer", "Alpha 审批者")
+        assertAuditActor(detail, "document.sync", null, "SYSTEM")
 
         val mirror = getJson("$platformUrl/platform/v1/documents/alpha/$documentId")
         assertEquals("alpha:$documentId", mirror.path("externalId").asText())
@@ -106,6 +110,10 @@ class DevAcceptanceIntegrationTest {
 
         val revised = post("$apiUrl/api/documents/$documentId/revise", null, editor, "application/json")
         assertEquals("DRAFT", revised.path("document").path("lifecycleState").asText())
+        assertAuditActor(revised, "document:rename", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(revised, "document:version:add", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(revised, "document:review:reject", "alpha-reviewer", "Alpha 审批者")
+        assertAuditActor(revised, "document:revise", "alpha-editor", "Alpha 编辑者")
     }
 
     @Test
@@ -185,6 +193,13 @@ class DevAcceptanceIntegrationTest {
             Thread.sleep(200)
         }
         throw AssertionError("Document $documentId did not reach lifecycle state $expected within the expected window.")
+    }
+
+    private fun assertAuditActor(detail: JsonNode, action: String, operatorId: String?, operatorName: String) {
+        val audit = detail.path("audits").firstOrNull { it.path("action").asText() == action }
+            ?: throw AssertionError("Audit action $action was not found.")
+        assertEquals(operatorId, audit.path("operatorId").takeUnless { it.isNull }?.asText())
+        assertEquals(operatorName, audit.path("operatorName").asText())
     }
 
     private fun getJson(url: String, token: String? = null): JsonNode {

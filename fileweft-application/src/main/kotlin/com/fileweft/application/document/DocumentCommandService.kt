@@ -1,5 +1,6 @@
 package com.fileweft.application.document
 
+import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -12,10 +13,11 @@ import com.fileweft.spi.tenant.TenantProvider
 
 class DocumentCommandService(
     private val tenantProvider: TenantProvider,
-    userRealmProvider: UserRealmProvider,
+    private val userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val documentRepository: DocumentRepository,
     private val transaction: ApplicationTransaction,
+    private val auditTrail: AuditTrail? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
@@ -27,14 +29,27 @@ class DocumentCommandService(
 
     private fun execute(documentId: Identifier, action: String, command: LifecycleCommand): Document {
         val tenant = tenantProvider.currentTenant()
+        val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, action)
         return transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.transition(command)
             documentRepository.save(document)
+            auditTrail?.record(
+                tenantId = tenant.tenantId,
+                resourceType = DOCUMENT_RESOURCE_TYPE,
+                resourceId = document.id,
+                action = action,
+                operatorId = operator?.id,
+                operatorName = operator?.displayName,
+            )
             document
         }
+    }
+
+    private companion object {
+        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
     }
 }
 

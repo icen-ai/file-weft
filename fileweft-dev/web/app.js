@@ -85,7 +85,11 @@ function renderInspector() {
   $("#version-list").innerHTML = detail.versions.map((version) => item(version.versionNumber, `${escapeHtml(version.fileName)} · ${escapeHtml(version.contentLength)} bytes · ${escapeHtml(version.contentHash || "无摘要")}`)).join("") || empty("尚无版本");
   $("#workflow-list").innerHTML = detail.workflows.map((workflow) => item(`${workflow.type} / ${workflow.state}`, workflow.tasks.map((task) => `${escapeHtml(task.assigneeId || "未指派")} · ${escapeHtml(task.state)}${task.comment ? ` · ${escapeHtml(task.comment)}` : ""}`).join("<br />"))).join("") || empty("尚无审批流");
   $("#sync-list").innerHTML = detail.syncRecords.map((sync) => item(`${sync.status} / ${sync.connectorName}`, `${escapeHtml(sync.externalId || "无外部 ID")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`)).join("") || empty("尚无同步记录");
-  $("#audit-list").innerHTML = detail.audits.map((audit) => item(audit.action, `${escapeHtml(audit.operatorId || "SYSTEM")} · ${time(audit.createdTime)}`)).join("") || empty("尚无审计记录");
+  $("#audit-list").innerHTML = detail.audits.map((audit) => {
+    const actorName = audit.operatorName || (audit.operatorId ? "未命名用户" : "SYSTEM");
+    const actorId = audit.operatorId ? ` · ${escapeHtml(audit.operatorId)}` : "";
+    return item(audit.action, `${escapeHtml(actorName)}${actorId} · ${time(audit.createdTime)}`);
+  }).join("") || empty("尚无审计记录");
   renderActions();
 }
 const item = (title, text) => `<div class="evidence-item"><b>${escapeHtml(title)}</b><small>${text}</small></div>`;

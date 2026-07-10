@@ -19,6 +19,7 @@ class AuditTrail(
         action: String,
         operatorId: Identifier? = null,
         details: Map<String, String> = emptyMap(),
+        operatorName: String? = null,
     ): AuditRecord {
         val record = AuditRecord(
             id = identifierGenerator.nextId(),
@@ -29,6 +30,7 @@ class AuditTrail(
             operatorId = operatorId,
             details = details,
             createdAt = clock.millis(),
+            operatorName = operatorName,
         )
         auditRecordRepository.append(record)
         return record

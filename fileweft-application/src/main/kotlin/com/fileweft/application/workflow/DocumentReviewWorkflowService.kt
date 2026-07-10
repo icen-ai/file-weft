@@ -1,5 +1,6 @@
 package com.fileweft.application.workflow
 
+import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.security.ApplicationAuthorization
@@ -30,11 +31,13 @@ class DocumentReviewWorkflowService(
     private val identifierGenerator: IdentifierGenerator,
     private val transaction: ApplicationTransaction,
     private val clock: Clock,
+    private val auditTrail: AuditTrail? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
     fun submit(documentId: Identifier, reviewerId: Identifier? = null): WorkflowInstance {
         val tenant = tenantProvider.currentTenant()
+        val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, SUBMIT_ACTION)
         return transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId)
@@ -60,6 +63,15 @@ class DocumentReviewWorkflowService(
             )
             documentRepository.save(document)
             workflowRepository.save(workflow)
+            auditTrail?.record(
+                tenantId = tenant.tenantId,
+                resourceType = DOCUMENT_RESOURCE_TYPE,
+                resourceId = document.id,
+                action = SUBMITTED_AUDIT_ACTION,
+                operatorId = operator?.id,
+                operatorName = operator?.displayName,
+                details = mapOf("workflowId" to workflow.id.value, "reviewerId" to (reviewerId?.value ?: "UNASSIGNED")),
+            )
             workflow
         }
     }
@@ -75,7 +87,7 @@ class DocumentReviewWorkflowService(
         val workflowSnapshot = transaction.execute {
             workflowRepository.findById(tenant.tenantId, workflowId) ?: throw WorkflowNotFoundException(workflowId)
         }
-        val operator = userRealmProvider.currentUser()?.id
+        val operator = userRealmProvider.currentUser()
             ?: throw ApplicationAuthorizationException("A current user is required.")
         authorization.requireDocumentAction(tenant.tenantId, workflowSnapshot.documentId, AUDIT_ACTION)
         return transaction.execute {
@@ -83,7 +95,7 @@ class DocumentReviewWorkflowService(
             val document = documentRepository.findById(tenant.tenantId, workflow.documentId)
                 ?: throw DocumentNotFoundException(workflow.documentId)
             if (approved) {
-                workflow.approve(taskId, operator, comment)
+                workflow.approve(taskId, operator.id, comment)
                 document.transition(LifecycleCommand.APPROVE)
                 outboxEventRepository.append(
                     OutboxEvent(
@@ -95,11 +107,24 @@ class DocumentReviewWorkflowService(
                     ),
                 )
             } else {
-                workflow.reject(taskId, operator, comment)
+                workflow.reject(taskId, operator.id, comment)
                 document.transition(LifecycleCommand.REJECT)
             }
             workflowRepository.save(workflow)
             documentRepository.save(document)
+            auditTrail?.record(
+                tenantId = tenant.tenantId,
+                resourceType = DOCUMENT_RESOURCE_TYPE,
+                resourceId = document.id,
+                action = if (approved) APPROVED_AUDIT_ACTION else REJECTED_AUDIT_ACTION,
+                operatorId = operator.id,
+                operatorName = operator.displayName,
+                details = linkedMapOf<String, String>().apply {
+                    put("workflowId", workflow.id.value)
+                    put("taskId", taskId.value)
+                    comment?.let { put("comment", it) }
+                },
+            )
             document
         }
     }
@@ -109,6 +134,10 @@ class DocumentReviewWorkflowService(
         const val SUBMIT_ACTION = "document:submit"
         const val AUDIT_ACTION = "document:audit"
         const val PUBLISH_REQUESTED_EVENT_TYPE = "document.publish.requested"
+        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        const val SUBMITTED_AUDIT_ACTION = "document:review:submit"
+        const val APPROVED_AUDIT_ACTION = "document:review:approve"
+        const val REJECTED_AUDIT_ACTION = "document:review:reject"
     }
 }
 

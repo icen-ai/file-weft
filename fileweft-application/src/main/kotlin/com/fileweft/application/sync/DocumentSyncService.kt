@@ -145,6 +145,7 @@ class DocumentSyncService(
             resourceType = "DOCUMENT",
             resourceId = documentId,
             action = "document.sync",
+            operatorName = "SYSTEM",
             details = linkedMapOf<String, String>().apply {
                 put("sourceEventId", sourceEvent.id.value)
                 put("connector", connectorName)

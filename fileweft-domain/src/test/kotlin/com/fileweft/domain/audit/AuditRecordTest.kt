@@ -11,11 +11,12 @@ class AuditRecordTest {
         val details = linkedMapOf("status" to "SUCCESS")
         val record = AuditRecord(
             Identifier("audit-1"), Identifier("tenant-1"), "DOCUMENT", Identifier("document-1"),
-            "document.sync", details = details, createdAt = 1,
+            "document.sync", details = details, createdAt = 1, operatorName = "审批人 A",
         )
         details["status"] = "CHANGED"
 
         assertEquals("SUCCESS", record.details["status"])
+        assertEquals("审批人 A", record.operatorName)
         assertFailsWith<UnsupportedOperationException> {
             (record.details as MutableMap<String, String>)["new"] = "value"
         }

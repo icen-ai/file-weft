@@ -42,6 +42,7 @@ data class DevAuditView(
     val id: String,
     val action: String,
     val operatorId: String?,
+    val operatorName: String?,
     val details: String?,
     val createdTime: Long,
 )
@@ -142,7 +143,10 @@ class DevDocumentQueryService(
             DevWorkflowTaskView(result.getString("id"), result.getString("assignee_id"), result.getString("task_state"), result.getString("comment_text"))
         }
         val AUDIT_MAPPER = org.springframework.jdbc.core.RowMapper<DevAuditView> { result, _ ->
-            DevAuditView(result.getString("id"), result.getString("action"), result.getString("operator_id"), result.getString("detail_json"), result.getLong("created_time"))
+            DevAuditView(
+                result.getString("id"), result.getString("action"), result.getString("operator_id"),
+                result.getString("operator_name"), result.getString("detail_json"), result.getLong("created_time"),
+            )
         }
         val SYNC_MAPPER = org.springframework.jdbc.core.RowMapper<DevSyncView> { result, _ ->
             DevSyncView(
@@ -185,7 +189,7 @@ class DevDocumentQueryService(
             WHERE tenant_id = ? AND workflow_id = ? ORDER BY created_time, id
         """
         const val AUDITS_SQL = """
-            SELECT id, action, operator_id, detail_json::text AS detail_json, created_time FROM fw_audit_record
+            SELECT id, action, operator_id, operator_name, detail_json::text AS detail_json, created_time FROM fw_audit_record
             WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ? ORDER BY created_time DESC
         """
         const val SYNC_SQL = """

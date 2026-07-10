@@ -112,8 +112,8 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DocumentCommandService::class)
     fun fileWeftDocumentCommandService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, transaction: ApplicationTransaction,
-    ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, documents, transaction)
+        documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(DocumentDraftService::class)
@@ -130,31 +130,31 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftPublishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, outbox: OutboxEventRepository, identifiers: IdentifierGenerator,
-        transaction: ApplicationTransaction, clock: Clock,
-    ): PublishDocumentService = PublishDocumentService(tenants, users, authorization, documents, outbox, identifiers, transaction, clock)
+        transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
+    ): PublishDocumentService = PublishDocumentService(tenants, users, authorization, documents, outbox, identifiers, transaction, clock, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(OfflineDocumentService::class)
     fun fileWeftOfflineService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, transaction: ApplicationTransaction,
-    ): OfflineDocumentService = OfflineDocumentService(tenants, users, authorization, documents, transaction)
+        documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ): OfflineDocumentService = OfflineDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(ArchiveDocumentService::class)
     fun fileWeftArchiveService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, transaction: ApplicationTransaction,
-    ): ArchiveDocumentService = ArchiveDocumentService(tenants, users, authorization, documents, transaction)
+        documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ): ArchiveDocumentService = ArchiveDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
     @ConditionalOnMissingBean(DocumentReviewWorkflowService::class)
     fun fileWeftReviewWorkflowService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, workflows: WorkflowInstanceRepository, outbox: OutboxEventRepository,
-        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
     ): DocumentReviewWorkflowService = DocumentReviewWorkflowService(
-        tenants, users, authorization, documents, workflows, outbox, identifiers, transaction, clock,
+        tenants, users, authorization, documents, workflows, outbox, identifiers, transaction, clock, auditTrail,
     )
 
     @Bean

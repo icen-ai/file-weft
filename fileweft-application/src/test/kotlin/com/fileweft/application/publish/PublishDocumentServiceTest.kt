@@ -1,5 +1,6 @@
 package com.fileweft.application.publish
 
+import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
@@ -11,6 +12,8 @@ import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
+import com.fileweft.domain.audit.AuditRecord
+import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
@@ -29,12 +32,13 @@ class PublishDocumentServiceTest {
         val document = pendingReviewDocument()
         val documentRepository = InMemoryDocumentRepository(document)
         val outbox = RecordingOutbox()
+        val audits = RecordingAudits()
         val service = PublishDocumentService(
             tenantProvider = object : TenantProvider {
                 override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
             },
             userRealmProvider = object : UserRealmProvider {
-                override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"))
+                override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "发布管理员")
 
                 override fun findUser(userId: Identifier): UserIdentity? = null
             },
@@ -48,6 +52,11 @@ class PublishDocumentServiceTest {
             },
             transaction = DirectTransaction,
             clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+            auditTrail = AuditTrail(
+                audits,
+                object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("audit-1") },
+                Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+            ),
         )
 
         service.publish(document.id)
@@ -57,6 +66,8 @@ class PublishDocumentServiceTest {
         assertEquals("document.publish.requested", outbox.events.single().type)
         assertEquals(document.id.value, outbox.events.single().payload["documentId"])
         assertEquals(100, outbox.events.single().timestamp)
+        assertEquals("document:publish:request", audits.records.single().action)
+        assertEquals("发布管理员", audits.records.single().operatorName)
     }
 
     private fun pendingReviewDocument(): Document {
@@ -99,6 +110,12 @@ class PublishDocumentServiceTest {
         override fun append(event: OutboxEvent) {
             events.add(event)
         }
+    }
+
+    private class RecordingAudits : AuditRecordRepository {
+        val records = mutableListOf<AuditRecord>()
+        override fun append(record: AuditRecord) { records += record }
+        override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
     }
 
     private object DirectTransaction : ApplicationTransaction {

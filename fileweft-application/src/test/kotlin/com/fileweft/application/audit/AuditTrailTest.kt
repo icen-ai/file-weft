@@ -23,13 +23,17 @@ class AuditTrailTest {
             resourceType = "DOCUMENT",
             resourceId = Identifier("document-1"),
             action = "document.sync",
+            operatorId = Identifier("10001"),
             details = mapOf("connector" to "test"),
+            operatorName = "外部审批人",
         )
 
         assertEquals(record, repository.records.single())
         assertEquals("audit-1", record.id.value)
         assertEquals(100, record.createdAt)
         assertEquals("test", record.details["connector"])
+        assertEquals("10001", record.operatorId?.value)
+        assertEquals("外部审批人", record.operatorName)
     }
 
     private class RecordingRepository : AuditRecordRepository {
