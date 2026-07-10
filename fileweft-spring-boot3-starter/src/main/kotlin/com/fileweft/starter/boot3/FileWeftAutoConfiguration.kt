@@ -3,6 +3,7 @@ package com.fileweft.starter.boot3
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.id.UuidIdentifierGenerator
 import com.fileweft.adapter.observability.NoOpFileWeftMetrics
+import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.core.context.TenantContext
@@ -11,6 +12,7 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
+import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -64,4 +66,8 @@ class FileWeftAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(FileWeftMetrics::class)
     fun fileWeftMetrics(): FileWeftMetrics = NoOpFileWeftMetrics()
+
+    @Bean
+    @ConditionalOnMissingBean(TraceContextProvider::class)
+    fun fileWeftTraceContextProvider(): TraceContextProvider = NoOpTraceContextProvider()
 }

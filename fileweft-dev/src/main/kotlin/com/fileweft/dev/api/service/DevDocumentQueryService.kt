@@ -48,6 +48,16 @@ data class DevAuditView(
     val createdTime: Long,
 )
 
+data class DevOperationLogView(
+    val id: String,
+    val action: String,
+    val operatorId: String?,
+    val operatorName: String?,
+    val traceId: String?,
+    val details: String?,
+    val createdTime: Long,
+)
+
 data class DevSyncView(
     val id: String,
     val sourceEventId: String,
@@ -109,6 +119,7 @@ data class DevDocumentDetail(
     val versions: List<DevDocumentVersionView>,
     val workflows: List<DevWorkflowView>,
     val audits: List<DevAuditView>,
+    val operationLogs: List<DevOperationLogView>,
     val deliveries: List<DevDeliveryView>,
     val tasks: List<DevBackgroundTaskView>,
     val doctorRecords: List<DevDoctorRecordView>,
@@ -145,6 +156,7 @@ class DevDocumentQueryService(
             versions = jdbcTemplate.query(VERSIONS_SQL, VERSION_MAPPER, tenantId, documentId.value),
             workflows = loadWorkflows(tenantId, documentId.value),
             audits = jdbcTemplate.query(AUDITS_SQL, AUDIT_MAPPER, tenantId, documentId.value),
+            operationLogs = jdbcTemplate.query(OPERATION_LOGS_SQL, OPERATION_LOG_MAPPER, tenantId, documentId.value),
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
             doctorRecords = jdbcTemplate.query(DOCTOR_RECORDS_SQL, DOCTOR_RECORD_MAPPER, tenantId, documentId.value),
@@ -188,6 +200,13 @@ class DevDocumentQueryService(
             DevAuditView(
                 result.getString("id"), result.getString("action"), result.getString("operator_id"),
                 result.getString("operator_name"), result.getString("detail_json"), result.getLong("created_time"),
+            )
+        }
+        val OPERATION_LOG_MAPPER = org.springframework.jdbc.core.RowMapper<DevOperationLogView> { result, _ ->
+            DevOperationLogView(
+                result.getString("id"), result.getString("action"), result.getString("operator_id"),
+                result.getString("operator_name"), result.getString("trace_id"), result.getString("detail_json"),
+                result.getLong("created_time"),
             )
         }
         val SYNC_MAPPER = org.springframework.jdbc.core.RowMapper<DevSyncView> { result, _ ->
@@ -266,6 +285,12 @@ class DevDocumentQueryService(
         const val AUDITS_SQL = """
             SELECT id, action, operator_id, operator_name, detail_json::text AS detail_json, created_time FROM fw_audit_record
             WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ? ORDER BY created_time DESC
+        """
+        const val OPERATION_LOGS_SQL = """
+            SELECT id, action, operator_id, operator_name, trace_id, detail_json::text AS detail_json, created_time
+            FROM fw_operation_log
+            WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ?
+            ORDER BY created_time DESC, id DESC
         """
         const val SYNC_SQL = """
             SELECT id, source_event_id, connector_name, sync_status, external_id, error_message, retry_count, updated_time

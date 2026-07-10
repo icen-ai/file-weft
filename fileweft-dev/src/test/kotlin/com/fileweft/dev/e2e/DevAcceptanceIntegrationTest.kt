@@ -80,6 +80,24 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `mirrors document audit evidence into operation history with the request trace`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val traceId = "e2e-operation-${UUID.randomUUID().toString().take(12)}"
+        val documentId = createDraft(
+            editor,
+            "E2E-TRACE-${UUID.randomUUID().toString().take(12)}",
+            traceId = traceId,
+        ).path("document").path("id").asText()
+
+        val detail = getJson("$apiUrl/api/documents/$documentId", editor)
+        val audit = detail.path("audits").first { it.path("action").asText() == "document:create" }
+        val operation = detail.path("operationLogs").first { it.path("action").asText() == "document:create" }
+        assertEquals(audit.path("id").asText(), operation.path("id").asText())
+        assertEquals(traceId, operation.path("traceId").asText())
+        assertEquals("alpha-editor", operation.path("operatorId").asText())
+    }
+
+    @Test
     fun `keeps catalog folders and bound documents isolated between tenants`() {
         val alphaEditor = login("editor@alpha", "dev-editor")
         val betaEditor = login("editor@beta", "dev-editor")
@@ -292,11 +310,17 @@ class DevAcceptanceIntegrationTest {
         null,
     ).also { response -> assertTrue(response.path("token").asText().isNotBlank()) }
 
-    private fun createDraft(token: String, documentNumber: String, folderId: String = "inbox"): JsonNode {
+    private fun createDraft(
+        token: String,
+        documentNumber: String,
+        folderId: String = "inbox",
+        traceId: String? = null,
+    ): JsonNode {
         return uploadFile(
             "$apiUrl/api/documents",
             mapOf("documentNumber" to documentNumber, "title" to "Compose 验收文档", "folderId" to folderId),
             token,
+            traceId,
         )
     }
 
@@ -306,13 +330,18 @@ class DevAcceptanceIntegrationTest {
         token,
     )
 
-    private fun uploadFile(url: String, fields: Map<String, String>, token: String): JsonNode {
-        val response = uploadFileResponse(url, fields, token)
+    private fun uploadFile(url: String, fields: Map<String, String>, token: String, traceId: String? = null): JsonNode {
+        val response = uploadFileResponse(url, fields, token, traceId)
         assertTrue(response.statusCode() in 200..299, "HTTP ${response.statusCode()}: ${response.body()}")
         return mapper.readTree(response.body().ifBlank { "{}" })
     }
 
-    private fun uploadFileResponse(url: String, fields: Map<String, String>, token: String): HttpResponse<String> {
+    private fun uploadFileResponse(
+        url: String,
+        fields: Map<String, String>,
+        token: String,
+        traceId: String? = null,
+    ): HttpResponse<String> {
         val boundary = "FileWeft-${UUID.randomUUID()}"
         val content = "development acceptance payload".toByteArray(StandardCharsets.UTF_8)
         val body = ByteArrayOutputStream().apply {
@@ -323,12 +352,13 @@ class DevAcceptanceIntegrationTest {
             write(content)
             writeText("\r\n--$boundary--\r\n")
         }.toByteArray()
-        return client.send(
-            HttpRequest.newBuilder(URI(url))
+        val request = HttpRequest.newBuilder(URI(url))
                 .header("Content-Type", "multipart/form-data; boundary=$boundary")
                 .header("Authorization", "Bearer $token")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build(),
+        traceId?.let { request.header("X-Trace-Id", it) }
+        return client.send(
+            request.build(),
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
         )
     }

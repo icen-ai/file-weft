@@ -42,10 +42,10 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `applies schema migrations for outbox recovery workflow tasks and doctor records`() {
+    fun `applies schema migrations for outbox recovery workflow tasks doctor records and operations`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(9, migrations)
+        assertEquals(10, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -58,10 +58,12 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(tableExists(connection, "fw_workflow_task"))
             assertTrue(tableExists(connection, "fw_task"))
             assertTrue(tableExists(connection, "fw_doctor_record"))
+            assertTrue(tableExists(connection, "fw_operation_log"))
             assertTrue(columnExists(connection, "fw_outbox_event", "next_attempt_time"))
             assertTrue(columnExists(connection, "fw_outbox_event", "last_error"))
             assertTrue(columnExists(connection, "fw_audit_record", "operator_name"))
             assertTrue(columnExists(connection, "fw_task", "lease_expire_time"))
+            assertTrue(columnExists(connection, "fw_operation_log", "trace_id"))
         }
     }
 

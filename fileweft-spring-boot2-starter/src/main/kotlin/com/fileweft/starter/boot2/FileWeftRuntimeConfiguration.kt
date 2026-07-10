@@ -41,6 +41,7 @@ import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.file.FileAssetRepository
 import com.fileweft.domain.file.FileObjectRepository
+import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.persistence.jdbc.JdbcApplicationTransaction
 import com.fileweft.persistence.jdbc.JdbcAuditRecordRepository
@@ -51,6 +52,7 @@ import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
 import com.fileweft.persistence.jdbc.JdbcFileObjectRepository
 import com.fileweft.persistence.jdbc.JdbcOutboxEventRepository
 import com.fileweft.persistence.jdbc.JdbcOutboxProcessingRepository
+import com.fileweft.persistence.jdbc.JdbcOperationLogRepository
 import com.fileweft.persistence.jdbc.JdbcSyncRecordRepository
 import com.fileweft.persistence.jdbc.JdbcTaskRepository
 import com.fileweft.persistence.jdbc.JdbcWorkflowInstanceRepository
@@ -64,6 +66,7 @@ import com.fileweft.spi.doctor.DoctorChecker
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
+import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.task.FileWeftTaskHandler
@@ -105,6 +108,10 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftAuditRepository(objectMapper: ObjectMapper): AuditRecordRepository = JdbcAuditRecordRepository(objectMapper)
 
     @Bean
+    @ConditionalOnMissingBean(OperationLogRepository::class)
+    fun fileWeftOperationLogRepository(objectMapper: ObjectMapper): OperationLogRepository = JdbcOperationLogRepository(objectMapper)
+
+    @Bean
     @ConditionalOnMissingBean(DoctorReportRepository::class)
     fun fileWeftDoctorReportRepository(objectMapper: ObjectMapper, clock: Clock): DoctorReportRepository =
         JdbcDoctorReportRepository(objectMapper, clock)
@@ -132,8 +139,13 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)
-    fun fileWeftAuditTrail(repository: AuditRecordRepository, identifiers: IdentifierGenerator, clock: Clock): AuditTrail =
-        AuditTrail(repository, identifiers, clock)
+    fun fileWeftAuditTrail(
+        repository: AuditRecordRepository,
+        operationLogs: OperationLogRepository,
+        traceContextProvider: TraceContextProvider,
+        identifiers: IdentifierGenerator,
+        clock: Clock,
+    ): AuditTrail = AuditTrail(repository, identifiers, clock, operationLogs, traceContextProvider)
 
     @Bean
     @ConditionalOnMissingBean(DeliveryConnectorResolver::class)

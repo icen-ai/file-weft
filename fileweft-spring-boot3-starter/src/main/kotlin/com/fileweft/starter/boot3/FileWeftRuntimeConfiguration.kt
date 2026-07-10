@@ -20,6 +20,7 @@ import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.file.FileAssetRepository
 import com.fileweft.domain.file.FileObjectRepository
+import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.persistence.jdbc.*
 import com.fileweft.spi.authorization.AuthorizationProvider
@@ -32,6 +33,7 @@ import com.fileweft.spi.doctor.DoctorChecker
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
+import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.task.FileWeftTaskHandler
@@ -73,6 +75,10 @@ class FileWeftRuntimeConfiguration {
     fun audits(objectMapper: ObjectMapper): AuditRecordRepository = JdbcAuditRecordRepository(objectMapper)
 
     @Bean
+    @ConditionalOnMissingBean(OperationLogRepository::class)
+    fun operationLogs(objectMapper: ObjectMapper): OperationLogRepository = JdbcOperationLogRepository(objectMapper)
+
+    @Bean
     @ConditionalOnMissingBean(DoctorReportRepository::class)
     fun doctorReports(objectMapper: ObjectMapper, clock: Clock): DoctorReportRepository = JdbcDoctorReportRepository(objectMapper, clock)
 
@@ -98,7 +104,13 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)
-    fun auditTrail(repository: AuditRecordRepository, identifiers: IdentifierGenerator, clock: Clock) = AuditTrail(repository, identifiers, clock)
+    fun auditTrail(
+        repository: AuditRecordRepository,
+        operationLogs: OperationLogRepository,
+        traceContextProvider: TraceContextProvider,
+        identifiers: IdentifierGenerator,
+        clock: Clock,
+    ) = AuditTrail(repository, identifiers, clock, operationLogs, traceContextProvider)
 
     @Bean
     @ConditionalOnMissingBean(DeliveryConnectorResolver::class)

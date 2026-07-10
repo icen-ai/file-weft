@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
 
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)
 class DevAuthenticationFilter(
     private val sessions: DevSessionStore,
 ) : OncePerRequestFilter() {

@@ -109,6 +109,12 @@ fileweft:
 
 Doctor 提供两条受控路径：即时检查用于交互式请求；异步检查在请求时先完成 `document:doctor` 授权，随后由无用户会话的后台 Worker 仅执行只读技术检查。结果写入 `fw_doctor_record`，因此运营者可保留诊断历史，而不会让后台线程绕过用户权限。开发验收台可排队 Doctor、查看任务状态与打开历史报告；仅管理员可手动处理任务队列。
 
+## 操作日志与请求追踪
+
+每一条由 `AuditTrail` 写入的业务审计记录，都会在同一个应用事务内镜像为 `fw_operation_log`。两者共享同一个不可变 ID，并保留租户、资源、动作、外部用户 ID、显示名快照、JSON 明细与发生时间；操作日志额外保存可选的 `trace_id`。因此审计语义保持兼容，而运维系统可以按资源或 Trace 聚合操作证据。
+
+`TraceContextProvider` 是不绑定日志框架或链路追踪厂商的 SPI。Starter 默认提供安全的空实现；接入 OpenTelemetry、Micrometer Tracing、消息头或其他宿主追踪系统时，只需提供该 SPI Bean。开发验收应用会接受格式受限的 `X-Trace-Id`（否则生成新的 ID），在响应中回显，并在文档检视器的“操作追踪”区域展示。异步 Worker 不会伪造原 HTTP Trace：跨异步/跨系统关联应由接入方在 Outbox 载荷和连接器协议中显式传播并持久化。
+
 Spring Boot Starter 默认使用本地存储；可通过以下配置修改根目录：
 
 ```properties

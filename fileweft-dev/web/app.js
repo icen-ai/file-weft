@@ -276,6 +276,13 @@ function renderInspector() {
     const actorId = audit.operatorId ? ` · ${escapeHtml(audit.operatorId)}` : "";
     return evidenceItem(localizedAudit(audit.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(audit.createdTime))}`);
   }).join("") || emptyEvidence("empty.audit");
+  $("#operation-log-list").innerHTML = detail.operationLogs.map((operation) => {
+    const actorName = operation.operatorName || (operation.operatorId ? t("actor.unnamed") : t("actor.system"));
+    const actorId = operation.operatorId ? ` · ${escapeHtml(operation.operatorId)}` : "";
+    const trace = operation.traceId ? ` · ${escapeHtml(t("operation.trace"))}:${escapeHtml(operation.traceId)}` : ` · ${escapeHtml(t("operation.noTrace"))}`;
+    const details = operation.details ? ` · ${escapeHtml(operation.details)}` : "";
+    return evidenceItem(localizedAudit(operation.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(operation.createdTime))}${trace}${details}`);
+  }).join("") || emptyEvidence("empty.operation");
   renderActions();
 }
 

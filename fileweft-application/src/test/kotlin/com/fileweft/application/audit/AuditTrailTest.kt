@@ -2,8 +2,12 @@ package com.fileweft.application.audit
 
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
+import com.fileweft.core.context.TraceContext
 import com.fileweft.domain.audit.AuditRecord
 import com.fileweft.domain.audit.AuditRecordRepository
+import com.fileweft.domain.operation.OperationLogRecord
+import com.fileweft.domain.operation.OperationLogRepository
+import com.fileweft.spi.observability.TraceContextProvider
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Instant
@@ -36,9 +40,55 @@ class AuditTrailTest {
         assertEquals("外部审批人", record.operatorName)
     }
 
+    @Test
+    fun `mirrors audit evidence into operation history with the active trace`() {
+        val audits = RecordingRepository()
+        val operations = RecordingOperationLogs()
+        AuditTrail(
+            audits,
+            object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("audit-2") },
+            Clock.fixed(Instant.ofEpochMilli(200), ZoneOffset.UTC),
+            operations,
+            object : TraceContextProvider {
+                override fun currentTraceContext(): TraceContext = TraceContext(Identifier("trace-acceptance-1"))
+            },
+        ).record(
+            tenantId = Identifier("tenant-1"),
+            resourceType = "DOCUMENT",
+            resourceId = Identifier("document-1"),
+            action = "document:create",
+            operatorId = Identifier("external-user-id"),
+            operatorName = "外部编辑者",
+            details = mapOf("source" to "HTTP"),
+        )
+
+        val operation = operations.records.single()
+        assertEquals("audit-2", operation.id.value)
+        assertEquals("trace-acceptance-1", operation.traceId?.value)
+        assertEquals("external-user-id", operation.operatorId?.value)
+        assertEquals("外部编辑者", operation.operatorName)
+        assertEquals("HTTP", operation.details["source"])
+        assertEquals(200, operation.createdAt)
+    }
+
     private class RecordingRepository : AuditRecordRepository {
         val records = mutableListOf<AuditRecord>()
         override fun append(record: AuditRecord) { records += record }
         override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
+    }
+
+    private class RecordingOperationLogs : OperationLogRepository {
+        val records = mutableListOf<OperationLogRecord>()
+
+        override fun append(record: OperationLogRecord) {
+            records += record
+        }
+
+        override fun findByResource(
+            tenantId: Identifier,
+            resourceType: String,
+            resourceId: Identifier,
+            limit: Int,
+        ): List<OperationLogRecord> = emptyList()
     }
 }

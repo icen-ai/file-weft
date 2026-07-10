@@ -14,6 +14,7 @@ import com.fileweft.dev.api.catalog.DevDocumentCatalogProvider
 import com.fileweft.dev.api.connector.DevPlatformConnector
 import com.fileweft.dev.api.security.DevAuthorizationProvider
 import com.fileweft.dev.api.security.DevSessionStore
+import com.fileweft.dev.api.security.DevTraceContextProvider
 import com.fileweft.dev.api.security.DevTenantProvider
 import com.fileweft.dev.api.security.DevUserDirectory
 import com.fileweft.dev.api.security.DevUserRealmProvider
@@ -45,6 +46,9 @@ class DevApiConfiguration {
 
     @Bean
     fun devSessionStore(): DevSessionStore = DevSessionStore()
+
+    @Bean
+    fun devTraceContextProvider(): DevTraceContextProvider = DevTraceContextProvider()
 
     @Bean
     fun devAuthService(users: DevUserDirectory, sessions: DevSessionStore): DevAuthService = DevAuthService(users, sessions)

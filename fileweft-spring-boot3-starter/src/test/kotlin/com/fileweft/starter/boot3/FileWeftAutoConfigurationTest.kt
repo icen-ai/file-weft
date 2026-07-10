@@ -4,6 +4,7 @@ import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.adapter.observability.NoOpFileWeftMetrics
+import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.document.DocumentDraftService
@@ -14,6 +15,8 @@ import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.observability.FileWeftMetrics
+import com.fileweft.spi.observability.TraceContextProvider
+import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.spi.authorization.AuthorizationAction
@@ -85,6 +88,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(AuthorizationProvider::class.java) is DefaultAuthorizationProvider)
             assertTrue(context.getBean(StorageAdapter::class.java) is LocalStorageAdapter)
             assertTrue(context.getBean(FileWeftMetrics::class.java) is NoOpFileWeftMetrics)
+            assertTrue(context.getBean(TraceContextProvider::class.java) is NoOpTraceContextProvider)
         }
     }
 
@@ -113,6 +117,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
             assertTrue(context.getBean(OutboxWorker::class.java) != null)
+            assertTrue(context.getBean(OperationLogRepository::class.java) != null)
         }
     }
 
