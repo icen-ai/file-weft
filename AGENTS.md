@@ -404,6 +404,24 @@ Avoid:
 
 ---
 
+# 16. Local Development Services
+
+When local infrastructure is required, define it in:
+
+```
+.docker/docker-compose.dev.yaml
+```
+
+The compose file must preserve the top-level project name:
+
+```
+name: fw-dev
+```
+
+Do not create local containers before the relevant implementation phase requires them.
+
+---
+
 # Final Rule
 
 When uncertain:
