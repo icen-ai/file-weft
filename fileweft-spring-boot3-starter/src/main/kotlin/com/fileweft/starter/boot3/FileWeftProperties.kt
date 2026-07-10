@@ -8,7 +8,13 @@ class FileWeftProperties {
 
     var storage: StorageProperties = StorageProperties()
 
+    var sync: SyncProperties = SyncProperties()
+
     class StorageProperties {
         var localRoot: String = "./fileweft-data"
+    }
+
+    class SyncProperties {
+        var connectorName: String = "default"
     }
 }

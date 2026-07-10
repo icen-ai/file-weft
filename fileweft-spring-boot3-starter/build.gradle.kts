@@ -5,6 +5,8 @@ plugins {
 dependencies {
     api(project(":fileweft-runtime"))
     implementation(project(":fileweft-adapter"))
+    implementation(project(":fileweft-persistence"))
+    implementation(libs.jackson.databind)
     api(libs.spring.boot3.autoconfigure)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

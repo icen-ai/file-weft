@@ -1,6 +1,7 @@
 package com.fileweft.adapter
 
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
+import com.fileweft.adapter.id.UuidIdentifierGenerator
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.authorization.AuthorizationAction
@@ -35,5 +36,17 @@ class DefaultAdapterTest {
 
         assertFalse(decision.allowed)
         assertEquals(DefaultAuthorizationProvider.REASON, decision.reason)
+    }
+
+    @Test
+    fun `default identifier generator returns distinct non blank identifiers`() {
+        val generator = UuidIdentifierGenerator()
+
+        val first = generator.nextId()
+        val second = generator.nextId()
+
+        assertEquals(32, first.value.length)
+        assertEquals(32, second.value.length)
+        kotlin.test.assertNotEquals(first, second)
     }
 }

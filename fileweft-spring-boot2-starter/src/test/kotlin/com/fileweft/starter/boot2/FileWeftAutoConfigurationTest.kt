@@ -3,9 +3,16 @@ package com.fileweft.starter.boot2
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
+import com.fileweft.application.archive.ArchiveDocumentService
+import com.fileweft.application.doctor.DoctorApplicationService
+import com.fileweft.application.outbox.OutboxWorker
+import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.tenant.TenantProvider
+import com.fileweft.domain.document.DocumentRepository
+import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.spi.authorization.AuthorizationAction
 import com.fileweft.spi.authorization.AuthorizationEnvironment
 import com.fileweft.spi.authorization.AuthorizationProvider
@@ -32,6 +39,11 @@ import java.io.InputStream
 import java.net.URI
 import java.nio.file.Path
 import java.time.Duration
+import java.io.PrintWriter
+import java.sql.Connection
+import java.sql.SQLFeatureNotSupportedException
+import java.util.logging.Logger
+import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertFalse
@@ -86,6 +98,26 @@ class FileWeftAutoConfigurationTest {
         }
     }
 
+    @Test
+    fun `assembles persistence backed runtime services when a data source is available`() {
+        contextRunner().withUserConfiguration(DatabaseConfiguration::class.java).run { context ->
+            assertTrue(context.getBean(ApplicationTransaction::class.java) != null)
+            assertTrue(context.getBean(DocumentRepository::class.java) != null)
+            assertTrue(context.getBean(WorkflowInstanceRepository::class.java) != null)
+            assertTrue(context.getBean(UploadApplicationService::class.java) != null)
+            assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
+            assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
+            assertTrue(context.getBean(OutboxWorker::class.java) != null)
+        }
+    }
+
+    @Test
+    fun `does not replace a customer document repository when assembling runtime services`() {
+        contextRunner().withUserConfiguration(DatabaseWithDocumentRepositoryConfiguration::class.java).run { context ->
+            assertSame(context.getBean("customerDocumentRepository"), context.getBean(DocumentRepository::class.java))
+        }
+    }
+
     private fun contextRunner(): ApplicationContextRunner = ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
         .withPropertyValues("fileweft.storage.local-root=${storageRoot.toAbsolutePath()}")
@@ -119,6 +151,24 @@ class FileWeftAutoConfigurationTest {
         fun customerStorageAdapter(): StorageAdapter = CustomerStorageAdapter
     }
 
+    @Configuration(proxyBeanMethods = false)
+    class DatabaseConfiguration {
+        @Bean
+        fun dataSource(): DataSource = StubDataSource
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class DatabaseWithDocumentRepositoryConfiguration {
+        @Bean
+        fun dataSource(): DataSource = StubDataSource
+
+        @Bean
+        fun customerDocumentRepository(): DocumentRepository = object : DocumentRepository {
+            override fun findById(tenantId: Identifier, documentId: Identifier) = null
+            override fun save(document: com.fileweft.domain.document.Document) = Unit
+        }
+    }
+
     private object CustomerStorageAdapter : StorageAdapter {
         override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = unsupported()
         override fun download(location: StorageObjectLocation): StorageDownload = unsupported()
@@ -131,5 +181,17 @@ class FileWeftAutoConfigurationTest {
         override fun abortMultipartUpload(upload: MultipartUpload) = unsupported<Unit>()
 
         private fun <T> unsupported(): T = throw UnsupportedOperationException("Test double")
+    }
+
+    private object StubDataSource : DataSource {
+        override fun getConnection(): Connection = throw UnsupportedOperationException("Test data source")
+        override fun getConnection(username: String?, password: String?): Connection = throw UnsupportedOperationException("Test data source")
+        override fun getLogWriter(): PrintWriter? = null
+        override fun setLogWriter(out: PrintWriter?) = Unit
+        override fun setLoginTimeout(seconds: Int) = Unit
+        override fun getLoginTimeout(): Int = 0
+        override fun getParentLogger(): Logger = Logger.getGlobal()
+        override fun <T : Any?> unwrap(iface: Class<T>?): T = throw SQLFeatureNotSupportedException()
+        override fun isWrapperFor(iface: Class<*>?): Boolean = false
     }
 }
