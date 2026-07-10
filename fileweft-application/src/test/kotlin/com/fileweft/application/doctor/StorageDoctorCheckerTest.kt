@@ -1,5 +1,6 @@
 package com.fileweft.application.doctor
 
+import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.DoctorCheckContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.result.DoctorStatus
@@ -31,6 +32,7 @@ class StorageDoctorCheckerTest {
             InMemoryDocumentRepository(documentWithActiveVersion()),
             InMemoryFileObjectRepository(fileObject()),
             storage,
+            DirectTransaction,
         ).check(context())
 
         assertEquals(DoctorStatus.ERROR, result.status)
@@ -44,6 +46,36 @@ class StorageDoctorCheckerTest {
         assertEquals(DoctorStatus.HEALTHY, result.status)
     }
 
+    @Test
+    fun `inspects object storage after the repository transaction has completed`() {
+        var inTransaction = false
+        val transaction = object : ApplicationTransaction {
+            override fun <T> execute(action: () -> T): T {
+                inTransaction = true
+                return try {
+                    action()
+                } finally {
+                    inTransaction = false
+                }
+            }
+        }
+        val storage = object : StorageAdapterStub() {
+            override fun exists(location: StorageObjectLocation): Boolean {
+                assertEquals(false, inTransaction)
+                return true
+            }
+        }
+
+        val result = StorageDoctorChecker(
+            InMemoryDocumentRepository(documentWithActiveVersion()),
+            InMemoryFileObjectRepository(fileObject()),
+            storage,
+            transaction,
+        ).check(context())
+
+        assertEquals(DoctorStatus.HEALTHY, result.status)
+    }
+
     private fun checker(fileObjects: InMemoryFileObjectRepository, exists: Boolean): StorageDoctorChecker =
         StorageDoctorChecker(
             InMemoryDocumentRepository(documentWithActiveVersion()),
@@ -51,7 +83,12 @@ class StorageDoctorCheckerTest {
             object : StorageAdapterStub() {
                 override fun exists(location: StorageObjectLocation): Boolean = exists
             },
+            DirectTransaction,
         )
 
     private fun context() = DoctorCheckContext(Identifier("tenant-1"), Identifier("document-1"))
+
+    private object DirectTransaction : ApplicationTransaction {
+        override fun <T> execute(action: () -> T): T = action()
+    }
 }

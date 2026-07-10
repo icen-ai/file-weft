@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101613" />
+    <title>FileWeft / 开发验收台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <main class="shell">
+      <section id="login-view" class="login-view">
+        <div class="login-mark">
+          <span class="index">01 / DEV ACCEPTANCE</span>
+          <h1>文件的<br /><em>秩序</em>与流动。</h1>
+          <p>FileWeft 开发验收台。以真实用户、真实 S3、真实 Outbox 和真实下游连接器验证每一条文档链路。</p>
+        </div>
+        <div class="login-card">
+          <div class="card-heading">
+            <span class="status-dot"></span>
+            <span>身份接入</span>
+          </div>
+          <form id="login-form">
+            <label>用户名<input id="username" name="username" autocomplete="username" placeholder="editor@alpha" required /></label>
+            <label>开发密码<input id="password" name="password" type="password" autocomplete="current-password" placeholder="dev-editor" required /></label>
+            <button class="primary wide" type="submit">进入验收台 <span>→</span></button>
+          </form>
+          <div class="preset-label">预置身份 / 用于权限验收</div>
+          <div class="preset-grid">
+            <button class="preset" data-user="admin@alpha" data-password="dev-admin"><b>管理员</b><small>完全控制</small></button>
+            <button class="preset" data-user="editor@alpha" data-password="dev-editor"><b>编辑者</b><small>创建与提交</small></button>
+            <button class="preset" data-user="reviewer@alpha" data-password="dev-reviewer"><b>审批者</b><small>审批与诊断</small></button>
+            <button class="preset" data-user="viewer@alpha" data-password="dev-viewer"><b>只读者</b><small>隔离验证</small></button>
+          </div>
+          <p class="dev-note">仅用于本地 Docker 开发环境，令牌重启后失效。</p>
+        </div>
+      </section>
+
+      <section id="app-view" class="app-view hidden">
+        <aside class="rail">
+          <div class="brand">
+            <span class="brand-glyph">F/W</span>
+            <span>FILEWEFT<br /><small>DEVELOPMENT LEDGER</small></span>
+          </div>
+          <div class="identity-card">
+            <span class="eyebrow">当前身份</span>
+            <strong id="identity-name">—</strong>
+            <span id="identity-meta" class="muted">—</span>
+            <span id="identity-role" class="role-tag">—</span>
+          </div>
+          <nav class="rail-nav" aria-label="开发验收导航">
+            <button class="nav-item active" data-panel="documents"><span>01</span> 文档流</button>
+            <button class="nav-item" data-panel="platform"><span>02</span> 下游镜像</button>
+            <button class="nav-item" data-panel="doctor"><span>03</span> Doctor</button>
+          </nav>
+          <div class="rail-footer">
+            <span class="pulse"></span>
+            <span>POSTGRES / RUSTFS / OUTBOX<br />已接入验收编排</span>
+          </div>
+          <button id="logout" class="text-button">退出会话</button>
+        </aside>
+
+        <section class="workbench">
+          <header class="topbar">
+            <div>
+              <span class="eyebrow">验收运行中</span>
+              <h2>文档 <em>流转账本</em></h2>
+            </div>
+            <div class="top-actions">
+              <button id="refresh" class="ghost">刷新</button>
+              <button id="process-outbox" class="outline">处理 Outbox</button>
+              <button id="open-create" class="primary">新建草稿 <span>+</span></button>
+            </div>
+          </header>
+
+          <div id="notice" class="notice hidden" role="status"></div>
+
+          <section class="signal-strip">
+            <div><span>当前租户</span><strong id="metric-tenant">—</strong></div>
+            <div><span>文档总数</span><strong id="metric-documents">0</strong></div>
+            <div><span>待审批</span><strong id="metric-review">0</strong></div>
+            <div><span>同步异常</span><strong id="metric-sync">0</strong></div>
+          </section>
+
+          <div id="create-drawer" class="create-drawer hidden">
+            <div class="drawer-head"><span>新建文档草稿</span><button id="close-create" class="icon-button" aria-label="关闭">×</button></div>
+            <form id="create-form" class="draft-form">
+              <label>文档编号<input name="documentNumber" required placeholder="DOC-2026-001" /></label>
+              <label>文档标题<input name="title" required placeholder="例如：采购合同验收稿" /></label>
+              <label class="file-field">首个版本文件<input name="file" type="file" required /><span>选择文件</span></label>
+              <button class="primary" type="submit">写入草稿并上传 <span>→</span></button>
+            </form>
+          </div>
+
+          <section id="documents-panel" class="ledger">
+            <div class="ledger-head">
+              <span>编号 / 标题</span><span>状态</span><span>更新时间</span><span>当前版本</span>
+            </div>
+            <div id="document-list" class="document-list"></div>
+          </section>
+
+          <section id="platform-panel" class="aux-panel hidden">
+            <div class="aux-title"><span>下游平台镜像</span><small>仅展示已选择文档的真实接收状态</small></div>
+            <pre id="platform-output">请选择文档。</pre>
+          </section>
+
+          <section id="doctor-panel" class="aux-panel hidden">
+            <div class="aux-title"><span>Doctor 诊断报告</span><small>基于当前身份、存储、生命周期和连接器</small></div>
+            <pre id="doctor-output">请选择文档后执行诊断。</pre>
+          </section>
+        </section>
+
+        <aside class="inspector">
+          <div class="inspector-head"><span>检视器</span><span id="selection-count">未选择</span></div>
+          <div id="empty-inspector" class="empty-inspector">
+            <span class="empty-glyph">↘</span>
+            <p>选择一份文档<br />查看证据、审批与同步轨迹。</p>
+          </div>
+          <div id="document-inspector" class="hidden">
+            <div class="document-title-block">
+              <span id="selected-number" class="eyebrow">—</span>
+              <h3 id="selected-title">—</h3>
+              <span id="selected-state" class="state-tag">—</span>
+            </div>
+            <div id="document-actions" class="action-grid"></div>
+            <form id="rename-form" class="compact-form hidden">
+              <input name="title" required placeholder="新标题" />
+              <button class="ghost" type="submit">改名</button>
+            </form>
+            <form id="version-form" class="compact-form hidden">
+              <input name="versionNumber" required placeholder="版本号，例如 1.1" />
+              <input name="file" type="file" required aria-label="新版文件" />
+              <button class="ghost" type="submit">追加版本</button>
+            </form>
+            <section class="evidence-section"><h4>版本证据</h4><div id="version-list"></div></section>
+            <section class="evidence-section"><h4>审批轨迹</h4><div id="workflow-list"></div></section>
+            <section class="evidence-section"><h4>同步记录</h4><div id="sync-list"></div></section>
+            <section class="evidence-section"><h4>审计日志</h4><div id="audit-list"></div></section>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

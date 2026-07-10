@@ -1,0 +1,18 @@
+FROM eclipse-temurin:21-jdk-jammy AS build
+
+WORKDIR /workspace
+COPY . .
+RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew --no-daemon --no-configuration-cache :fileweft-dev:installDist
+
+FROM eclipse-temurin:21-jre-jammy
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --create-home fileweft
+
+WORKDIR /opt/fileweft
+COPY --from=build --chown=fileweft:fileweft /workspace/fileweft-dev/build/install/fileweft-dev /opt/fileweft
+
+USER fileweft
+ENTRYPOINT ["java", "-cp", "/opt/fileweft/lib/*"]

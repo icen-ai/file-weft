@@ -1,5 +1,6 @@
 package com.fileweft.application.doctor
 
+import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.result.DoctorCheckResult
 import com.fileweft.core.result.DoctorStatus
@@ -29,7 +30,7 @@ class DoctorApplicationServiceTest {
             permissionChecker = permissionChecker(AuthorizationDecision(true)),
             checkers = listOf(
                 LifecycleDoctorChecker(InMemoryDocumentRepository(documentWithActiveVersion())),
-                StorageDoctorChecker(InMemoryDocumentRepository(documentWithActiveVersion()), InMemoryFileObjectRepository(fileObject()), storage),
+                StorageDoctorChecker(InMemoryDocumentRepository(documentWithActiveVersion()), InMemoryFileObjectRepository(fileObject()), storage, DirectTransaction),
                 ConnectorDoctorChecker(listOf(FixedConnector(ConnectorHealth(ConnectorHealthStatus.HEALTHY)))),
             ),
             clock = fixedClock(),
@@ -138,5 +139,9 @@ class DoctorApplicationServiceTest {
 
     private object ThrowingMetrics : FileWeftMetrics {
         override fun increment(metric: FileWeftMetric, tags: Map<String, String>) = throw IllegalStateException("metrics offline")
+    }
+
+    private object DirectTransaction : ApplicationTransaction {
+        override fun <T> execute(action: () -> T): T = action()
     }
 }

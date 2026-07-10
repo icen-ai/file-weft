@@ -144,8 +144,9 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(StorageDoctorChecker::class)
-    fun storageDoctor(documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter) =
-        StorageDoctorChecker(documents, fileObjects, storage)
+    fun storageDoctor(
+        documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter, transaction: ApplicationTransaction,
+    ) = StorageDoctorChecker(documents, fileObjects, storage, transaction)
 
     @Bean
     @ConditionalOnMissingBean(ConnectorDoctorChecker::class)
@@ -155,11 +156,14 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun doctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, clock: Clock, metrics: FileWeftMetrics,
+        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, transaction: ApplicationTransaction,
+        clock: Clock, metrics: FileWeftMetrics,
     ) = DoctorApplicationService(
         tenants, permission,
         listOf<DoctorChecker>(
-            lifecycle, storage, connector,
+            TransactionalDoctorChecker(lifecycle, transaction),
+            storage,
+            connector,
             UnavailableDoctorChecker("agent", "No agent runtime checker is configured.", "Register an agent DoctorChecker when an agent runtime is enabled."),
         ),
         clock,

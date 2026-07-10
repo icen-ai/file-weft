@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
+import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.doctor.ConnectorDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.doctor.LifecycleDoctorChecker
 import com.fileweft.application.doctor.PermissionDoctorChecker
 import com.fileweft.application.doctor.StorageDoctorChecker
+import com.fileweft.application.doctor.TransactionalDoctorChecker
 import com.fileweft.application.doctor.UnavailableDoctorChecker
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
@@ -114,6 +116,16 @@ class FileWeftRuntimeConfiguration {
     ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, documents, transaction)
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDraftService::class)
+    fun fileWeftDocumentDraftService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider, storage: StorageAdapter,
+        documents: DocumentRepository, fileObjects: FileObjectRepository, assets: FileAssetRepository,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
+    ): DocumentDraftService = DocumentDraftService(
+        tenants, users, authorization, storage, documents, fileObjects, assets, identifiers, transaction, auditTrail, metrics,
+    )
+
+    @Bean
     @ConditionalOnMissingBean(PublishDocumentService::class)
     fun fileWeftPublishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -157,8 +169,8 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(StorageDoctorChecker::class)
     fun fileWeftStorageDoctorChecker(
-        documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
-    ): StorageDoctorChecker = StorageDoctorChecker(documents, fileObjects, storage)
+        documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter, transaction: ApplicationTransaction,
+    ): StorageDoctorChecker = StorageDoctorChecker(documents, fileObjects, storage, transaction)
 
     @Bean
     @ConditionalOnMissingBean(ConnectorDoctorChecker::class)
@@ -168,12 +180,13 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun fileWeftDoctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, clock: Clock, metrics: FileWeftMetrics,
+        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, transaction: ApplicationTransaction,
+        clock: Clock, metrics: FileWeftMetrics,
     ): DoctorApplicationService = DoctorApplicationService(
         tenants,
         permission,
         listOf<DoctorChecker>(
-            lifecycle,
+            TransactionalDoctorChecker(lifecycle, transaction),
             storage,
             connector,
             UnavailableDoctorChecker("agent", "No agent runtime checker is configured.", "Register an agent DoctorChecker when an agent runtime is enabled."),

@@ -37,6 +37,78 @@ services:
       timeout: 3s
       retries: 12
 
+  fileweft-dev-platform:
+    build:
+      context: ..
+      dockerfile: .docker/Dockerfile.dev
+    image: fileweft-dev:local
+    pull_policy: never
+    container_name: fw-dev-platform
+    command: ["com.fileweft.dev.platform.DevPlatformApplicationKt", "--spring.profiles.active=platform"]
+    environment:
+      FILEWEFT_PLATFORM_DB_URL: jdbc:postgresql://postgres:5432/fileweft?currentSchema=fileweft_dev_platform
+      FILEWEFT_PLATFORM_DB_USERNAME: fileweft
+      FILEWEFT_PLATFORM_DB_PASSWORD: fileweft-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/platform/v1/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 18
+
+  fileweft-dev-api:
+    image: fileweft-dev:local
+    pull_policy: never
+    container_name: fw-dev-api
+    command: ["com.fileweft.dev.FileWeftDevApplicationKt"]
+    environment:
+      FILEWEFT_DEV_DB_URL: jdbc:postgresql://postgres:5432/fileweft?currentSchema=fileweft_dev
+      FILEWEFT_DEV_DB_USERNAME: fileweft
+      FILEWEFT_DEV_DB_PASSWORD: fileweft-dev
+      FILEWEFT_DEV_S3_ENDPOINT: http://rustfs:9000
+      FILEWEFT_DEV_S3_REGION: us-east-1
+      FILEWEFT_DEV_S3_ACCESS_KEY: rustfsadmin
+      FILEWEFT_DEV_S3_SECRET_KEY: ChangeMe123!
+      FILEWEFT_DEV_S3_BUCKET: fileweft-dev
+      FILEWEFT_DEV_PLATFORM_URL: http://fileweft-dev-platform:8081/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      fileweft-dev-platform:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 18
+
+  fileweft-dev-web:
+    image: nginx:1.27-alpine
+    container_name: fw-dev-web
+    depends_on:
+      fileweft-dev-api:
+        condition: service_healthy
+      fileweft-dev-platform:
+        condition: service_healthy
+    ports:
+      - "8088:80"
+    volumes:
+      - ../fileweft-dev/web:/usr/share/nginx/html:ro
+      - ./nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
 volumes:
   fw-dev-postgres:
   fw-dev-rustfs:
