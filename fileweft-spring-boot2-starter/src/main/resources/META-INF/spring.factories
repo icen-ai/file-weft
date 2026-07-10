@@ -1,0 +1,2 @@
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+com.fileweft.starter.boot2.FileWeftAutoConfiguration
