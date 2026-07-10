@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api(project(":fileweft-runtime"))
+    implementation(project(":fileweft-adapter"))
     api(libs.spring.boot2.autoconfigure)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

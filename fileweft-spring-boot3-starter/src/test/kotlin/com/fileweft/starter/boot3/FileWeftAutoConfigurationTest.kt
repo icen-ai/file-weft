@@ -1,5 +1,8 @@
 package com.fileweft.starter.boot3
 
+import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
+import com.fileweft.adapter.identity.DefaultUserRealmProvider
+import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.tenant.TenantProvider
@@ -9,42 +12,83 @@ import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
 import com.fileweft.spi.authorization.AuthorizationResource
 import com.fileweft.spi.authorization.AuthorizationSubject
+import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.identity.UserIdentity
+import com.fileweft.spi.storage.MultipartPart
+import com.fileweft.spi.storage.MultipartUpload
+import com.fileweft.spi.storage.StorageAdapter
+import com.fileweft.spi.storage.StorageDownload
+import com.fileweft.spi.storage.StorageObjectLocation
+import com.fileweft.spi.storage.StorageUploadRequest
+import com.fileweft.spi.storage.StoredObject
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import java.io.InputStream
+import java.net.URI
+import java.nio.file.Path
+import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class FileWeftAutoConfigurationTest {
-    private val contextRunner = ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
+    @TempDir
+    lateinit var storageRoot: Path
 
     @Test
     fun `binds the default tenant property`() {
-        contextRunner.withPropertyValues("fileweft.default-tenant-id=tenant-a").run { context ->
+        contextRunner().withPropertyValues("fileweft.default-tenant-id=tenant-a").run { context ->
             assertEquals("tenant-a", context.getBean(TenantProvider::class.java).currentTenant().tenantId.value)
         }
     }
 
     @Test
-    fun `does not replace a customer tenant provider`() {
-        contextRunner.withUserConfiguration(CustomerConfiguration::class.java).run { context ->
+    fun `does not replace customer extension beans`() {
+        contextRunner().withUserConfiguration(CustomerConfiguration::class.java).run { context ->
             assertSame(context.getBean("customerTenantProvider"), context.getBean(TenantProvider::class.java))
+            assertSame(context.getBean("customerUserRealmProvider"), context.getBean(UserRealmProvider::class.java))
+            assertSame(context.getBean("customerAuthorizationProvider"), context.getBean(AuthorizationProvider::class.java))
+            assertSame(context.getBean("customerStorageAdapter"), context.getBean(StorageAdapter::class.java))
         }
     }
 
     @Test
-    fun `defaults to no user and deny all authorization`() {
-        contextRunner.run { context ->
+    fun `defaults to safe identity authorization and local storage adapters`() {
+        contextRunner().run { context ->
             assertNull(context.getBean(UserRealmProvider::class.java).currentUser())
-            assertFalse(context.getBean(AuthorizationProvider::class.java).authorize(request()).allowed)
+            assertTrue(context.getBean(UserRealmProvider::class.java) is DefaultUserRealmProvider)
+            val decision = context.getBean(AuthorizationProvider::class.java).authorize(request())
+            assertFalse(decision.allowed)
+            assertEquals(DefaultAuthorizationProvider.REASON, decision.reason)
+            assertTrue(context.getBean(AuthorizationProvider::class.java) is DefaultAuthorizationProvider)
+            assertTrue(context.getBean(StorageAdapter::class.java) is LocalStorageAdapter)
         }
     }
+
+    @Test
+    fun `binds local storage root and makes the default storage usable`() {
+        contextRunner().run { context ->
+            val storage = context.getBean(StorageAdapter::class.java)
+            val stored = storage.upload(
+                StorageUploadRequest(Identifier("tenant-a"), "sample.txt", 2, "text/plain"),
+                "ok".byteInputStream(),
+            )
+
+            assertTrue(storage.accessUrl(stored.location, Duration.ofMinutes(1)).toString().startsWith(storageRoot.toUri().toString()))
+            storage.delete(stored.location)
+        }
+    }
+
+    private fun contextRunner(): ApplicationContextRunner = ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
+        .withPropertyValues("fileweft.storage.local-root=${storageRoot.toAbsolutePath()}")
 
     private fun request() = AuthorizationRequest(
         AuthorizationSubject(Identifier("user"), "USER"),
@@ -59,5 +103,33 @@ class FileWeftAutoConfigurationTest {
         fun customerTenantProvider(): TenantProvider = object : TenantProvider {
             override fun currentTenant(): TenantContext = TenantContext(Identifier("customer"))
         }
+
+        @Bean
+        fun customerUserRealmProvider(): UserRealmProvider = object : UserRealmProvider {
+            override fun currentUser(): UserIdentity = UserIdentity(Identifier("customer-user"))
+            override fun findUser(userId: Identifier): UserIdentity? = null
+        }
+
+        @Bean
+        fun customerAuthorizationProvider(): AuthorizationProvider = object : AuthorizationProvider {
+            override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
+        }
+
+        @Bean
+        fun customerStorageAdapter(): StorageAdapter = CustomerStorageAdapter
+    }
+
+    private object CustomerStorageAdapter : StorageAdapter {
+        override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = unsupported()
+        override fun download(location: StorageObjectLocation): StorageDownload = unsupported()
+        override fun delete(location: StorageObjectLocation) = unsupported<Unit>()
+        override fun exists(location: StorageObjectLocation): Boolean = unsupported()
+        override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI = unsupported()
+        override fun beginMultipartUpload(request: StorageUploadRequest): MultipartUpload = unsupported()
+        override fun uploadPart(upload: MultipartUpload, partNumber: Int, content: InputStream, contentLength: Long): MultipartPart = unsupported()
+        override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject = unsupported()
+        override fun abortMultipartUpload(upload: MultipartUpload) = unsupported<Unit>()
+
+        private fun <T> unsupported(): T = throw UnsupportedOperationException("Test double")
     }
 }
