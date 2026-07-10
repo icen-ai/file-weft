@@ -14,12 +14,16 @@ internal class ApplicationAuthorization(
     private val authorizationProvider: AuthorizationProvider,
 ) {
     fun requireDocumentAction(tenantId: Identifier, documentId: Identifier, action: String) {
+        requireAction(tenantId, documentId, "DOCUMENT", action)
+    }
+
+    fun requireAction(tenantId: Identifier, resourceId: Identifier, resourceType: String, action: String) {
         val user = userRealmProvider.currentUser()
             ?: throw ApplicationAuthorizationException("A current user is required.")
         val decision = authorizationProvider.authorize(
             AuthorizationRequest(
                 subject = AuthorizationSubject(user.id, "USER", user.attributes),
-                resource = AuthorizationResource(documentId, "DOCUMENT", tenantId),
+                resource = AuthorizationResource(resourceId, resourceType, tenantId),
                 action = AuthorizationAction(action),
                 environment = AuthorizationEnvironment(),
             ),
