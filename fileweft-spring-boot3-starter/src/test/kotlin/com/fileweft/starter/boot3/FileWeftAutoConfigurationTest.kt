@@ -18,6 +18,8 @@ import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
+import com.fileweft.runtime.plugin.FileWeftPluginRegistry
+import com.fileweft.spi.plugin.FileWeftPlugin
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
@@ -100,6 +102,14 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `uses plugin storage ahead of the default while retaining plugin diagnostics`() {
+        contextRunner().withUserConfiguration(PluginConfiguration::class.java).run { context ->
+            assertSame(CustomerStorageAdapter, context.getBean(StorageAdapter::class.java))
+            assertTrue(context.getBean(FileWeftPluginRegistry::class.java).plugins().any { it.id() == "test-storage-plugin" })
+        }
+    }
+
+    @Test
     fun `binds local storage root and makes the default storage usable`() {
         contextRunner().run { context ->
             val storage = context.getBean(StorageAdapter::class.java)
@@ -177,6 +187,15 @@ class FileWeftAutoConfigurationTest {
     class DatabaseConfiguration {
         @Bean
         fun dataSource(): DataSource = StubDataSource
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class PluginConfiguration {
+        @Bean
+        fun testStoragePlugin(): FileWeftPlugin = object : FileWeftPlugin {
+            override fun id(): String = "test-storage-plugin"
+            override fun storageAdapters(): List<StorageAdapter> = listOf(CustomerStorageAdapter)
+        }
     }
 
     @Configuration(proxyBeanMethods = false)

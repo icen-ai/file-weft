@@ -30,6 +30,7 @@ import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.persistence.jdbc.*
+import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.delivery.DeliveryConnectorResolver
@@ -118,7 +119,9 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(AgentTaskOrchestrator::class)
-    fun agentTaskOrchestrator(agents: List<com.fileweft.spi.ai.FileWeftAgent>, clock: Clock) = AgentTaskOrchestrator(agents, clock)
+    fun agentTaskOrchestrator(
+        agents: List<com.fileweft.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry, clock: Clock,
+    ) = AgentTaskOrchestrator(agents + plugins.agents(), clock)
 
     @Bean
     @ConditionalOnMissingBean(AgentTaskScheduler::class)
@@ -134,9 +137,9 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(AgentTaskOutboxEventHandler::class)
     fun agentTaskOutboxEventHandler(
-        triggers: List<com.fileweft.spi.ai.AgentTaskTrigger>, scheduler: AgentTaskScheduler,
+        triggers: List<com.fileweft.spi.ai.AgentTaskTrigger>, plugins: FileWeftPluginRegistry, scheduler: AgentTaskScheduler,
         tasks: TaskRepository, transaction: ApplicationTransaction,
-    ) = AgentTaskOutboxEventHandler(triggers, scheduler, tasks, transaction)
+    ) = AgentTaskOutboxEventHandler(triggers + plugins.agentTaskTriggers(), scheduler, tasks, transaction)
 
     @Bean
     @ConditionalOnMissingBean(PersistedAgentSuggestionConfirmationService::class)
@@ -157,8 +160,9 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(DeliveryConnectorResolver::class)
-    fun deliveryConnectorResolver(connectors: Map<String, FileConnector>, properties: FileWeftProperties): DeliveryConnectorResolver =
-        MapDeliveryConnectorResolver(connectors, properties.sync.connectorName)
+    fun deliveryConnectorResolver(
+        connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, properties: FileWeftProperties,
+    ): DeliveryConnectorResolver = MapDeliveryConnectorResolver(plugins.mergeConnectors(connectors), properties.sync.connectorName)
 
     @Bean
     @ConditionalOnMissingBean(DocumentDeliveryProfileProvider::class)
@@ -304,14 +308,15 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(ConnectorDoctorChecker::class)
-    fun connectorDoctor(connectors: List<FileConnector>) = ConnectorDoctorChecker(connectors)
+    fun connectorDoctor(connectors: List<FileConnector>, plugins: FileWeftPluginRegistry) =
+        ConnectorDoctorChecker(connectors + plugins.connectors().values)
 
     @Bean
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun doctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
         storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, transaction: ApplicationTransaction,
-        clock: Clock, metrics: FileWeftMetrics,
+        clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
     ) = DoctorApplicationService(
         tenants, permission,
         listOf<DoctorChecker>(
@@ -319,7 +324,7 @@ class FileWeftRuntimeConfiguration {
             storage,
             connector,
             UnavailableDoctorChecker("agent", "No agent runtime checker is configured.", "Register an agent DoctorChecker when an agent runtime is enabled."),
-        ),
+        ) + plugins.doctorCheckers(),
         clock,
         metrics,
     )
@@ -363,19 +368,20 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(OutboxWorker::class)
     fun outboxWorker(
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,
-        handlers: List<OutboxEventHandler>, clock: Clock, traces: ObjectProvider<TraceContextScope>,
-    ) = OutboxWorker(repository, transaction, handlers, clock, traceContextScope = traces.getIfAvailable())
+        handlers: List<OutboxEventHandler>, plugins: FileWeftPluginRegistry, clock: Clock, traces: ObjectProvider<TraceContextScope>,
+    ) = OutboxWorker(repository, transaction, handlers + plugins.outboxEventHandlers(), clock, traceContextScope = traces.getIfAvailable())
 
     @Bean
     @ConditionalOnBean(TaskProcessingRepository::class)
     @ConditionalOnMissingBean(TaskWorker::class)
     fun taskWorker(
         repository: TaskProcessingRepository, transaction: ApplicationTransaction,
-        handlers: List<FileWeftTaskHandler>, clock: Clock, properties: FileWeftProperties, metrics: FileWeftMetrics,
+        handlers: List<FileWeftTaskHandler>, plugins: FileWeftPluginRegistry,
+        clock: Clock, properties: FileWeftProperties, metrics: FileWeftMetrics,
     ) = TaskWorker(
         repository = repository,
         transaction = transaction,
-        handlers = handlers,
+        handlers = handlers + plugins.taskHandlers(),
         clock = clock,
         workerId = properties.task.workerId?.takeIf { it.isNotBlank() } ?: "fileweft-${UUID.randomUUID()}",
         maxAttempts = properties.task.maxAttempts,

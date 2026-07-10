@@ -9,10 +9,12 @@ import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
+import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
+import com.fileweft.spi.plugin.FileWeftPlugin
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -46,10 +48,19 @@ class FileWeftAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(StorageAdapter::class)
-    fun fileWeftStorageAdapter(properties: FileWeftProperties): StorageAdapter {
+    fun fileWeftStorageAdapter(properties: FileWeftProperties, plugins: FileWeftPluginRegistry): StorageAdapter {
+        val pluginAdapters = plugins.storageAdapters()
+        require(pluginAdapters.size <= 1) {
+            "More than one plugin StorageAdapter is available; register the intended adapter as a customer Spring bean."
+        }
+        pluginAdapters.singleOrNull()?.let { return it }
         require(properties.storage.localRoot.isNotBlank()) { "fileweft.storage.local-root must not be blank." }
         return LocalStorageAdapter(Paths.get(properties.storage.localRoot))
     }
+
+    @Bean
+    @ConditionalOnMissingBean(FileWeftPluginRegistry::class)
+    fun fileWeftPluginRegistry(plugins: List<FileWeftPlugin>): FileWeftPluginRegistry = FileWeftPluginRegistry(plugins)
 
     @Bean
     @ConditionalOnMissingBean(IdentifierGenerator::class)
