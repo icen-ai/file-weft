@@ -18,7 +18,7 @@ object DevRolePolicy {
         "document:read", "document:download", "document:create", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
-        "document:delivery:retry",
+        "document:delivery:retry", "agent:suggestion:confirm",
     )
 
     fun allows(role: DevRole, action: String): Boolean = role == DevRole.ADMIN || action in actionsFor(role)

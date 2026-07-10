@@ -261,6 +261,21 @@ function renderInspector() {
     `${localizedTaskStatus(task.status)} / ${task.type}`,
     `${formatTime(task.createdTime)}${task.retryCount ? ` · ${escapeHtml(interpolate("task.retries", { count: task.retryCount }))}` : ""}${task.lastError ? ` · ${escapeHtml(task.lastError)}` : ""}`,
   )).join("") || emptyEvidence("empty.tasks");
+  $("#agent-result-list").innerHTML = detail.agentResults.map((result) => {
+    const payload = safeJson(result.result);
+    const suggestions = (payload.suggestions || []).map((suggestion) => {
+      const confirmed = result.confirmations.some((confirmation) => confirmation.suggestionId === suggestion.id);
+      const button = !confirmed && can("agent:suggestion:confirm")
+        ? `<button class="delivery-retry" type="button" data-agent-confirm="${escapeHtml(result.taskId)}" data-agent-suggestion="${escapeHtml(suggestion.id)}">${escapeHtml(t("action.confirmAgent"))}</button>` : "";
+      return `<small>${escapeHtml(suggestion.type)} · ${escapeHtml(JSON.stringify(suggestion.payload || {}))}${confirmed ? ` · ${escapeHtml(t("agent.confirmed"))}` : ""}${button}</small>`;
+    }).join("<br />");
+    return evidenceItem(`${localized("agent.capability", result.capability)} / ${escapeHtml(result.status)}`, `${escapeHtml(result.sourceEventType)} · ${suggestions}`);
+  }).join("") || emptyEvidence("empty.agent");
+  $("#agent-result-list").querySelectorAll("[data-agent-confirm]").forEach((button) => button.addEventListener("click", async () => {
+    await api(`/api/documents/agent-results/${button.dataset.agentConfirm}/suggestions/${button.dataset.agentSuggestion}/confirm`, { method: "POST" });
+    notice(t("notice.agentConfirmed"));
+    await selectDocument(state.selectedId, false);
+  }));
   $("#doctor-record-list").innerHTML = detail.doctorRecords.map((record) => `
     <div class="evidence-item doctor-record"><b>${escapeHtml(record.status)} / ${escapeHtml(formatTime(record.createdTime))}</b>
       <small>${escapeHtml(record.taskId)}</small><button type="button" data-doctor-record="${escapeHtml(record.id)}">${escapeHtml(t("action.openDoctorRecord"))}</button></div>`

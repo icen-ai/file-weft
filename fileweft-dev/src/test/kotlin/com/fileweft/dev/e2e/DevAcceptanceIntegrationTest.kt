@@ -340,6 +340,30 @@ class DevAcceptanceIntegrationTest {
         assertAuditActor(detail, "document:doctor:schedule", "alpha-editor", "Alpha 编辑者")
     }
 
+    @Test
+    fun `fans out a published event to a durable agent task and requires explicit suggestion confirmation`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-AGENT-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+        val workflow = postJson("$apiUrl/api/documents/$documentId/submit", """{"reviewerId":"alpha-reviewer"}""", editor)
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+            """{"comment":"Agent acceptance","deliveryProfileId":"internal"}""", reviewer,
+        )
+        val admin = login("admin@alpha", "dev-admin")
+        post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
+        post("$apiUrl/api/tasks/process?limit=20", null, admin, "application/json")
+
+        val result = awaitAgentResult(documentId, admin)
+        val taskId = result.path("taskId").asText()
+        val suggestionId = mapper.readTree(result.path("result").asText()).path("suggestions").first().path("id").asText()
+        assertEquals("CLASSIFICATION", result.path("capability").asText())
+        assertEquals("SUCCEEDED", result.path("status").asText())
+
+        post("$apiUrl/api/documents/agent-results/$taskId/suggestions/$suggestionId/confirm", null, admin, "application/json")
+        assertTrue(awaitAgentResult(documentId, admin).path("confirmations").any { it.path("suggestionId").asText() == suggestionId })
+    }
+
     private fun login(username: String, password: String): String = loginResponse(username, password).path("token").asText()
 
     private fun loginResponse(username: String, password: String): JsonNode = postJson(
@@ -421,6 +445,15 @@ class DevAcceptanceIntegrationTest {
             Thread.sleep(200)
         }
         throw AssertionError("Document $documentId did not receive a persisted Doctor report within the expected window.")
+    }
+
+    private fun awaitAgentResult(documentId: String, token: String): JsonNode {
+        repeat(50) {
+            val result = getJson("$apiUrl/api/documents/$documentId", token).path("agentResults").firstOrNull()
+            if (result != null) return result
+            Thread.sleep(200)
+        }
+        throw AssertionError("Document $documentId did not receive an agent result within the expected window.")
     }
 
     private fun assertAuditActor(detail: JsonNode, action: String, operatorId: String?, operatorName: String) {

@@ -9,6 +9,8 @@ import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
+import com.fileweft.dev.api.agent.DevClassificationAgent
+import com.fileweft.dev.api.agent.DevPublishClassificationTrigger
 import com.fileweft.dev.api.catalog.DevCatalogQueryService
 import com.fileweft.dev.api.catalog.DevDocumentCatalogProvider
 import com.fileweft.dev.api.connector.DevPlatformConnector
@@ -24,6 +26,8 @@ import com.fileweft.dev.api.service.DevAuthService
 import com.fileweft.dev.api.service.DevOperationsService
 import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.ai.AgentTaskTrigger
+import com.fileweft.spi.ai.FileWeftAgent
 import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.delivery.DeliveryRequirement
@@ -41,6 +45,12 @@ import java.net.URI
 
 @Configuration(proxyBeanMethods = false)
 class DevApiConfiguration {
+    @Bean
+    fun devClassificationAgent(): FileWeftAgent = DevClassificationAgent()
+
+    @Bean
+    fun devPublishClassificationTrigger(): AgentTaskTrigger = DevPublishClassificationTrigger()
+
     @Bean
     fun devUserDirectory(properties: FileWeftDevProperties): DevUserDirectory = DevUserDirectory(properties)
 

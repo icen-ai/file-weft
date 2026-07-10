@@ -7,6 +7,7 @@ import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownload
 import com.fileweft.application.document.DocumentDownloadService
+import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.offline.OfflineDocumentService
@@ -42,6 +43,7 @@ data class DevWorkflowDecisionRequest(val comment: String? = null, val deliveryP
 data class DevPublishDocumentRequest(val deliveryProfileId: String? = null)
 data class DevWorkflowResponse(val workflowId: String, val state: String, val taskId: String)
 data class DevDoctorTaskResponse(val taskId: String, val status: String)
+data class DevAgentSuggestionConfirmationResponse(val taskId: String, val suggestionId: String, val confirmedBy: String, val confirmedTime: Long)
 
 @RestController
 @RequestMapping("/api/documents")
@@ -59,6 +61,7 @@ class DevDocumentController(
     private val operations: DevOperationsService,
     private val retryDeliveries: RetryDocumentDeliveryService,
     private val doctorScheduler: ScheduleDocumentDoctorService,
+    private val agentSuggestions: ConfirmAgentSuggestionService,
 ) {
     @PostMapping(consumes = ["multipart/form-data"])
     @ResponseStatus(HttpStatus.CREATED)
@@ -179,6 +182,17 @@ class DevDocumentController(
     fun retryDelivery(@PathVariable deliveryId: String): DevDocumentDetail {
         val delivery = retryDeliveries.retry(Identifier(deliveryId))
         return queries.detail(delivery.documentId)
+    }
+
+    @PostMapping("/agent-results/{taskId}/suggestions/{suggestionId}/confirm")
+    fun confirmAgentSuggestion(
+        @PathVariable taskId: String,
+        @PathVariable suggestionId: String,
+    ): DevAgentSuggestionConfirmationResponse {
+        val confirmation = agentSuggestions.confirm(Identifier(taskId), Identifier(suggestionId))
+        return DevAgentSuggestionConfirmationResponse(
+            confirmation.taskId.value, confirmation.suggestionId.value, confirmation.confirmedBy.value, confirmation.confirmedAt,
+        )
     }
 
     private fun WorkflowInstance.toResponse(): DevWorkflowResponse = DevWorkflowResponse(

@@ -114,6 +114,24 @@ data class DevDoctorRecordView(
     val updatedTime: Long,
 )
 
+data class DevAgentConfirmationView(
+    val id: String,
+    val suggestionId: String,
+    val confirmedBy: String,
+    val confirmedTime: Long,
+)
+
+data class DevAgentResultView(
+    val id: String,
+    val taskId: String,
+    val capability: String,
+    val sourceEventType: String,
+    val status: String,
+    val result: String,
+    val createdTime: Long,
+    val confirmations: List<DevAgentConfirmationView>,
+)
+
 data class DevDocumentDetail(
     val document: DevDocumentSummary,
     val versions: List<DevDocumentVersionView>,
@@ -123,6 +141,7 @@ data class DevDocumentDetail(
     val deliveries: List<DevDeliveryView>,
     val tasks: List<DevBackgroundTaskView>,
     val doctorRecords: List<DevDoctorRecordView>,
+    val agentResults: List<DevAgentResultView>,
     val syncRecords: List<DevSyncView>,
     val outboxEvents: List<DevOutboxView>,
 )
@@ -160,6 +179,7 @@ class DevDocumentQueryService(
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
             doctorRecords = jdbcTemplate.query(DOCTOR_RECORDS_SQL, DOCTOR_RECORD_MAPPER, tenantId, documentId.value),
+            agentResults = loadAgentResults(tenantId, documentId.value),
             syncRecords = jdbcTemplate.query(SYNC_SQL, SYNC_MAPPER, tenantId, documentId.value),
             outboxEvents = jdbcTemplate.query(OUTBOX_SQL, OUTBOX_MAPPER, tenantId, documentId.value),
         )
@@ -177,6 +197,15 @@ class DevDocumentQueryService(
             state,
             jdbcTemplate.query(WORKFLOW_TASKS_SQL, WORKFLOW_TASK_MAPPER, tenantId, workflowId),
         )
+    }
+
+    private fun loadAgentResults(tenantId: String, documentId: String): List<DevAgentResultView> = jdbcTemplate.query(
+        AGENT_RESULTS_SQL,
+        AGENT_RESULT_MAPPER,
+        tenantId,
+        documentId,
+    ).map { result ->
+        result.copy(confirmations = jdbcTemplate.query(AGENT_CONFIRMATIONS_SQL, AGENT_CONFIRMATION_MAPPER, tenantId, result.taskId))
     }
 
     private companion object {
@@ -241,6 +270,18 @@ class DevDocumentQueryService(
             DevDoctorRecordView(
                 result.getString("id"), result.getString("task_id"), result.getString("doctor_status"),
                 result.getString("report_json"), result.getLong("created_time"), result.getLong("updated_time"),
+            )
+        }
+        val AGENT_RESULT_MAPPER = org.springframework.jdbc.core.RowMapper<DevAgentResultView> { result, _ ->
+            DevAgentResultView(
+                result.getString("id"), result.getString("task_id"), result.getString("capability"),
+                result.getString("source_event_type"), result.getString("result_status"), result.getString("result_json"),
+                result.getLong("created_time"), emptyList(),
+            )
+        }
+        val AGENT_CONFIRMATION_MAPPER = org.springframework.jdbc.core.RowMapper<DevAgentConfirmationView> { result, _ ->
+            DevAgentConfirmationView(
+                result.getString("id"), result.getString("suggestion_id"), result.getString("confirmed_by"), result.getLong("confirmed_time"),
             )
         }
 
@@ -308,6 +349,20 @@ class DevDocumentQueryService(
         const val DOCTOR_RECORDS_SQL = """
             SELECT id, task_id, doctor_status, report_json::text AS report_json, created_time, updated_time
             FROM fw_doctor_record WHERE tenant_id = ? AND document_id = ? ORDER BY created_time DESC, id DESC
+        """
+        const val AGENT_RESULTS_SQL = """
+            SELECT result.id, result.task_id, result.capability, result.source_event_type, result.result_status,
+                   result.result_json::text AS result_json, result.created_time
+            FROM fw_agent_result result
+            JOIN fw_task task ON task.id = result.task_id AND task.tenant_id = result.tenant_id
+            WHERE result.tenant_id = ? AND task.business_id = ?
+            ORDER BY result.created_time DESC, result.id DESC
+        """
+        const val AGENT_CONFIRMATIONS_SQL = """
+            SELECT id, suggestion_id, confirmed_by, confirmed_time
+            FROM fw_agent_suggestion_confirmation
+            WHERE tenant_id = ? AND task_id = ?
+            ORDER BY confirmed_time DESC, id DESC
         """
         const val OUTBOX_SQL = """
             SELECT id, event_type, event_status, retry_count, last_error, created_time, updated_time
