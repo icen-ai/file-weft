@@ -44,6 +44,18 @@ class ContextAndEventTest {
         payload["documentId"] = "changed"
 
         assertEquals("document-1", event.payload["documentId"])
+        assertNull(event.traceId)
+    }
+
+    @Test
+    fun `outbox event carries an optional trace outside its business payload`() {
+        val event = OutboxEvent(
+            Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested",
+            mapOf("documentId" to "document-1"), 1, Identifier("trace-1"),
+        )
+
+        assertEquals("trace-1", event.traceId?.value)
+        assertNull(event.payload["traceId"])
     }
 
     private class TestEvent(

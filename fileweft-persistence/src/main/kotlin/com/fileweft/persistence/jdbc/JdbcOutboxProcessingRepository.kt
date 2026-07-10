@@ -84,6 +84,7 @@ class JdbcOutboxProcessingRepository(
             type = result.getString("event_type"),
             payload = objectMapper.readValue(result.getString("payload_json"), STRING_MAP_TYPE),
             timestamp = result.getLong("created_time"),
+            traceId = result.getString("trace_id")?.let(::Identifier),
         ),
         retryCount = result.getInt("retry_count"),
     )
@@ -105,7 +106,7 @@ class JdbcOutboxProcessingRepository(
             SET event_status = 'RUNNING', updated_time = ?, last_error = NULL
             FROM candidates
             WHERE event.id = candidates.id
-            RETURNING event.id, event.tenant_id, event.event_type, event.payload_json, event.retry_count, event.created_time
+            RETURNING event.id, event.tenant_id, event.event_type, event.payload_json, event.trace_id, event.retry_count, event.created_time
         """
     }
 }

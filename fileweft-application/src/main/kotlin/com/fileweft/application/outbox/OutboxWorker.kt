@@ -1,8 +1,10 @@
 package com.fileweft.application.outbox
 
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.core.context.TraceContext
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.observability.TraceContextScope
 import java.time.Clock
 import java.time.Duration
 import java.util.ArrayList
@@ -12,7 +14,7 @@ import kotlin.math.min
  * Runs external outbox handlers outside database transactions and records the
  * outcome through short follow-up transactions.
  */
-class OutboxWorker(
+class OutboxWorker @JvmOverloads constructor(
     private val repository: OutboxProcessingRepository,
     private val transaction: ApplicationTransaction,
     handlers: List<OutboxEventHandler>,
@@ -20,6 +22,7 @@ class OutboxWorker(
     private val maxAttempts: Int = 5,
     initialRetryDelay: Duration = Duration.ofSeconds(10),
     maxRetryDelay: Duration = Duration.ofMinutes(5),
+    private val traceContextScope: TraceContextScope? = null,
 ) {
     private val handlers: List<OutboxEventHandler> = ArrayList(handlers)
     private val initialRetryDelayMillis: Long = durationMillis(initialRetryDelay, "Initial retry delay")
@@ -48,7 +51,11 @@ class OutboxWorker(
         return OutboxProcessingSummary(claimed.size, succeeded, retried, failed)
     }
 
-    private fun process(lease: OutboxEventLease): ProcessingOutcome {
+    private fun process(lease: OutboxEventLease): ProcessingOutcome = withEventTrace(lease) {
+        processInTrace(lease)
+    }
+
+    private fun processInTrace(lease: OutboxEventLease): ProcessingOutcome {
         val matchingHandlers = try {
             handlers.filter { it.supports(lease.event) }
         } catch (failure: Exception) {
@@ -85,6 +92,17 @@ class OutboxWorker(
                 markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.", handler)
                 ProcessingOutcome.FAILED
             }
+        }
+    }
+
+    private fun <T> withEventTrace(lease: OutboxEventLease, action: () -> T): T {
+        val scope = traceContextScope ?: return action()
+        val previous = scope.currentTraceContext()
+        scope.bindTraceContext(lease.event.traceId?.let(::TraceContext))
+        return try {
+            action()
+        } finally {
+            scope.bindTraceContext(previous)
         }
     }
 

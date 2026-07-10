@@ -3,6 +3,8 @@ package com.fileweft.dev.api.security
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import com.fileweft.core.context.TraceContext
+import com.fileweft.core.id.Identifier
 import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.stereotype.Component
@@ -18,12 +20,12 @@ class DevTraceFilter(
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
         val traceId = request.getHeader(TRACE_HEADER)?.trim()?.takeIf(SAFE_TRACE_ID::matches)
             ?: UUID.randomUUID().toString()
-        traces.bind(traceId)
+        traces.bindTraceContext(TraceContext(Identifier(traceId)))
         response.setHeader(TRACE_HEADER, traceId)
         try {
             chain.doFilter(request, response)
         } finally {
-            traces.clear()
+            traces.bindTraceContext(null)
         }
     }
 

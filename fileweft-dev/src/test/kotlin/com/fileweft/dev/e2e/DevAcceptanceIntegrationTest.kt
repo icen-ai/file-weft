@@ -143,10 +143,12 @@ class DevAcceptanceIntegrationTest {
             editor,
         )
         val reviewer = login("reviewer@alpha", "dev-reviewer")
+        val deliveryTraceId = "e2e-delivery-${UUID.randomUUID().toString().take(12)}"
         postJson(
             "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
             """{"comment":"Compose acceptance approved","deliveryProfileId":"regulated"}""",
             reviewer,
+            deliveryTraceId,
         )
         val admin = login("admin@alpha", "dev-admin")
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
@@ -160,6 +162,9 @@ class DevAcceptanceIntegrationTest {
         assertAuditActor(detail, "document:review:submit", "alpha-editor", "Alpha 编辑者")
         assertAuditActor(detail, "document:review:approve", "alpha-reviewer", "Alpha 审批者")
         assertEquals(3, detail.path("audits").count { it.path("action").asText() == "document:delivery:succeeded" })
+        val deliveryOperations = detail.path("operationLogs").filter { it.path("action").asText() == "document:delivery:succeeded" }
+        assertEquals(3, deliveryOperations.size)
+        assertTrue(deliveryOperations.all { it.path("traceId").asText() == deliveryTraceId })
 
         listOf("compliance", "collaboration", "search").forEach { targetId ->
             val mirror = getPlatform(targetId, documentId)
@@ -408,8 +413,8 @@ class DevAcceptanceIntegrationTest {
         return response(request)
     }
 
-    private fun postJson(url: String, body: String, token: String?): JsonNode =
-        post(url, body.toByteArray(StandardCharsets.UTF_8), token, "application/json")
+    private fun postJson(url: String, body: String, token: String?, traceId: String? = null): JsonNode =
+        post(url, body.toByteArray(StandardCharsets.UTF_8), token, "application/json", traceId)
 
     private fun requestJson(method: String, url: String, body: String, token: String): JsonNode {
         val builder = HttpRequest.newBuilder(URI(url))
@@ -419,11 +424,12 @@ class DevAcceptanceIntegrationTest {
         return response(builder.build())
     }
 
-    private fun post(url: String, body: ByteArray?, token: String?, contentType: String): JsonNode {
+    private fun post(url: String, body: ByteArray?, token: String?, contentType: String, traceId: String? = null): JsonNode {
         val builder = HttpRequest.newBuilder(URI(url))
             .header("Content-Type", contentType)
             .POST(HttpRequest.BodyPublishers.ofByteArray(body ?: ByteArray(0)))
         token?.let { builder.header("Authorization", "Bearer $it") }
+        traceId?.let { builder.header("X-Trace-Id", it) }
         return response(builder.build())
     }
 

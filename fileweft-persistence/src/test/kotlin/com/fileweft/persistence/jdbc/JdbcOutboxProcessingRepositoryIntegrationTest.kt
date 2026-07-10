@@ -45,6 +45,7 @@ class JdbcOutboxProcessingRepositoryIntegrationTest {
 
         val firstLease = transaction.execute { processing.claimAvailable(10, 100) }.single()
         assertEquals("event-1", firstLease.event.id.value)
+        assertEquals("trace-1", firstLease.event.traceId?.value)
         assertEquals(0, firstLease.retryCount)
         assertEquals("RUNNING", state("event-1").status)
         assertTrue(transaction.execute { processing.claimAvailable(10, 100) }.isEmpty())
@@ -75,7 +76,10 @@ class JdbcOutboxProcessingRepositoryIntegrationTest {
         transaction.execute { events.append(event()) }
         val lease = transaction.execute { processing.claimAvailable(1, 1) }.single()
         val wrongTenantLease = OutboxEventLease(
-            OutboxEvent(lease.event.id, Identifier("tenant-2"), lease.event.type, lease.event.payload, lease.event.timestamp),
+            OutboxEvent(
+                lease.event.id, Identifier("tenant-2"), lease.event.type, lease.event.payload,
+                lease.event.timestamp, lease.event.traceId,
+            ),
             lease.retryCount,
         )
 
@@ -86,7 +90,8 @@ class JdbcOutboxProcessingRepositoryIntegrationTest {
     }
 
     private fun event() = OutboxEvent(
-        Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested", mapOf("documentId" to "document-1"), 1,
+        Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested",
+        mapOf("documentId" to "document-1"), 1, Identifier("trace-1"),
     )
 
     private fun state(id: String): State = dataSource.connection.use { connection ->

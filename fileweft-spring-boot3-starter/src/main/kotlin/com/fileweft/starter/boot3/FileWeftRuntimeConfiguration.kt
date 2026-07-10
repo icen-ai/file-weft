@@ -34,12 +34,14 @@ import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
+import com.fileweft.spi.observability.TraceContextScope
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.task.FileWeftTaskHandler
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
@@ -92,7 +94,8 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(OutboxEventRepository::class)
-    fun outboxEvents(objectMapper: ObjectMapper): OutboxEventRepository = JdbcOutboxEventRepository(objectMapper)
+    fun outboxEvents(objectMapper: ObjectMapper, traces: TraceContextProvider): OutboxEventRepository =
+        TraceAwareOutboxEventRepository(JdbcOutboxEventRepository(objectMapper), traces)
 
     @Bean
     @ConditionalOnMissingBean(OutboxProcessingRepository::class)
@@ -312,8 +315,8 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(OutboxWorker::class)
     fun outboxWorker(
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,
-        handlers: List<OutboxEventHandler>, clock: Clock,
-    ) = OutboxWorker(repository, transaction, handlers, clock)
+        handlers: List<OutboxEventHandler>, clock: Clock, traces: ObjectProvider<TraceContextScope>,
+    ) = OutboxWorker(repository, transaction, handlers, clock, traceContextScope = traces.getIfAvailable())
 
     @Bean
     @ConditionalOnBean(TaskProcessingRepository::class)

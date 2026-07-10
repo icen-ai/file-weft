@@ -25,6 +25,7 @@ import com.fileweft.application.doctor.UnavailableDoctorChecker
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.outbox.OutboxProcessingRepository
+import com.fileweft.application.outbox.TraceAwareOutboxEventRepository
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.sync.DocumentPublishOutboxEventHandler
@@ -67,12 +68,14 @@ import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
+import com.fileweft.spi.observability.TraceContextScope
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.task.FileWeftTaskHandler
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
@@ -127,7 +130,8 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(OutboxEventRepository::class)
-    fun fileWeftOutboxEventRepository(objectMapper: ObjectMapper): OutboxEventRepository = JdbcOutboxEventRepository(objectMapper)
+    fun fileWeftOutboxEventRepository(objectMapper: ObjectMapper, traces: TraceContextProvider): OutboxEventRepository =
+        TraceAwareOutboxEventRepository(JdbcOutboxEventRepository(objectMapper), traces)
 
     @Bean
     @ConditionalOnMissingBean(OutboxProcessingRepository::class)
@@ -360,8 +364,8 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(OutboxWorker::class)
     fun fileWeftOutboxWorker(
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,
-        handlers: List<OutboxEventHandler>, clock: Clock,
-    ): OutboxWorker = OutboxWorker(repository, transaction, handlers, clock)
+        handlers: List<OutboxEventHandler>, clock: Clock, traces: ObjectProvider<TraceContextScope>,
+    ): OutboxWorker = OutboxWorker(repository, transaction, handlers, clock, traceContextScope = traces.getIfAvailable())
 
     @Bean
     @ConditionalOnBean(TaskProcessingRepository::class)

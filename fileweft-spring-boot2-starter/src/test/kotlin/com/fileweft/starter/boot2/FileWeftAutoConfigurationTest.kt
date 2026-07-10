@@ -16,6 +16,7 @@ import com.fileweft.core.id.Identifier
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
+import com.fileweft.spi.observability.TraceContextScope
 import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
@@ -89,6 +90,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(StorageAdapter::class.java) is LocalStorageAdapter)
             assertTrue(context.getBean(FileWeftMetrics::class.java) is NoOpFileWeftMetrics)
             assertTrue(context.getBean(TraceContextProvider::class.java) is NoOpTraceContextProvider)
+            assertTrue(context.getBean(TraceContextScope::class.java) is NoOpTraceContextProvider)
         }
     }
 

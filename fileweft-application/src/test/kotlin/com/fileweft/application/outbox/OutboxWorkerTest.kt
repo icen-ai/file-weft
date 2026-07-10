@@ -1,11 +1,13 @@
 package com.fileweft.application.outbox
 
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.core.context.TraceContext
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.event.OutboxHandlingResult
 import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.observability.TraceContextScope
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Duration
@@ -105,6 +107,26 @@ class OutboxWorkerTest {
     }
 
     @Test
+    fun `binds an event trace while handling and restores the prior worker context`() {
+        val traces = RecordingTraceScope(TraceContext(Identifier("trace-before")))
+        var handledTrace: String? = null
+
+        val summary = worker(
+            RecordingRepository(listOf(lease(traceId = "trace-event"))),
+            TrackingTransaction(),
+            listOf(handler {
+                handledTrace = traces.currentTraceContext()?.traceId?.value
+                OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED)
+            }),
+            traces = traces,
+        ).processAvailable(1)
+
+        assertEquals(1, summary.succeeded)
+        assertEquals("trace-event", handledTrace)
+        assertEquals("trace-before", traces.currentTraceContext()?.traceId?.value)
+    }
+
+    @Test
     fun `rejects invalid worker configuration and processing limit`() {
         assertFailsWith<IllegalArgumentException> {
             worker(RecordingRepository(), TrackingTransaction(), emptyList(), maxAttempts = 0)
@@ -119,6 +141,7 @@ class OutboxWorkerTest {
         transaction: TrackingTransaction,
         handlers: List<OutboxEventHandler>,
         maxAttempts: Int = 3,
+        traces: TraceContextScope? = null,
     ): OutboxWorker = OutboxWorker(
         repository,
         transaction,
@@ -127,6 +150,7 @@ class OutboxWorkerTest {
         maxAttempts,
         Duration.ofMillis(10),
         Duration.ofMillis(40),
+        traces,
     )
 
     private fun handler(handle: () -> OutboxHandlingResult): OutboxEventHandler = object : OutboxEventHandler {
@@ -134,8 +158,11 @@ class OutboxWorkerTest {
         override fun handle(event: OutboxEvent): OutboxHandlingResult = handle()
     }
 
-    private fun lease(retryCount: Int = 0): OutboxEventLease = OutboxEventLease(
-        OutboxEvent(Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested", emptyMap(), 1),
+    private fun lease(retryCount: Int = 0, traceId: String? = null): OutboxEventLease = OutboxEventLease(
+        OutboxEvent(
+            Identifier("event-1"), Identifier("tenant-1"), "document.publish.requested", emptyMap(), 1,
+            traceId?.let(::Identifier),
+        ),
         retryCount,
     )
 
@@ -182,4 +209,14 @@ class OutboxWorkerTest {
 
     private data class Retry(val nextAttemptAt: Long, val message: String)
     private data class Failure(val message: String)
+
+    private class RecordingTraceScope(initial: TraceContext?) : TraceContextScope {
+        private var traceContext = initial
+
+        override fun currentTraceContext(): TraceContext? = traceContext
+
+        override fun bindTraceContext(traceContext: TraceContext?) {
+            this.traceContext = traceContext
+        }
+    }
 }

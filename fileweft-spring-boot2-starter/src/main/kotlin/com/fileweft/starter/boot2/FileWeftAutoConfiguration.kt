@@ -69,5 +69,5 @@ class FileWeftAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(TraceContextProvider::class)
-    fun fileWeftTraceContextProvider(): TraceContextProvider = NoOpTraceContextProvider()
+    fun fileWeftTraceContextProvider(): NoOpTraceContextProvider = NoOpTraceContextProvider()
 }
