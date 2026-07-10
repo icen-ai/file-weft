@@ -1,6 +1,12 @@
 package com.fileweft.starter.boot2
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fileweft.agent.AgentTaskHandler
+import com.fileweft.agent.AgentTaskOrchestrator
+import com.fileweft.agent.AgentTaskOutboxEventHandler
+import com.fileweft.agent.AgentTaskScheduler
+import com.fileweft.agent.PersistedAgentSuggestionConfirmationService
+import com.fileweft.application.agent.AgentResultRepository
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
@@ -46,6 +52,7 @@ import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
 import com.fileweft.persistence.jdbc.JdbcApplicationTransaction
+import com.fileweft.persistence.jdbc.JdbcAgentResultRepository
 import com.fileweft.persistence.jdbc.JdbcAuditRecordRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentRepository
 import com.fileweft.persistence.jdbc.JdbcDoctorReportRepository
@@ -141,6 +148,43 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(value = [TaskRepository::class, TaskProcessingRepository::class])
     fun fileWeftTaskRepository(objectMapper: ObjectMapper, clock: Clock): JdbcTaskRepository = JdbcTaskRepository(objectMapper, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentResultRepository::class)
+    fun fileWeftAgentResultRepository(objectMapper: ObjectMapper, clock: Clock): AgentResultRepository =
+        JdbcAgentResultRepository(objectMapper, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskOrchestrator::class)
+    fun fileWeftAgentTaskOrchestrator(agents: List<com.fileweft.spi.ai.FileWeftAgent>, clock: Clock): AgentTaskOrchestrator =
+        AgentTaskOrchestrator(agents, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskScheduler::class)
+    fun fileWeftAgentTaskScheduler(identifiers: IdentifierGenerator, clock: Clock): AgentTaskScheduler =
+        AgentTaskScheduler(identifiers, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskHandler::class)
+    fun fileWeftAgentTaskHandler(
+        orchestrator: AgentTaskOrchestrator, results: AgentResultRepository,
+        transaction: ApplicationTransaction, clock: Clock,
+    ): AgentTaskHandler = AgentTaskHandler(orchestrator, results, transaction, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskOutboxEventHandler::class)
+    fun fileWeftAgentTaskOutboxEventHandler(
+        triggers: List<com.fileweft.spi.ai.AgentTaskTrigger>, scheduler: AgentTaskScheduler,
+        tasks: TaskRepository, transaction: ApplicationTransaction,
+    ): AgentTaskOutboxEventHandler = AgentTaskOutboxEventHandler(triggers, scheduler, tasks, transaction)
+
+    @Bean
+    @ConditionalOnMissingBean(PersistedAgentSuggestionConfirmationService::class)
+    fun fileWeftAgentSuggestionConfirmations(
+        results: AgentResultRepository, transaction: ApplicationTransaction,
+        identifiers: IdentifierGenerator, clock: Clock,
+    ): PersistedAgentSuggestionConfirmationService =
+        PersistedAgentSuggestionConfirmationService(results, transaction, identifiers, clock)
 
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)

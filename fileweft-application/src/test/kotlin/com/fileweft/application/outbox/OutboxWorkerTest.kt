@@ -58,18 +58,18 @@ class OutboxWorkerTest {
     }
 
     @Test
-    fun `fails unsupported ambiguous and permanently failed events without retry`() {
+    fun `fails unsupported and permanently failed events without retry while fanning out matches`() {
         val unsupported = RecordingRepository(listOf(lease()))
         assertEquals(1, worker(unsupported, TrackingTransaction(), emptyList()).processAvailable(1).failed)
 
-        val ambiguous = RecordingRepository(listOf(lease()))
+        val fanout = RecordingRepository(listOf(lease()))
         assertEquals(
             1,
             worker(
-                ambiguous,
+                fanout,
                 TrackingTransaction(),
                 listOf(handler { OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED) }, handler { OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED) }),
-            ).processAvailable(1).failed,
+            ).processAvailable(1).succeeded,
         )
 
         val permanent = RecordingRepository(listOf(lease()))
@@ -85,8 +85,9 @@ class OutboxWorkerTest {
     }
 
     @Test
-    fun `notifies the selected handler when a retry is exhausted but never for ambiguous routing`() {
+    fun `notifies every matching handler when a retry is exhausted`() {
         var exhausted: String? = null
+        var secondExhausted: String? = null
         val selectedHandler = object : OutboxEventHandler {
             override fun supports(event: OutboxEvent): Boolean = true
             override fun handle(event: OutboxEvent) = OutboxHandlingResult(OutboxHandlingStatus.RETRYABLE_FAILURE, "remote down")
@@ -97,13 +98,21 @@ class OutboxWorkerTest {
             .processAvailable(1)
         assertEquals("remote down", exhausted)
 
-        exhausted = null
         worker(
-            RecordingRepository(listOf(lease())),
+            RecordingRepository(listOf(lease(retryCount = 1))),
             TrackingTransaction(),
-            listOf(selectedHandler, handler { OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED) }),
+            listOf(
+                selectedHandler,
+                object : OutboxEventHandler {
+                    override fun supports(event: OutboxEvent): Boolean = true
+                    override fun handle(event: OutboxEvent) = OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED)
+                    override fun onExhausted(event: OutboxEvent, message: String) { secondExhausted = message }
+                },
+            ),
+            maxAttempts = 2,
         ).processAvailable(1)
-        assertEquals(null, exhausted)
+        assertEquals("remote down", exhausted)
+        assertEquals("remote down", secondExhausted)
     }
 
     @Test

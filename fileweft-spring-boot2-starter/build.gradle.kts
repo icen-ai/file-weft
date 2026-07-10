@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api(project(":fileweft-runtime"))
+    implementation(project(":fileweft-agent"))
     implementation(project(":fileweft-adapter"))
     implementation(project(":fileweft-persistence"))
     implementation(libs.jackson.databind)

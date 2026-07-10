@@ -1,6 +1,12 @@
 package com.fileweft.starter.boot3
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fileweft.agent.AgentTaskHandler
+import com.fileweft.agent.AgentTaskOrchestrator
+import com.fileweft.agent.AgentTaskOutboxEventHandler
+import com.fileweft.agent.AgentTaskScheduler
+import com.fileweft.agent.PersistedAgentSuggestionConfirmationService
+import com.fileweft.application.agent.AgentResultRepository
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentCommandService
@@ -105,6 +111,39 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(value = [TaskRepository::class, TaskProcessingRepository::class])
     fun tasks(objectMapper: ObjectMapper, clock: Clock): JdbcTaskRepository = JdbcTaskRepository(objectMapper, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentResultRepository::class)
+    fun agentResults(objectMapper: ObjectMapper, clock: Clock): AgentResultRepository = JdbcAgentResultRepository(objectMapper, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskOrchestrator::class)
+    fun agentTaskOrchestrator(agents: List<com.fileweft.spi.ai.FileWeftAgent>, clock: Clock) = AgentTaskOrchestrator(agents, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskScheduler::class)
+    fun agentTaskScheduler(identifiers: IdentifierGenerator, clock: Clock) = AgentTaskScheduler(identifiers, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskHandler::class)
+    fun agentTaskHandler(
+        orchestrator: AgentTaskOrchestrator, results: AgentResultRepository,
+        transaction: ApplicationTransaction, clock: Clock,
+    ) = AgentTaskHandler(orchestrator, results, transaction, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(AgentTaskOutboxEventHandler::class)
+    fun agentTaskOutboxEventHandler(
+        triggers: List<com.fileweft.spi.ai.AgentTaskTrigger>, scheduler: AgentTaskScheduler,
+        tasks: TaskRepository, transaction: ApplicationTransaction,
+    ) = AgentTaskOutboxEventHandler(triggers, scheduler, tasks, transaction)
+
+    @Bean
+    @ConditionalOnMissingBean(PersistedAgentSuggestionConfirmationService::class)
+    fun agentSuggestionConfirmations(
+        results: AgentResultRepository, transaction: ApplicationTransaction,
+        identifiers: IdentifierGenerator, clock: Clock,
+    ) = PersistedAgentSuggestionConfirmationService(results, transaction, identifiers, clock)
 
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)

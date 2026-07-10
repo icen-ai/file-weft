@@ -1,6 +1,10 @@
 package com.fileweft.starter.boot3
 
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
+import com.fileweft.agent.AgentTaskHandler
+import com.fileweft.agent.AgentTaskOutboxEventHandler
+import com.fileweft.agent.PersistedAgentSuggestionConfirmationService
+import com.fileweft.application.agent.AgentResultRepository
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.adapter.observability.NoOpFileWeftMetrics
@@ -122,6 +126,10 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
             assertTrue(context.getBean(OutboxWorker::class.java) != null)
             assertTrue(context.getBean(OperationLogRepository::class.java) != null)
+            assertTrue(context.getBean(AgentResultRepository::class.java) != null)
+            assertTrue(context.getBean(AgentTaskHandler::class.java) != null)
+            assertTrue(context.getBean(AgentTaskOutboxEventHandler::class.java) != null)
+            assertTrue(context.getBean(PersistedAgentSuggestionConfirmationService::class.java) != null)
         }
     }
 

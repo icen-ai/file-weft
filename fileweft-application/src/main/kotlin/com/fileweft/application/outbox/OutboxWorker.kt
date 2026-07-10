@@ -61,38 +61,33 @@ class OutboxWorker @JvmOverloads constructor(
         } catch (failure: Exception) {
             return retryOrFail(lease, "Outbox handler selection failed: ${failure.javaClass.name}")
         }
-        if (matchingHandlers.size != 1) {
-            val message = if (matchingHandlers.isEmpty()) {
-                "No outbox handler supports event type ${lease.event.type}."
-            } else {
-                "Multiple outbox handlers support event type ${lease.event.type}."
-            }
+        if (matchingHandlers.isEmpty()) {
+            val message = "No outbox handler supports event type ${lease.event.type}."
             markFailed(lease, message)
             return ProcessingOutcome.FAILED
         }
-        val handler = matchingHandlers.single()
-        val result = try {
-            handler.handle(lease.event)
-        } catch (failure: Exception) {
-            return retryOrFail(lease, "Outbox handler failed: ${failure.javaClass.name}", handler)
-        }
-        return when (result.status) {
-            OutboxHandlingStatus.SUCCEEDED -> {
-                transaction.execute { repository.markSucceeded(lease, now()) }
-                ProcessingOutcome.SUCCEEDED
+        matchingHandlers.forEach { handler ->
+            val result = try {
+                handler.handle(lease.event)
+            } catch (failure: Exception) {
+                return retryOrFail(lease, "Outbox handler failed: ${failure.javaClass.name}", matchingHandlers)
             }
+            when (result.status) {
+                OutboxHandlingStatus.SUCCEEDED -> Unit
+                OutboxHandlingStatus.RETRYABLE_FAILURE -> return retryOrFail(
+                    lease,
+                    result.message ?: "Outbox handler requested a retry.",
+                    matchingHandlers,
+                )
 
-            OutboxHandlingStatus.RETRYABLE_FAILURE -> retryOrFail(
-                lease,
-                result.message ?: "Outbox handler requested a retry.",
-                handler,
-            )
-
-            OutboxHandlingStatus.PERMANENT_FAILURE -> {
-                markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.", handler)
-                ProcessingOutcome.FAILED
+                OutboxHandlingStatus.PERMANENT_FAILURE -> {
+                    markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.", matchingHandlers)
+                    return ProcessingOutcome.FAILED
+                }
             }
         }
+        transaction.execute { repository.markSucceeded(lease, now()) }
+        return ProcessingOutcome.SUCCEEDED
     }
 
     private fun <T> withEventTrace(lease: OutboxEventLease, action: () -> T): T {
@@ -109,11 +104,11 @@ class OutboxWorker @JvmOverloads constructor(
     private fun retryOrFail(
         lease: OutboxEventLease,
         message: String,
-        handler: OutboxEventHandler? = null,
+        handlers: List<OutboxEventHandler> = emptyList(),
     ): ProcessingOutcome {
         val attemptsAfterCurrent = lease.retryCount + 1
         if (attemptsAfterCurrent >= maxAttempts) {
-            markFailed(lease, message, handler)
+            markFailed(lease, message, handlers)
             return ProcessingOutcome.FAILED
         }
         val now = now()
@@ -123,13 +118,15 @@ class OutboxWorker @JvmOverloads constructor(
         return ProcessingOutcome.RETRIED
     }
 
-    private fun markFailed(lease: OutboxEventLease, message: String, handler: OutboxEventHandler? = null) {
+    private fun markFailed(lease: OutboxEventLease, message: String, handlers: List<OutboxEventHandler> = emptyList()) {
         val now = now()
         transaction.execute { repository.markFailed(lease, truncateMessage(message), now) }
-        try {
-            handler?.onExhausted(lease.event, truncateMessage(message))
-        } catch (_: Exception) {
-            // A local failure projection cannot change the durable outbox result.
+        handlers.forEach { handler ->
+            try {
+                handler.onExhausted(lease.event, truncateMessage(message))
+            } catch (_: Exception) {
+                // A local failure projection cannot change the durable outbox result.
+            }
         }
     }
 
