@@ -1,6 +1,6 @@
 # 架构防回归门禁
 
-`./gradlew check` 会自动执行 `verifyFileWeftArchitecture`。它只扫描生产 Kotlin 源码的 `import`，以最快、最稳定的方式阻止以下不可接受的依赖泄漏。门禁采用“允许命名空间白名单”：每层只能导入本层允许的 FileWeft 层、JDK（`java` / `javax`）和 Kotlin 类型；任何未知第三方或上层模块命名空间都会失败。
+`./gradlew check` 会自动执行 `verifyFileWeftArchitecture`，并运行 `build-logic` 中的 TestKit 回归测试。门禁只扫描生产 Kotlin 源码的 `import`，以最快、最稳定的方式阻止以下不可接受的依赖泄漏。门禁采用“允许命名空间白名单”：每层只能导入本层允许的 FileWeft 层、JDK（`java` / `javax`）和 Kotlin 类型；任何未知第三方或上层模块命名空间都会失败。
 
 - Core 只能依赖 Core；不得依赖上层 FileWeft 模块、Spring、JDBC、Flyway 或厂商 SDK。
 - SPI 只能依赖 Core 与 SPI；不得依赖 Domain、Application、Persistence、Adapter、Starter、数据库或厂商 SDK。
