@@ -49,6 +49,9 @@ class DocumentCatalogBindingService(
         // Source visibility is established by prepare; only then may the
         // requested target folder be evaluated.
         val folder = catalogAccess.requireFolderForDocumentUpdate(documentId, folderId)
+        // A target provider may be remote. Revalidate the source decision after
+        // that call so a revocation cannot slip into the final mutation window.
+        mutationGuard.revalidate(tenant.tenantId, documentId, sourcePermit)
         return transaction.execute {
             val document = documents.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)

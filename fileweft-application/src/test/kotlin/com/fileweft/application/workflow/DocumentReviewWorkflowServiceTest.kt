@@ -4,6 +4,7 @@ import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
+import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.application.transaction.ApplicationTransaction
@@ -19,8 +20,11 @@ import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.LifecycleState
 import com.fileweft.domain.workflow.WorkflowInstance
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
+import com.fileweft.domain.workflow.WorkflowDecisionConflictException
 import com.fileweft.domain.workflow.WorkflowState
 import com.fileweft.domain.workflow.WorkflowTask
+import com.fileweft.domain.workflow.WorkflowTaskAssignmentDeniedException
+import com.fileweft.domain.workflow.WorkflowTaskState
 import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
@@ -69,6 +73,39 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     @Test
+    fun `submit rejects foreign tenant and wrong id returned by the final document lock without side effects`() {
+        finalIdentityMismatches(::draftDocument).forEach { (case, lockedDocument) ->
+            val persistedDocument = draftDocument()
+            val documents = InMemoryDocuments(persistedDocument).apply {
+                findForMutationOverride = { _, _ -> lockedDocument }
+            }
+            val workflows = InMemoryWorkflows()
+            val outbox = RecordingOutbox()
+            val audits = RecordingAudits()
+            val service = service(
+                documents = documents,
+                workflows = workflows,
+                outbox = outbox,
+                identifiers = listOf("workflow-1", "task-1"),
+                auditTrail = auditTrail(audits),
+                authorization = { AuthorizationDecision(true) },
+            )
+
+            assertFailsWith<DocumentNotFoundException>(case) {
+                service.submit(Identifier("document-1"), Identifier("reviewer-1"))
+            }
+
+            assertEquals(LifecycleState.DRAFT, persistedDocument.lifecycleState, case)
+            assertEquals(LifecycleState.DRAFT, lockedDocument.lifecycleState, case)
+            assertEquals(0, documents.saveCalls, case)
+            assertEquals(0, workflows.saveCalls, case)
+            assertEquals(null, workflows.workflow, case)
+            assertEquals(emptyList(), audits.records, case)
+            assertEquals(emptyList(), outbox.events, case)
+        }
+    }
+
+    @Test
     fun `approval publishes document and emits one per target delivery event`() {
         val document = pendingReviewDocument()
         val workflow = pendingWorkflow(document.id)
@@ -97,6 +134,16 @@ class DocumentReviewWorkflowServiceTest {
         assertEquals(LifecycleState.REJECTED, rejected.lifecycleState)
         assertEquals(WorkflowState.REJECTED, workflow.state)
         assertEquals(emptyList(), outbox.events)
+    }
+
+    @Test
+    fun `approval hides malicious final document identities without side effects`() {
+        assertDecisionFinalIdentityFailures(approved = true)
+    }
+
+    @Test
+    fun `rejection hides malicious final document identities without side effects`() {
+        assertDecisionFinalIdentityFailures(approved = false)
     }
 
     @Test
@@ -246,10 +293,120 @@ class DocumentReviewWorkflowServiceTest {
 
     @Test
     fun `enforces workflow tenant lookup`() {
-        val service = service(InMemoryDocuments(draftDocument()), InMemoryWorkflows(), RecordingOutbox(), emptyList()) { AuthorizationDecision(true) }
+        val workflows = InMemoryWorkflows()
+        val authorizationRequests = mutableListOf<AuthorizationRequest>()
+        val service = service(InMemoryDocuments(draftDocument()), workflows, RecordingOutbox(), emptyList()) { request ->
+            authorizationRequests += request
+            AuthorizationDecision(true)
+        }
 
         assertFailsWith<WorkflowNotFoundException> {
             service.approve(Identifier("missing-workflow"), Identifier("missing-task"))
+        }
+
+        assertEquals(1, workflows.snapshotLookups)
+        assertEquals(0, workflows.decisionLookups)
+        assertEquals(emptyList(), authorizationRequests)
+    }
+
+    @Test
+    fun `document denial after workflow lookup is hidden as workflow not found`() {
+        val document = pendingReviewDocument()
+        val workflow = pendingWorkflow(document.id)
+        val workflows = InMemoryWorkflows(workflow)
+        val authorizationRequests = mutableListOf<AuthorizationRequest>()
+        val service = service(InMemoryDocuments(document), workflows, RecordingOutbox(), emptyList()) { request ->
+            authorizationRequests += request
+            AuthorizationDecision(false, "document audit denied")
+        }
+
+        assertFailsWith<WorkflowNotFoundException> {
+            service.approve(workflow.id, workflow.tasks.single().id)
+        }
+
+        assertEquals(1, workflows.snapshotLookups)
+        assertEquals(0, workflows.decisionLookups)
+        assertEquals(
+            listOf(DocumentReviewWorkflowService.DOCUMENT_RESOURCE_TYPE),
+            authorizationRequests.map { request -> request.resource.type },
+        )
+    }
+
+    @Test
+    fun `orphaned and foreign workflow documents are hidden before delivery profile resolution`() {
+        listOf(
+            "orphaned document" to null,
+            "foreign tenant document" to pendingReviewDocument(tenantId = Identifier("tenant-foreign")),
+        ).forEach { (case, resolvedDocument) ->
+            val workflow = pendingWorkflow(Identifier("document-1"))
+            val documents = InMemoryDocuments(resolvedDocument)
+            val workflows = InMemoryWorkflows(workflow)
+            val outbox = RecordingOutbox()
+            val audits = RecordingAudits()
+            var profileResolutions = 0
+            val service = service(
+                documents = documents,
+                workflows = workflows,
+                outbox = outbox,
+                identifiers = emptyList(),
+                auditTrail = auditTrail(audits),
+                deliveryPlannerOverride = deliveryPlanner(outbox) { profileResolutions++ },
+                authorization = { AuthorizationDecision(true) },
+            )
+
+            assertFailsWith<WorkflowNotFoundException>(case) {
+                service.approve(workflow.id, workflow.tasks.single().id)
+            }
+
+            assertEquals(0, profileResolutions, case)
+            assertEquals(0, documents.saveCalls, case)
+            assertEquals(0, workflows.saveCalls, case)
+            assertEquals(0, workflows.decisionLookups, case)
+            assertEquals(WorkflowState.PENDING, workflow.state, case)
+            assertEquals(WorkflowTaskState.PENDING, workflow.tasks.single().state, case)
+            assertEquals(emptyList(), audits.records, case)
+            assertEquals(emptyList(), outbox.events, case)
+        }
+    }
+
+    @Test
+    fun `task assignment and decision conflicts remain distinct after document authorization`() {
+        val document = pendingReviewDocument()
+        val assignedWorkflow = pendingWorkflow(document.id, Identifier("assigned-reviewer"))
+        val denied = service(
+            InMemoryDocuments(document),
+            InMemoryWorkflows(assignedWorkflow),
+            RecordingOutbox(),
+            emptyList(),
+            authorization = { AuthorizationDecision(true) },
+        )
+
+        assertFailsWith<WorkflowTaskAssignmentDeniedException> {
+            denied.approve(assignedWorkflow.id, assignedWorkflow.tasks.single().id)
+        }
+
+        val repeatedDocument = pendingReviewDocument()
+        val repeatedWorkflow = WorkflowInstance(
+            Identifier("workflow-1"),
+            Identifier("tenant-1"),
+            repeatedDocument.id,
+            DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+            tasks = listOf(
+                WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-1")),
+                WorkflowTask(Identifier("task-2"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-2")),
+            ),
+        )
+        repeatedWorkflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
+        val conflicted = service(
+            InMemoryDocuments(repeatedDocument),
+            InMemoryWorkflows(repeatedWorkflow),
+            RecordingOutbox(),
+            emptyList(),
+            authorization = { AuthorizationDecision(true) },
+        )
+
+        assertFailsWith<WorkflowDecisionConflictException> {
+            conflicted.approve(repeatedWorkflow.id, Identifier("task-1"))
         }
     }
 
@@ -257,18 +414,27 @@ class DocumentReviewWorkflowServiceTest {
     fun `classifies a missing reviewer during a workflow decision as unauthenticated`() {
         val document = pendingReviewDocument()
         val workflow = pendingWorkflow(document.id)
+        val workflows = InMemoryWorkflows(workflow)
+        var authorizationCalls = 0
         val service = service(
             documents = InMemoryDocuments(document),
-            workflows = InMemoryWorkflows(workflow),
+            workflows = workflows,
             outbox = RecordingOutbox(),
             identifiers = emptyList(),
             currentUser = null,
-            authorization = { AuthorizationDecision(true) },
+            authorization = {
+                authorizationCalls++
+                AuthorizationDecision(true)
+            },
         )
 
         assertFailsWith<ApplicationUnauthenticatedException> {
             service.approve(workflow.id, workflow.tasks.single().id, "approved")
         }
+
+        assertEquals(0, authorizationCalls)
+        assertEquals(0, workflows.snapshotLookups)
+        assertEquals(0, workflows.decisionLookups)
     }
 
     private fun service(
@@ -310,13 +476,24 @@ class DocumentReviewWorkflowServiceTest {
         Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
     )
 
-    private fun draftDocument() = Document(
-        Identifier("document-1"), Identifier("tenant-1"), Identifier("asset-1"), "DOC-001", "Contract",
-        versions = listOf(DocumentVersion(Identifier("version-1"), Identifier("tenant-1"), Identifier("document-1"), "1.0", Identifier("file-1"))),
+    private fun draftDocument(
+        id: Identifier = Identifier("document-1"),
+        tenantId: Identifier = Identifier("tenant-1"),
+    ) = Document(
+        id, tenantId, Identifier("asset-1"), "DOC-001", "Contract",
+        versions = listOf(DocumentVersion(Identifier("version-1"), tenantId, id, "1.0", Identifier("file-1"))),
         currentVersionId = Identifier("version-1"),
     )
 
-    private fun pendingReviewDocument() = draftDocument().also { it.transition(com.fileweft.domain.document.LifecycleCommand.SUBMIT) }
+    private fun pendingReviewDocument(
+        id: Identifier = Identifier("document-1"),
+        tenantId: Identifier = Identifier("tenant-1"),
+    ) = draftDocument(id, tenantId).also { it.transition(com.fileweft.domain.document.LifecycleCommand.SUBMIT) }
+
+    private fun finalIdentityMismatches(factory: (Identifier, Identifier) -> Document): List<Pair<String, Document>> = listOf(
+        "foreign tenant" to factory(Identifier("document-1"), Identifier("tenant-foreign")),
+        "wrong document id" to factory(Identifier("document-wrong"), Identifier("tenant-1")),
+    )
 
     private fun pendingWorkflow(documentId: Identifier, assigneeId: Identifier = Identifier("reviewer-1")) = WorkflowInstance(
         Identifier("workflow-1"), Identifier("tenant-1"), documentId, DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
@@ -324,23 +501,43 @@ class DocumentReviewWorkflowServiceTest {
     )
 
     private class InMemoryDocuments(var document: Document?) : DocumentRepository {
+        var saveCalls: Int = 0
+            private set
+        var findForMutationOverride: ((Identifier, Identifier) -> Document?)? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = document?.takeIf { it.tenantId == tenantId && it.id == documentId }
-        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
-        override fun save(document: Document) { this.document = document }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? {
+            findForMutationOverride?.let { provider -> return provider(tenantId, documentId) }
+            return findById(tenantId, documentId)
+        }
+        override fun save(document: Document) {
+            saveCalls++
+            this.document = document
+        }
     }
 
     private class InMemoryWorkflows(var workflow: WorkflowInstance? = null) : WorkflowInstanceRepository {
+        var snapshotLookups = 0
+            private set
         var decisionLookups = 0
             private set
+        var saveCalls: Int = 0
+            private set
 
-        override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? = workflow?.takeIf { it.tenantId == tenantId && it.id == workflowId }
+        override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? {
+            snapshotLookups++
+            return workflow?.takeIf { it.tenantId == tenantId && it.id == workflowId }
+        }
         override fun findForDecision(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? {
             decisionLookups++
             return findById(tenantId, workflowId)
         }
         override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? =
             workflow?.takeIf { it.tenantId == tenantId && it.documentId == documentId && it.state == WorkflowState.PENDING }
-        override fun save(workflow: WorkflowInstance) { this.workflow = workflow }
+        override fun save(workflow: WorkflowInstance) {
+            saveCalls++
+            this.workflow = workflow
+        }
     }
 
     private class RecordingOutbox : OutboxEventRepository {
@@ -371,17 +568,23 @@ class DocumentReviewWorkflowServiceTest {
         }
     }
 
-    private fun deliveryPlanner(outbox: RecordingOutbox): DocumentDeliveryPlanner {
+    private fun deliveryPlanner(
+        outbox: RecordingOutbox,
+        onProfileResolution: () -> Unit = {},
+    ): DocumentDeliveryPlanner {
         val ids = ArrayDeque(listOf("delivery-1", "delivery-event-1"))
         return DocumentDeliveryPlanner(
             profiles = object : DocumentDeliveryProfileProvider {
-                override fun listProfiles(tenantId: Identifier) = listOf(
-                    DocumentDeliveryProfile(
-                        "default", "Default", listOf(
-                            DocumentDeliveryTargetDefinition("main", "Main", "main", DeliveryRequirement.REQUIRED),
+                override fun listProfiles(tenantId: Identifier): List<DocumentDeliveryProfile> {
+                    onProfileResolution()
+                    return listOf(
+                        DocumentDeliveryProfile(
+                            "default", "Default", listOf(
+                                DocumentDeliveryTargetDefinition("main", "Main", "main", DeliveryRequirement.REQUIRED),
+                            ),
                         ),
-                    ),
-                )
+                    )
+                }
             },
             connectors = object : DeliveryConnectorResolver {
                 override fun findConnector(connectorId: String): FileConnector = object : FileConnector {
@@ -399,5 +602,44 @@ class DocumentReviewWorkflowServiceTest {
             identifiers = object : IdentifierGenerator { override fun nextId() = Identifier(ids.removeFirst()) },
             clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
         )
+    }
+
+    private fun assertDecisionFinalIdentityFailures(approved: Boolean) {
+        finalIdentityMismatches(::pendingReviewDocument).forEach { (case, lockedDocument) ->
+            val persistedDocument = pendingReviewDocument()
+            val workflow = pendingWorkflow(persistedDocument.id)
+            val documents = InMemoryDocuments(persistedDocument).apply {
+                findForMutationOverride = { _, _ -> lockedDocument }
+            }
+            val workflows = InMemoryWorkflows(workflow)
+            val outbox = RecordingOutbox()
+            val audits = RecordingAudits()
+            val service = service(
+                documents = documents,
+                workflows = workflows,
+                outbox = outbox,
+                identifiers = emptyList(),
+                auditTrail = auditTrail(audits),
+                authorization = { AuthorizationDecision(true) },
+            )
+
+            assertFailsWith<WorkflowNotFoundException>(case) {
+                if (approved) {
+                    service.approve(workflow.id, workflow.tasks.single().id, "approved")
+                } else {
+                    service.reject(workflow.id, workflow.tasks.single().id, "rejected")
+                }
+            }
+
+            assertEquals(LifecycleState.PENDING_REVIEW, persistedDocument.lifecycleState, case)
+            assertEquals(LifecycleState.PENDING_REVIEW, lockedDocument.lifecycleState, case)
+            assertEquals(WorkflowState.PENDING, workflow.state, case)
+            assertEquals(WorkflowTaskState.PENDING, workflow.tasks.single().state, case)
+            assertEquals(0, documents.saveCalls, case)
+            assertEquals(0, workflows.saveCalls, case)
+            assertEquals(0, workflows.decisionLookups, case)
+            assertEquals(emptyList(), audits.records, case)
+            assertEquals(emptyList(), outbox.events, case)
+        }
     }
 }

@@ -1,6 +1,8 @@
 package com.fileweft.application.publish
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
+import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.security.ApplicationAuthorization
@@ -26,21 +28,52 @@ class PublishDocumentService(
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
-    fun publish(documentId: Identifier): Document = publish(documentId, null)
+    fun publish(documentId: Identifier): Document = execute(documentId, null, null)
 
-    fun publish(documentId: Identifier, deliveryProfileId: String?): Document {
+    fun publish(documentId: Identifier, deliveryProfileId: String?): Document =
+        execute(documentId, deliveryProfileId, null)
+
+    internal fun publish(
+        documentId: Identifier,
+        deliveryProfileId: String?,
+        guard: DocumentLifecycleMutationGuard,
+    ): Document = execute(documentId, deliveryProfileId, guard)
+
+    private fun execute(
+        documentId: Identifier,
+        deliveryProfileId: String?,
+        guard: DocumentLifecycleMutationGuard?,
+    ): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, "document:publish")
+        authorization.requireDocumentAction(tenant.tenantId, documentId, PUBLISH_ACTION)
+        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
+            null
+        } else {
+            guard.prepareLifecycle(tenant.tenantId, documentId, PUBLISH_ACTION)
+        }
         transaction.execute {
-            documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findById(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
+            if (document.tenantId != tenant.tenantId || document.id != documentId) {
+                throw DocumentNotFoundException(documentId)
+            }
             requireNoActiveWorkflow(tenant.tenantId, documentId)
         }
         val preparation = deliveryPlanner.prepare(tenant.tenantId, deliveryProfileId)
+        if (guard != null) {
+            guard.revalidateLifecycle(tenant.tenantId, documentId, checkNotNull(permit))
+        }
         return transaction.execute {
             val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
+            if (document.tenantId != tenant.tenantId || document.id != documentId) {
+                throw DocumentNotFoundException(documentId)
+            }
+            if (guard != null) {
+                // Document lock first, then the guard's asset mutation lock.
+                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
+            }
             requireNoActiveWorkflow(tenant.tenantId, documentId)
             document.transition(LifecycleCommand.APPROVE)
             documentRepository.save(document)
@@ -65,6 +98,7 @@ class PublishDocumentService(
 
     private companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        const val PUBLISH_ACTION = "document:publish"
         const val PUBLISH_AUDIT_ACTION = "document:publish:request"
     }
 }

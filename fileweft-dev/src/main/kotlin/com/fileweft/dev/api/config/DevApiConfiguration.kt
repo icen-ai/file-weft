@@ -5,11 +5,11 @@ import com.fileweft.adapter.s3.S3StorageAdapter
 import com.fileweft.adapter.s3.S3StorageConfiguration
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.doctor.DoctorApplicationService
-import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.agent.DevClassificationAgent
@@ -241,8 +241,9 @@ class DevApiConfiguration {
 
     @Bean
     fun devReviewService(
+        access: DevAccessService,
         users: DevUserDirectory,
         tenants: TenantProvider,
-        workflows: DocumentReviewWorkflowService,
-    ): DevReviewService = DevReviewService(users, tenants, workflows)
+        lifecycle: DocumentCatalogLifecycleService,
+    ): DevReviewService = DevReviewService(access, users, tenants, lifecycle)
 }

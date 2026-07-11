@@ -7,6 +7,7 @@ import com.fileweft.application.publish.ActiveDocumentReviewWorkflowException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.domain.document.DocumentConflictException
+import com.fileweft.domain.workflow.WorkflowConflictException
 import com.fileweft.web.api.ApiError
 import com.fileweft.web.api.ApiErrorCodes
 import com.fileweft.web.api.ApiResponse
@@ -60,6 +61,7 @@ class V1ApiResponseFactory {
                 "The requested feature is unavailable.",
             )
             is DocumentConflictException,
+            is WorkflowConflictException,
             is ActiveDocumentReviewWorkflowException,
             -> MappedFailure(
                 ApiHttpStatus.CONFLICT,

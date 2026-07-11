@@ -32,8 +32,10 @@ class WorkflowInstance(
     }
 
     fun approve(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
-        require(state == WorkflowState.PENDING) { "Only pending workflows can be approved." }
-        task(taskId).approve(operatorId, comment)
+        val candidate = task(taskId)
+        candidate.requireAssignedTo(operatorId)
+        requirePendingWorkflow("approved")
+        candidate.approve(operatorId, comment)
         if (mutableTasks.all { it.state == WorkflowTaskState.APPROVED }) {
             state = WorkflowState.APPROVED
         }
@@ -45,24 +47,32 @@ class WorkflowInstance(
      * policy before acquiring the database transaction for the final decision.
      */
     fun willCompleteAfterApproval(taskId: Identifier, operatorId: Identifier): Boolean {
-        require(state == WorkflowState.PENDING) { "Only pending workflows can be approved." }
         val candidate = task(taskId)
-        require(candidate.state == WorkflowTaskState.PENDING) { "Only pending workflow tasks can be decided." }
-        require(candidate.assigneeId == null || candidate.assigneeId == operatorId) {
-            "Workflow task is assigned to another operator."
-        }
+        candidate.requireAssignedTo(operatorId)
+        requirePendingWorkflow("approved")
+        candidate.requirePendingDecision()
         return mutableTasks.all { task -> task.id == taskId || task.state == WorkflowTaskState.APPROVED }
     }
 
     fun reject(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
-        require(state == WorkflowState.PENDING) { "Only pending workflows can be rejected." }
-        task(taskId).reject(operatorId, comment)
+        val candidate = task(taskId)
+        candidate.requireAssignedTo(operatorId)
+        requirePendingWorkflow("rejected")
+        candidate.reject(operatorId, comment)
         state = WorkflowState.REJECTED
     }
 
     private fun task(taskId: Identifier): WorkflowTask =
         mutableTasks.firstOrNull { it.id == taskId }
-            ?: throw NoSuchElementException("Workflow task ${taskId.value} does not belong to workflow ${id.value}.")
+            ?: throw WorkflowTaskNotFoundException(id, taskId)
+
+    private fun requirePendingWorkflow(operation: String) {
+        if (state != WorkflowState.PENDING) {
+            throw WorkflowDecisionConflictException(
+                "Only pending workflows can be $operation; workflow ${id.value} is ${state.name}.",
+            )
+        }
+    }
 
     private fun requireStateAndTasksAreConsistent() {
         when (state) {

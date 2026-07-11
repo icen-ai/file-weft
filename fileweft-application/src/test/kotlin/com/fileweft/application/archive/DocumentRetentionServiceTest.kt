@@ -89,6 +89,84 @@ class DocumentRetentionServiceTest {
     }
 
     @Test
+    fun `archive rejects foreign tenant and wrong id returned by the final document lock without side effects`() {
+        finalIdentityMismatches(::publishedDocument).forEach { (case, lockedDocument) ->
+            val persistedDocument = publishedDocument()
+            val repository = InMemoryDocumentRepository(persistedDocument).apply {
+                findForMutationOverride = { _, _ -> lockedDocument }
+            }
+            val audits = RecordingAudits()
+            val deliveries = RecordingDeliveries(
+                deliveredTarget(
+                    tenantId = lockedDocument.tenantId,
+                    documentId = lockedDocument.id,
+                ),
+            )
+            val outbox = RecordingOutbox()
+            val service = ArchiveDocumentService(
+                tenantProvider(),
+                userProvider(),
+                authorizationProvider { AuthorizationDecision(true) },
+                repository,
+                DirectTransaction,
+                auditTrail(audits),
+                removalPlanner(deliveries, outbox),
+            )
+
+            assertThrows<DocumentNotFoundException>(case) {
+                service.archive(Identifier("document-1"))
+            }
+
+            assertEquals(LifecycleState.PUBLISHED, persistedDocument.lifecycleState, case)
+            assertEquals(LifecycleState.PUBLISHED, lockedDocument.lifecycleState, case)
+            assertEquals(0, repository.saveCalls, case)
+            assertEquals(null, repository.saved, case)
+            assertEquals(0, deliveries.saveCalls, case)
+            assertEquals(emptyList(), audits.records, case)
+            assertEquals(emptyList(), outbox.events, case)
+        }
+    }
+
+    @Test
+    fun `offline rejects foreign tenant and wrong id returned by the final document lock without side effects`() {
+        finalIdentityMismatches(::publishedDocument).forEach { (case, lockedDocument) ->
+            val persistedDocument = publishedDocument()
+            val repository = InMemoryDocumentRepository(persistedDocument).apply {
+                findForMutationOverride = { _, _ -> lockedDocument }
+            }
+            val audits = RecordingAudits()
+            val deliveries = RecordingDeliveries(
+                deliveredTarget(
+                    tenantId = lockedDocument.tenantId,
+                    documentId = lockedDocument.id,
+                ),
+            )
+            val outbox = RecordingOutbox()
+            val service = OfflineDocumentService(
+                tenantProvider(),
+                userProvider(),
+                authorizationProvider { AuthorizationDecision(true) },
+                repository,
+                DirectTransaction,
+                auditTrail(audits),
+                removalPlanner(deliveries, outbox),
+            )
+
+            assertThrows<DocumentNotFoundException>(case) {
+                service.offline(Identifier("document-1"))
+            }
+
+            assertEquals(LifecycleState.PUBLISHED, persistedDocument.lifecycleState, case)
+            assertEquals(LifecycleState.PUBLISHED, lockedDocument.lifecycleState, case)
+            assertEquals(0, repository.saveCalls, case)
+            assertEquals(null, repository.saved, case)
+            assertEquals(0, deliveries.saveCalls, case)
+            assertEquals(emptyList(), audits.records, case)
+            assertEquals(emptyList(), outbox.events, case)
+        }
+    }
+
+    @Test
     fun `restores an offline document only after its current delivery generation is withdrawn`() {
         val document = publishedDocument().also { it.transition(LifecycleCommand.OFFLINE) }
         val repository = InMemoryDocumentRepository(document)
@@ -116,13 +194,56 @@ class DocumentRetentionServiceTest {
         assertThrows<IllegalArgumentException> { service.restore(document.id) }
     }
 
-    private fun publishedDocument(): Document = Document(
-        id = Identifier("document-1"),
-        tenantId = Identifier("tenant-1"),
+    @Test
+    fun `restore rejects foreign tenant and wrong id returned by the final document lock without side effects`() {
+        finalIdentityMismatches { id, tenantId ->
+            publishedDocument(id, tenantId).also { it.transition(LifecycleCommand.OFFLINE) }
+        }.forEach { (case, lockedDocument) ->
+            val persistedDocument = publishedDocument().also { it.transition(LifecycleCommand.OFFLINE) }
+            val repository = InMemoryDocumentRepository(persistedDocument).apply {
+                findForMutationOverride = { _, _ -> lockedDocument }
+            }
+            val audits = RecordingAudits()
+            val deliveries = RecordingDeliveries(
+                deliveredTarget(
+                    removalStatus = DocumentDeliveryRemovalStatus.SUCCEEDED,
+                    tenantId = lockedDocument.tenantId,
+                    documentId = lockedDocument.id,
+                ),
+            )
+            val service = RestoreOfflineDocumentService(
+                tenantProvider(),
+                userProvider(),
+                authorizationProvider { AuthorizationDecision(true) },
+                repository,
+                deliveries,
+                DirectTransaction,
+                auditTrail(audits),
+            )
+
+            assertThrows<DocumentNotFoundException>(case) {
+                service.restore(Identifier("document-1"))
+            }
+
+            assertEquals(LifecycleState.OFFLINE, persistedDocument.lifecycleState, case)
+            assertEquals(LifecycleState.OFFLINE, lockedDocument.lifecycleState, case)
+            assertEquals(0, repository.saveCalls, case)
+            assertEquals(null, repository.saved, case)
+            assertEquals(0, deliveries.saveCalls, case)
+            assertEquals(emptyList(), audits.records, case)
+        }
+    }
+
+    private fun publishedDocument(
+        id: Identifier = Identifier("document-1"),
+        tenantId: Identifier = Identifier("tenant-1"),
+    ): Document = Document(
+        id = id,
+        tenantId = tenantId,
         assetId = Identifier("asset-1"),
         documentNumber = "DOC-001",
         title = "Contract",
-        versions = listOf(DocumentVersion(Identifier("version-1"), Identifier("tenant-1"), Identifier("document-1"), "1.0", Identifier("file-1"))),
+        versions = listOf(DocumentVersion(Identifier("version-1"), tenantId, id, "1.0", Identifier("file-1"))),
         currentVersionId = Identifier("version-1"),
     ).also {
         it.transition(LifecycleCommand.SUBMIT)
@@ -130,10 +251,14 @@ class DocumentRetentionServiceTest {
         it.transition(LifecycleCommand.PUBLISH_SUCCEEDED)
     }
 
-    private fun deliveredTarget(removalStatus: DocumentDeliveryRemovalStatus = DocumentDeliveryRemovalStatus.NOT_REQUESTED) = DocumentDeliveryTarget(
+    private fun deliveredTarget(
+        removalStatus: DocumentDeliveryRemovalStatus = DocumentDeliveryRemovalStatus.NOT_REQUESTED,
+        tenantId: Identifier = Identifier("tenant-1"),
+        documentId: Identifier = Identifier("document-1"),
+    ) = DocumentDeliveryTarget(
         id = Identifier("delivery-1"),
-        tenantId = Identifier("tenant-1"),
-        documentId = Identifier("document-1"),
+        tenantId = tenantId,
+        documentId = documentId,
         profileId = "regulated",
         targetId = "archive",
         displayName = "Archive",
@@ -143,6 +268,11 @@ class DocumentRetentionServiceTest {
         externalId = "archive:tenant-1:document-1",
         deliveryGeneration = 1,
         removalStatus = removalStatus,
+    )
+
+    private fun finalIdentityMismatches(factory: (Identifier, Identifier) -> Document): List<Pair<String, Document>> = listOf(
+        "foreign tenant" to factory(Identifier("document-1"), Identifier("tenant-foreign")),
+        "wrong document id" to factory(Identifier("document-wrong"), Identifier("tenant-1")),
     )
 
     private fun tenantProvider(): TenantProvider = object : TenantProvider {
@@ -163,14 +293,20 @@ class DocumentRetentionServiceTest {
         private var document: Document?,
     ) : DocumentRepository {
         var saved: Document? = null
+        var saveCalls: Int = 0
+            private set
+        var findForMutationOverride: ((Identifier, Identifier) -> Document?)? = null
 
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document?.takeIf { it.tenantId == tenantId && it.id == documentId }
 
-        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
-            findById(tenantId, documentId)
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? {
+            findForMutationOverride?.let { provider -> return provider(tenantId, documentId) }
+            return findById(tenantId, documentId)
+        }
 
         override fun save(document: Document) {
+            saveCalls++
             this.document = document
             saved = document
         }
@@ -193,6 +329,9 @@ class DocumentRetentionServiceTest {
     }
 
     private class RecordingDeliveries(var target: DocumentDeliveryTarget?) : DocumentDeliveryTargetRepository {
+        var saveCalls: Int = 0
+            private set
+
         override fun findById(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? =
             target?.takeIf { it.tenantId == tenantId && it.id == deliveryId }
 
@@ -200,6 +339,7 @@ class DocumentRetentionServiceTest {
             target?.takeIf { it.tenantId == tenantId && it.documentId == documentId }?.let(::listOf) ?: emptyList()
 
         override fun save(target: DocumentDeliveryTarget) {
+            saveCalls++
             this.target = target
         }
     }
@@ -215,4 +355,14 @@ class DocumentRetentionServiceTest {
         private val ids = ArrayDeque(values.toList())
         override fun nextId(): Identifier = Identifier(ids.removeFirst())
     }
+
+    private fun removalPlanner(
+        deliveries: RecordingDeliveries,
+        outbox: RecordingOutbox,
+    ) = DocumentDeliveryRemovalPlanner(
+        deliveries,
+        outbox,
+        SequenceIds("removal-event"),
+        Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC),
+    )
 }

@@ -56,8 +56,14 @@ class DocumentCatalogAccessService(
 
     /** Performs base document authorization without invoking the host catalog or a repository. */
     internal fun requireDocumentUpdateAuthorization(documentId: Identifier) {
+        requireDocumentActionAuthorization(documentId, DOCUMENT_EDIT_ACTION)
+    }
+
+    /** Performs one action-specific base authorization without consulting the catalog. */
+    internal fun requireDocumentActionAuthorization(documentId: Identifier, actionName: String) {
+        requireValidDocumentAction(actionName)
         val tenant = tenantProvider.currentTenant()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, DOCUMENT_EDIT_ACTION)
+        authorization.requireDocumentAction(tenant.tenantId, documentId, actionName)
     }
 
     /**
@@ -68,12 +74,59 @@ class DocumentCatalogAccessService(
     internal fun requireCurrentFolderForDocumentUpdate(
         documentId: Identifier,
         folderId: String,
+    ): DocumentCatalogFolder = requireCurrentFolderForDocumentAction(
+        documentId,
+        folderId,
+        DOCUMENT_EDIT_ACTION,
+        DocumentCatalogOperation.BIND_DOCUMENT,
+    )
+
+    /**
+     * Applies an action-specific document authorization and checks that the
+     * persisted source folder remains browseable. Lifecycle operations never
+     * request permission to rebind the document merely to inspect its source.
+     */
+    internal fun requireCurrentFolderForDocumentLifecycle(
+        documentId: Identifier,
+        folderId: String,
+        actionName: String,
+    ): DocumentCatalogFolder = requireCurrentFolderForDocumentAction(
+        documentId,
+        folderId,
+        actionName,
+        DocumentCatalogOperation.BROWSE,
+    )
+
+    private fun requireCurrentFolderForDocumentAction(
+        documentId: Identifier,
+        folderId: String,
+        actionName: String,
+        operation: DocumentCatalogOperation,
     ): DocumentCatalogFolder = try {
-        requireFolderForDocumentUpdate(documentId, folderId)
+        requireValidDocumentAction(actionName)
+        require(folderId == folderId.trim()) {
+            "Persisted document catalog binding must be a canonical folder id."
+        }
+        requireFolder(
+            folderId,
+            documentId,
+            DOCUMENT_RESOURCE_TYPE,
+            actionName,
+            operation,
+        )
     } catch (_: DocumentCatalogFolderUnavailableException) {
         throw DocumentNotFoundException(documentId)
     } catch (failure: IllegalArgumentException) {
         throw IllegalStateException("Persisted document catalog binding is invalid.", failure)
+    }
+
+    private fun requireValidDocumentAction(actionName: String) {
+        require(actionName.startsWith(DOCUMENT_ACTION_PREFIX) && actionName.length > DOCUMENT_ACTION_PREFIX.length) {
+            "Document action must use the document namespace."
+        }
+        require(actionName.none { character -> Character.isISOControl(character) }) {
+            "Document action must not contain control characters."
+        }
     }
 
     override fun requireFolderForDocumentRead(folderId: String) {
@@ -124,6 +177,7 @@ class DocumentCatalogAccessService(
     private fun requireValidCanonicalFolder(folder: DocumentCatalogFolder) {
         if (
             folder.id.isBlank() ||
+            folder.id != folder.id.trim() ||
             folder.id.length > MAX_FOLDER_ID_LENGTH ||
             folder.id.any { character -> Character.isISOControl(character) }
         ) {
@@ -163,6 +217,7 @@ class DocumentCatalogAccessService(
         const val DOCUMENT_DOWNLOAD_ACTION = "document:download"
         const val DOCUMENT_CREATE_ACTION = "document:create"
         const val DOCUMENT_EDIT_ACTION = "document:edit"
+        const val DOCUMENT_ACTION_PREFIX = "document:"
         const val MAX_FOLDER_ID_LENGTH = 256
     }
 }

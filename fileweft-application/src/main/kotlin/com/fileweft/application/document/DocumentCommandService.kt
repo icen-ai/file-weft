@@ -1,6 +1,8 @@
 package com.fileweft.application.document
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
+import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -21,19 +23,47 @@ class DocumentCommandService(
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
-    fun submit(documentId: Identifier): Document = execute(documentId, "document:submit", LifecycleCommand.SUBMIT)
+    fun submit(documentId: Identifier): Document = execute(documentId, SUBMIT_ACTION, LifecycleCommand.SUBMIT, null)
 
-    fun reject(documentId: Identifier): Document = execute(documentId, "document:reject", LifecycleCommand.REJECT)
+    internal fun submit(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
+        execute(documentId, SUBMIT_ACTION, LifecycleCommand.SUBMIT, guard)
 
-    fun revise(documentId: Identifier): Document = execute(documentId, "document:revise", LifecycleCommand.REVISE)
+    fun reject(documentId: Identifier): Document = execute(documentId, REJECT_ACTION, LifecycleCommand.REJECT, null)
 
-    private fun execute(documentId: Identifier, action: String, command: LifecycleCommand): Document {
+    internal fun reject(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
+        execute(documentId, REJECT_ACTION, LifecycleCommand.REJECT, guard)
+
+    fun revise(documentId: Identifier): Document = execute(documentId, REVISE_ACTION, LifecycleCommand.REVISE, null)
+
+    internal fun revise(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
+        execute(documentId, REVISE_ACTION, LifecycleCommand.REVISE, guard)
+
+    private fun execute(
+        documentId: Identifier,
+        action: String,
+        command: LifecycleCommand,
+        guard: DocumentLifecycleMutationGuard?,
+    ): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
+        // Base authorization must precede every repository and catalog access.
         authorization.requireDocumentAction(tenant.tenantId, documentId, action)
+        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
+            null
+        } else {
+            guard.prepareLifecycle(tenant.tenantId, documentId, action).also { prepared ->
+                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
+            }
+        }
         return transaction.execute {
             val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
+            if (document.tenantId != tenant.tenantId || document.id != documentId) {
+                throw DocumentNotFoundException(documentId)
+            }
+            if (guard != null) {
+                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
+            }
             document.transition(command)
             documentRepository.save(document)
             auditTrail?.record(
@@ -50,6 +80,9 @@ class DocumentCommandService(
 
     private companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        const val SUBMIT_ACTION = "document:submit"
+        const val REJECT_ACTION = "document:reject"
+        const val REVISE_ACTION = "document:revise"
     }
 }
 

@@ -108,7 +108,13 @@ $env:FILEWEFT_RUN_DEV_UI_E2E='true'
 
 FileWeft 不拥有业务系统的目录，也不会把目录名称写入对象存储路径。宿主实现 `DocumentCatalogProvider`，以租户内不透明字符串 ID 返回文件夹；选中的 ID 仅以 `catalog.folder-id` 元数据绑定到文件资产。这样同一个 `inbox` ID 可以在不同租户中独立存在，目录改名或移动也无需迁移 FileWeft 数据。
 
-新版 SPI 可接收 `DocumentCatalogAccessRequest`，其中的租户、当前用户和操作意图由 FileWeft 的可信上下文生成。目录 ACL 应由宿主在该方法中实施，不能信任前端传入的租户或用户。为兼容现有实现，旧的 `listFolders(tenantId)` 仍有效；需要按用户过滤时覆写请求版本。Starter 在存在唯一 `DocumentCatalogProvider` Bean 时自动装配 `DocumentCatalogAccessService`：先校验 `document:read` 或 `document:create`，再调用宿主目录。创建草稿前调用 `requireFolderForDocumentCreation(folderId)`，然后将返回 ID 写入 `DocumentCatalogBinding.METADATA_KEY`；`DocumentDraftService` 会继续独立执行文档创建授权。文件树移动使用 `DocumentCatalogBindingService.move(documentId, folderId)`：它要求 `document:edit` 和目标目录 ACL，只更新资产元数据并记录 `document:catalog:move` 审计，不移动对象、不改变生命周期或重新推送下游。相同条件下自动装配的 `CatalogDoctorChecker` 会在异步 Doctor 中校验绑定目录仍属于该租户；它不模拟用户或检查用户 ACL，因此不会绕过宿主权限模型。
+新版 SPI 可接收 `DocumentCatalogAccessRequest`，其中的租户、当前用户和操作意图由 FileWeft 的可信上下文生成。目录 ACL 应由宿主在该方法中实施，不能信任前端传入的租户或用户。为兼容现有实现，旧的 `listFolders(tenantId)` 仍有效；需要按用户过滤时覆写请求版本。Starter 自动生成 `DocumentCatalogAccessService` 时要求恰好一个 `DocumentCatalogProvider`；即使候选之一标记了 `@Primary`，多个未聚合的目录安全边界也会让启动明确失败。确需组合多个目录源时，宿主必须显式提供一个负责聚合与 ACL 的 `DocumentCatalogAccessService`，且访问服务本身仍只能有一个。创建草稿前先校验 `document:create` 与目录权限，再将返回 ID 写入 `DocumentCatalogBinding.METADATA_KEY`；文件树移动则要求 `document:edit` 和目标目录 ACL，目标目录解析后还会再次验证源目录，最后只更新资产元数据并记录审计，不移动对象、不改变生命周期或重新推送下游。
+
+逐请求 `folderId`、canonical ID 约束、按租户动态路由、多个 OA/ERP 目录聚合及远程 ACL 缓存要求见[目录动态路由实现规范](docs/plugin-development.md#动态目录与组合系统实现规范)。
+
+目录模式下，改名、新版本以及提交、审批、修订、发布、下线、恢复和归档都会先在短事务中冻结文档到资产的原始目录绑定，在事务外执行当前动作授权和源目录 `BROWSE` ACL，外部审批路由或交付策略返回后再次验证，最后按 document → asset（审批再到 workflow）的锁序复核绑定。权限撤销、目录移动竞态或跨租户恶意仓储结果都会在业务写入和审计前失败。自定义资产仓储若没有 `FileAssetMutationRepository` 行锁能力，Starter 不会装配目录安全的 mutation/lifecycle 门面；目录模式的 Controller 或宿主入口必须把该能力缺失视为不可用，不能回退调用租户级底层服务。相同条件下的 `CatalogDoctorChecker` 会在异步 Doctor 中校验绑定目录仍属于该租户；它不模拟用户或检查用户 ACL，因此不会绕过宿主权限模型。
+
+为保持已有嵌入代码兼容，`DocumentCommandService`、`DocumentReviewWorkflowService`、`PublishDocumentService`、`OfflineDocumentService`、`RestoreOfflineDocumentService` 和 `ArchiveDocumentService` 仍是无目录宿主可直接使用的租户级原语。启用目录后直接注入这些原语不会自动获得目录 ACL；官方 Controller 与宿主自定义入口必须改用目录 mutation/lifecycle 门面。正式生命周期 HTTP 在提供统一的 flat/guarded 能力解析器与缺能力 `503` 路径前不会开放。
 
 ## 多下游交付
 

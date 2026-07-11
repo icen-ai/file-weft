@@ -23,6 +23,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class DocumentCommandServiceTest {
     @Test
@@ -55,9 +56,54 @@ class DocumentCommandServiceTest {
         assertEquals("外部编辑者", audits.records.single().operatorName)
     }
 
-    private fun rejectedDocument() = Document(
-        Identifier("document-1"), Identifier("tenant-1"), Identifier("asset-1"), "DOC-001", "Contract",
-        versions = listOf(DocumentVersion(Identifier("version-1"), Identifier("tenant-1"), Identifier("document-1"), "1.0", Identifier("file-1"))),
+    @Test
+    fun `rejects foreign tenant and wrong id documents returned by the mutation repository without side effects`() {
+        val requestedDocumentId = Identifier("document-1")
+        val maliciousDocuments = listOf(
+            rejectedDocument(tenantId = Identifier("tenant-2")),
+            rejectedDocument(documentId = Identifier("document-2")),
+        )
+
+        maliciousDocuments.forEach { maliciousDocument ->
+            val documents = MaliciousMutationDocuments(maliciousDocument)
+            val audits = RecordingAudits()
+            val service = DocumentCommandService(
+                tenantProvider = object : TenantProvider {
+                    override fun currentTenant() = TenantContext(Identifier("tenant-1"))
+                },
+                userRealmProvider = object : UserRealmProvider {
+                    override fun currentUser() = UserIdentity(Identifier("10001"), "外部编辑者")
+                    override fun findUser(userId: Identifier): UserIdentity? = null
+                },
+                authorizationProvider = object : AuthorizationProvider {
+                    override fun authorize(request: AuthorizationRequest) = AuthorizationDecision(true)
+                },
+                documentRepository = documents,
+                transaction = DirectTransaction,
+                auditTrail = AuditTrail(
+                    audits,
+                    object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("audit-1") },
+                    Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC),
+                ),
+            )
+            val originalState = maliciousDocument.lifecycleState
+
+            assertFailsWith<DocumentNotFoundException> {
+                service.revise(requestedDocumentId)
+            }
+
+            assertEquals(originalState, maliciousDocument.lifecycleState)
+            assertEquals(0, documents.saveCalls)
+            assertEquals(emptyList(), audits.records)
+        }
+    }
+
+    private fun rejectedDocument(
+        documentId: Identifier = Identifier("document-1"),
+        tenantId: Identifier = Identifier("tenant-1"),
+    ) = Document(
+        documentId, tenantId, Identifier("asset-1"), "DOC-001", "Contract",
+        versions = listOf(DocumentVersion(Identifier("version-1"), tenantId, documentId, "1.0", Identifier("file-1"))),
         currentVersionId = Identifier("version-1"),
     ).also {
         it.transition(LifecycleCommand.SUBMIT)
@@ -72,6 +118,20 @@ class DocumentCommandServiceTest {
             findById(tenantId, documentId)
 
         override fun save(document: Document) { this.document = document }
+    }
+
+    private class MaliciousMutationDocuments(
+        private val maliciousDocument: Document,
+    ) : DocumentRepository {
+        var saveCalls: Int = 0
+
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? = null
+
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document = maliciousDocument
+
+        override fun save(document: Document) {
+            saveCalls += 1
+        }
     }
 
     private class RecordingAudits : AuditRecordRepository {

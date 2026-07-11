@@ -20,6 +20,7 @@ import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.doctor.CatalogDoctorChecker
 import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
@@ -27,7 +28,9 @@ import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.delivery.DocumentDeliverySyncService
 import com.fileweft.application.document.DocumentDraftService
+import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
+import com.fileweft.application.document.DocumentDownloadVisibility
 import com.fileweft.application.document.DocumentFolderReadAccess
 import com.fileweft.application.document.DocumentPageRequest
 import com.fileweft.application.document.DocumentPageResult
@@ -38,6 +41,9 @@ import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.outbox.OutboxBacklogMetricsPublisher
 import com.fileweft.application.outbox.OutboxBacklogReader
+import com.fileweft.application.offline.OfflineDocumentService
+import com.fileweft.application.offline.RestoreOfflineDocumentService
+import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
@@ -45,6 +51,7 @@ import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
 import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
+import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
@@ -86,8 +93,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Primary
 import java.io.InputStream
 import java.net.URI
 import java.nio.file.Path
@@ -347,6 +357,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(DocumentDraftService::class.java) != null)
             assertTrue(context.getBeansOfType(DocumentCatalogDraftService::class.java).isEmpty())
             assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(DocumentCatalogLifecycleService::class.java).isEmpty())
             assertTrue(context.getBean(DocumentDownloadService::class.java) != null)
             assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
@@ -394,9 +405,11 @@ class FileWeftAutoConfigurationTest {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java, CustomerConfiguration::class.java, CatalogConfiguration::class.java)
             .run { context ->
                 assertTrue(context.getBean(DocumentCatalogAccessService::class.java) != null)
+                assertTrue(context.containsBean("fileWeftDocumentCatalogAccessService"))
                 assertTrue(context.getBean(DocumentCatalogBindingService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
+                assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
                 assertTrue(context.getBean(FileAssetMutationRepository::class.java) != null)
                 assertTrue(context.getBean(JdbcFileAssetRepository::class.java) is FileAssetMutationRepository)
                 assertTrue(context.getBean(CatalogDoctorChecker::class.java) != null)
@@ -425,6 +438,7 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBeansOfType(DocumentCatalogBindingService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(DocumentCatalogLifecycleService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(FileAssetMutationRepository::class.java).isEmpty())
             }
     }
@@ -445,6 +459,7 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogBindingService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
+                assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
             }
     }
 
@@ -465,11 +480,12 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogBindingService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
+                assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
             }
     }
 
     @Test
-    fun `does not choose a catalog integration when the host provides multiple catalog providers`() {
+    fun `fails closed when the host provides multiple catalog providers`() {
         contextRunner()
             .withUserConfiguration(
                 DatabaseConfiguration::class.java,
@@ -477,10 +493,33 @@ class FileWeftAutoConfigurationTest {
                 MultipleCatalogConfiguration::class.java,
             )
             .run { context ->
-                assertTrue(context.getBeansOfType(DocumentCatalogAccessService::class.java).isEmpty())
-                assertTrue(context.getBeansOfType(DocumentCatalogBindingService::class.java).isEmpty())
-                assertTrue(context.getBeansOfType(DocumentCatalogDraftService::class.java).isEmpty())
-                assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
+                assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
+            }
+    }
+
+    @Test
+    fun `fails closed when one of multiple catalog providers is primary`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                CustomerConfiguration::class.java,
+                PrimaryMultipleCatalogConfiguration::class.java,
+            )
+            .run { context ->
+                assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
+            }
+    }
+
+    @Test
+    fun `fails closed when one of multiple catalog access boundaries is primary`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                CustomerConfiguration::class.java,
+                MultipleCatalogAccessConfiguration::class.java,
+            )
+            .run { context ->
+                assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
             }
     }
 
@@ -535,6 +574,23 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `does not replace a customer catalog lifecycle service`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                CustomerConfiguration::class.java,
+                CatalogConfiguration::class.java,
+                CustomerCatalogLifecycleConfiguration::class.java,
+            )
+            .run { context ->
+                assertSame(
+                    context.getBean("customerCatalogLifecycleService"),
+                    context.getBean(DocumentCatalogLifecycleService::class.java),
+                )
+            }
+    }
+
+    @Test
     fun `does not replace customer document query ports or services when assembling runtime services`() {
         contextRunner()
             .withUserConfiguration(DatabaseConfiguration::class.java, CustomerDocumentQueryConfiguration::class.java)
@@ -551,6 +607,9 @@ class FileWeftAutoConfigurationTest {
     private fun privateField(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name)
         .apply { isAccessible = true }
         .get(target)
+
+    private fun Throwable.hasCause(type: Class<out Throwable>): Boolean =
+        generateSequence(this) { failure -> failure.cause }.any(type::isInstance)
 
     private fun request() = AuthorizationRequest(
         AuthorizationSubject(Identifier("user"), "USER"),
@@ -631,6 +690,61 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
+    class PrimaryMultipleCatalogConfiguration {
+        @Bean
+        @Primary
+        fun primaryCatalogProvider(): DocumentCatalogProvider = object : DocumentCatalogProvider {
+            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
+                listOf(DocumentCatalogFolder("primary-inbox", null, "Primary inbox"))
+        }
+
+        @Bean
+        fun secondaryCatalogProvider(): DocumentCatalogProvider = object : DocumentCatalogProvider {
+            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
+                listOf(DocumentCatalogFolder("secondary-inbox", null, "Secondary inbox"))
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class MultipleCatalogAccessConfiguration {
+        @Bean
+        @Primary
+        fun primaryCatalogAccessService(
+            tenants: TenantProvider,
+            users: UserRealmProvider,
+            authorization: AuthorizationProvider,
+        ): DocumentCatalogAccessService = access(tenants, users, authorization, "primary-inbox")
+
+        @Bean
+        fun secondaryCatalogAccessService(
+            tenants: TenantProvider,
+            users: UserRealmProvider,
+            authorization: AuthorizationProvider,
+        ): DocumentCatalogAccessService = access(tenants, users, authorization, "secondary-inbox")
+
+        @Bean
+        fun customerDocumentDownloadVisibility(
+            @Qualifier("primaryCatalogAccessService") catalogAccess: DocumentCatalogAccessService,
+            queries: DocumentQueryRepository,
+        ): DocumentDownloadVisibility = DocumentDownloadVisibility(catalogAccess, queries)
+
+        private fun access(
+            tenants: TenantProvider,
+            users: UserRealmProvider,
+            authorization: AuthorizationProvider,
+            folderId: String,
+        ): DocumentCatalogAccessService = DocumentCatalogAccessService(
+            tenants,
+            users,
+            authorization,
+            object : DocumentCatalogProvider {
+                override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
+                    listOf(DocumentCatalogFolder(folderId, null, folderId))
+            },
+        )
+    }
+
+    @Configuration(proxyBeanMethods = false)
     class ExplicitCatalogAccessConfiguration {
         @Bean
         fun explicitCatalogAccessService(
@@ -675,6 +789,34 @@ class FileWeftAutoConfigurationTest {
             catalogAccess: DocumentCatalogAccessService,
         ): DocumentCatalogMutationService =
             DocumentCatalogMutationService(drafts, catalogAccess)
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CustomerCatalogLifecycleConfiguration {
+        @Bean
+        fun customerCatalogLifecycleService(
+            commands: DocumentCommandService,
+            workflows: DocumentReviewWorkflowService,
+            publish: PublishDocumentService,
+            offline: OfflineDocumentService,
+            restore: RestoreOfflineDocumentService,
+            archive: ArchiveDocumentService,
+            catalogAccess: DocumentCatalogAccessService,
+            documents: DocumentRepository,
+            assets: FileAssetRepository,
+            transaction: ApplicationTransaction,
+        ): DocumentCatalogLifecycleService = DocumentCatalogLifecycleService(
+            commands,
+            workflows,
+            publish,
+            offline,
+            restore,
+            archive,
+            catalogAccess,
+            documents,
+            assets,
+            transaction,
+        )
     }
 
     @Configuration(proxyBeanMethods = false)

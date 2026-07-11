@@ -3,11 +3,15 @@ package com.fileweft.web.runtime.v1
 import com.fileweft.application.document.DocumentFolderReadAccessUnavailableException
 import com.fileweft.application.document.DocumentContentUnavailableException
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.workflow.DocumentReviewConflictException
 import com.fileweft.application.upload.StoredObjectIntegrityException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
+import com.fileweft.domain.workflow.WorkflowDecisionConflictException
+import com.fileweft.domain.workflow.WorkflowTaskAssignmentDeniedException
+import com.fileweft.domain.workflow.WorkflowTaskNotFoundException
 import com.fileweft.web.api.ApiErrorCodes
 import com.fileweft.web.runtime.v1.document.V1FeatureUnavailableException
 import org.junit.jupiter.api.Test
@@ -26,10 +30,26 @@ class V1ApiResponseFactoryTest {
             V1RangeNotSupportedException() to Triple(416, ApiErrorCodes.RANGE_NOT_SUPPORTED, "Range requests are not supported."),
             ApplicationUnauthenticatedException("host identity is unavailable") to Triple(401, ApiErrorCodes.UNAUTHENTICATED, "Authentication is required."),
             ApplicationForbiddenException("policy=restricted-folder") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
+            WorkflowTaskAssignmentDeniedException(Identifier("private-task")) to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             DocumentNotFoundException(Identifier("private-document")) to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
+            WorkflowTaskNotFoundException(Identifier("private-workflow"), Identifier("private-task")) to Triple(
+                404,
+                ApiErrorCodes.NOT_FOUND,
+                "Resource was not found.",
+            ),
             DocumentFolderReadAccessUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             V1FeatureUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             DocumentNumberAlreadyExistsException("private-number") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            WorkflowDecisionConflictException("private workflow state") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            DocumentReviewConflictException("private review route race") to Triple(
                 409,
                 ApiErrorCodes.CONFLICT,
                 "Request conflicts with the current resource state.",

@@ -1,6 +1,8 @@
 package com.fileweft.application.offline
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
+import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.delivery.DocumentDeliveryRemovalStatus
 import com.fileweft.application.delivery.DocumentDeliveryStatus
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
@@ -31,13 +33,31 @@ class RestoreOfflineDocumentService(
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
-    fun restore(documentId: Identifier): Document {
+    fun restore(documentId: Identifier): Document = execute(documentId, null)
+
+    internal fun restore(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
+        execute(documentId, guard)
+
+    private fun execute(documentId: Identifier, guard: DocumentLifecycleMutationGuard?): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, RESTORE_ACTION)
+        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
+            null
+        } else {
+            guard.prepareLifecycle(tenant.tenantId, documentId, RESTORE_ACTION).also { prepared ->
+                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
+            }
+        }
         return transaction.execute {
             val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
+            if (document.tenantId != tenant.tenantId || document.id != documentId) {
+                throw DocumentNotFoundException(documentId)
+            }
+            if (guard != null) {
+                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
+            }
             val currentDeliveries = deliveries.findByDocumentGeneration(
                 tenant.tenantId,
                 document.id,

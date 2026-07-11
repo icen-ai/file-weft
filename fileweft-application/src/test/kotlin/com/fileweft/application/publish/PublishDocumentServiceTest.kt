@@ -4,6 +4,7 @@ import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
+import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
@@ -87,6 +88,69 @@ class PublishDocumentServiceTest {
     }
 
     @Test
+    fun `rejects foreign tenant and wrong id documents returned by preflight lookup without side effects`() {
+        val requestedDocumentId = Identifier("document-1")
+        val maliciousDocuments = listOf(
+            pendingReviewDocument(tenantId = Identifier("tenant-2")),
+            pendingReviewDocument(documentId = Identifier("document-2")),
+        )
+
+        maliciousDocuments.forEach { maliciousDocument ->
+            val documents = AdversarialDocumentRepository(
+                preflightDocument = maliciousDocument,
+                mutationDocument = pendingReviewDocument(),
+            )
+            val outbox = RecordingOutbox()
+            val audits = RecordingAudits()
+            val service = publishService(documents, outbox, audits)
+            val originalState = maliciousDocument.lifecycleState
+
+            assertFailsWith<DocumentNotFoundException> {
+                service.publish(requestedDocumentId)
+            }
+
+            assertEquals(originalState, maliciousDocument.lifecycleState)
+            assertEquals(0, documents.mutationReads)
+            assertEquals(0, documents.saveCalls)
+            assertEquals(emptyList(), outbox.events)
+            assertEquals(emptyList(), audits.records)
+        }
+    }
+
+    @Test
+    fun `rejects foreign tenant and wrong id documents returned by final mutation lookup without side effects`() {
+        val requestedDocumentId = Identifier("document-1")
+        val maliciousDocuments = listOf(
+            pendingReviewDocument(tenantId = Identifier("tenant-2")),
+            pendingReviewDocument(documentId = Identifier("document-2")),
+        )
+
+        maliciousDocuments.forEach { maliciousDocument ->
+            val validPreflightDocument = pendingReviewDocument()
+            val documents = AdversarialDocumentRepository(
+                preflightDocument = validPreflightDocument,
+                mutationDocument = maliciousDocument,
+            )
+            val outbox = RecordingOutbox()
+            val audits = RecordingAudits()
+            val service = publishService(documents, outbox, audits)
+            val preflightOriginalState = validPreflightDocument.lifecycleState
+            val maliciousOriginalState = maliciousDocument.lifecycleState
+
+            assertFailsWith<DocumentNotFoundException> {
+                service.publish(requestedDocumentId)
+            }
+
+            assertEquals(preflightOriginalState, validPreflightDocument.lifecycleState)
+            assertEquals(maliciousOriginalState, maliciousDocument.lifecycleState)
+            assertEquals(1, documents.mutationReads)
+            assertEquals(0, documents.saveCalls)
+            assertEquals(emptyList(), outbox.events)
+            assertEquals(emptyList(), audits.records)
+        }
+    }
+
+    @Test
     fun `refuses direct publication while a local review workflow remains active`() {
         val document = pendingReviewDocument()
         val documentRepository = InMemoryDocumentRepository(document)
@@ -135,10 +199,13 @@ class PublishDocumentServiceTest {
         assertEquals(emptyList(), outbox.events)
     }
 
-    private fun pendingReviewDocument(): Document {
+    private fun pendingReviewDocument(
+        documentId: Identifier = Identifier("document-1"),
+        tenantId: Identifier = Identifier("tenant-1"),
+    ): Document {
         val document = Document(
-            id = Identifier("document-1"),
-            tenantId = Identifier("tenant-1"),
+            id = documentId,
+            tenantId = tenantId,
             assetId = Identifier("asset-1"),
             documentNumber = "DOC-001",
             title = "Contract",
@@ -156,6 +223,32 @@ class PublishDocumentServiceTest {
         return document
     }
 
+    private fun publishService(
+        documents: DocumentRepository,
+        outbox: RecordingOutbox,
+        audits: RecordingAudits,
+    ): PublishDocumentService = PublishDocumentService(
+        tenantProvider = object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
+        },
+        userRealmProvider = object : UserRealmProvider {
+            override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "发布管理员")
+            override fun findUser(userId: Identifier): UserIdentity? = null
+        },
+        authorizationProvider = object : AuthorizationProvider {
+            override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
+        },
+        documentRepository = documents,
+        deliveryPlanner = deliveryPlanner(outbox, listOf("delivery-1", "event-1")),
+        transaction = DirectTransaction,
+        auditTrail = AuditTrail(
+            audits,
+            object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("audit-1") },
+            Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+        ),
+        workflows = EmptyWorkflows,
+    )
+
     private class InMemoryDocumentRepository(document: Document) : DocumentRepository {
         private var document: Document? = document
         var savedDocument: Document? = null
@@ -169,6 +262,25 @@ class PublishDocumentServiceTest {
         override fun save(document: Document) {
             this.document = document
             savedDocument = document
+        }
+    }
+
+    private class AdversarialDocumentRepository(
+        private val preflightDocument: Document?,
+        private val mutationDocument: Document?,
+    ) : DocumentRepository {
+        var mutationReads: Int = 0
+        var saveCalls: Int = 0
+
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? = preflightDocument
+
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? {
+            mutationReads += 1
+            return mutationDocument
+        }
+
+        override fun save(document: Document) {
+            saveCalls += 1
         }
     }
 

@@ -28,7 +28,7 @@ import com.fileweft.spi.catalog.DocumentCatalogBinding
 internal class DocumentCatalogMutationGuard(
     private val catalogAccess: DocumentCatalogAccessService,
     components: DocumentMutationComponents,
-) : DocumentMutationGuard {
+) : DocumentMutationGuard, DocumentLifecycleMutationGuard {
     private val documents: DocumentRepository = components.documents
     private val assets: FileAssetRepository = components.assets
     private val transaction = components.transaction
@@ -38,30 +38,31 @@ internal class DocumentCatalogMutationGuard(
         )
 
     override fun prepare(tenantId: Identifier, documentId: Identifier): DocumentMutationPermit {
-        val permit = transaction.execute {
-            val document = documents.findById(tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
-            }
-            val asset = assets.findById(tenantId, document.assetId)
-                ?: throw missingAsset(document)
-            if (asset.tenantId != tenantId || asset.id != document.assetId) {
-                throw missingAsset(document)
-            }
-            val rawFolderId = asset.metadata[DocumentCatalogBinding.METADATA_KEY]
-            DocumentCatalogMutationPermit(
-                tenantId = tenantId,
-                documentId = document.id,
-                assetId = document.assetId,
-                rawFolderId = rawFolderId,
-                effectiveFolderId = rawFolderId?.takeIf { value -> value.isNotBlank() }
-                    ?: DocumentSummaryView.DEFAULT_FOLDER_ID,
-            )
-        }
+        val permit = snapshot(tenantId, documentId, DocumentCatalogMutationPurpose.DRAFT_EDIT)
         // The host catalog may be remote. It must be called only after the
         // short persistence snapshot transaction has completed.
         catalogAccess.requireCurrentFolderForDocumentUpdate(permit.documentId, permit.effectiveFolderId)
+        return permit
+    }
+
+    override fun prepareLifecycle(
+        tenantId: Identifier,
+        documentId: Identifier,
+        actionName: String,
+    ): DocumentLifecycleMutationPermit {
+        val permit = snapshot(
+            tenantId,
+            documentId,
+            DocumentCatalogMutationPurpose.LIFECYCLE,
+            actionName,
+        )
+        // Base authorization and the host-owned folder ACL are intentionally
+        // outside FileWeft's short snapshot transaction.
+        catalogAccess.requireCurrentFolderForDocumentLifecycle(
+            permit.documentId,
+            permit.effectiveFolderId,
+            permit.actionName,
+        )
         return permit
     }
 
@@ -80,12 +81,36 @@ internal class DocumentCatalogMutationGuard(
         )
     }
 
+    override fun revalidateLifecycle(
+        tenantId: Identifier,
+        documentId: Identifier,
+        permit: DocumentLifecycleMutationPermit,
+    ) {
+        val catalogPermit = lifecyclePermit(permit)
+        if (catalogPermit.tenantId != tenantId || catalogPermit.documentId != documentId) {
+            throw DocumentCatalogBindingChangedException(documentId)
+        }
+        catalogAccess.requireCurrentFolderForDocumentLifecycle(
+            catalogPermit.documentId,
+            catalogPermit.effectiveFolderId,
+            catalogPermit.actionName,
+        )
+    }
+
     override fun verifyLocked(
         tenantId: Identifier,
         document: Document,
         permit: DocumentMutationPermit,
     ) {
         verifyAndLoadAssetLocked(tenantId, document, permit)
+    }
+
+    override fun verifyLifecycleLocked(
+        tenantId: Identifier,
+        document: Document,
+        permit: DocumentLifecycleMutationPermit,
+    ) {
+        verifyAndLoadAssetLocked(tenantId, document, lifecyclePermit(permit))
     }
 
     /** Locks and returns the verified asset so a catalog move needs no second read. */
@@ -114,12 +139,54 @@ internal class DocumentCatalogMutationGuard(
         return asset
     }
 
+    private fun snapshot(
+        tenantId: Identifier,
+        documentId: Identifier,
+        purpose: DocumentCatalogMutationPurpose,
+        actionName: String = DRAFT_EDIT_ACTION,
+    ): DocumentCatalogMutationPermit = transaction.execute {
+        val document = documents.findById(tenantId, documentId)
+            ?: throw DocumentNotFoundException(documentId)
+        if (document.tenantId != tenantId || document.id != documentId) {
+            throw DocumentNotFoundException(documentId)
+        }
+        val asset = assets.findById(tenantId, document.assetId)
+            ?: throw missingAsset(document)
+        if (asset.tenantId != tenantId || asset.id != document.assetId) {
+            throw missingAsset(document)
+        }
+        val rawFolderId = asset.metadata[DocumentCatalogBinding.METADATA_KEY]
+        DocumentCatalogMutationPermit(
+            tenantId = tenantId,
+            documentId = document.id,
+            assetId = document.assetId,
+            rawFolderId = rawFolderId,
+            effectiveFolderId = rawFolderId?.takeIf { value -> value.isNotBlank() }
+                ?: DocumentSummaryView.DEFAULT_FOLDER_ID,
+            purpose = purpose,
+            actionName = actionName,
+        )
+    }
+
     private fun catalogPermit(permit: DocumentMutationPermit): DocumentCatalogMutationPermit =
         permit as? DocumentCatalogMutationPermit
             ?: throw IllegalStateException("Document mutation permit does not belong to the catalog guard.")
 
+    private fun lifecyclePermit(permit: DocumentLifecycleMutationPermit): DocumentCatalogMutationPermit {
+        val catalogPermit = permit as? DocumentCatalogMutationPermit
+            ?: throw IllegalStateException("Document lifecycle permit does not belong to the catalog guard.")
+        if (catalogPermit.purpose != DocumentCatalogMutationPurpose.LIFECYCLE) {
+            throw IllegalStateException("Document lifecycle permit was created for a different mutation purpose.")
+        }
+        return catalogPermit
+    }
+
     private fun missingAsset(document: Document): IllegalStateException =
         IllegalStateException("Document ${document.id.value} references a missing file asset.")
+
+    private companion object {
+        const val DRAFT_EDIT_ACTION = "document:edit"
+    }
 }
 
 private class DocumentCatalogMutationPermit(
@@ -128,4 +195,40 @@ private class DocumentCatalogMutationPermit(
     val assetId: Identifier,
     val rawFolderId: String?,
     val effectiveFolderId: String,
-) : DocumentMutationPermit
+    val purpose: DocumentCatalogMutationPurpose,
+    val actionName: String,
+) : DocumentMutationPermit, DocumentLifecycleMutationPermit
+
+private enum class DocumentCatalogMutationPurpose {
+    DRAFT_EDIT,
+    LIFECYCLE,
+}
+
+/**
+ * Two-phase policy boundary for catalog-aware lifecycle and workflow changes.
+ * Implementations must keep external authorization and catalog calls outside
+ * the final mutation transaction.
+ */
+internal interface DocumentLifecycleMutationGuard {
+    fun prepareLifecycle(
+        tenantId: Identifier,
+        documentId: Identifier,
+        actionName: String,
+    ): DocumentLifecycleMutationPermit
+
+    fun revalidateLifecycle(
+        tenantId: Identifier,
+        documentId: Identifier,
+        permit: DocumentLifecycleMutationPermit,
+    )
+
+    /** Called only after the caller has acquired the document mutation lock. */
+    fun verifyLifecycleLocked(
+        tenantId: Identifier,
+        document: Document,
+        permit: DocumentLifecycleMutationPermit,
+    )
+}
+
+/** Invocation-local evidence for one action-specific catalog decision. */
+internal interface DocumentLifecycleMutationPermit

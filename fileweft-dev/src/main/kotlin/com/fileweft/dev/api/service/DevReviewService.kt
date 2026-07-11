@@ -1,18 +1,20 @@
 package com.fileweft.dev.api.service
 
+import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.config.DevRole
 import com.fileweft.dev.api.security.DevUserDirectory
 import com.fileweft.domain.workflow.WorkflowInstance
 import com.fileweft.spi.tenant.TenantProvider
-import com.fileweft.application.workflow.DocumentReviewWorkflowService
 
 class DevReviewService(
+    private val access: DevAccessService,
     private val users: DevUserDirectory,
     private val tenants: TenantProvider,
-    private val workflows: DocumentReviewWorkflowService,
+    private val workflows: DocumentCatalogLifecycleService,
 ) {
     fun submit(documentId: Identifier, reviewerId: String?, reviewRouteId: String?): WorkflowInstance {
+        access.requireDocumentAction(documentId, SUBMIT_ACTION)
         val reviewer = reviewerId?.takeIf { it.isNotBlank() }?.let(::Identifier)?.let { users.findById(it) }
         if (reviewer != null) {
             require(reviewer.tenantId == tenants.currentTenant().tenantId) { "Reviewer must belong to the current tenant." }
@@ -22,6 +24,10 @@ class DevReviewService(
         } else {
             require(reviewerId.isNullOrBlank()) { "Reviewer was not found." }
         }
-        return workflows.submit(documentId, reviewer?.id, reviewRouteId)
+        return workflows.submitForReview(documentId, reviewer?.id, reviewRouteId)
+    }
+
+    private companion object {
+        const val SUBMIT_ACTION = "document:submit"
     }
 }

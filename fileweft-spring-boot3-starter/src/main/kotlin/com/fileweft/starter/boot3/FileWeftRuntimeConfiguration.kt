@@ -17,6 +17,7 @@ import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
@@ -190,10 +191,23 @@ class FileWeftRuntimeConfiguration {
     fun resumableUploadSessions(objectMapper: ObjectMapper): ResumableUploadSessionRepository =
         JdbcResumableUploadSessionRepository(objectMapper)
 
-    @Bean
+    @Bean(name = ["documentCatalogAccessService"])
     @ConditionalOnBean(DocumentCatalogProvider::class)
-    @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
     @ConditionalOnMissingBean(DocumentCatalogAccessService::class)
+    fun documentCatalogAccessServiceFromCandidates(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        catalogs: ObjectProvider<DocumentCatalogProvider>,
+    ) = DocumentCatalogAccessService(
+        tenants,
+        users,
+        authorization,
+        requiredSecurityCandidate(catalogs, DocumentCatalogProvider::class.java),
+    )
+
+    /** Retains the original factory ABI for hosts that invoked this configuration directly. */
+    @Deprecated("Use the ObjectProvider-backed auto-configuration factory.")
     fun documentCatalogAccessService(
         tenants: TenantProvider,
         users: UserRealmProvider,
@@ -238,6 +252,42 @@ class FileWeftRuntimeConfiguration {
         assets: FileAssetRepository,
     ): DocumentCatalogMutationService? =
         if (assets is FileAssetMutationRepository) DocumentCatalogMutationService(drafts, catalogAccess) else null
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogLifecycleService::class)
+    // Keep lifecycle changes behind the same catalog binding lock required by
+    // guarded draft mutations; never downgrade to an ordinary asset read.
+    fun documentCatalogLifecycleService(
+        commands: DocumentCommandService,
+        workflows: DocumentReviewWorkflowService,
+        publish: PublishDocumentService,
+        offline: OfflineDocumentService,
+        restore: RestoreOfflineDocumentService,
+        archive: ArchiveDocumentService,
+        catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
+        documents: DocumentRepository,
+        assets: FileAssetRepository,
+        transaction: ApplicationTransaction,
+    ): DocumentCatalogLifecycleService? {
+        val catalogAccess = requiredSecurityCandidate(catalogAccesses, DocumentCatalogAccessService::class.java)
+        return if (assets is FileAssetMutationRepository) {
+            DocumentCatalogLifecycleService(
+                commands,
+                workflows,
+                publish,
+                offline,
+                restore,
+                archive,
+                catalogAccess,
+                documents,
+                assets,
+                transaction,
+            )
+        } else {
+            null
+        }
+    }
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
@@ -502,11 +552,17 @@ class FileWeftRuntimeConfiguration {
             throw NoUniqueBeanDefinitionException(
                 beanType,
                 candidates.size,
-                "Exactly one ${beanType.simpleName} security guard may be configured.",
+                "Exactly one ${beanType.simpleName} security boundary may be configured.",
             )
         }
         return candidates.singleOrNull()
     }
+
+    private fun <T : Any> requiredSecurityCandidate(
+        provider: ObjectProvider<T>,
+        beanType: Class<T>,
+    ): T = singleSecurityCandidateOrNull(provider, beanType)
+        ?: throw NoSuchBeanDefinitionException(beanType)
 
     @Bean
     @ConditionalOnMissingBean(DocumentDraftService::class)

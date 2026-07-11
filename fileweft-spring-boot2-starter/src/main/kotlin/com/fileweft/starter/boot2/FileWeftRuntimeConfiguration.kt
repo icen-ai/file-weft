@@ -17,6 +17,7 @@ import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
@@ -117,6 +118,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
+import org.springframework.beans.factory.NoSuchBeanDefinitionException
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
@@ -237,10 +239,23 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftResumableUploadSessionRepository(objectMapper: ObjectMapper): ResumableUploadSessionRepository =
         JdbcResumableUploadSessionRepository(objectMapper)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentCatalogAccessService"])
     @ConditionalOnBean(DocumentCatalogProvider::class)
-    @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
     @ConditionalOnMissingBean(DocumentCatalogAccessService::class)
+    fun fileWeftDocumentCatalogAccessServiceFromCandidates(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        catalogs: ObjectProvider<DocumentCatalogProvider>,
+    ): DocumentCatalogAccessService = DocumentCatalogAccessService(
+        tenants,
+        users,
+        authorization,
+        requiredSecurityCandidate(catalogs, DocumentCatalogProvider::class.java),
+    )
+
+    /** Retains the original factory ABI for hosts that invoked this configuration directly. */
+    @Deprecated("Use the ObjectProvider-backed auto-configuration factory.")
     fun fileWeftDocumentCatalogAccessService(
         tenants: TenantProvider,
         users: UserRealmProvider,
@@ -293,6 +308,42 @@ class FileWeftRuntimeConfiguration {
         assets: FileAssetRepository,
     ): DocumentCatalogMutationService? =
         if (assets is FileAssetMutationRepository) DocumentCatalogMutationService(drafts, catalogAccess) else null
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogLifecycleService::class)
+    // Lifecycle commands must preserve the same locked catalog binding used by
+    // draft mutations; a plain FileAssetRepository cannot provide that proof.
+    fun fileWeftDocumentCatalogLifecycleService(
+        commands: DocumentCommandService,
+        workflows: DocumentReviewWorkflowService,
+        publish: PublishDocumentService,
+        offline: OfflineDocumentService,
+        restore: RestoreOfflineDocumentService,
+        archive: ArchiveDocumentService,
+        catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
+        documents: DocumentRepository,
+        assets: FileAssetRepository,
+        transaction: ApplicationTransaction,
+    ): DocumentCatalogLifecycleService? {
+        val catalogAccess = requiredSecurityCandidate(catalogAccesses, DocumentCatalogAccessService::class.java)
+        return if (assets is FileAssetMutationRepository) {
+            DocumentCatalogLifecycleService(
+                commands,
+                workflows,
+                publish,
+                offline,
+                restore,
+                archive,
+                catalogAccess,
+                documents,
+                assets,
+                transaction,
+            )
+        } else {
+            null
+        }
+    }
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
@@ -579,6 +630,27 @@ class FileWeftRuntimeConfiguration {
                 DocumentDownloadVisibility::class.java,
                 candidates.size,
                 "FileWeft download service requires at most one DocumentDownloadVisibility.",
+            )
+        }
+        return candidates.singleOrNull()
+    }
+
+    private fun <T : Any> requiredSecurityCandidate(
+        provider: ObjectProvider<T>,
+        beanType: Class<T>,
+    ): T = singleSecurityCandidateOrNull(provider, beanType)
+        ?: throw NoSuchBeanDefinitionException(beanType)
+
+    private fun <T : Any> singleSecurityCandidateOrNull(
+        provider: ObjectProvider<T>,
+        beanType: Class<T>,
+    ): T? {
+        val candidates = provider.stream().iterator().asSequence().toList()
+        if (candidates.size > 1) {
+            throw NoUniqueBeanDefinitionException(
+                beanType,
+                candidates.size,
+                "Exactly one ${beanType.simpleName} security boundary may be configured.",
             )
         }
         return candidates.singleOrNull()

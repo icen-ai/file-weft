@@ -1,6 +1,8 @@
 package com.fileweft.application.archive
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
+import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
 import com.fileweft.application.security.ApplicationAuthorization
@@ -25,13 +27,31 @@ class ArchiveDocumentService(
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
-    fun archive(documentId: Identifier): Document {
+    fun archive(documentId: Identifier): Document = execute(documentId, null)
+
+    internal fun archive(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
+        execute(documentId, guard)
+
+    private fun execute(documentId: Identifier, guard: DocumentLifecycleMutationGuard?): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, "document:archive")
+        authorization.requireDocumentAction(tenant.tenantId, documentId, ARCHIVE_ACTION)
+        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
+            null
+        } else {
+            guard.prepareLifecycle(tenant.tenantId, documentId, ARCHIVE_ACTION).also { prepared ->
+                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
+            }
+        }
         return transaction.execute {
             val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
+            if (document.tenantId != tenant.tenantId || document.id != documentId) {
+                throw DocumentNotFoundException(documentId)
+            }
+            if (guard != null) {
+                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
+            }
             document.transition(LifecycleCommand.ARCHIVE)
             val removalPlan = removalPlanner?.plan(document)
             documentRepository.save(document)
@@ -50,6 +70,7 @@ class ArchiveDocumentService(
 
     private companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        const val ARCHIVE_ACTION = "document:archive"
         const val ARCHIVE_AUDIT_ACTION = "document:archive"
     }
 }

@@ -89,6 +89,21 @@ class DocumentCatalogDraftServiceTest {
     }
 
     @Test
+    fun `rejects a provider folder id with surrounding whitespace before upload`() {
+        val fixture = Fixture(
+            folder = DocumentCatalogFolder(" $CANONICAL_FOLDER_ID ", null, "Invalid canonical folder"),
+        )
+
+        val failure = assertThrows<IllegalStateException> {
+            fixture.service.createInFolder(command(), "folder-alias", content())
+        }
+
+        assertTrue(failure.message.orEmpty().contains("provider returned an invalid canonical folder id"))
+        assertEquals(1, fixture.catalog.calls)
+        assertNoDraftWasCreated(fixture)
+    }
+
+    @Test
     fun `rejects every caller reserved namespace before upload`() {
         listOf(
             "catalog.folder-id",

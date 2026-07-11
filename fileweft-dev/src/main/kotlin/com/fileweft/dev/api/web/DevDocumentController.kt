@@ -1,20 +1,15 @@
 package com.fileweft.dev.api.web
 
-import com.fileweft.application.archive.ArchiveDocumentService
+import com.fileweft.application.catalog.DocumentCatalogLifecycleService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.AddDocumentVersionCommand
 import com.fileweft.application.document.CreateDocumentDraftCommand
-import com.fileweft.application.document.DocumentCommandService
-import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownload
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.doctor.ScheduleDocumentDoctorService
-import com.fileweft.application.offline.OfflineDocumentService
-import com.fileweft.application.offline.RestoreOfflineDocumentService
-import com.fileweft.application.publish.PublishDocumentService
-import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.connector.DevPlatformMirrorService
@@ -60,17 +55,12 @@ data class DevAgentSuggestionConfirmationResponse(val taskId: String, val sugges
 @RestController
 @RequestMapping("/api/documents")
 class DevDocumentController(
-    private val drafts: DocumentDraftService,
+    private val catalogMutations: DocumentCatalogMutationService,
     private val downloads: DocumentDownloadService,
     private val catalogDrafts: DevCatalogDocumentService,
     private val catalogBindings: DocumentCatalogBindingService,
-    private val commands: DocumentCommandService,
     private val reviews: DevReviewService,
-    private val reviewWorkflow: DocumentReviewWorkflowService,
-    private val publish: PublishDocumentService,
-    private val offline: OfflineDocumentService,
-    private val restoreOffline: RestoreOfflineDocumentService,
-    private val archive: ArchiveDocumentService,
+    private val lifecycle: DocumentCatalogLifecycleService,
     private val queries: DevDocumentQueryService,
     private val operations: DevOperationsService,
     private val retryDeliveries: RetryDocumentDeliveryService,
@@ -124,7 +114,7 @@ class DevDocumentController(
 
     @PatchMapping("/{documentId}")
     fun rename(@PathVariable documentId: String, @RequestBody request: DevRenameDocumentRequest): DevDocumentDetail {
-        val document = drafts.rename(Identifier(documentId), request.title)
+        val document = catalogMutations.rename(Identifier(documentId), request.title)
         return queries.detail(document.id)
     }
 
@@ -143,7 +133,7 @@ class DevDocumentController(
         @RequestParam versionNumber: String,
         @RequestParam file: MultipartFile,
     ): DevDocumentDetail = file.inputStream.use { content ->
-        val document = drafts.addVersion(
+        val document = catalogMutations.addVersion(
             Identifier(documentId),
             AddDocumentVersionCommand(versionNumber, requiredFileName(file), file.size, file.contentType),
             content,
@@ -157,7 +147,7 @@ class DevDocumentController(
 
     @PostMapping("/{documentId}/revise")
     fun revise(@PathVariable documentId: String): DevDocumentDetail {
-        val document = commands.revise(Identifier(documentId))
+        val document = lifecycle.revise(Identifier(documentId))
         return queries.detail(document.id)
     }
 
@@ -166,25 +156,25 @@ class DevDocumentController(
         @PathVariable documentId: String,
         @RequestBody(required = false) request: DevPublishDocumentRequest?,
     ): DevDocumentDetail {
-        val document = publish.publish(Identifier(documentId), request?.deliveryProfileId)
+        val document = lifecycle.publish(Identifier(documentId), request?.deliveryProfileId)
         return queries.detail(document.id)
     }
 
     @PostMapping("/{documentId}/offline")
     fun offline(@PathVariable documentId: String): DevDocumentDetail {
-        val document = offline.offline(Identifier(documentId))
+        val document = lifecycle.offline(Identifier(documentId))
         return queries.detail(document.id)
     }
 
     @PostMapping("/{documentId}/restore")
     fun restore(@PathVariable documentId: String): DevDocumentDetail {
-        val document = restoreOffline.restore(Identifier(documentId))
+        val document = lifecycle.restore(Identifier(documentId))
         return queries.detail(document.id)
     }
 
     @PostMapping("/{documentId}/archive")
     fun archive(@PathVariable documentId: String): DevDocumentDetail {
-        val document = archive.archive(Identifier(documentId))
+        val document = lifecycle.archive(Identifier(documentId))
         return queries.detail(document.id)
     }
 
@@ -209,7 +199,7 @@ class DevDocumentController(
         @PathVariable taskId: String,
         @RequestBody request: DevWorkflowDecisionRequest,
     ): DevDocumentDetail {
-        val document = reviewWorkflow.approve(Identifier(workflowId), Identifier(taskId), request.comment, request.deliveryProfileId)
+        val document = lifecycle.approve(Identifier(workflowId), Identifier(taskId), request.comment, request.deliveryProfileId)
         return queries.detail(document.id)
     }
 
@@ -219,7 +209,7 @@ class DevDocumentController(
         @PathVariable taskId: String,
         @RequestBody request: DevWorkflowDecisionRequest,
     ): DevDocumentDetail {
-        val document = reviewWorkflow.reject(Identifier(workflowId), Identifier(taskId), request.comment)
+        val document = lifecycle.rejectReview(Identifier(workflowId), Identifier(taskId), request.comment)
         return queries.detail(document.id)
     }
 

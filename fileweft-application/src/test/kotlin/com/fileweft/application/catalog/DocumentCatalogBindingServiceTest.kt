@@ -46,7 +46,14 @@ class DocumentCatalogBindingServiceTest {
         assertEquals(1, fixture.assets.saved.size)
         assertEquals(2, fixture.documents.mutationReads)
         assertEquals(
-            listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID, TARGET_FOLDER_ID, TARGET_FOLDER_ID),
+            listOf(
+                SOURCE_FOLDER_ID,
+                TARGET_FOLDER_ID,
+                SOURCE_FOLDER_ID,
+                TARGET_FOLDER_ID,
+                TARGET_FOLDER_ID,
+                TARGET_FOLDER_ID,
+            ),
             fixture.catalog.folderRequests,
         )
         assertTrue(fixture.catalog.transactionStates.all { active -> !active })
@@ -176,8 +183,32 @@ class DocumentCatalogBindingServiceTest {
     }
 
     @Test
+    fun `revalidates the source after target resolution and rejects a revoked acl before locking`() {
+        val fixture = Fixture()
+        fixture.catalog.afterLookup = { folderId ->
+            if (folderId == TARGET_FOLDER_ID) {
+                fixture.catalog.hide(SOURCE_FOLDER_ID)
+            }
+        }
+
+        assertThrows<DocumentNotFoundException> {
+            fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        }
+
+        assertEquals(
+            listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID, SOURCE_FOLDER_ID),
+            fixture.catalog.folderRequests,
+        )
+        assertEquals(0, fixture.documents.mutationReads)
+        assertEquals(0, fixture.assets.mutationReads)
+        assertTrue(fixture.assets.saved.isEmpty())
+        assertTrue(fixture.audits.records.isEmpty())
+        assertTrue(fixture.catalog.transactionStates.none { it })
+    }
+
+    @Test
     fun `rejects invalid canonical target ids as provider failures without persisting`() {
-        listOf("x".repeat(257), "unsafe\u0000canonical").forEach { invalidCanonicalId ->
+        listOf(" $TARGET_FOLDER_ID ", "x".repeat(257), "unsafe\u0000canonical").forEach { invalidCanonicalId ->
             val fixture = Fixture(
                 folderOverrides = mapOf(
                     TARGET_FOLDER_ID to DocumentCatalogFolder(invalidCanonicalId, null, "Invalid canonical folder"),
@@ -207,7 +238,10 @@ class DocumentCatalogBindingServiceTest {
             fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
         }
 
-        assertEquals(listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID), fixture.catalog.folderRequests)
+        assertEquals(
+            listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID, SOURCE_FOLDER_ID),
+            fixture.catalog.folderRequests,
+        )
         assertEquals(1, fixture.documents.mutationReads)
         assertTrue(fixture.assets.saved.isEmpty())
         assertTrue(fixture.audits.records.isEmpty())
@@ -443,13 +477,15 @@ class DocumentCatalogBindingServiceTest {
     }
 
     private class RecordingCatalog(
-        private val visibleFolderIds: Set<String>,
+        visibleFolderIds: Set<String>,
         private val folderOverrides: Map<String, DocumentCatalogFolder>,
         private val transaction: TrackingTransaction,
         private val events: MutableList<String>,
     ) : DocumentCatalogProvider {
+        private val visibleFolderIds = visibleFolderIds.toMutableSet()
         val folderRequests = mutableListOf<String>()
         val transactionStates = mutableListOf<Boolean>()
+        var afterLookup: ((String) -> Unit)? = null
 
         override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = emptyList()
 
@@ -458,11 +494,18 @@ class DocumentCatalogBindingServiceTest {
             assertFalse(transaction.active, "A host catalog must never be called inside a database transaction.")
             folderRequests += folderId
             events += "catalog:$folderId"
-            if (folderId !in visibleFolderIds) {
-                return null
+            val folder = if (folderId in visibleFolderIds) {
+                folderOverrides[folderId]
+                    ?: DocumentCatalogFolder(folderId, null, "Folder $folderId")
+            } else {
+                null
             }
-            return folderOverrides[folderId]
-                ?: DocumentCatalogFolder(folderId, null, "Folder $folderId")
+            afterLookup?.invoke(folderId)
+            return folder
+        }
+
+        fun hide(folderId: String) {
+            visibleFolderIds -= folderId
         }
     }
 

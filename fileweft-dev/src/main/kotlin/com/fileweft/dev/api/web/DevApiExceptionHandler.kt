@@ -3,8 +3,10 @@ package com.fileweft.dev.api.web
 import com.fileweft.application.publish.ActiveDocumentReviewWorkflowException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
+import com.fileweft.application.workflow.DocumentReviewConflictException
 import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.domain.document.InvalidLifecycleTransitionException
+import com.fileweft.domain.workflow.WorkflowConflictException
 import com.fileweft.application.upload.ResumableUploadStateException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -33,6 +35,20 @@ class DevApiExceptionHandler {
             DevApiError("INVALID_LIFECYCLE_TRANSITION", failure.message ?: "Document lifecycle does not allow this operation."),
         )
 
+    @ExceptionHandler(DocumentReviewConflictException::class)
+    fun documentReviewConflict(
+        @Suppress("UNUSED_PARAMETER") failure: DocumentReviewConflictException,
+    ): ResponseEntity<DevApiError> = ResponseEntity.status(HttpStatus.CONFLICT).body(
+        DevApiError("DOCUMENT_REVIEW_CONFLICT", "Document review conflicts with the current workflow state."),
+    )
+
+    @ExceptionHandler(WorkflowConflictException::class)
+    fun workflowConflict(
+        @Suppress("UNUSED_PARAMETER") failure: WorkflowConflictException,
+    ): ResponseEntity<DevApiError> = ResponseEntity.status(HttpStatus.CONFLICT).body(
+        DevApiError("WORKFLOW_CONFLICT", "Workflow command conflicts with the current workflow state."),
+    )
+
     @ExceptionHandler(ApplicationUnauthenticatedException::class)
     fun unauthenticated(@Suppress("UNUSED_PARAMETER") failure: ApplicationUnauthenticatedException): ResponseEntity<DevApiError> =
         ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(DevApiError("UNAUTHENTICATED", "Authentication is required."))
@@ -46,8 +62,8 @@ class DevApiExceptionHandler {
         ResponseEntity.status(HttpStatus.FORBIDDEN).body(DevApiError("FORBIDDEN", "Access denied."))
 
     @ExceptionHandler(NoSuchElementException::class)
-    fun notFound(failure: NoSuchElementException): ResponseEntity<DevApiError> =
-        ResponseEntity.status(HttpStatus.NOT_FOUND).body(DevApiError("NOT_FOUND", failure.message ?: "资源不存在。"))
+    fun notFound(@Suppress("UNUSED_PARAMETER") failure: NoSuchElementException): ResponseEntity<DevApiError> =
+        ResponseEntity.status(HttpStatus.NOT_FOUND).body(DevApiError("NOT_FOUND", "Resource was not found."))
 
     @ExceptionHandler(ResumableUploadStateException::class)
     fun uploadStateConflict(failure: ResumableUploadStateException): ResponseEntity<DevApiError> =

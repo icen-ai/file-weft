@@ -64,11 +64,13 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 首版下载协议明确不支持 Range 与 HEAD 派生下载。请求只要出现 `Range` 头，就会在授权、仓储和对象存储之前固定返回 `416 RANGE_NOT_SUPPORTED`；两个内容路径的显式 `HEAD` 固定返回 `405 METHOD_NOT_ALLOWED` 与 `Allow: GET`，不会借用 Spring 的自动 HEAD 行为打开文件。
 
-未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。接入唯一的目录 SPI 后，默认 Starter 会同时装配目录创建、目录感知修改和下载可见性服务：创建必须给出目录并通过应用层目录授权与保留绑定；新增版本和改名会先快照并授权文档的当前源目录，新增版本在上传后还会再次检查源目录权限，再按 document → asset 顺序取得两级 mutation lock 并复核原始绑定。Catalog SPI 始终在 FileWeft 管理的数据库事务外调用，权限撤销或绑定竞态会在提交前失败，新增版本已上传的对象会被补偿删除。自定义装配若只提供目录创建、或资产仓储没有安全 mutation lock 能力，新增版本和改名仍安全失败为 `503 FEATURE_UNAVAILABLE`，绝不退化调用无目录保护的通用写服务；自定义 `DocumentDownloadService` 也必须显式保留等价的目录可见性校验。
+未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。自动生成目录访问边界时，默认 Starter 要求恰好一个 `DocumentCatalogProvider`；多个未聚合 provider 即使存在 `@Primary` 也会启动失败。宿主如需组合多个 provider，必须显式提供一个聚合 ACL 的 `DocumentCatalogAccessService`，且多个 access 候选同样会启动失败。具备 `FileAssetMutationRepository` 行锁能力时，Starter 才装配目录感知修改与 action-aware 生命周期 guard。创建必须给出目录并通过应用层目录授权与保留绑定；新增版本和改名会先快照并授权当前源目录，新增版本在上传后还会再次检查源目录权限，目录移动则在目标目录解析后重新验证源目录，再按 document → asset 顺序取得两级 mutation lock 并复核原始绑定。生命周期与审批 guard 使用实际动作权限和源目录 `BROWSE` ACL，在审批路由或交付策略外调后再次验证，最终按 document → asset → workflow 锁序复核原始绑定。Catalog SPI 始终在 FileWeft 管理的数据库事务外调用，权限撤销或绑定竞态会在提交前失败，新增版本已上传的对象会被补偿删除。自定义装配若只有目录创建，或资产仓储没有安全 mutation lock 能力，目录模式的正式写入口必须保持不可用，不能回退调用租户级底层服务；自定义 `DocumentDownloadService` 也必须显式保留等价的目录可见性校验。
+
+现有六个 lifecycle/workflow 应用服务继续作为无目录宿主的租户级兼容原语，因此不会被 Starter 静默改写语义。目录宿主若绕过 `DocumentCatalogLifecycleService` 直接调用这些原语，就不具备目录 ACL 保证。未来正式 lifecycle Controller 必须通过统一能力解析器选择 flat 或 guarded 路径：没有 access 时才允许 flat；存在 access 但缺少唯一 guarded capability 时固定返回 `503 FEATURE_UNAVAILABLE`；多个 access 或 lifecycle 候选即使有 `@Primary` 也必须启动失败。
 
 后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
 
-- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：受控生命周期操作。
+- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：应用层目录 guard 已就绪，但正式路由必须等持久化 `Idempotency-Key` 与对应契约完成后才开放。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。
 - `GET /sync-status`、`GET /logs`、`GET /plugins`、`GET /health`：在相应的脱敏读模型和系统授权服务完成后加入；不能复用 Dev 的直连 JDBC DTO。

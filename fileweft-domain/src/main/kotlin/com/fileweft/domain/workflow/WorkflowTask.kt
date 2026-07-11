@@ -21,27 +21,33 @@ class WorkflowTask(
     }
 
     fun approve(operatorId: Identifier, decisionComment: String? = null) {
-        requirePending()
         requireAssignedTo(operatorId)
+        requirePendingDecision()
         validateComment(decisionComment)
         state = WorkflowTaskState.APPROVED
         comment = decisionComment
     }
 
     fun reject(operatorId: Identifier, decisionComment: String? = null) {
-        requirePending()
         requireAssignedTo(operatorId)
+        requirePendingDecision()
         validateComment(decisionComment)
         state = WorkflowTaskState.REJECTED
         comment = decisionComment
     }
 
-    private fun requirePending() {
-        require(state == WorkflowTaskState.PENDING) { "Only pending workflow tasks can be decided." }
+    internal fun requirePendingDecision() {
+        if (state != WorkflowTaskState.PENDING) {
+            throw WorkflowDecisionConflictException(
+                "Workflow task ${id.value} has already been decided.",
+            )
+        }
     }
 
-    private fun requireAssignedTo(operatorId: Identifier) {
-        require(assigneeId == null || assigneeId == operatorId) { "Workflow task is assigned to another operator." }
+    internal fun requireAssignedTo(operatorId: Identifier) {
+        if (assigneeId != null && assigneeId != operatorId) {
+            throw WorkflowTaskAssignmentDeniedException(id)
+        }
     }
 
     private fun validateComment(decisionComment: String?) {

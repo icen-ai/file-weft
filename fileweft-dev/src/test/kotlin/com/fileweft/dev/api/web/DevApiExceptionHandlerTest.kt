@@ -3,10 +3,12 @@ package com.fileweft.dev.api.web
 import com.fileweft.application.publish.ActiveDocumentReviewWorkflowException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
+import com.fileweft.application.workflow.DocumentReviewConflictException
 import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.InvalidLifecycleTransitionException
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
+import com.fileweft.domain.workflow.WorkflowConflictException
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpStatus
 import kotlin.test.assertEquals
@@ -31,6 +33,40 @@ class DevApiExceptionHandlerTest {
 
         assertEquals(HttpStatus.CONFLICT, response.statusCode)
         assertEquals("INVALID_LIFECYCLE_TRANSITION", response.body?.code)
+    }
+
+    @Test
+    fun `maps a document review race to a fixed conflict response`() {
+        val response = handler.documentReviewConflict(
+            DocumentReviewConflictException("document document-1 changed while route secret-route was resolved"),
+        )
+
+        assertEquals(HttpStatus.CONFLICT, response.statusCode)
+        assertEquals("DOCUMENT_REVIEW_CONFLICT", response.body?.code)
+        assertEquals("Document review conflicts with the current workflow state.", response.body?.message)
+        assertNotEquals("document document-1 changed while route secret-route was resolved", response.body?.message)
+    }
+
+    @Test
+    fun `maps a workflow decision race to a fixed conflict response`() {
+        val response = handler.workflowConflict(
+            WorkflowConflictException("workflow workflow-1 task task-2 was already approved"),
+        )
+
+        assertEquals(HttpStatus.CONFLICT, response.statusCode)
+        assertEquals("WORKFLOW_CONFLICT", response.body?.code)
+        assertEquals("Workflow command conflicts with the current workflow state.", response.body?.message)
+        assertNotEquals("workflow workflow-1 task task-2 was already approved", response.body?.message)
+    }
+
+    @Test
+    fun `maps missing resources without exposing their type or identifier`() {
+        val response = handler.notFound(NoSuchElementException("Workflow private-workflow was not found."))
+
+        assertEquals(HttpStatus.NOT_FOUND, response.statusCode)
+        assertEquals("NOT_FOUND", response.body?.code)
+        assertEquals("Resource was not found.", response.body?.message)
+        assertNotEquals("Workflow private-workflow was not found.", response.body?.message)
     }
 
     @Test

@@ -368,6 +368,25 @@ class DocumentCatalogMutationServiceTest {
         }
     }
 
+    @Test
+    fun `rejects a non canonical persisted binding instead of authorizing its trimmed value`() {
+        val fixture = Fixture(
+            rawFolderId = " $SOURCE_FOLDER_ID ",
+            visibleFolderIds = setOf(SOURCE_FOLDER_ID),
+        )
+
+        val failure = assertThrows<IllegalStateException> {
+            fixture.service.addVersion(fixture.document.id, versionCommand(), content())
+        }
+
+        assertTrue(failure.message.orEmpty().contains("Persisted document catalog binding"))
+        assertTrue(fixture.catalog.folderRequests.isEmpty())
+        assertTrue(fixture.storage.uploads.isEmpty())
+        assertEquals(0, fixture.documents.mutationReads)
+        assertEquals(0, fixture.assets.mutationReads)
+        assertNoMutationWasPersisted(fixture)
+    }
+
     private fun assertNoMutationWasPersisted(fixture: Fixture) {
         assertTrue(fixture.documents.saved.isEmpty())
         assertTrue(fixture.fileObjects.saved.isEmpty())
