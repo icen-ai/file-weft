@@ -21,5 +21,9 @@ gradlePlugin {
             id = "fileweft.jvm17-library"
             implementationClass = "com.fileweft.buildlogic.Jvm17LibraryConventionPlugin"
         }
+        register("fileweftArchitectureGuard") {
+            id = "fileweft.architecture-guard"
+            implementationClass = "com.fileweft.buildlogic.ArchitectureGuardPlugin"
+        }
     }
 }

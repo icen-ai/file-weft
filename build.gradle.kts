@@ -1,3 +1,7 @@
+plugins {
+    id("fileweft.architecture-guard")
+}
+
 group = "com.fileweft"
 version = "0.1.0-SNAPSHOT"
 
