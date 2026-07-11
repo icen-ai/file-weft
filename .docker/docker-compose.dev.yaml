@@ -76,6 +76,7 @@ services:
       FILEWEFT_DEV_S3_BUCKET: fileweft-dev
       FILEWEFT_DEV_PLATFORM_URL: http://fileweft-dev-platform:8081/
       FILEWEFT_DEV_WORKER_ENABLED: "false"
+      FILEWEFT_SYNC_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS: ${FILEWEFT_DEV_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS:-5000}
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,6 +110,7 @@ services:
       FILEWEFT_DEV_WORKER_ENABLED: "false"
       FILEWEFT_WORKER_ENABLED: "true"
       FILEWEFT_TASK_WORKER_ID: fw-dev-worker
+      FILEWEFT_SYNC_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS: ${FILEWEFT_DEV_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS:-5000}
     depends_on:
       postgres:
         condition: service_healthy

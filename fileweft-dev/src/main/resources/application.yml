@@ -21,7 +21,7 @@ fileweft:
     connector-name: dev-platform
     connector-timeout-millis: 3000
     circuit-breaker-failure-threshold: 3
-    circuit-breaker-open-duration-millis: 1000
+    circuit-breaker-open-duration-millis: 5000
   dev:
     storage:
       endpoint: ${FILEWEFT_DEV_S3_ENDPOINT:http://127.0.0.1:9000}

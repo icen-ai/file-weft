@@ -42,10 +42,10 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `applies schema migrations for outbox recovery workflow tasks doctor records agents and upload sessions`() {
+    fun `applies schema migrations for outbox recovery workflow tasks doctor records agents upload sessions and production indexes`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(15, migrations)
+        assertEquals(16, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -76,6 +76,8 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_retry_count"))
             assertTrue(columnExists(connection, "fw_document", "delivery_generation"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "delivery_generation"))
+            assertTrue(indexExists(connection, "fw_sync_record", "idx_fw_sync_tenant_document_connector_status"))
+            assertTrue(indexExists(connection, "fw_task", "idx_fw_task_tenant_status_updated"))
         }
     }
 
@@ -84,4 +86,10 @@ class FlywayMigrationRunnerIntegrationTest {
 
     private fun columnExists(connection: Connection, tableName: String, columnName: String): Boolean =
         connection.metaData.getColumns(null, "public", tableName, columnName).use { it.next() }
+
+    private fun indexExists(connection: Connection, tableName: String, indexName: String): Boolean =
+        connection.metaData.getIndexInfo(null, "public", tableName, false, false).use { indexes ->
+            generateSequence { if (indexes.next()) indexes.getString("INDEX_NAME") else null }
+                .any { it.equals(indexName, ignoreCase = true) }
+        }
 }
