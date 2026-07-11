@@ -22,3 +22,37 @@ interface TaskProcessingRepository {
 
     fun markFailed(lease: BackgroundTaskLease, message: String, updatedAt: Long)
 }
+
+/**
+ * Immutable ownership data for one task claim. A token is intentionally
+ * distinct from the worker id: one worker can reclaim a task after its own
+ * earlier lease expired, and only the latest claim may acknowledge it.
+ */
+class TaskLeaseClaim @JvmOverloads constructor(
+    val leaseOwner: String,
+    val leaseToken: String,
+    val leaseExpiresAt: Long,
+    val legacyRunningBefore: Long = 0,
+) {
+    init {
+        require(leaseOwner.isNotBlank()) { "Task lease owner must not be blank." }
+        require(leaseToken.isNotBlank()) { "Task lease token must not be blank." }
+        require(leaseExpiresAt >= 0) { "Task lease expiry time must not be negative." }
+        require(legacyRunningBefore >= 0) { "Task legacy running cutoff must not be negative." }
+    }
+}
+
+/**
+ * Optional stronger task port for repositories that persist lease tokens.
+ * Existing [TaskProcessingRepository] implementations remain source and
+ * binary compatible; [TaskWorker] detects this interface at runtime.
+ */
+interface LeasedTaskProcessingRepository : TaskProcessingRepository {
+    fun claimAvailable(limit: Int, now: Long, claim: TaskLeaseClaim): List<BackgroundTaskLease>
+}
+
+/**
+ * Raised when a task acknowledgement loses its lease to a newer claim.
+ * Workers treat this as an abandoned local outcome and continue polling.
+ */
+class TaskLeaseLostException(message: String) : IllegalStateException(message)

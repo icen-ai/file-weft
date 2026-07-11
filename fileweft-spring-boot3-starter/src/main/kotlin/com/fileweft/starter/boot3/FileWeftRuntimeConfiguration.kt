@@ -582,6 +582,7 @@ class FileWeftRuntimeConfiguration {
         maxRetryDelay = Duration.ofMillis(properties.task.maxRetryDelayMillis),
         leaseDuration = Duration.ofMillis(properties.task.leaseDurationMillis),
         metrics = metrics,
+        legacyRunningGrace = Duration.ofMillis(properties.task.legacyRunningGraceMillis),
     )
 
     private companion object {

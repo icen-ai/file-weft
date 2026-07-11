@@ -5,18 +5,21 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.task.BackgroundTask
 import com.fileweft.application.task.BackgroundTaskLease
 import com.fileweft.application.task.BackgroundTaskStatus
-import com.fileweft.application.task.TaskProcessingRepository
+import com.fileweft.application.task.LeasedTaskProcessingRepository
+import com.fileweft.application.task.TaskLeaseClaim
+import com.fileweft.application.task.TaskLeaseLostException
 import com.fileweft.application.task.TaskRepository
 import com.fileweft.core.id.Identifier
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.time.Clock
+import java.util.UUID
 
 /** PostgreSQL task repository with ownership leases and SKIP LOCKED claiming. */
 class JdbcTaskRepository(
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
-) : TaskRepository, TaskProcessingRepository {
+) : TaskRepository, LeasedTaskProcessingRepository {
     override fun enqueue(task: BackgroundTask) {
         val now = clock.millis()
         JdbcConnectionContext.requireCurrent().prepareStatement(
@@ -72,20 +75,34 @@ class JdbcTaskRepository(
         now: Long,
         leaseOwner: String,
         leaseExpiresAt: Long,
-    ): List<BackgroundTaskLease> {
+    ): List<BackgroundTaskLease> = claimAvailable(
+        limit,
+        now,
+        TaskLeaseClaim(
+            leaseOwner,
+            UUID.randomUUID().toString(),
+            leaseExpiresAt,
+            safeSubtract(now, LEGACY_RUNNING_GRACE_MILLIS),
+        ),
+    )
+
+    override fun claimAvailable(limit: Int, now: Long, claim: TaskLeaseClaim): List<BackgroundTaskLease> {
         require(limit > 0) { "Task claim limit must be positive." }
-        require(now >= 0 && leaseExpiresAt > now) { "Task lease time must be after claim time." }
-        require(leaseOwner.isNotBlank()) { "Task lease owner must not be blank." }
+        require(now >= 0) { "Task claim time must not be negative." }
+        require(claim.leaseExpiresAt > now) { "Task lease expiry must be after claim time." }
+        require(claim.legacyRunningBefore <= now) { "Task legacy running cutoff must not be after claim time." }
         return JdbcConnectionContext.requireCurrent().prepareStatement(CLAIM_SQL).use { statement ->
             statement.setLong(1, now)
             statement.setLong(2, now)
-            statement.setInt(3, limit)
-            statement.setString(4, leaseOwner)
-            statement.setLong(5, leaseExpiresAt)
-            statement.setLong(6, now)
+            statement.setLong(3, claim.legacyRunningBefore)
+            statement.setInt(4, limit)
+            statement.setString(5, claim.leaseOwner)
+            statement.setString(6, claim.leaseToken)
+            statement.setLong(7, claim.leaseExpiresAt)
+            statement.setLong(8, now)
             statement.executeQuery().use { result ->
                 val leases = ArrayList<BackgroundTaskLease>()
-                while (result.next()) leases += BackgroundTaskLease(mapTask(result), leaseOwner)
+                while (result.next()) leases += mapLease(result)
                 leases
             }
         }
@@ -93,52 +110,59 @@ class JdbcTaskRepository(
 
     override fun markSucceeded(lease: BackgroundTaskLease, completedAt: Long) {
         require(completedAt >= 0) { "Task completion time must not be negative." }
-        transition(
-            lease,
-            "UPDATE fw_task SET task_status = 'SUCCESS', next_attempt_time = 0, lease_owner = NULL, lease_expire_time = 0, last_error = NULL, updated_time = ? WHERE id = ? AND tenant_id = ? AND task_status = 'RUNNING' AND lease_owner = ?",
-            completedAt,
-        )
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            "UPDATE fw_task SET task_status = 'SUCCESS', next_attempt_time = 0, lease_owner = NULL, lease_token = NULL, lease_expire_time = 0, last_error = NULL, updated_time = ? WHERE id = ? AND tenant_id = ? AND task_status = 'RUNNING'${leasePredicate(lease)}",
+        ).use { statement ->
+            statement.setLong(1, completedAt)
+            bindLease(statement, lease, 2)
+            requireRunningTransition(statement.executeUpdate(), lease)
+        }
     }
 
     override fun markForRetry(lease: BackgroundTaskLease, nextAttemptAt: Long, message: String, updatedAt: Long) {
         require(nextAttemptAt >= 0 && updatedAt >= 0) { "Task retry times must not be negative." }
         require(message.isNotBlank()) { "Task retry message must not be blank." }
-        transition(
-            lease,
-            "UPDATE fw_task SET task_status = 'RETRY', retry_count = retry_count + 1, next_attempt_time = ?, lease_owner = NULL, lease_expire_time = 0, last_error = ?, updated_time = ? WHERE id = ? AND tenant_id = ? AND task_status = 'RUNNING' AND lease_owner = ?",
-            nextAttemptAt,
-            message,
-            updatedAt,
-        )
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            "UPDATE fw_task SET task_status = 'RETRY', retry_count = retry_count + 1, next_attempt_time = ?, lease_owner = NULL, lease_token = NULL, lease_expire_time = 0, last_error = ?, updated_time = ? WHERE id = ? AND tenant_id = ? AND task_status = 'RUNNING'${leasePredicate(lease)}",
+        ).use { statement ->
+            statement.setLong(1, nextAttemptAt)
+            statement.setString(2, message)
+            statement.setLong(3, updatedAt)
+            bindLease(statement, lease, 4)
+            requireRunningTransition(statement.executeUpdate(), lease)
+        }
     }
 
     override fun markFailed(lease: BackgroundTaskLease, message: String, updatedAt: Long) {
         require(updatedAt >= 0) { "Task update time must not be negative." }
         require(message.isNotBlank()) { "Task failure message must not be blank." }
-        transition(
-            lease,
-            "UPDATE fw_task SET task_status = 'FAILED', lease_owner = NULL, lease_expire_time = 0, last_error = ?, updated_time = ? WHERE id = ? AND tenant_id = ? AND task_status = 'RUNNING' AND lease_owner = ?",
-            message,
-            updatedAt,
-        )
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            "UPDATE fw_task SET task_status = 'FAILED', lease_owner = NULL, lease_token = NULL, lease_expire_time = 0, last_error = ?, updated_time = ? WHERE id = ? AND tenant_id = ? AND task_status = 'RUNNING'${leasePredicate(lease)}",
+        ).use { statement ->
+            statement.setString(1, message)
+            statement.setLong(2, updatedAt)
+            bindLease(statement, lease, 3)
+            requireRunningTransition(statement.executeUpdate(), lease)
+        }
     }
 
-    private fun transition(lease: BackgroundTaskLease, sql: String, vararg values: Any) {
-        JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
-            var index = 1
-            values.forEach { value ->
-                when (value) {
-                    is Long -> statement.setLong(index++, value)
-                    is String -> statement.setString(index++, value)
-                    else -> throw IllegalArgumentException("Unsupported task SQL value ${value.javaClass.name}.")
-                }
-            }
-            statement.setString(index++, lease.task.id.value)
-            statement.setString(index++, lease.task.tenantId.value)
-            statement.setString(index, lease.leaseOwner)
-            require(statement.executeUpdate() == 1) {
-                "Task ${lease.task.id.value} is not leased by worker ${lease.leaseOwner} in the current tenant."
-            }
+    private fun bindLease(statement: PreparedStatement, lease: BackgroundTaskLease, offset: Int) {
+        statement.setString(offset, lease.task.id.value)
+        statement.setString(offset + 1, lease.task.tenantId.value)
+        statement.setString(offset + 2, lease.leaseOwner)
+        lease.leaseToken?.let { token ->
+            statement.setString(offset + 3, token)
+        }
+    }
+
+    private fun leasePredicate(lease: BackgroundTaskLease): String =
+        if (lease.leaseToken == null) " AND lease_owner = ? AND lease_token IS NULL" else " AND lease_owner = ? AND lease_token = ?"
+
+    private fun requireRunningTransition(updated: Int, lease: BackgroundTaskLease) {
+        if (updated != 1) {
+            throw TaskLeaseLostException(
+                "Task ${lease.task.id.value} is no longer leased by the current worker in the current tenant.",
+            )
         }
     }
 
@@ -155,25 +179,39 @@ class JdbcTaskRepository(
         lastError = result.getString("last_error"),
     )
 
+    private fun mapLease(result: ResultSet): BackgroundTaskLease = BackgroundTaskLease(
+        task = mapTask(result),
+        leaseOwner = result.getString("lease_owner") ?: error("Claimed task is missing its lease owner."),
+        leaseToken = result.getString("lease_token") ?: error("Claimed task is missing its lease token."),
+    )
+
+    private fun safeSubtract(value: Long, decrement: Long): Long =
+        if (value < decrement) 0 else value - decrement
+
     private companion object {
         val STRING_MAP_TYPE = object : TypeReference<Map<String, String>>() {}
+        const val LEGACY_RUNNING_GRACE_MILLIS = 300_000L
         const val SELECT_COLUMNS = "SELECT id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status, retry_count, next_attempt_time, last_error"
         const val CLAIM_SQL = """
             WITH candidates AS (
                 SELECT id
                 FROM fw_task
                 WHERE (task_status IN ('PENDING', 'RETRY') AND next_attempt_time <= ?)
-                   OR (task_status = 'RUNNING' AND lease_expire_time <= ?)
+                   OR (task_status = 'RUNNING' AND (
+                        (lease_token IS NOT NULL AND lease_expire_time <= ?)
+                        OR (lease_token IS NULL AND updated_time <= ?)
+                   ))
                 ORDER BY created_time, id
                 FOR UPDATE SKIP LOCKED
                 LIMIT ?
             )
             UPDATE fw_task AS task
-            SET task_status = 'RUNNING', lease_owner = ?, lease_expire_time = ?, updated_time = ?
+            SET task_status = 'RUNNING', lease_owner = ?, lease_token = ?, lease_expire_time = ?, updated_time = ?, last_error = NULL
             FROM candidates
             WHERE task.id = candidates.id
             RETURNING task.id, task.tenant_id, task.task_type, task.business_id, task.payload_json,
-                      task.idempotency_key, task.task_status, task.retry_count, task.next_attempt_time, task.last_error
+                      task.idempotency_key, task.task_status, task.retry_count, task.next_attempt_time, task.last_error,
+                      task.lease_owner, task.lease_token
         """
     }
 }

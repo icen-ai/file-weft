@@ -12,6 +12,12 @@ enum class FileWeftMetric(
     DOCTOR_FAILURE("doctor_failure"),
     TASK_SUCCESS("task_success"),
     TASK_FAILURE("task_failure"),
+    /**
+     * A worker lost its fenced task claim before it could acknowledge the
+     * outcome. This is deliberately separate from [TASK_FAILURE], because
+     * another worker may already have recovered and completed the task.
+     */
+    TASK_LEASE_LOST("task_lease_lost"),
 }
 
 /**

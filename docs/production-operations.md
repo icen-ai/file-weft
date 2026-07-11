@@ -26,7 +26,7 @@ fileweft:
 
 若需要拆分资源池，可让下游同步节点只开启 `process-outbox`，让 Doctor/Agent 节点只开启 `process-tasks`，让存储维护节点只开启 `process-upload-cleanup`。所有节点可以水平扩展：Outbox 与后台任务均通过数据库租约/锁领取，重复投递由事件或任务的幂等键约束。
 
-Worker 每轮失败只记录日志，不会丢弃待处理记录；下一轮会继续领取符合重试时间或租约已过期的工作。生产报警应至少覆盖同步失败、任务失败、Doctor 失败和持久化 Outbox 积压。
+Worker 每轮失败只记录日志，不会丢弃待处理记录；下一轮会继续领取符合重试时间或租约已过期的工作。生产报警应至少覆盖同步失败、任务失败、任务失租（`fileweft.task_lease_lost`）、Doctor 失败和持久化 Outbox 积压。
 
 ## Outbox 租约与滚动升级
 
@@ -46,6 +46,26 @@ fileweft:
     legacy-running-grace-millis: 300000
 ```
 
+## 后台任务租约与滚动升级
+
+`V019` 为 `fw_task` 的既有 `lease_owner` 和 `lease_expire_time` 增加持久化 `lease_token`，并为 token 化与历史 `RUNNING` 任务分别建立恢复索引。新 Worker 每次只领取一条任务：在短事务内写入 Worker 标识、随机 token 和到期时间，随后在事务外执行任务处理器；确认成功、安排重试或标记失败时必须同时匹配该 token。这样，租约到期后被新 Worker 重新领取的任务，不会被旧 Worker 的迟到确认覆盖。
+
+默认任务租约为 60 秒（`fileweft.task.lease-duration-millis=60000`）。它必须大于一次任务处理的最长预期耗时和必要余量；任务耗时超过租约、进程崩溃或确认前网络/数据库失败时，任务可能被重新执行。`fileweft.task.worker-id` 应在同时运行的 Worker 间唯一，建议使用 Pod 或主机实例 ID。未配置或空白时 Starter 保持生成 `fileweft-<UUID>` 的行为，适合单独启动但不适合跨重启关联诊断。
+
+`fileweft.task.legacy-running-grace-millis` 默认 5 分钟（300000 毫秒），仅用于回收 `V019` 前没有 token 的历史 `RUNNING` 任务；它不是旧、新 Worker 并行运行的安全屏障。升级时必须先停止旧版本的任务轮询并等待正在执行的处理器排空，再执行 `V019` 并启动租约感知的新 Worker。不能只依赖 legacy grace：旧 Worker 可能仍在执行外部调用，而新 Worker 已回收同一任务。无法排空时，grace 至少应覆盖旧 Worker 的最长任务耗时，并持续观察 `RUNNING` 任务、幂等命中和失败告警。
+
+后台任务语义是至少一次（at-least-once），不是恰好一次：`FileWeftTaskHandler` 必须把 `TaskExecution.id` 作为幂等依据；任务创建端的租户级 `idempotencyKey` 只负责折叠重复入队，不能替代处理器或外部系统的去重。租约 token 只保证陈旧 Worker 不能覆盖较新的持有者，不能阻止已发出的外部副作用重复执行。
+
+JDBC 默认仓储已经实现 token 围栏。自定义 `TaskProcessingRepository` 为兼容旧插件仍可继续运行，但只获得原有的 `lease_owner` 语义；要在多 Worker、重启或租约到期场景获得 token 围栏，必须同时实现可选的 `LeasedTaskProcessingRepository`，在领取和全部确认路径持久化并校验 `TaskLeaseClaim.leaseToken`。升级自定义仓储前应按至少一次语义验证任务 ID 幂等；不能把仅实现旧端口的仓储误认为已经具备 fencing。
+
+```yaml
+fileweft:
+  task:
+    worker-id: ${HOSTNAME}
+    lease-duration-millis: 60000
+    legacy-running-grace-millis: 300000
+```
+
 ## 并行审批与直接发布
 
 同一工作流的最终审批或驳回会通过 `WorkflowInstanceRepository.findForDecision` 串行化。默认 PostgreSQL 实现对工作流父行使用 `SELECT … FOR UPDATE`，因此双人会签的第二位审批者会在第一位提交后读取最新任务状态，而不会用旧聚合快照覆盖已批准的任务。所有文档读改写用例则必须通过 `DocumentRepository.findForMutation` 获取同一文档的串行化读取；默认 PostgreSQL 实现对文档行使用 `SELECT … FOR UPDATE`。审批决策统一按“文档、工作流”顺序加锁，避免与提交、直接发布或版本更新形成反向锁顺序。
@@ -56,9 +76,9 @@ fileweft:
 
 ## 数据库迁移与查询索引
 
-所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；普通升级以事务内 `IF NOT EXISTS` 执行，确保 Flyway 的 schema-history 锁不会与 PostgreSQL 的并发索引构建互相等待。
+所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引。普通升级以事务内 `IF NOT EXISTS` 执行，确保 Flyway 的 schema-history 锁不会与 PostgreSQL 的并发索引构建互相等待。
 
-对于已有大量 `fw_sync_record` 或 `fw_task` 数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
+对于已有大量 `fw_sync_record` 或 `fw_task` 数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql) 和 [V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
 
 ## 断点续传与对象完整性
 

@@ -28,6 +28,7 @@ import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
+import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
@@ -168,6 +169,52 @@ class FileWeftAutoConfigurationTest {
         contextRunner()
             .withUserConfiguration(DatabaseConfiguration::class.java)
             .withPropertyValues("fileweft.outbox.legacy-running-grace-millis=-1")
+            .run { context -> assertTrue(context.startupFailure != null) }
+    }
+
+    @Test
+    fun `binds persisted task lease settings into the runtime worker`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.task.worker-id=boot2-task-worker",
+                "fileweft.task.lease-duration-millis=9000",
+                "fileweft.task.legacy-running-grace-millis=4000",
+            )
+            .run { context ->
+                val task = context.getBean(FileWeftProperties::class.java).task
+                assertEquals("boot2-task-worker", task.workerId)
+                assertEquals(9_000, task.leaseDurationMillis)
+                assertEquals(4_000, task.legacyRunningGraceMillis)
+
+                val worker = context.getBean(TaskWorker::class.java)
+                assertEquals("boot2-task-worker", privateField(worker, "workerId"))
+                assertEquals(9_000L, privateField(worker, "leaseDurationMillis"))
+                assertEquals(4_000L, privateField(worker, "legacyRunningGraceMillis"))
+            }
+    }
+
+    @Test
+    fun `generates a task worker identity for a blank setting`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.task.worker-id=   ")
+            .run { context ->
+                val worker = context.getBean(TaskWorker::class.java)
+                assertTrue((privateField(worker, "workerId") as String).startsWith("fileweft-"))
+                assertEquals(300_000L, privateField(worker, "legacyRunningGraceMillis"))
+            }
+    }
+
+    @Test
+    fun `rejects invalid task lease durations during runtime assembly`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.task.lease-duration-millis=0")
+            .run { context -> assertTrue(context.startupFailure != null) }
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.task.legacy-running-grace-millis=-1")
             .run { context -> assertTrue(context.startupFailure != null) }
     }
 

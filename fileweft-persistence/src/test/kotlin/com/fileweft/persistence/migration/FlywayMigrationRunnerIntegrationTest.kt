@@ -2,8 +2,10 @@ package com.fileweft.persistence.migration
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.outbox.OutboxLeaseClaim
+import com.fileweft.application.task.TaskLeaseClaim
 import com.fileweft.persistence.jdbc.JdbcApplicationTransaction
 import com.fileweft.persistence.jdbc.JdbcOutboxProcessingRepository
+import com.fileweft.persistence.jdbc.JdbcTaskRepository
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.FlywayException
 import org.junit.jupiter.api.AfterEach
@@ -12,6 +14,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.postgresql.ds.PGSimpleDataSource
 import java.sql.Connection
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -49,10 +54,10 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `applies schema migrations for outbox recovery workflow tasks doctor records agents upload sessions and production indexes`() {
+    fun `applies schema migrations for outbox and task recovery workflow doctor records agents upload sessions and production indexes`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(18, migrations)
+        assertEquals(19, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -74,6 +79,7 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_outbox_event", "last_error"))
             assertTrue(columnExists(connection, "fw_audit_record", "operator_name"))
             assertTrue(columnExists(connection, "fw_task", "lease_expire_time"))
+            assertTrue(columnExists(connection, "fw_task", "lease_token"))
             assertTrue(columnExists(connection, "fw_operation_log", "trace_id"))
             assertTrue(columnExists(connection, "fw_outbox_event", "trace_id"))
             assertTrue(columnExists(connection, "fw_outbox_event", "lease_owner"))
@@ -91,6 +97,8 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(indexExists(connection, "fw_workflow_instance", "uq_fw_workflow_instance_tenant_document_pending"))
             assertTrue(indexExists(connection, "fw_outbox_event", "idx_fw_outbox_running_lease_expiry"))
             assertTrue(indexExists(connection, "fw_outbox_event", "idx_fw_outbox_legacy_running_updated"))
+            assertTrue(indexExists(connection, "fw_task", "idx_fw_task_running_lease_expiry"))
+            assertTrue(indexExists(connection, "fw_task", "idx_fw_task_legacy_running_updated"))
         }
     }
 
@@ -140,6 +148,64 @@ class FlywayMigrationRunnerIntegrationTest {
                 statement.executeQuery().use { result ->
                     assertTrue(result.next())
                     assertEquals("RUNNING", result.getString("event_status"))
+                    assertEquals("worker-new", result.getString("lease_owner"))
+                    assertEquals("token-new", result.getString("lease_token"))
+                    assertEquals(200, result.getLong("lease_expire_time"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `makes historical running task rows reclaimable after the legacy cutoff with a new token lease`() {
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations("classpath:db/migration")
+            .target("18")
+            .load()
+            .migrate()
+
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                INSERT INTO fw_task(
+                    id, tenant_id, task_type, payload_json, idempotency_key, task_status, retry_count,
+                    next_attempt_time, lease_owner, lease_expire_time, created_time, updated_time
+                ) VALUES (?, ?, ?, '{}'::jsonb, ?, 'RUNNING', 0, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, "historical-running-task")
+                statement.setString(2, "tenant-1")
+                statement.setString(3, "document.doctor")
+                statement.setString(4, "doctor:document-1")
+                statement.setLong(5, 9_999)
+                statement.setString(6, "old-worker")
+                statement.setLong(7, 0)
+                statement.setLong(8, 1)
+                statement.setLong(9, 1)
+                statement.executeUpdate()
+            }
+        }
+
+        FlywayMigrationRunner(dataSource).migrate()
+
+        val processing = JdbcTaskRepository(ObjectMapper(), Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC))
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val lease = transaction.execute {
+            processing.claimAvailable(1, 100, TaskLeaseClaim("worker-new", "token-new", 200, 1))
+        }.single()
+
+        assertEquals("historical-running-task", lease.task.id.value)
+        assertEquals("worker-new", lease.leaseOwner)
+        assertEquals("token-new", lease.leaseToken)
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "SELECT task_status, lease_owner, lease_token, lease_expire_time FROM fw_task WHERE id = ?",
+            ).use { statement ->
+                statement.setString(1, "historical-running-task")
+                statement.executeQuery().use { result ->
+                    assertTrue(result.next())
+                    assertEquals("RUNNING", result.getString("task_status"))
                     assertEquals("worker-new", result.getString("lease_owner"))
                     assertEquals("token-new", result.getString("lease_token"))
                     assertEquals(200, result.getLong("lease_expire_time"))

@@ -46,13 +46,19 @@ class BackgroundTask @JvmOverloads constructor(
     fun execution(): TaskExecution = TaskExecution(id, tenantId, type, businessId, payload, retryCount)
 }
 
-/** A worker-owned lease; only the matching lease owner may change its state. */
-class BackgroundTaskLease(
+/**
+ * A worker-owned lease. Older repositories identify ownership solely by
+ * [leaseOwner]; token-aware repositories also require [leaseToken] to fence
+ * off acknowledgements from an expired or superseded claim.
+ */
+class BackgroundTaskLease @JvmOverloads constructor(
     val task: BackgroundTask,
     val leaseOwner: String,
+    val leaseToken: String? = null,
 ) {
     init {
         require(leaseOwner.isNotBlank()) { "Task lease owner must not be blank." }
+        require(leaseToken == null || leaseToken.isNotBlank()) { "Task lease token must not be blank." }
         require(task.status == BackgroundTaskStatus.RUNNING) { "Only running tasks can be leased." }
     }
 }

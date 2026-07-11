@@ -76,6 +76,8 @@ class FileWeftProperties {
         var initialRetryDelayMillis: Long = 10_000
         var maxRetryDelayMillis: Long = 300_000
         var leaseDurationMillis: Long = 60_000
+        /** Recovery delay for RUNNING tasks created before persisted lease tokens were available. */
+        var legacyRunningGraceMillis: Long = 300_000
         var workerId: String? = null
     }
 
