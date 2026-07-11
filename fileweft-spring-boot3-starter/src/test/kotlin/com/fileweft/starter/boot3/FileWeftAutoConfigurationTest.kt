@@ -36,6 +36,12 @@ import com.fileweft.application.document.DocumentPageRequest
 import com.fileweft.application.document.DocumentPageResult
 import com.fileweft.application.document.DocumentQueryRepository
 import com.fileweft.application.document.DocumentQueryService
+import com.fileweft.application.idempotency.IdempotencyResult
+import com.fileweft.application.idempotency.RequestIdempotency
+import com.fileweft.application.idempotency.RequestIdempotencyClaim
+import com.fileweft.application.idempotency.RequestIdempotencyRecord
+import com.fileweft.application.idempotency.RequestIdempotencyRepository
+import com.fileweft.application.idempotency.RequestIdempotencyService
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
@@ -49,10 +55,12 @@ import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
+import com.fileweft.persistence.jdbc.JdbcRequestIdempotencyRepository
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
+import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.plugin.FileWeftPlugin
 import com.fileweft.spi.catalog.DocumentCatalogFolder
@@ -100,6 +108,7 @@ import org.springframework.context.annotation.Primary
 import java.io.InputStream
 import java.net.URI
 import java.nio.file.Path
+import java.time.Clock
 import java.time.Duration
 import java.io.PrintWriter
 import java.sql.Connection
@@ -353,6 +362,8 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(UploadApplicationService::class.java) != null)
             assertTrue(context.getBean(ResumableUploadService::class.java) != null)
             assertTrue(context.getBean(ResumableUploadSessionRepository::class.java) != null)
+            assertTrue(context.getBean(RequestIdempotencyRepository::class.java) is JdbcRequestIdempotencyRepository)
+            assertTrue(context.getBean(RequestIdempotencyService::class.java) != null)
             assertTrue(context.getBean(DocumentDraftService::class.java) != null)
             assertTrue(context.getBeansOfType(DocumentCatalogDraftService::class.java).isEmpty())
             assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
@@ -385,6 +396,23 @@ class FileWeftAutoConfigurationTest {
                 context.getBean(DoctorApplicationService::class.java)
                     .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
                     .checks.any { it.checkerName == WorkflowDoctorChecker.NAME },
+            )
+        }
+    }
+
+    @Test
+    fun `backs off request idempotency repository and service for customer beans`() {
+        contextRunner().withUserConfiguration(
+            DatabaseConfiguration::class.java,
+            CustomerRequestIdempotencyConfiguration::class.java,
+        ).run { context ->
+            assertSame(
+                context.getBean("customerRequestIdempotencyRepository"),
+                context.getBean(RequestIdempotencyRepository::class.java),
+            )
+            assertSame(
+                context.getBean("customerRequestIdempotencyService"),
+                context.getBean(RequestIdempotencyService::class.java),
             )
         }
     }
@@ -646,6 +674,39 @@ class FileWeftAutoConfigurationTest {
     class DatabaseConfiguration {
         @Bean
         fun dataSource(): DataSource = StubDataSource
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CustomerRequestIdempotencyConfiguration {
+        @Bean
+        fun customerRequestIdempotencyRepository(): RequestIdempotencyRepository =
+            CustomerRequestIdempotencyRepository
+
+        @Bean
+        fun customerRequestIdempotencyService(
+            repository: RequestIdempotencyRepository,
+            transaction: ApplicationTransaction,
+            identifiers: IdentifierGenerator,
+            clock: Clock,
+        ): RequestIdempotencyService = RequestIdempotencyService(repository, transaction, identifiers, clock)
+    }
+
+    private object CustomerRequestIdempotencyRepository : RequestIdempotencyRepository {
+        override fun findByKeyDigest(tenantId: Identifier, keyDigest: String): RequestIdempotencyRecord? = null
+
+        override fun claim(
+            request: RequestIdempotency,
+            newRecordId: Identifier,
+            now: Long,
+        ): RequestIdempotencyClaim = error("The auto-configuration test repository must not be invoked.")
+
+        override fun complete(
+            recordId: Identifier,
+            tenantId: Identifier,
+            keyDigest: String,
+            result: IdempotencyResult,
+            completedAt: Long,
+        ): RequestIdempotencyRecord = error("The auto-configuration test repository must not be invoked.")
     }
 
     @Configuration(proxyBeanMethods = false)

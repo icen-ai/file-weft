@@ -19,6 +19,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import javax.sql.DataSource
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -54,10 +55,10 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `applies schema migrations for outbox and task recovery workflow doctor records agents upload sessions and production indexes`() {
+    fun `applies schema migrations for durable runtime recovery and request idempotency`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(19, migrations)
+        assertEquals(20, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -75,6 +76,7 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(tableExists(connection, "fw_agent_suggestion_confirmation"))
             assertTrue(tableExists(connection, "fw_upload_session"))
             assertTrue(tableExists(connection, "fw_upload_session_part"))
+            assertTrue(tableExists(connection, "fw_idempotency_record"))
             assertTrue(columnExists(connection, "fw_outbox_event", "next_attempt_time"))
             assertTrue(columnExists(connection, "fw_outbox_event", "last_error"))
             assertTrue(columnExists(connection, "fw_audit_record", "operator_name"))
@@ -92,6 +94,26 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_retry_count"))
             assertTrue(columnExists(connection, "fw_document", "delivery_generation"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "delivery_generation"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "tenant_id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "key_digest"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "operator_id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "action"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "resource_type"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "resource_id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "subresource_id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "request_fingerprint"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "record_status"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "result_resource_type"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "result_resource_id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "result_related_resource_type"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "result_related_resource_id"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "completed_time"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "created_time"))
+            assertTrue(columnExists(connection, "fw_idempotency_record", "updated_time"))
+            assertFalse(columnExists(connection, "fw_idempotency_record", "idempotency_key"))
+            assertFalse(columnExists(connection, "fw_idempotency_record", "result_json"))
+            assertFalse(columnExists(connection, "fw_idempotency_record", "expires_at"))
             assertTrue(indexExists(connection, "fw_sync_record", "idx_fw_sync_tenant_document_connector_status"))
             assertTrue(indexExists(connection, "fw_task", "idx_fw_task_tenant_status_updated"))
             assertTrue(indexExists(connection, "fw_workflow_instance", "uq_fw_workflow_instance_tenant_document_pending"))
@@ -99,6 +121,14 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(indexExists(connection, "fw_outbox_event", "idx_fw_outbox_legacy_running_updated"))
             assertTrue(indexExists(connection, "fw_task", "idx_fw_task_running_lease_expiry"))
             assertTrue(indexExists(connection, "fw_task", "idx_fw_task_legacy_running_updated"))
+            assertTrue(indexExists(connection, "fw_idempotency_record", "uq_fw_idempotency_tenant_key_digest"))
+            assertTrue(indexExists(connection, "fw_idempotency_record", "idx_fw_idempotency_tenant_resource_time"))
+            assertTrue(indexExists(connection, "fw_idempotency_record", "idx_fw_idempotency_in_progress_diagnostic"))
+            assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_digests"))
+            assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_binding"))
+            assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_status"))
+            assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_result"))
+            assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_time"))
         }
     }
 
@@ -264,5 +294,14 @@ class FlywayMigrationRunnerIntegrationTest {
         connection.metaData.getIndexInfo(null, "public", tableName, false, false).use { indexes ->
             generateSequence { if (indexes.next()) indexes.getString("INDEX_NAME") else null }
                 .any { it.equals(indexName, ignoreCase = true) }
+        }
+
+    private fun constraintExists(connection: Connection, tableName: String, constraintName: String): Boolean =
+        connection.prepareStatement(
+            "SELECT 1 FROM information_schema.table_constraints WHERE table_schema = 'public' AND table_name = ? AND constraint_name = ?",
+        ).use { statement ->
+            statement.setString(1, tableName)
+            statement.setString(2, constraintName)
+            statement.executeQuery().use { result -> result.next() }
         }
 }

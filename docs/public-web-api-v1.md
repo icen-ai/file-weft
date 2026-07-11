@@ -70,12 +70,22 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
 
-- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：应用层目录 guard 已就绪，但正式路由必须等持久化 `Idempotency-Key` 与对应契约完成后才开放。
+- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：应用层目录 guard 与持久化幂等地基已就绪，但正式路由仍需完成各用例的事务内幂等接入、统一 flat/guarded 能力解析器和两代 MVC 契约后才开放。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。
 - `GET /sync-status`、`GET /logs`、`GET /plugins`、`GET /health`：在相应的脱敏读模型和系统授权服务完成后加入；不能复用 Dev 的直连 JDBC DTO。
 
 分页使用不透明 cursor 而不是让调用方拼接数据库 offset；当前 runtime 的 v1 codec 版本化 Base64URL 编码只包含稳定排序键 `updatedTime` 与 `documentId`，不含租户、用户、路径或密钥。它不是加密或签名机制：篡改/损坏 cursor 会被统一拒绝，而租户过滤与授权仍由应用层负责。每个列表请求仍以可信当前租户作为唯一数据域。所有文本输入均限制长度并拒绝控制字符；下载文件名与内容类型则由共享 runtime 策略归一，保证 Boot 2 与 Boot 3 不会各自解释不受信任的持久化 metadata。
+
+## 持久化请求幂等地基
+
+`V020` 新增的请求幂等记录属于 Application/Persistence 能力，不代表上述生命周期路由已经开放。正式写入口接入时必须要求恰好一个 `Idempotency-Key`：首字符为 ASCII 字母或数字，后续只允许 ASCII 字母、数字、`.`、`_`、`~`、`:`、`-`，总长 1 到 128。缺失、重复、空白、控制字符或越界都固定归类为 `400 INVALID_REQUEST`，原始 key 不得进入日志、异常、审计或数据库。
+
+Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 摘要，只持久化摘要；同一租户下的摘要唯一。记录还绑定可信当前用户、动作、资源、可选子资源以及由已校验命令生成的请求指纹。完全相同的重试返回第一次提交的稳定资源 ID；任一绑定维度不同都固定返回 `409 CONFLICT`，不得说明冲突来自用户、路径还是请求体。请求指纹由服务端对 typed command 生成，客户端不能直接提交；未来 multipart 写入还必须纳入实际内容哈希，不能只使用文件名和长度。
+
+认证、动作授权和目录可见性必须在每次重放前重新检查，幂等记录不是权限缓存。快速重放应位于领域状态校验以及审批路由、交付策略等外部解析之前；未命中后，最终短事务的锁序固定为 idempotency → document → asset → workflow，并在同一事务内完成 claim、领域保存、审计、Outbox 和安全结果。外部 Catalog、审批路由或交付策略不得被包进该事务。并发同 key 会由 PostgreSQL 唯一键串行：首请求提交后其他请求重放结果，首请求回滚后下一请求取得执行权；正确实现不会提交可见的 `IN_PROGRESS` 记录。
+
+当前地基故意不承诺自动过期或清理窗口。正式保留期、合规归档和重新执行窗口在形成稳定协议前，运行方不得删除 `fw_idempotency_record` 或复用已经使用的 key；任何已提交的 `IN_PROGRESS` 行都表示集成不变量被破坏，应告警并人工诊断，不能自动接管。
 
 ## 安全与运行要求
 
@@ -83,12 +93,12 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - 下载保持 `DocumentDownloadService` 的授权、目录可见性和审计，不向前端暴露存储地址或凭据；自定义 Service 装配不能绕过默认 Starter 的目录 guard。
 - Controller 只转发 runtime 已归一的 `Content-Disposition`、内容类型和 verified length，并关闭异常详情回显；它不会从持久化长度推测 `Content-Length`。
 - CORS、CSRF、会话、OAuth/OIDC、mTLS 和 Actuator 暴露由宿主安全策略决定；Web Adapter 不提供弱默认认证。
-- 正式写路由尚未承诺 `Idempotency-Key`。生产发布前必须提供与业务结果一起持久化的租户级请求幂等记录，使断线重试可以返回第一次已提交的结果；Controller 进程内缓存不能代替该能力。
+- 正式写路由尚未开放 `Idempotency-Key` 协议；底层持久化记录与事务协调器已经交付，但每个生命周期用例仍必须把 claim、业务结果、审计和 Outbox 接入自己的最终短事务后才能发布。Controller 进程内缓存不能代替该能力。
 
 ## 测试与迁移门槛
 
 每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
-本里程碑已完成相关常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 和 9 条 Playwright 浏览器用例；其中包含独立的 formal-v1 用例，验证 Dev 应用确实通过正式 Starter 暴露 v1，而不只是前端改写 URL。该结果闭环了当前已交付读写与下载路由的 Dev v1 验收，但不覆盖尚未实现的持久化请求幂等、正式生命周期/多人审批、Doctor、同步状态和日志等 HTTP 映射。
+本里程碑已完成相关常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 和 9 条 Playwright 浏览器用例；其中包含独立的 formal-v1 用例，验证 Dev 应用确实通过正式 Starter 暴露 v1，而不只是前端改写 URL。该结果闭环了当前已交付读写与下载路由的 Dev v1 验收；持久化请求幂等地基已经独立交付，但尚未覆盖正式生命周期/多人审批用例接入及 Doctor、同步状态和日志等 HTTP 映射。
 
 首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 当前的分阶段接入只作为可运行示例，不代表所有 `/api` 能力已经形成正式协议。

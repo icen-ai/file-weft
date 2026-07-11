@@ -48,6 +48,8 @@ import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.doctor.TransactionalDoctorChecker
 import com.fileweft.application.doctor.UnavailableDoctorChecker
 import com.fileweft.application.doctor.WorkflowDoctorChecker
+import com.fileweft.application.idempotency.RequestIdempotencyRepository
+import com.fileweft.application.idempotency.RequestIdempotencyService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
@@ -91,6 +93,7 @@ import com.fileweft.persistence.jdbc.JdbcOutboxEventRepository
 import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.persistence.jdbc.JdbcOutboxProcessingRepository
 import com.fileweft.persistence.jdbc.JdbcOperationLogRepository
+import com.fileweft.persistence.jdbc.JdbcRequestIdempotencyRepository
 import com.fileweft.persistence.jdbc.JdbcResumableUploadSessionRepository
 import com.fileweft.persistence.jdbc.JdbcSyncRecordRepository
 import com.fileweft.persistence.jdbc.JdbcTaskRepository
@@ -238,6 +241,20 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(ResumableUploadSessionRepository::class)
     fun fileWeftResumableUploadSessionRepository(objectMapper: ObjectMapper): ResumableUploadSessionRepository =
         JdbcResumableUploadSessionRepository(objectMapper)
+
+    @Bean
+    @ConditionalOnMissingBean(RequestIdempotencyRepository::class)
+    fun fileWeftRequestIdempotencyRepository(): RequestIdempotencyRepository =
+        JdbcRequestIdempotencyRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(RequestIdempotencyService::class)
+    fun fileWeftRequestIdempotencyService(
+        repository: RequestIdempotencyRepository,
+        transaction: ApplicationTransaction,
+        identifiers: IdentifierGenerator,
+        clock: Clock,
+    ): RequestIdempotencyService = RequestIdempotencyService(repository, transaction, identifiers, clock)
 
     @Bean(name = ["fileWeftDocumentCatalogAccessService"])
     @ConditionalOnBean(DocumentCatalogProvider::class)

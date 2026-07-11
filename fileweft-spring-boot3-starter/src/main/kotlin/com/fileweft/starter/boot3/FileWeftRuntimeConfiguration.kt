@@ -28,6 +28,8 @@ import com.fileweft.application.document.DocumentQueryService
 import com.fileweft.application.doctor.*
 import com.fileweft.application.delivery.*
 import com.fileweft.application.document.DocumentDraftService
+import com.fileweft.application.idempotency.RequestIdempotencyRepository
+import com.fileweft.application.idempotency.RequestIdempotencyService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.*
@@ -190,6 +192,19 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(ResumableUploadSessionRepository::class)
     fun resumableUploadSessions(objectMapper: ObjectMapper): ResumableUploadSessionRepository =
         JdbcResumableUploadSessionRepository(objectMapper)
+
+    @Bean
+    @ConditionalOnMissingBean(RequestIdempotencyRepository::class)
+    fun requestIdempotencyRepository(): RequestIdempotencyRepository = JdbcRequestIdempotencyRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(RequestIdempotencyService::class)
+    fun requestIdempotencyService(
+        repository: RequestIdempotencyRepository,
+        transaction: ApplicationTransaction,
+        identifiers: IdentifierGenerator,
+        clock: Clock,
+    ): RequestIdempotencyService = RequestIdempotencyService(repository, transaction, identifiers, clock)
 
     @Bean(name = ["documentCatalogAccessService"])
     @ConditionalOnBean(DocumentCatalogProvider::class)
