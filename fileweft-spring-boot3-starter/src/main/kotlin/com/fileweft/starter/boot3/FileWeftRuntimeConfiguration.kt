@@ -458,6 +458,12 @@ class FileWeftRuntimeConfiguration {
     ) = StorageDoctorChecker(documents, fileObjects, storage, transaction)
 
     @Bean
+    @ConditionalOnMissingBean(WorkflowDoctorChecker::class)
+    fun workflowDoctor(
+        documents: DocumentRepository, workflows: WorkflowInstanceRepository,
+    ) = WorkflowDoctorChecker(documents, workflows)
+
+    @Bean
     @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
     @ConditionalOnMissingBean(CatalogDoctorChecker::class)
     fun catalogDoctor(
@@ -480,7 +486,7 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun doctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
+        storage: StorageDoctorChecker, workflow: WorkflowDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
         deliveryProfile: DeliveryProfileDoctorChecker,
         agent: AgentDoctorChecker, transaction: ApplicationTransaction,
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
@@ -490,6 +496,7 @@ class FileWeftRuntimeConfiguration {
             tenants, permission,
             listOf<DoctorChecker>(
                 TransactionalDoctorChecker(lifecycle, transaction),
+                TransactionalDoctorChecker(workflow, transaction),
                 storage,
             ) + listOfNotNull(catalogChecker) + listOf(
                 deliveryProfile,

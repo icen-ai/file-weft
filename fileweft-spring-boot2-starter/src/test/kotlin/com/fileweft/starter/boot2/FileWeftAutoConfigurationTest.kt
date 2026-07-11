@@ -21,6 +21,7 @@ import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.doctor.CatalogDoctorChecker
 import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
+import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.upload.ResumableUploadService
@@ -173,6 +174,7 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(PersistedAgentSuggestionConfirmationService::class.java) != null)
             assertTrue(context.getBean(AgentDoctorChecker::class.java) != null)
             assertTrue(context.getBean(DeliveryProfileDoctorChecker::class.java) != null)
+            assertTrue(context.getBean(WorkflowDoctorChecker::class.java) != null)
             assertTrue(context.getBean(ConnectorInvocationExecutor::class.java) != null)
             assertTrue(context.getBean(ConnectorResiliencePolicy::class.java) != null)
             assertTrue(context.getBean(ConnectorResilienceRegistry::class.java) != null)
@@ -181,6 +183,11 @@ class FileWeftAutoConfigurationTest {
                 context.getBean(DoctorApplicationService::class.java)
                     .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
                     .checks.any { it.checkerName == DeliveryProfileDoctorChecker.NAME },
+            )
+            assertTrue(
+                context.getBean(DoctorApplicationService::class.java)
+                    .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
+                    .checks.any { it.checkerName == WorkflowDoctorChecker.NAME },
             )
         }
     }

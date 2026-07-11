@@ -40,6 +40,7 @@ import com.fileweft.application.doctor.StorageDoctorChecker
 import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.doctor.TransactionalDoctorChecker
 import com.fileweft.application.doctor.UnavailableDoctorChecker
+import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
@@ -523,6 +524,12 @@ class FileWeftRuntimeConfiguration {
     ): StorageDoctorChecker = StorageDoctorChecker(documents, fileObjects, storage, transaction)
 
     @Bean
+    @ConditionalOnMissingBean(WorkflowDoctorChecker::class)
+    fun fileWeftWorkflowDoctorChecker(
+        documents: DocumentRepository, workflows: WorkflowInstanceRepository,
+    ): WorkflowDoctorChecker = WorkflowDoctorChecker(documents, workflows)
+
+    @Bean
     @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
     @ConditionalOnMissingBean(CatalogDoctorChecker::class)
     fun fileWeftCatalogDoctorChecker(
@@ -545,7 +552,7 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun fileWeftDoctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
+        storage: StorageDoctorChecker, workflow: WorkflowDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
         deliveryProfile: DeliveryProfileDoctorChecker,
         agent: AgentDoctorChecker, transaction: ApplicationTransaction,
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
@@ -556,6 +563,7 @@ class FileWeftRuntimeConfiguration {
             permission,
             listOf<DoctorChecker>(
                 TransactionalDoctorChecker(lifecycle, transaction),
+                TransactionalDoctorChecker(workflow, transaction),
                 storage,
             ) + listOfNotNull(catalogChecker) + listOf(
                 deliveryProfile,
