@@ -44,6 +44,8 @@ import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
+import com.fileweft.application.outbox.OutboxBacklogMetricsPublisher
+import com.fileweft.application.outbox.OutboxBacklogReader
 import com.fileweft.application.outbox.OutboxProcessingRepository
 import com.fileweft.application.outbox.TraceAwareOutboxEventRepository
 import com.fileweft.application.outbox.OutboxWorker
@@ -77,6 +79,7 @@ import com.fileweft.persistence.jdbc.JdbcDocumentDeliveryTargetRepository
 import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
 import com.fileweft.persistence.jdbc.JdbcFileObjectRepository
 import com.fileweft.persistence.jdbc.JdbcOutboxEventRepository
+import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.persistence.jdbc.JdbcOutboxProcessingRepository
 import com.fileweft.persistence.jdbc.JdbcOperationLogRepository
 import com.fileweft.persistence.jdbc.JdbcResumableUploadSessionRepository
@@ -94,6 +97,7 @@ import com.fileweft.spi.delivery.DocumentDeliveryProfileProvider
 import com.fileweft.spi.doctor.DoctorChecker
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.observability.FileWeftGaugeRecorder
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.observability.TraceContextScope
@@ -103,6 +107,7 @@ import com.fileweft.spi.task.FileWeftTaskHandler
 import com.fileweft.spi.workflow.DocumentReviewRouteProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
@@ -165,6 +170,44 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(OutboxProcessingRepository::class)
     fun fileWeftOutboxProcessingRepository(objectMapper: ObjectMapper): OutboxProcessingRepository = JdbcOutboxProcessingRepository(objectMapper)
+
+    /**
+     * Global backlog inspection is deliberately separate from processing so customers can
+     * replace the query with a partition-aware operational projection without changing workers.
+     */
+    @Bean
+    @ConditionalOnProperty(
+        prefix = "fileweft.outbox",
+        name = ["backlog-metrics-enabled"],
+        havingValue = "true",
+        matchIfMissing = true,
+    )
+    @ConditionalOnMissingBean(OutboxBacklogReader::class)
+    fun fileWeftOutboxBacklogReader(properties: FileWeftProperties): OutboxBacklogReader =
+        JdbcOutboxBacklogReader(properties.outbox.backlogMetricsQueryTimeoutSeconds)
+
+    @Bean
+    @ConditionalOnProperty(
+        prefix = "fileweft.outbox",
+        name = ["backlog-metrics-enabled"],
+        havingValue = "true",
+        matchIfMissing = true,
+    )
+    @ConditionalOnMissingBean(OutboxBacklogMetricsPublisher::class)
+    fun fileWeftOutboxBacklogMetricsPublisher(
+        transaction: ApplicationTransaction,
+        reader: ObjectProvider<OutboxBacklogReader>,
+        gauges: ObjectProvider<FileWeftGaugeRecorder>,
+        clock: Clock,
+        properties: FileWeftProperties,
+    ): OutboxBacklogMetricsPublisher = OutboxBacklogMetricsPublisher(
+        transaction = transaction,
+        reader = reader.getIfAvailable(),
+        gauges = gauges.getIfAvailable(),
+        clock = clock,
+        samplingInterval = Duration.ofMillis(properties.outbox.backlogMetricsIntervalMillis),
+        legacyRunningGrace = Duration.ofMillis(properties.outbox.legacyRunningGraceMillis),
+    )
 
     @Bean
     @ConditionalOnMissingBean(value = [TaskRepository::class, TaskProcessingRepository::class])

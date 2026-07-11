@@ -13,6 +13,7 @@ import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
 import com.fileweft.adapter.observability.NoOpFileWeftMetrics
+import com.fileweft.adapter.micrometer.MicrometerFileWeftGauges
 import com.fileweft.adapter.micrometer.MicrometerFileWeftMetrics
 import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
@@ -28,9 +29,12 @@ import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
+import com.fileweft.application.outbox.OutboxBacklogMetricsPublisher
+import com.fileweft.application.outbox.OutboxBacklogReader
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
+import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
@@ -40,6 +44,7 @@ import com.fileweft.spi.catalog.DocumentCatalogFolder
 import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.observability.FileWeftMetrics
+import com.fileweft.spi.observability.FileWeftGaugeRecorder
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.observability.TraceContextScope
 import com.fileweft.domain.operation.OperationLogRepository
@@ -170,6 +175,14 @@ class FileWeftAutoConfigurationTest {
             .withUserConfiguration(DatabaseConfiguration::class.java)
             .withPropertyValues("fileweft.outbox.legacy-running-grace-millis=-1")
             .run { context -> assertTrue(context.startupFailure != null) }
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.outbox.backlog-metrics-interval-millis=0")
+            .run { context -> assertTrue(context.startupFailure != null) }
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.outbox.backlog-metrics-query-timeout-seconds=0")
+            .run { context -> assertTrue(context.startupFailure != null) }
     }
 
     @Test
@@ -260,7 +273,50 @@ class FileWeftAutoConfigurationTest {
     fun `adapts the host Micrometer registry without replacing a customer metrics bean`() {
         contextRunner().withUserConfiguration(MicrometerConfiguration::class.java).run { context ->
             assertTrue(context.getBean(FileWeftMetrics::class.java) is MicrometerFileWeftMetrics)
+            assertTrue(context.getBean(FileWeftGaugeRecorder::class.java) is MicrometerFileWeftGauges)
         }
+    }
+
+    @Test
+    fun `wires bounded persistent Outbox backlog observation through replaceable ports`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java, MicrometerConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.worker.enabled=true",
+                "fileweft.outbox.backlog-metrics-interval-millis=9000",
+                "fileweft.outbox.backlog-metrics-query-timeout-seconds=7",
+            )
+            .run { context ->
+                assertEquals(9_000, context.getBean(FileWeftProperties::class.java).outbox.backlogMetricsIntervalMillis)
+                assertEquals(7, context.getBean(FileWeftProperties::class.java).outbox.backlogMetricsQueryTimeoutSeconds)
+                val reader = context.getBean(OutboxBacklogReader::class.java)
+                assertTrue(reader is JdbcOutboxBacklogReader)
+                assertEquals(7, privateField(reader, "queryTimeoutSeconds"))
+                assertTrue(context.getBean(OutboxBacklogMetricsPublisher::class.java) != null)
+                assertTrue(context.getBean(FileWeftGaugeRecorder::class.java) is MicrometerFileWeftGauges)
+                assertTrue(context.containsBean("fileWeftOutboxBacklogMetricsExecutor"))
+                assertEquals(
+                    9_000L,
+                    privateField(context.getBean(OutboxBacklogMetricsPublisher::class.java), "samplingIntervalMillis"),
+                )
+            }
+    }
+
+    @Test
+    fun `allows hosts to disable default persistent Outbox observation and its worker lane`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.worker.enabled=true",
+                "fileweft.outbox.backlog-metrics-enabled=false",
+            )
+            .run { context ->
+                assertFalse(context.getBean(FileWeftProperties::class.java).outbox.backlogMetricsEnabled)
+                assertTrue(context.getBeansOfType(OutboxBacklogReader::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(OutboxBacklogMetricsPublisher::class.java).isEmpty())
+                assertFalse(context.containsBean("fileWeftOutboxBacklogMetricsExecutor"))
+                assertTrue(context.getBean(FileWeftWorkerScheduler::class.java) != null)
+            }
     }
 
     @Test
@@ -277,6 +333,8 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
             assertTrue(context.getBean(OutboxWorker::class.java) != null)
+            assertTrue(context.getBean(OutboxBacklogReader::class.java) != null)
+            assertTrue(context.getBean(OutboxBacklogMetricsPublisher::class.java) != null)
             assertTrue(context.getBean(OperationLogRepository::class.java) != null)
             assertTrue(context.getBean(AgentResultRepository::class.java) != null)
             assertTrue(context.getBean(ConfirmAgentSuggestionService::class.java) != null)

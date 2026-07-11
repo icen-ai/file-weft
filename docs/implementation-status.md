@@ -7,15 +7,15 @@
 | 阶段 | 已交付能力 | 验证方式 |
 | --- | --- | --- |
 | Core | 标识、上下文、结果、错误与 Outbox 模型，不依赖 Spring 或厂商 SDK | Core 单元测试、分层依赖与 Java 互操作语法门禁，以及 Java 8/11/21/25 运行时矩阵 |
-| SPI | 身份、授权、租户、存储、连接器、交付、任务、诊断、Agent、审批路由与宿主目录契约 | SPI 模型与合约测试、Java 互操作语法门禁 |
+| SPI | 身份、授权、租户、存储、连接器、交付、任务、诊断、Agent、审批路由、宿主目录与低基数 Gauge 契约 | SPI 模型与合约测试、Java 互操作语法门禁 |
 | Domain | 文件、文档版本、生命周期、工作流、审计与操作日志领域规则；受控恢复草稿与发布代次 | Domain 单元测试 |
 | Application | 上传、下载、审批、并行会签、发布、下线/归档撤回、受控新版本再发布、同步、Doctor、任务与 Agent 用例 | Application 单元测试 |
-| Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |
-| Starter | Boot 2 / Boot 3 自动装配、安全默认实现与客户替换点 | Starter 上下文测试，以及 Java 8/11/21/25（Boot 2）与 Java 17/21/25（Boot 3）运行时矩阵 |
-| Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 指标 | Adapter 与 TestKit 合约测试 |
+| Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约与全局积压快照、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |
+| Starter | Boot 2 / Boot 3 自动装配、安全默认实现、Outbox Worker 积压采样与客户替换点 | Starter 上下文测试，以及 Java 8/11/21/25（Boot 2）与 Java 17/21/25（Boot 3）运行时矩阵 |
+| Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 计数器与受限 Outbox Gauge | Adapter 与 TestKit 合约测试 |
 | Doctor | 权限、生命周期、工作流一致性、存储、连接器、交付档案与连接器映射、宿主目录绑定与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
-| Hardening | 多租户隔离、Outbox、重试、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom` 与 Compose 验收 |
+| Hardening | 多租户隔离、Outbox、重试、固定状态的持久化 Outbox 积压/最老可执行年龄/读取失败 Gauge、零队列异步观测、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom` 与 Compose 验收 |
 
 目前的关键验收命令：
 

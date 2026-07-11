@@ -28,6 +28,42 @@ fileweft:
 
 Worker 每轮失败只记录日志，不会丢弃待处理记录；下一轮会继续领取符合重试时间或租约已过期的工作。生产报警应至少覆盖同步失败、任务失败、任务失租（`fileweft.task_lease_lost`）、Doctor 失败和持久化 Outbox 积压。
 
+## 持久化 Outbox 积压指标与运行角色
+
+Outbox 积压不是 API 节点上的内存计数，而是对 `fw_outbox_event` 的全局数据库聚合快照。启用了 Micrometer `MeterRegistry` 的 Starter 会导出以下指标：
+
+| 指标 | 固定 `state` / 标签 | 运营含义 |
+| --- | --- | --- |
+| `fileweft.outbox_backlog` | `ready` | 已到执行时间的 `PENDING`/`RETRY`；持续增长通常表示 Worker 不足、下游受阻或领取失败。 |
+| `fileweft.outbox_backlog` | `delayed` | 尚在退避窗口的 `PENDING`/`RETRY`；短暂存在是正常现象。 |
+| `fileweft.outbox_backlog` | `running` | 仍在有效租约内、暂不可回收的 `RUNNING`。 |
+| `fileweft.outbox_backlog` | `expired` | 已可回收的 `RUNNING`，包括 token 租约到期或无 token 历史记录超过 legacy grace。持续非零应检查处理时长、旧 Worker 排空和下游超时。 |
+| `fileweft.outbox_backlog` | `failed` | 已进入终态的 `FAILED`，需要按交付/事件的既有运维流程排查和人工重排。 |
+| `fileweft.outbox_oldest_ready_age_seconds` | 无 | 最早 `ready` 事件的等待秒数；没有 `ready` 事件时为 `0`。 |
+| `fileweft.outbox_backlog_observation_failure` | 无 | 最近一次实际执行的积压读取是否失败；`0` 为成功，`1` 为失败。 |
+
+五个 `state` 彼此互斥，且 `state` 是唯一允许的 gauge 标签。指标不包含 `tenantId`、文档 ID、用户 ID、连接器 ID 或下游错误文本；租户级排查必须使用审计、操作日志、Trace 与受权限保护的交付状态查询。多个 Outbox Worker 观察的是同一份全局数据库状态，因此查询或报警规则不能把各实例序列相加；应按 `state` 取最近值或最大值。
+
+默认启用后，每个 Outbox Worker 进程每 30 秒最多尝试一次采样；可通过下列配置调整（间隔和查询超时必须大于零）：
+
+```yaml
+fileweft:
+  worker:
+    enabled: true
+    process-outbox: true
+    fixed-delay-millis: 1000
+  outbox:
+    backlog-metrics-enabled: true
+    backlog-metrics-interval-millis: 30000
+    backlog-metrics-query-timeout-seconds: 5
+```
+
+采样只挂在 Outbox 轮询角色上：Web 节点维持默认的 `fileweft.worker.enabled=false`，不会产生积压 gauge；仅处理 `process-tasks` 或 `process-upload-cleanup` 的 Worker 也不会产生。若集群需要这组指标，至少保留一个 `enabled=true` 且 `process-outbox=true` 的 Worker。设置 `backlog-metrics-enabled=false` 会使默认读取器、发布器和观察执行通道都不装配。采样在每次 Outbox 轮询结束后尝试，故实际频率还受轮询周期和进程存活影响，不是独立于 Worker 的定时探针。
+
+每次采样先提交到独立的单线程、零队列观察通道，Outbox Worker 不会等待该数据库工作；若前一次慢查询仍在运行，新采样不会排队。实际运行时会在一个独立、短暂的数据库事务内执行只针对 `PENDING`、`RETRY`、`RUNNING` 和 `FAILED` 的聚合查询，事务外才更新指标后端；单条 JDBC 查询最长默认 5 秒。它不会在事务中调用连接器，也不会影响事件的确认、退避或租约恢复。`fileweft.outbox_backlog_observation_failure=1` 表示最近一个已实际执行的读取失败，下一次成功会写回 `0`；通道拒绝或进程退出前未执行的任务不会在 Worker 线程直接调用客户指标适配器。默认使用 `JdbcOutboxBacklogReader` 与 Micrometer 导出器；宿主可通过 `OutboxBacklogReader` 或 `FileWeftGaugeRecorder` Bean 替换查询或指标后端。自定义读取器必须维持五种状态的互斥分类与最早 `ready` 创建时间，自定义导出器必须把写入理解为当前值替换、快速且非阻塞，并隔离自身失败，不能改变 Outbox 处理语义。
+
+默认读取已经排除 `SUCCESS` 历史，但它仍需统计保留的 `FAILED`、待处理和运行中记录。长期保留大量终态失败记录的部署，应按自身合规策略归档/分区，并在需要时提供分区感知的 `OutboxBacklogReader`；不要通过取消查询超时或让观察任务在 Worker 线程中排队来换取指标完整性。
+
 ## Outbox 租约与滚动升级
 
 `V018` 为 `fw_outbox_event` 增加持久化租约字段。新 Worker 每次只领取一条事件，并在短事务内写入独立的 `lease_owner`、随机 `lease_token` 与到期时间；只有持有同一 token 的 Worker 才能确认成功、重试或失败，迟到的旧 Worker 不能覆盖新领取者的状态。默认租约为 5 分钟（`fileweft.outbox.lease-duration-millis=300000`）。该值应大于一次外部调用的最长预期耗时及必要余量；租约到期后其他 Worker 可以重新领取事件，因此不能把它当作“最多执行一次”保证。
@@ -44,6 +80,7 @@ fileweft:
     worker-id: ${HOSTNAME}
     lease-duration-millis: 300000
     legacy-running-grace-millis: 300000
+    backlog-metrics-interval-millis: 30000
 ```
 
 ## 后台任务租约与滚动升级

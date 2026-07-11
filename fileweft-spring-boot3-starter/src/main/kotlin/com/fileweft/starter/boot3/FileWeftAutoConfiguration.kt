@@ -2,8 +2,9 @@ package com.fileweft.starter.boot3
 
 import com.fileweft.adapter.authorization.DefaultAuthorizationProvider
 import com.fileweft.adapter.id.UuidIdentifierGenerator
-import com.fileweft.adapter.observability.NoOpFileWeftMetrics
+import com.fileweft.adapter.micrometer.MicrometerFileWeftGauges
 import com.fileweft.adapter.micrometer.MicrometerFileWeftMetrics
+import com.fileweft.adapter.observability.NoOpFileWeftMetrics
 import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.adapter.identity.DefaultUserRealmProvider
 import com.fileweft.adapter.storage.LocalStorageAdapter
@@ -13,6 +14,7 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.observability.FileWeftGaugeRecorder
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.plugin.FileWeftPlugin
@@ -81,6 +83,11 @@ class FileWeftAutoConfiguration {
     @ConditionalOnMissingBean(FileWeftMetrics::class)
     @ConditionalOnBean(MeterRegistry::class)
     fun fileWeftMicrometerMetrics(meterRegistry: MeterRegistry): FileWeftMetrics = MicrometerFileWeftMetrics(meterRegistry)
+
+    @Bean
+    @ConditionalOnMissingBean(FileWeftGaugeRecorder::class)
+    @ConditionalOnBean(MeterRegistry::class)
+    fun fileWeftMicrometerGauges(meterRegistry: MeterRegistry): FileWeftGaugeRecorder = MicrometerFileWeftGauges(meterRegistry)
 
     @Bean
     @ConditionalOnMissingBean(value = [FileWeftMetrics::class, MeterRegistry::class])

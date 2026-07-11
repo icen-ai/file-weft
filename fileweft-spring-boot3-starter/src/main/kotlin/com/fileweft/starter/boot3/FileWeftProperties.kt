@@ -89,6 +89,12 @@ class FileWeftProperties {
         var leaseDurationMillis: Long = 300_000
         /** Recovery delay before reclaiming RUNNING records created before persisted leases existed. */
         var legacyRunningGraceMillis: Long = 300_000
+        /** Enables bounded global durable Outbox backlog observations on Outbox worker roles. */
+        var backlogMetricsEnabled: Boolean = true
+        /** Minimum interval between global durable Outbox backlog observations on one worker process. */
+        var backlogMetricsIntervalMillis: Long = 30_000
+        /** JDBC statement timeout for one aggregate backlog observation. */
+        var backlogMetricsQueryTimeoutSeconds: Int = 5
     }
 
     /** Explicitly opt-in polling configuration for a separately deployed worker role. */
