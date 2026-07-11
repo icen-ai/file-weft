@@ -96,6 +96,37 @@ class DocumentCatalogAccessServiceTest {
     }
 
     @Test
+    fun `derives an immutable download scope with trusted browse context and download action`() {
+        val catalog = RecordingCatalog(
+            listOf(
+                DocumentCatalogFolder("finance", null, "Finance"),
+                DocumentCatalogFolder("contracts", null, "Contracts"),
+            ),
+        )
+        val authorization = RecordingAuthorization()
+        val service = service(catalog, authorization)
+        val documentId = Identifier("document-a")
+
+        val folderIds = service.readableFolderIdsForDocumentDownload(documentId)
+
+        assertEquals(setOf("finance", "contracts"), folderIds)
+        assertEquals(DocumentCatalogOperation.BROWSE, catalog.lastRequest?.operation)
+        assertEquals(Identifier("tenant-a"), catalog.lastRequest?.tenantId)
+        assertEquals(Identifier("editor-a"), catalog.lastRequest?.userId)
+        assertEquals("document:download", authorization.lastRequest?.action?.name)
+        assertEquals(documentId, authorization.lastRequest?.resource?.id)
+        assertEquals("DOCUMENT", authorization.lastRequest?.resource?.type)
+        @Suppress("UNCHECKED_CAST")
+        assertFailsWith<UnsupportedOperationException> {
+            (folderIds as MutableSet<String>).add("private")
+        }
+
+        val empty = service(RecordingCatalog(emptyList()), RecordingAuthorization())
+            .readableFolderIdsForDocumentDownload(documentId)
+        assertEquals(emptySet(), empty)
+    }
+
+    @Test
     fun `does not ask the host catalog when FileWeft base authorization denies access`() {
         val catalog = RecordingCatalog()
         val service = service(catalog, RecordingAuthorization(allowed = false))
@@ -132,14 +163,16 @@ class DocumentCatalogAccessServiceTest {
         catalog = catalog,
     )
 
-    private class RecordingCatalog : DocumentCatalogProvider {
+    private class RecordingCatalog(
+        private val folders: List<DocumentCatalogFolder> = listOf(DocumentCatalogFolder("visible", null, "Visible")),
+    ) : DocumentCatalogProvider {
         var lastRequest: DocumentCatalogAccessRequest? = null
 
         override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = emptyList()
 
         override fun listFolders(request: DocumentCatalogAccessRequest): List<DocumentCatalogFolder> {
             lastRequest = request
-            return listOf(DocumentCatalogFolder("visible", null, "Visible"))
+            return folders
         }
     }
 

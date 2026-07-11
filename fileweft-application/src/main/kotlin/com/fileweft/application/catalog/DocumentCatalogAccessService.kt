@@ -2,7 +2,7 @@ package com.fileweft.application.catalog
 
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.security.ApplicationUnauthenticatedException
-import com.fileweft.application.document.DocumentFolderReadAccess
+import com.fileweft.application.document.DocumentFolderDownloadAccess
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.authorization.AuthorizationProvider
@@ -24,7 +24,7 @@ class DocumentCatalogAccessService(
     private val userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val catalog: DocumentCatalogProvider,
-) : DocumentFolderReadAccess {
+) : DocumentFolderDownloadAccess {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
     fun listAccessibleFolders(): List<DocumentCatalogFolder> = access(
@@ -86,8 +86,16 @@ class DocumentCatalogAccessService(
         )
     }
 
-    override fun readableFolderIds(): Set<String> =
-        Collections.unmodifiableSet(LinkedHashSet(listAccessibleFolders().map { folder -> folder.id }))
+    override fun readableFolderIds(): Set<String> = immutableFolderIds(listAccessibleFolders())
+
+    override fun readableFolderIdsForDocumentDownload(documentId: Identifier): Set<String> = access(
+        DocumentCatalogOperation.BROWSE,
+        documentId,
+        DOCUMENT_RESOURCE_TYPE,
+        DOCUMENT_DOWNLOAD_ACTION,
+    ) { request ->
+        immutableFolderIds(catalog.listFolders(request))
+    }
 
     private fun requireFolder(
         folderId: String,
@@ -123,6 +131,11 @@ class DocumentCatalogAccessService(
         }
     }
 
+    private fun immutableFolderIds(folders: List<DocumentCatalogFolder>): Set<String> {
+        folders.forEach(::requireValidCanonicalFolder)
+        return Collections.unmodifiableSet(LinkedHashSet(folders.map { folder -> folder.id }))
+    }
+
     private fun <T> access(
         operation: DocumentCatalogOperation,
         resourceId: Identifier,
@@ -147,6 +160,7 @@ class DocumentCatalogAccessService(
         const val CATALOG_RESOURCE_TYPE = "DOCUMENT_CATALOG"
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val DOCUMENT_READ_ACTION = "document:read"
+        const val DOCUMENT_DOWNLOAD_ACTION = "document:download"
         const val DOCUMENT_CREATE_ACTION = "document:create"
         const val DOCUMENT_EDIT_ACTION = "document:edit"
         const val MAX_FOLDER_ID_LENGTH = 256

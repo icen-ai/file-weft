@@ -30,17 +30,46 @@ class DocumentDownloadService(
     private val auditTrail: AuditTrail? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
+    private var downloadVisibility: DocumentDownloadVisibility? = null
+
+    constructor(
+        tenantProvider: TenantProvider,
+        userRealmProvider: UserRealmProvider,
+        authorizationProvider: AuthorizationProvider,
+        documentRepository: DocumentRepository,
+        fileObjectRepository: FileObjectRepository,
+        storageAdapter: StorageAdapter,
+        transaction: ApplicationTransaction,
+        auditTrail: AuditTrail?,
+        downloadVisibility: DocumentDownloadVisibility,
+    ) : this(
+        tenantProvider,
+        userRealmProvider,
+        authorizationProvider,
+        documentRepository,
+        fileObjectRepository,
+        storageAdapter,
+        transaction,
+        auditTrail,
+    ) {
+        this.downloadVisibility = downloadVisibility
+    }
 
     @JvmOverloads
     fun download(documentId: Identifier, versionId: Identifier? = null): DocumentDownload {
         val tenant = tenantProvider.currentTenant()
         authorization.requireDocumentAction(tenant.tenantId, documentId, DOWNLOAD_ACTION)
+        val visibility = downloadVisibility
+        val visibilityPermit = visibility?.prepare(tenant.tenantId, documentId)
         // A user realm can be remote. Freeze its audit identity before opening
         // the short repository transaction so the database transaction never
         // waits on identity infrastructure.
         val operator = userRealmProvider.currentUser()
         val target = transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId) ?: throw DocumentNotFoundException(documentId)
+            if (visibility != null) {
+                visibility.verify(tenant.tenantId, document, checkNotNull(visibilityPermit))
+            }
             val version = resolveVersion(document, versionId)
             val fileObject = fileObjectRepository.findById(tenant.tenantId, version.fileObjectId)
                 ?: throw DocumentDownloadNotFoundException("File ${version.fileObjectId.value} for document ${document.id.value} was not found.")

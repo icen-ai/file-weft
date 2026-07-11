@@ -1,5 +1,6 @@
 package com.fileweft.application.document
 
+import com.fileweft.core.id.Identifier
 import java.util.Collections
 import java.util.LinkedHashSet
 
@@ -20,6 +21,18 @@ interface DocumentFolderReadAccess {
      * to fall back to an unfiltered document query.
      */
     fun readableFolderIds(): Set<String>
+}
+
+/**
+ * Additive download-specific catalog capability.
+ *
+ * Keeping this as a child interface leaves the existing
+ * [DocumentFolderReadAccess] JVM contract unchanged for previously compiled
+ * Java and Kotlin hosts. Download visibility safely falls back to
+ * [DocumentFolderReadAccess.readableFolderIds] for legacy implementations.
+ */
+interface DocumentFolderDownloadAccess : DocumentFolderReadAccess {
+    fun readableFolderIdsForDocumentDownload(documentId: Identifier): Set<String>
 }
 
 /**

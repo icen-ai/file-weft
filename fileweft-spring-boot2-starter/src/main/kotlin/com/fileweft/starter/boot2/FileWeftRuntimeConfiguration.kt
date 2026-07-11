@@ -20,6 +20,7 @@ import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
+import com.fileweft.application.document.DocumentDownloadVisibility
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentFolderReadAccess
 import com.fileweft.application.document.DocumentQueryRepository
@@ -116,6 +117,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -521,14 +523,66 @@ class FileWeftRuntimeConfiguration {
     ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
+    @ConditionalOnBean(DocumentFolderReadAccess::class)
+    @ConditionalOnMissingBean(DocumentDownloadVisibility::class)
+    fun fileWeftDocumentDownloadVisibility(
+        folderReadAccesses: ObjectProvider<DocumentFolderReadAccess>,
+        queries: DocumentQueryRepository,
+    ): DocumentDownloadVisibility = DocumentDownloadVisibility(
+        requiredDownloadFolderAccess(folderReadAccesses),
+        queries,
+    )
+
+    @Bean
     @ConditionalOnMissingBean(DocumentDownloadService::class)
     fun fileWeftDocumentDownloadService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ): DocumentDownloadService = DocumentDownloadService(
-        tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail,
-    )
+        visibility: ObjectProvider<DocumentDownloadVisibility>,
+    ): DocumentDownloadService {
+        // Do not let @Primary select one guard from several candidates: doing
+        // so could silently drop another folder policy and widen downloads.
+        val downloadVisibility = optionalDownloadVisibility(visibility)
+        return if (downloadVisibility == null) {
+            DocumentDownloadService(
+                tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail,
+            )
+        } else {
+            DocumentDownloadService(
+                tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail,
+                downloadVisibility,
+            )
+        }
+    }
+
+    private fun requiredDownloadFolderAccess(
+        accesses: ObjectProvider<DocumentFolderReadAccess>,
+    ): DocumentFolderReadAccess {
+        val candidates = accesses.stream().iterator().asSequence().toList()
+        if (candidates.size != 1) {
+            throw NoUniqueBeanDefinitionException(
+                DocumentFolderReadAccess::class.java,
+                candidates.size,
+                "FileWeft download visibility requires exactly one DocumentFolderReadAccess.",
+            )
+        }
+        return candidates.single()
+    }
+
+    private fun optionalDownloadVisibility(
+        visibility: ObjectProvider<DocumentDownloadVisibility>,
+    ): DocumentDownloadVisibility? {
+        val candidates = visibility.stream().iterator().asSequence().toList()
+        if (candidates.size > 1) {
+            throw NoUniqueBeanDefinitionException(
+                DocumentDownloadVisibility::class.java,
+                candidates.size,
+                "FileWeft download service requires at most one DocumentDownloadVisibility.",
+            )
+        }
+        return candidates.singleOrNull()
+    }
 
     @Bean
     @ConditionalOnMissingBean(DocumentDraftService::class)

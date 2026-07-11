@@ -20,6 +20,7 @@ import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
+import com.fileweft.application.document.DocumentDownloadVisibility
 import com.fileweft.application.document.DocumentFolderReadAccess
 import com.fileweft.application.document.DocumentQueryRepository
 import com.fileweft.application.document.DocumentQueryService
@@ -67,11 +68,13 @@ import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.task.FileWeftTaskHandler
 import com.fileweft.spi.workflow.DocumentReviewRouteProvider
+import org.springframework.beans.factory.NoSuchBeanDefinitionException
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
-import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
@@ -456,12 +459,54 @@ class FileWeftRuntimeConfiguration {
     ) = DocumentCommandService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
+    @ConditionalOnBean(DocumentFolderReadAccess::class)
+    @ConditionalOnMissingBean(DocumentDownloadVisibility::class)
+    fun documentDownloadVisibility(
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+        queries: DocumentQueryRepository,
+    ): DocumentDownloadVisibility {
+        val access = singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java)
+            ?: throw NoSuchBeanDefinitionException(DocumentFolderReadAccess::class.java)
+        return DocumentDownloadVisibility(access, queries)
+    }
+
+    @Bean
     @ConditionalOnMissingBean(DocumentDownloadService::class)
     fun documentDownloads(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ) = DocumentDownloadService(tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail)
+        visibility: ObjectProvider<DocumentDownloadVisibility>,
+    ): DocumentDownloadService {
+        // Do not let @Primary select among security guards. More than one
+        // candidate is a configuration error, not an ordering preference.
+        val downloadVisibility = singleSecurityCandidateOrNull(visibility, DocumentDownloadVisibility::class.java)
+        return if (downloadVisibility == null) {
+            DocumentDownloadService(
+                tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail,
+            )
+        } else {
+            DocumentDownloadService(
+                tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail,
+                downloadVisibility,
+            )
+        }
+    }
+
+    private fun <T : Any> singleSecurityCandidateOrNull(
+        provider: ObjectProvider<T>,
+        beanType: Class<T>,
+    ): T? {
+        val candidates = provider.stream().iterator().asSequence().toList()
+        if (candidates.size > 1) {
+            throw NoUniqueBeanDefinitionException(
+                beanType,
+                candidates.size,
+                "Exactly one ${beanType.simpleName} security guard may be configured.",
+            )
+        }
+        return candidates.singleOrNull()
+    }
 
     @Bean
     @ConditionalOnMissingBean(DocumentDraftService::class)
