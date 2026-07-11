@@ -589,7 +589,10 @@ class DevAcceptanceIntegrationTest {
 
         var circuitWasObserved = false
         try {
-            val failedDocuments = (1..4).map { index ->
+            // Keep all failures on the dedicated Worker process. The development API's
+            // manual endpoint owns a separate JVM-local circuit and must not participate
+            // in a topology test for the scheduled Worker.
+            val failedDetails = (1..4).map { index ->
                 val documentId = createDraft(editor, "E2E-CIRCUIT-$index-${UUID.randomUUID().toString().take(8)}")
                     .path("document").path("id").asText()
                 val workflow = postJson(
@@ -602,11 +605,9 @@ class DevAcceptanceIntegrationTest {
                     """{"comment":"验证连接器熔断","deliveryProfileId":"regulated"}""",
                     reviewer,
                 )
-                documentId
+                awaitLifecycle(documentId, admin, "SYNC_ERROR")
             }
-            post("$apiUrl/api/outbox/process?limit=100", null, admin, "application/json")
 
-            val failedDetails = failedDocuments.map { documentId -> awaitLifecycle(documentId, admin, "SYNC_ERROR") }
             assertTrue(
                 failedDetails.any { detail ->
                     delivery(detail, "compliance").path("errorMessage").asText().contains("circuit is open")
@@ -632,7 +633,6 @@ class DevAcceptanceIntegrationTest {
             """{"comment":"验证熔断恢复","deliveryProfileId":"regulated"}""",
             reviewer,
         )
-        post("$apiUrl/api/outbox/process?limit=100", null, admin, "application/json")
         assertEquals("SUCCEEDED", delivery(awaitPublished(recoveryDocumentId, admin), "compliance").path("status").asText())
     }
 
