@@ -281,6 +281,41 @@ class OutboxWorkerTest {
         assertEquals(0, legacyWorker.processAvailable(1).claimed)
     }
 
+    @Test
+    fun `retains legacy Kotlin default constructor ABI`() {
+        val legacyParameterTypes = arrayOf(
+            OutboxProcessingRepository::class.java,
+            ApplicationTransaction::class.java,
+            java.util.List::class.java,
+            Clock::class.java,
+            Int::class.javaPrimitiveType!!,
+            Duration::class.java,
+            Duration::class.java,
+            TraceContextScope::class.java,
+            Int::class.javaPrimitiveType!!,
+            Class.forName("kotlin.jvm.internal.DefaultConstructorMarker"),
+        )
+        val legacyKotlinConstructor = OutboxWorker::class.java.declaredConstructors.singleOrNull { constructor ->
+            constructor.parameterTypes.contentEquals(legacyParameterTypes)
+        }
+        assertTrue(legacyKotlinConstructor != null, "The pre-lease Kotlin default constructor ABI must remain available.")
+
+        val legacyWorker = requireNotNull(legacyKotlinConstructor).newInstance(
+            RecordingRepository(),
+            TrackingTransaction(),
+            emptyList<OutboxEventHandler>(),
+            Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+            0,
+            null,
+            null,
+            null,
+            0b1111_0000,
+            null,
+        ) as OutboxWorker
+
+        assertEquals(0, legacyWorker.processAvailable(1).claimed)
+    }
+
     private fun worker(
         repository: OutboxProcessingRepository,
         transaction: TrackingTransaction,

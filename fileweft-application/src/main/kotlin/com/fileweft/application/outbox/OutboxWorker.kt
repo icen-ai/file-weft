@@ -15,26 +15,87 @@ import kotlin.math.min
  * Runs external outbox handlers outside database transactions and records the
  * outcome through short follow-up transactions.
  */
-class OutboxWorker @JvmOverloads constructor(
+class OutboxWorker private constructor(
     private val repository: OutboxProcessingRepository,
     private val transaction: ApplicationTransaction,
     handlers: List<OutboxEventHandler>,
     private val clock: Clock,
-    private val maxAttempts: Int = 5,
-    initialRetryDelay: Duration = Duration.ofSeconds(10),
-    maxRetryDelay: Duration = Duration.ofMinutes(5),
-    private val traceContextScope: TraceContextScope? = null,
-    private val workerId: String = "fileweft-outbox-${UUID.randomUUID()}",
-    leaseDuration: Duration = Duration.ofMinutes(5),
-    legacyRunningGrace: Duration = Duration.ofMinutes(5),
+    private val maxAttempts: Int,
+    initialRetryDelay: Duration,
+    maxRetryDelay: Duration,
+    private val traceContextScope: TraceContextScope?,
+    leaseSettings: OutboxLeaseSettings,
 ) {
+    private val workerId: String = leaseSettings.workerId
+    /**
+     * Retains the original Kotlin default-constructor ABI for existing
+     * plugins. Do not append lease settings to this constructor: compiled
+     * Kotlin callers link to its synthetic default-argument overload.
+     */
+    @JvmOverloads
+    constructor(
+        repository: OutboxProcessingRepository,
+        transaction: ApplicationTransaction,
+        handlers: List<OutboxEventHandler>,
+        clock: Clock,
+        maxAttempts: Int = 5,
+        initialRetryDelay: Duration = Duration.ofSeconds(10),
+        maxRetryDelay: Duration = Duration.ofMinutes(5),
+        traceContextScope: TraceContextScope? = null,
+    ) : this(
+        repository = repository,
+        transaction = transaction,
+        handlers = handlers,
+        clock = clock,
+        maxAttempts = maxAttempts,
+        initialRetryDelay = initialRetryDelay,
+        maxRetryDelay = maxRetryDelay,
+        traceContextScope = traceContextScope,
+        leaseSettings = OutboxLeaseSettings(
+            workerId = "fileweft-outbox-${UUID.randomUUID()}",
+            leaseDuration = Duration.ofMinutes(5),
+            legacyRunningGrace = Duration.ofMinutes(5),
+        ),
+    )
+
+    /**
+     * Adds persisted-lease configuration without changing the constructor
+     * used by plugins compiled against the pre-lease API.
+     */
+    constructor(
+        repository: OutboxProcessingRepository,
+        transaction: ApplicationTransaction,
+        handlers: List<OutboxEventHandler>,
+        clock: Clock,
+        maxAttempts: Int = 5,
+        initialRetryDelay: Duration = Duration.ofSeconds(10),
+        maxRetryDelay: Duration = Duration.ofMinutes(5),
+        traceContextScope: TraceContextScope? = null,
+        workerId: String,
+        leaseDuration: Duration,
+        legacyRunningGrace: Duration,
+    ) : this(
+        repository = repository,
+        transaction = transaction,
+        handlers = handlers,
+        clock = clock,
+        maxAttempts = maxAttempts,
+        initialRetryDelay = initialRetryDelay,
+        maxRetryDelay = maxRetryDelay,
+        traceContextScope = traceContextScope,
+        leaseSettings = OutboxLeaseSettings(workerId, leaseDuration, legacyRunningGrace),
+    )
+
     private val handlers: List<OutboxEventHandler> = ArrayList(handlers)
     private val initialRetryDelayMillis: Long = durationMillis(initialRetryDelay, "Initial retry delay")
     private val maxRetryDelayMillis: Long = durationMillis(maxRetryDelay, "Maximum retry delay")
-    private val leaseDurationMillis: Long = durationMillis(leaseDuration, "Outbox lease duration").also {
+    private val leaseDurationMillis: Long = durationMillis(leaseSettings.leaseDuration, "Outbox lease duration").also {
         require(it > 0) { "Outbox lease duration must be at least one millisecond." }
     }
-    private val legacyRunningGraceMillis: Long = nonNegativeDurationMillis(legacyRunningGrace, "Outbox legacy running grace")
+    private val legacyRunningGraceMillis: Long = nonNegativeDurationMillis(
+        leaseSettings.legacyRunningGrace,
+        "Outbox legacy running grace",
+    )
 
     init {
         require(workerId.isNotBlank()) { "Outbox worker id must not be blank." }
@@ -224,6 +285,12 @@ class OutboxWorker @JvmOverloads constructor(
         FAILED,
         LOST,
     }
+
+    private class OutboxLeaseSettings(
+        val workerId: String,
+        val leaseDuration: Duration,
+        val legacyRunningGrace: Duration,
+    )
 
     private companion object {
         const val MAX_ERROR_MESSAGE_LENGTH = 1024
