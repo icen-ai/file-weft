@@ -8,6 +8,7 @@ import com.fileweft.spi.observability.TraceContextScope
 import java.time.Clock
 import java.time.Duration
 import java.util.ArrayList
+import java.util.UUID
 import kotlin.math.min
 
 /**
@@ -23,12 +24,20 @@ class OutboxWorker @JvmOverloads constructor(
     initialRetryDelay: Duration = Duration.ofSeconds(10),
     maxRetryDelay: Duration = Duration.ofMinutes(5),
     private val traceContextScope: TraceContextScope? = null,
+    private val workerId: String = "fileweft-outbox-${UUID.randomUUID()}",
+    leaseDuration: Duration = Duration.ofMinutes(5),
+    legacyRunningGrace: Duration = Duration.ofMinutes(5),
 ) {
     private val handlers: List<OutboxEventHandler> = ArrayList(handlers)
     private val initialRetryDelayMillis: Long = durationMillis(initialRetryDelay, "Initial retry delay")
     private val maxRetryDelayMillis: Long = durationMillis(maxRetryDelay, "Maximum retry delay")
+    private val leaseDurationMillis: Long = durationMillis(leaseDuration, "Outbox lease duration").also {
+        require(it > 0) { "Outbox lease duration must be at least one millisecond." }
+    }
+    private val legacyRunningGraceMillis: Long = nonNegativeDurationMillis(legacyRunningGrace, "Outbox legacy running grace")
 
     init {
+        require(workerId.isNotBlank()) { "Outbox worker id must not be blank." }
         require(maxAttempts > 0) { "Maximum outbox attempts must be positive." }
         require(maxRetryDelayMillis >= initialRetryDelayMillis) {
             "Maximum retry delay must not be shorter than initial retry delay."
@@ -37,18 +46,54 @@ class OutboxWorker @JvmOverloads constructor(
 
     fun processAvailable(limit: Int): OutboxProcessingSummary {
         require(limit > 0) { "Outbox processing limit must be positive." }
-        val claimed = transaction.execute { repository.claimAvailable(limit, now()) }
         var succeeded = 0
         var retried = 0
         var failed = 0
-        claimed.forEach { lease ->
+        var lost = 0
+        var claimed = 0
+        for (ignored in 0 until limit) {
+            val lease = claimOne() ?: break
+            claimed++
             when (process(lease)) {
                 ProcessingOutcome.SUCCEEDED -> succeeded++
                 ProcessingOutcome.RETRIED -> retried++
                 ProcessingOutcome.FAILED -> failed++
+                ProcessingOutcome.LOST -> lost++
             }
         }
-        return OutboxProcessingSummary(claimed.size, succeeded, retried, failed)
+        return OutboxProcessingSummary(claimed, succeeded, retried, failed, lost)
+    }
+
+    /**
+     * Claim one event at a time. A slow external handler can therefore only
+     * consume its own bounded lease instead of expiring the remainder of a
+     * large batch before processing starts.
+     */
+    private fun claimOne(): OutboxEventLease? {
+        val claimNow = now()
+        val leasedRepository = repository as? LeasedOutboxProcessingRepository
+        val leaseClaim = leasedRepository?.let {
+            OutboxLeaseClaim(
+                leaseOwner = workerId,
+                leaseToken = UUID.randomUUID().toString(),
+                leaseExpiresAt = leaseExpiresAt(claimNow),
+                legacyRunningBefore = safeSubtract(claimNow, legacyRunningGraceMillis),
+            )
+        }
+        val claimed = transaction.execute {
+            if (leasedRepository == null) {
+                repository.claimAvailable(1, claimNow)
+            } else {
+                leasedRepository.claimAvailable(1, claimNow, requireNotNull(leaseClaim))
+            }
+        }
+        require(claimed.size <= 1) { "Outbox repository returned more events than the requested single-event claim." }
+        leaseClaim?.let { claim ->
+            require(claimed.all { lease -> lease.leaseOwner == claim.leaseOwner && lease.leaseToken == claim.leaseToken }) {
+                "Leased outbox repository returned an event without the current claim owner and token."
+            }
+        }
+        return claimed.singleOrNull()
     }
 
     private fun process(lease: OutboxEventLease): ProcessingOutcome = withEventTrace(lease) {
@@ -63,8 +108,7 @@ class OutboxWorker @JvmOverloads constructor(
         }
         if (matchingHandlers.isEmpty()) {
             val message = "No outbox handler supports event type ${lease.event.type}."
-            markFailed(lease, message)
-            return ProcessingOutcome.FAILED
+            return if (markFailed(lease, message)) ProcessingOutcome.FAILED else ProcessingOutcome.LOST
         }
         matchingHandlers.forEach { handler ->
             val result = try {
@@ -81,13 +125,20 @@ class OutboxWorker @JvmOverloads constructor(
                 )
 
                 OutboxHandlingStatus.PERMANENT_FAILURE -> {
-                    markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.", matchingHandlers)
-                    return ProcessingOutcome.FAILED
+                    return if (markFailed(lease, result.message ?: "Outbox handler reported a permanent failure.", matchingHandlers)) {
+                        ProcessingOutcome.FAILED
+                    } else {
+                        ProcessingOutcome.LOST
+                    }
                 }
             }
         }
-        transaction.execute { repository.markSucceeded(lease, now()) }
-        return ProcessingOutcome.SUCCEEDED
+        return try {
+            transaction.execute { repository.markSucceeded(lease, now()) }
+            ProcessingOutcome.SUCCEEDED
+        } catch (_: OutboxLeaseLostException) {
+            ProcessingOutcome.LOST
+        }
     }
 
     private fun <T> withEventTrace(lease: OutboxEventLease, action: () -> T): T {
@@ -108,26 +159,35 @@ class OutboxWorker @JvmOverloads constructor(
     ): ProcessingOutcome {
         val attemptsAfterCurrent = lease.retryCount + 1
         if (attemptsAfterCurrent >= maxAttempts) {
-            markFailed(lease, message, handlers)
-            return ProcessingOutcome.FAILED
+            return if (markFailed(lease, message, handlers)) ProcessingOutcome.FAILED else ProcessingOutcome.LOST
         }
         val now = now()
-        transaction.execute {
-            repository.markForRetry(lease, nextAttemptAt(now, attemptsAfterCurrent), truncateMessage(message), now)
+        return try {
+            transaction.execute {
+                repository.markForRetry(lease, nextAttemptAt(now, attemptsAfterCurrent), truncateMessage(message), now)
+            }
+            ProcessingOutcome.RETRIED
+        } catch (_: OutboxLeaseLostException) {
+            ProcessingOutcome.LOST
         }
-        return ProcessingOutcome.RETRIED
     }
 
-    private fun markFailed(lease: OutboxEventLease, message: String, handlers: List<OutboxEventHandler> = emptyList()) {
+    private fun markFailed(lease: OutboxEventLease, message: String, handlers: List<OutboxEventHandler> = emptyList()): Boolean {
         val now = now()
-        transaction.execute { repository.markFailed(lease, truncateMessage(message), now) }
+        val truncated = truncateMessage(message)
+        try {
+            transaction.execute { repository.markFailed(lease, truncated, now) }
+        } catch (_: OutboxLeaseLostException) {
+            return false
+        }
         handlers.forEach { handler ->
             try {
-                handler.onExhausted(lease.event, truncateMessage(message))
+                handler.onExhausted(lease.event, truncated)
             } catch (_: Exception) {
                 // A local failure projection cannot change the durable outbox result.
             }
         }
+        return true
     }
 
     private fun nextAttemptAt(now: Long, attemptsAfterCurrent: Int): Long {
@@ -135,12 +195,26 @@ class OutboxWorker @JvmOverloads constructor(
         repeat((attemptsAfterCurrent - 1).coerceAtMost(62)) {
             delay = min(maxRetryDelayMillis, if (delay > Long.MAX_VALUE / 2) Long.MAX_VALUE else delay * 2)
         }
-        return if (now > Long.MAX_VALUE - delay) Long.MAX_VALUE else now + delay
+        return safeAdd(now, delay)
     }
 
     private fun now(): Long = clock.millis().also {
         require(it >= 0) { "Outbox worker clock must not return a negative time." }
     }
+
+    private fun leaseExpiresAt(claimedAt: Long): Long {
+        val expiresAt = safeAdd(claimedAt, leaseDurationMillis)
+        require(expiresAt > claimedAt) {
+            "Outbox lease expiry cannot be represented after the current clock time."
+        }
+        return expiresAt
+    }
+
+    private fun safeAdd(value: Long, increment: Long): Long =
+        if (value > Long.MAX_VALUE - increment) Long.MAX_VALUE else value + increment
+
+    private fun safeSubtract(value: Long, decrement: Long): Long =
+        if (value < decrement) 0 else value - decrement
 
     private fun truncateMessage(message: String): String = message.take(MAX_ERROR_MESSAGE_LENGTH)
 
@@ -148,6 +222,7 @@ class OutboxWorker @JvmOverloads constructor(
         SUCCEEDED,
         RETRIED,
         FAILED,
+        LOST,
     }
 
     private companion object {
@@ -161,20 +236,30 @@ class OutboxWorker @JvmOverloads constructor(
                 throw IllegalArgumentException("$name is too large.", failure)
             }
         }
+
+        fun nonNegativeDurationMillis(duration: Duration, name: String): Long {
+            require(!duration.isNegative) { "$name must not be negative." }
+            return try {
+                duration.toMillis()
+            } catch (failure: ArithmeticException) {
+                throw IllegalArgumentException("$name is too large.", failure)
+            }
+        }
     }
 }
 
-class OutboxProcessingSummary(
+class OutboxProcessingSummary @JvmOverloads constructor(
     val claimed: Int,
     val succeeded: Int,
     val retried: Int,
     val failed: Int,
+    val lost: Int = 0,
 ) {
     init {
-        require(claimed >= 0 && succeeded >= 0 && retried >= 0 && failed >= 0) {
+        require(claimed >= 0 && succeeded >= 0 && retried >= 0 && failed >= 0 && lost >= 0) {
             "Outbox processing counts must not be negative."
         }
-        require(succeeded + retried + failed == claimed) {
+        require(succeeded + retried + failed + lost == claimed) {
             "Outbox processing outcomes must account for every claimed event."
         }
     }

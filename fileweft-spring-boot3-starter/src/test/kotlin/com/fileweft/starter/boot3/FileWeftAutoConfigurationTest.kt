@@ -127,6 +127,51 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `binds persisted Outbox lease settings into the runtime worker`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.outbox.worker-id=boot3-outbox-worker",
+                "fileweft.outbox.lease-duration-millis=9000",
+                "fileweft.outbox.legacy-running-grace-millis=4000",
+            )
+            .run { context ->
+                val outbox = context.getBean(FileWeftProperties::class.java).outbox
+                assertEquals("boot3-outbox-worker", outbox.workerId)
+                assertEquals(9_000, outbox.leaseDurationMillis)
+                assertEquals(4_000, outbox.legacyRunningGraceMillis)
+
+                val worker = context.getBean(OutboxWorker::class.java)
+                assertEquals("boot3-outbox-worker", privateField(worker, "workerId"))
+                assertEquals(9_000L, privateField(worker, "leaseDurationMillis"))
+                assertEquals(4_000L, privateField(worker, "legacyRunningGraceMillis"))
+            }
+    }
+
+    @Test
+    fun `generates an Outbox worker identity for a blank setting`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.outbox.worker-id=   ")
+            .run { context ->
+                val worker = context.getBean(OutboxWorker::class.java)
+                assertTrue((privateField(worker, "workerId") as String).startsWith("fileweft-outbox-"))
+            }
+    }
+
+    @Test
+    fun `rejects invalid Outbox lease durations during runtime assembly`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.outbox.lease-duration-millis=0")
+            .run { context -> assertTrue(context.startupFailure != null) }
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.outbox.legacy-running-grace-millis=-1")
+            .run { context -> assertTrue(context.startupFailure != null) }
+    }
+
+    @Test
     fun `defaults to safe identity authorization and local storage adapters`() {
         contextRunner().run { context ->
             assertNull(context.getBean(UserRealmProvider::class.java).currentUser())
@@ -250,6 +295,10 @@ class FileWeftAutoConfigurationTest {
     private fun contextRunner(): ApplicationContextRunner = ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
         .withPropertyValues("fileweft.storage.local-root=${storageRoot.toAbsolutePath()}")
+
+    private fun privateField(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name)
+        .apply { isAccessible = true }
+        .get(target)
 
     private fun request() = AuthorizationRequest(
         AuthorizationSubject(Identifier("user"), "USER"),

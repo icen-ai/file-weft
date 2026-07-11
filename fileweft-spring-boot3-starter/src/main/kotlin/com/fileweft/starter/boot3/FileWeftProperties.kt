@@ -16,6 +16,8 @@ class FileWeftProperties {
 
     var task: TaskProperties = TaskProperties()
 
+    var outbox: OutboxProperties = OutboxProperties()
+
     var worker: WorkerProperties = WorkerProperties()
 
     class StorageProperties {
@@ -75,6 +77,16 @@ class FileWeftProperties {
         var maxRetryDelayMillis: Long = 300_000
         var leaseDurationMillis: Long = 60_000
         var workerId: String? = null
+    }
+
+    /** Durable Outbox ownership settings for independently deployed worker processes. */
+    class OutboxProperties {
+        /** Optional unique worker identity; blank values receive a generated process-local identity. */
+        var workerId: String? = null
+        /** Maximum ownership period for one claimed Outbox event. */
+        var leaseDurationMillis: Long = 300_000
+        /** Recovery delay before reclaiming RUNNING records created before persisted leases existed. */
+        var legacyRunningGraceMillis: Long = 300_000
     }
 
     /** Explicitly opt-in polling configuration for a separately deployed worker role. */

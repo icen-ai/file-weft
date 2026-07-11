@@ -620,7 +620,17 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftOutboxWorker(
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,
         handlers: List<OutboxEventHandler>, plugins: FileWeftPluginRegistry, clock: Clock, traces: ObjectProvider<TraceContextScope>,
-    ): OutboxWorker = OutboxWorker(repository, transaction, handlers + plugins.outboxEventHandlers(), clock, traceContextScope = traces.getIfAvailable())
+        properties: FileWeftProperties,
+    ): OutboxWorker = OutboxWorker(
+        repository = repository,
+        transaction = transaction,
+        handlers = handlers + plugins.outboxEventHandlers(),
+        clock = clock,
+        traceContextScope = traces.getIfAvailable(),
+        workerId = properties.outbox.workerId?.takeIf { it.isNotBlank() } ?: "fileweft-outbox-${UUID.randomUUID()}",
+        leaseDuration = Duration.ofMillis(properties.outbox.leaseDurationMillis),
+        legacyRunningGrace = Duration.ofMillis(properties.outbox.legacyRunningGraceMillis),
+    )
 
     @Bean
     @ConditionalOnBean(TaskProcessingRepository::class)

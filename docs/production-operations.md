@@ -28,6 +28,24 @@ fileweft:
 
 Worker 每轮失败只记录日志，不会丢弃待处理记录；下一轮会继续领取符合重试时间或租约已过期的工作。生产报警应至少覆盖同步失败、任务失败、Doctor 失败和持久化 Outbox 积压。
 
+## Outbox 租约与滚动升级
+
+`V018` 为 `fw_outbox_event` 增加持久化租约字段。新 Worker 每次只领取一条事件，并在短事务内写入独立的 `lease_owner`、随机 `lease_token` 与到期时间；只有持有同一 token 的 Worker 才能确认成功、重试或失败，迟到的旧 Worker 不能覆盖新领取者的状态。默认租约为 5 分钟（`fileweft.outbox.lease-duration-millis=300000`）。该值应大于一次外部调用的最长预期耗时及必要余量；租约到期后其他 Worker 可以重新领取事件，因此不能把它当作“最多执行一次”保证。
+
+`fileweft.outbox.worker-id` 应在同时运行的 Worker 间唯一，建议使用 Pod/主机实例 ID。未配置或空白时 Starter 会生成 `fileweft-outbox-<UUID>`，便于独立进程启动但不适合跨重启关联诊断。`fileweft.outbox.legacy-running-grace-millis` 默认也是 5 分钟，只用于回收升级前没有 token 的历史 `RUNNING` 记录；它不是旧、新 Worker 并行运行的安全屏障。
+
+滚动升级到 `V018` 时，必须先暂停旧版本 Worker 的轮询并排空其正在处理的 Outbox，再执行迁移并启动租约感知的新 Worker。不要仅依赖 legacy grace：旧 Worker 可能仍在调用下游，而新 Worker 回收同一事件会产生重复交付。若故障场景无法排空，legacy grace 应覆盖旧 Worker 的最长外部调用时间，并持续观察 `RUNNING` 记录、下游幂等命中和失败告警。
+
+Outbox 语义仍然是至少一次（at-least-once）：进程崩溃、超时或租约到期后，同一事件可能再次调用处理器。每个 `OutboxEventHandler` 必须以事件 ID 实现幂等；下游连接器还必须使用 `ConnectorInvocation.idempotencyKey` 去重。租约 token 只防止陈旧确认覆盖较新的所有权，不能替代外部系统幂等。
+
+```yaml
+fileweft:
+  outbox:
+    worker-id: ${HOSTNAME}
+    lease-duration-millis: 300000
+    legacy-running-grace-millis: 300000
+```
+
 ## 并行审批与直接发布
 
 同一工作流的最终审批或驳回会通过 `WorkflowInstanceRepository.findForDecision` 串行化。默认 PostgreSQL 实现对工作流父行使用 `SELECT … FOR UPDATE`，因此双人会签的第二位审批者会在第一位提交后读取最新任务状态，而不会用旧聚合快照覆盖已批准的任务。所有文档读改写用例则必须通过 `DocumentRepository.findForMutation` 获取同一文档的串行化读取；默认 PostgreSQL 实现对文档行使用 `SELECT … FOR UPDATE`。审批决策统一按“文档、工作流”顺序加锁，避免与提交、直接发布或版本更新形成反向锁顺序。
