@@ -320,16 +320,16 @@ class DevAcceptanceIntegrationTest {
         awaitPublished(documentId, administrator)
         assertEquals(200, platformDocumentStatus("collaboration", documentId))
 
-        val offline = post("$apiUrl/api/documents/$documentId/offline", null, editor, "application/json")
+        val offline = post("$apiUrl/api/documents/$documentId/offline", null, administrator, "application/json")
         assertEquals("OFFLINE", offline.path("document").path("lifecycleState").asText())
         assertTrue(offline.path("outboxEvents").any { it.path("type").asText() == "document.delivery.target.removal.requested" })
 
         post("$apiUrl/api/outbox/process?limit=20", null, administrator, "application/json")
-        val withdrawn = getJson("$apiUrl/api/documents/$documentId", administrator)
+        val withdrawn = awaitDeliveryRemoval(documentId, administrator)
         assertEquals("OFFLINE", withdrawn.path("document").path("lifecycleState").asText())
         assertEquals("SUCCEEDED", withdrawn.path("deliveries").single().path("removalStatus").asText())
         assertEquals(404, platformDocumentStatus("collaboration", documentId))
-        assertAuditActor(withdrawn, "document:offline", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(withdrawn, "document:offline", "alpha-admin", "Alpha 管理员")
         assertTrue(withdrawn.path("audits").any { it.path("action").asText() == "document:delivery:remove:succeeded" })
     }
 
@@ -627,6 +627,15 @@ class DevAcceptanceIntegrationTest {
             Thread.sleep(200)
         }
         throw AssertionError("Document $documentId did not receive a persisted Doctor report within the expected window.")
+    }
+
+    private fun awaitDeliveryRemoval(documentId: String, token: String): JsonNode {
+        repeat(50) {
+            val detail = getJson("$apiUrl/api/documents/$documentId", token)
+            if (detail.path("deliveries").all { it.path("removalStatus").asText() == "SUCCEEDED" }) return detail
+            Thread.sleep(200)
+        }
+        throw AssertionError("Document $documentId did not complete downstream withdrawal within the expected window.")
     }
 
     private fun awaitAgentResult(documentId: String, token: String): JsonNode {
