@@ -36,6 +36,12 @@ class ArchitectureGuardPlugin : Plugin<Project> {
             forbiddenInfrastructurePrefixes.set(
                 listOf("java.sql.", "javax.sql.", "javax.persistence.", "jakarta.persistence."),
             )
+            forbiddenKotlinSyntaxByModule.putAll(
+                mapOf(
+                    "fileweft-core" to listOf("suspend fun", "value class", "sealed interface", "data object"),
+                    "fileweft-spi" to listOf("suspend fun", "value class", "sealed interface", "data object"),
+                ),
+            )
             sourceRoots.from(approvedImportPrefixesByModule.keys.map { module ->
                 project.layout.projectDirectory.dir("$module/src/main/kotlin")
             })

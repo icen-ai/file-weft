@@ -59,6 +59,7 @@ class ArchitectureGuardPluginTest {
             import org.springframework.context.ApplicationContext
 
             internal typealias ForbiddenImport = Pair<Connection, ApplicationContext>
+            internal data object KotlinOnlySingleton
             """.trimIndent(),
         )
 
@@ -66,6 +67,7 @@ class ArchitectureGuardPluginTest {
 
         assertTrue(result.output.contains("forbidden prefix: java.sql."))
         assertTrue(result.output.contains("not approved for fileweft-core"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
         assertTrue(result.output.contains("Reusing configuration cache."))
     }
 

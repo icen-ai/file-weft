@@ -25,6 +25,9 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
     @get:Input
     abstract val forbiddenInfrastructurePrefixes: org.gradle.api.provider.ListProperty<String>
 
+    @get:Input
+    abstract val forbiddenKotlinSyntaxByModule: MapProperty<String, List<String>>
+
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val sourceRoots: ConfigurableFileCollection
@@ -33,6 +36,7 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
     fun verify() {
         val approvedPrefixesByModule = approvedImportPrefixesByModule.get()
         val forbiddenPrefixes = forbiddenInfrastructurePrefixes.get()
+        val forbiddenSyntaxByModule = forbiddenKotlinSyntaxByModule.get()
         val violations = mutableListOf<String>()
 
         sourceRoots.files
@@ -41,6 +45,7 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
             .forEach { sourceRoot ->
                 val module = sourceRoot.parentFile?.parentFile?.parentFile?.name ?: return@forEach
                 val approvedPrefixes = approvedPrefixesByModule[module] ?: return@forEach
+                val forbiddenSyntax = forbiddenSyntaxByModule[module].orEmpty()
 
                 sourceRoot.walkTopDown()
                     .filter { source -> source.isFile && source.extension == "kt" }
@@ -52,17 +57,21 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
                                 .takeIf { it.startsWith("import ") }
                                 ?.removePrefix("import ")
                                 ?.substringBefore(" as ")
-                                ?: return@forEachIndexed
-
-                            val forbiddenPrefix = forbiddenPrefixes.firstOrNull(importedType::startsWith)
-                            val approved = approvedPrefixes.any(importedType::startsWith)
-                            if (forbiddenPrefix == null && approved) {
-                                return@forEachIndexed
+                            if (importedType != null) {
+                                val forbiddenPrefix = forbiddenPrefixes.firstOrNull(importedType::startsWith)
+                                val approved = approvedPrefixes.any(importedType::startsWith)
+                                if (forbiddenPrefix != null || !approved) {
+                                    val relativePath = source.relativeTo(sourceRoot).invariantSeparatorsPath
+                                    val reason = forbiddenPrefix?.let { prefix -> "forbidden prefix: $prefix" }
+                                        ?: "not approved for $module"
+                                    violations += "$module/$relativePath:${index + 1} imports $importedType ($reason)"
+                                }
                             }
-                            val relativePath = source.relativeTo(sourceRoot).invariantSeparatorsPath
-                            val reason = forbiddenPrefix?.let { prefix -> "forbidden prefix: $prefix" }
-                                ?: "not approved for $module"
-                            violations += "$module/$relativePath:${index + 1} imports $importedType ($reason)"
+
+                            forbiddenSyntax.firstOrNull { syntax -> line.contains(syntax) }?.let { syntax ->
+                                val relativePath = source.relativeTo(sourceRoot).invariantSeparatorsPath
+                                violations += "$module/$relativePath:${index + 1} uses forbidden Kotlin API syntax: $syntax"
+                            }
                         }
                     }
             }
@@ -70,7 +79,7 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
         if (violations.isNotEmpty()) {
             throw GradleException(
                 "FileWeft architecture boundary violations found:\n${violations.joinToString("\n")}" +
-                    "\nUse an SPI, use a JDK type, or move the infrastructure concern to the appropriate outer module.",
+                    "\nUse an SPI, Java-friendly API type, or move the infrastructure concern to the appropriate outer module.",
             )
         }
     }
