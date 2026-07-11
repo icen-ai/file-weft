@@ -55,6 +55,7 @@ class DevAcceptanceIntegrationTest {
         val admin = loginResponse("admin@alpha", "dev-admin")
 
         assertTrue(editor.path("permissions").any { it.asText() == "document:create" })
+        assertTrue(editor.path("permissions").any { it.asText() == "document:edit" })
         assertTrue(editor.path("permissions").any { it.asText() == "file:upload" })
         assertTrue(editor.path("permissions").none { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "document:audit" })
@@ -208,9 +209,17 @@ class DevAcceptanceIntegrationTest {
         )
         assertEquals(422, betaCannotBindAlphaFolder.statusCode())
 
+        val moved = postJson(
+            "$apiUrl/api/documents/$alphaDocument/folder",
+            """{"folderId":"finance"}""",
+            alphaEditor,
+        )
+        assertEquals("finance", moved.path("document").path("folderId").asText())
+        assertAuditActor(moved, "document:catalog:move", "alpha-editor", "Alpha 编辑者")
+
         val alphaDocuments = getJson("$apiUrl/api/documents?limit=100", alphaEditor)
         val betaDocuments = getJson("$apiUrl/api/documents?limit=100", betaEditor)
-        assertEquals("contracts", alphaDocuments.first { it.path("id").asText() == alphaDocument }.path("folderId").asText())
+        assertEquals("finance", alphaDocuments.first { it.path("id").asText() == alphaDocument }.path("folderId").asText())
         assertEquals("projects", betaDocuments.first { it.path("id").asText() == betaDocument }.path("folderId").asText())
         assertTrue(alphaDocuments.none { it.path("id").asText() == betaDocument })
         assertTrue(betaDocuments.none { it.path("id").asText() == alphaDocument })

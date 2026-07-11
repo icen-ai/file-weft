@@ -73,7 +73,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 FileWeft 不拥有业务系统的目录，也不会把目录名称写入对象存储路径。宿主实现 `DocumentCatalogProvider`，以租户内不透明字符串 ID 返回文件夹；选中的 ID 仅以 `catalog.folder-id` 元数据绑定到文件资产。这样同一个 `inbox` ID 可以在不同租户中独立存在，目录改名或移动也无需迁移 FileWeft 数据。
 
-新版 SPI 可接收 `DocumentCatalogAccessRequest`，其中的租户、当前用户和操作意图由 FileWeft 的可信上下文生成。目录 ACL 应由宿主在该方法中实施，不能信任前端传入的租户或用户。为兼容现有实现，旧的 `listFolders(tenantId)` 仍有效；需要按用户过滤时覆写请求版本。Starter 在存在唯一 `DocumentCatalogProvider` Bean 时自动装配 `DocumentCatalogAccessService`：先校验 `document:read` 或 `document:create`，再调用宿主目录。创建草稿前调用 `requireFolderForDocumentCreation(folderId)`，然后将返回 ID 写入 `DocumentCatalogBinding.METADATA_KEY`；`DocumentDraftService` 会继续独立执行文档创建授权。
+新版 SPI 可接收 `DocumentCatalogAccessRequest`，其中的租户、当前用户和操作意图由 FileWeft 的可信上下文生成。目录 ACL 应由宿主在该方法中实施，不能信任前端传入的租户或用户。为兼容现有实现，旧的 `listFolders(tenantId)` 仍有效；需要按用户过滤时覆写请求版本。Starter 在存在唯一 `DocumentCatalogProvider` Bean 时自动装配 `DocumentCatalogAccessService`：先校验 `document:read` 或 `document:create`，再调用宿主目录。创建草稿前调用 `requireFolderForDocumentCreation(folderId)`，然后将返回 ID 写入 `DocumentCatalogBinding.METADATA_KEY`；`DocumentDraftService` 会继续独立执行文档创建授权。文件树移动使用 `DocumentCatalogBindingService.move(documentId, folderId)`：它要求 `document:edit` 和目标目录 ACL，只更新资产元数据并记录 `document:catalog:move` 审计，不移动对象、不改变生命周期或重新推送下游。
 
 ## 多下游交付
 

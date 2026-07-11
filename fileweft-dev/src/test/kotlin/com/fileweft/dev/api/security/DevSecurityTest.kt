@@ -77,6 +77,7 @@ class DevSecurityTest {
     @Test
     fun `exposes only proof lab actions granted to each role`() {
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:create"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:edit"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:audit"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:audit"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("agent:suggestion:read"))

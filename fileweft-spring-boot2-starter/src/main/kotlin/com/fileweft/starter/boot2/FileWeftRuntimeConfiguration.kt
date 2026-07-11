@@ -15,6 +15,7 @@ import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentCatalogAccessService
+import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.document.DocumentDraftService
@@ -186,6 +187,27 @@ class FileWeftRuntimeConfiguration {
         authorization: AuthorizationProvider,
         catalog: DocumentCatalogProvider,
     ): DocumentCatalogAccessService = DocumentCatalogAccessService(tenants, users, authorization, catalog)
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogBindingService::class)
+    fun fileWeftDocumentCatalogBindingService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        catalogAccess: DocumentCatalogAccessService,
+        documents: DocumentRepository,
+        assets: FileAssetRepository,
+        transaction: ApplicationTransaction,
+        auditTrail: AuditTrail,
+    ): DocumentCatalogBindingService = DocumentCatalogBindingService(
+        tenants,
+        users,
+        catalogAccess,
+        documents,
+        assets,
+        transaction,
+        auditTrail,
+    )
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)

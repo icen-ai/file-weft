@@ -185,6 +185,7 @@ function renderCatalog() {
     renderCatalog();
     renderDocuments();
     syncFolderOptions();
+    if (state.detail) renderActions();
   }));
 }
 
@@ -337,6 +338,9 @@ function renderActions() {
   const actions = [];
   if (can("document:doctor")) actions.push(actionButton("action.doctor", "doctor"), actionButton("action.scheduleDoctor", "scheduleDoctor"));
   if (can("document:rename")) actions.push(actionButton("action.rename", "rename"));
+  if (can("document:edit") && state.selectedFolderId && document.folderId !== state.selectedFolderId) {
+    actions.push(actionButton("action.moveToFolder", "moveFolder"));
+  }
   if (["DRAFT", "REJECTED"].includes(document.lifecycleState) && can("document:version:add")) actions.push(actionButton("action.addVersion", "version"));
   if (document.lifecycleState === "DRAFT" && can("document:submit")) {
     actions.push(actionButton("action.submit", "submit"), actionButton("action.submitDualControl", "submitDualControl"));
@@ -369,6 +373,12 @@ async function runAction(action) {
     if (action === "scheduleDoctor") {
       await api(`/api/documents/${id}/doctor/tasks`, { method: "POST" });
       notice(t("notice.doctorScheduled"));
+      await refreshDocuments();
+      return;
+    }
+    if (action === "moveFolder") {
+      await api(`/api/documents/${id}/folder`, json({ folderId: state.selectedFolderId }));
+      notice(t("notice.folderMoved"));
       await refreshDocuments();
       return;
     }

@@ -8,6 +8,7 @@ import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownload
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.agent.ConfirmAgentSuggestionService
+import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.offline.OfflineDocumentService
@@ -39,6 +40,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.nio.charset.StandardCharsets
 
 data class DevRenameDocumentRequest(val title: String)
+data class DevMoveDocumentRequest(val folderId: String)
 data class DevSubmitDocumentRequest(val reviewerId: String? = null, val reviewRouteId: String? = null)
 data class DevWorkflowDecisionRequest(val comment: String? = null, val deliveryProfileId: String? = null)
 data class DevPublishDocumentRequest(val deliveryProfileId: String? = null)
@@ -58,6 +60,7 @@ class DevDocumentController(
     private val drafts: DocumentDraftService,
     private val downloads: DocumentDownloadService,
     private val catalogDrafts: DevCatalogDocumentService,
+    private val catalogBindings: DocumentCatalogBindingService,
     private val commands: DocumentCommandService,
     private val reviews: DevReviewService,
     private val reviewWorkflow: DocumentReviewWorkflowService,
@@ -109,6 +112,15 @@ class DevDocumentController(
     @PatchMapping("/{documentId}")
     fun rename(@PathVariable documentId: String, @RequestBody request: DevRenameDocumentRequest): DevDocumentDetail {
         val document = drafts.rename(Identifier(documentId), request.title)
+        return queries.detail(document.id)
+    }
+
+    @PostMapping("/{documentId}/folder")
+    fun moveToFolder(
+        @PathVariable documentId: String,
+        @RequestBody request: DevMoveDocumentRequest,
+    ): DevDocumentDetail {
+        val document = catalogBindings.move(Identifier(documentId), request.folderId)
         return queries.detail(document.id)
     }
 
