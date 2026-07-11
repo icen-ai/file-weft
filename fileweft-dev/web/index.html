@@ -66,6 +66,7 @@
             <button class="nav-item" type="button" data-panel="fixtures"><span>02</span><b data-i18n="nav.fixtures">Proof lab</b></button>
             <button class="nav-item" type="button" data-panel="platform"><span>03</span><b data-i18n="nav.platform">Downstream mirror</b></button>
             <button class="nav-item" type="button" data-panel="doctor" data-permission="document:doctor"><span>04</span><b data-i18n="nav.doctor">Doctor</b></button>
+            <button class="nav-item" type="button" data-panel="uploads" data-permission="file:upload"><span>05</span><b data-i18n="nav.uploads">Resumable upload</b></button>
           </nav>
           <div class="rail-footer"><span class="pulse"></span><span data-i18n-html="rail.status">POSTGRES / RUSTFS / OUTBOX<br />connected to the proof stack</span></div>
           <button id="logout" class="text-button" type="button" data-i18n="session.logout">End session</button>
@@ -130,6 +131,18 @@
           <section id="doctor-panel" class="aux-panel hidden">
             <div class="aux-title"><span data-i18n="doctor.title">Doctor report</span><small data-i18n="doctor.subtitle">Permission, storage, lifecycle and connector evidence.</small></div>
             <pre id="doctor-output" data-i18n="doctor.empty">Select a document, then run Doctor.</pre>
+          </section>
+
+          <section id="uploads-panel" class="upload-lab hidden">
+            <div class="aux-title"><span data-i18n="upload.title">Resumable upload</span><small data-i18n="upload.subtitle">Each acknowledged part is durable. Refresh, reconnect, then continue from the checkpoint.</small></div>
+            <div class="upload-rail-note"><span>R</span><p data-i18n="upload.note">The browser stores only the session checkpoint. File bytes and the storage upload identifier remain server-side.</p></div>
+            <form id="resumable-upload-form" class="resumable-form">
+              <label class="file-field"><span data-i18n="upload.file">File to upload</span><input id="resumable-file" type="file" required /><span data-i18n="upload.pick">Choose file</span></label>
+              <label><span data-i18n="upload.chunk">Chunk size (MiB)</span><input id="resumable-chunk-size" type="number" min="5" max="512" value="5" required /></label>
+              <button class="primary" type="submit"><span data-i18n="upload.start">Start or resume</span><span>→</span></button>
+            </form>
+            <div id="resumable-upload-status" class="resumable-status" aria-live="polite"></div>
+            <div class="resumable-actions"><button id="resumable-abort" class="ghost hidden" type="button" data-i18n="upload.abort">Abort checkpoint</button></div>
           </section>
         </section>
 

@@ -1,6 +1,7 @@
 package com.fileweft.dev.api.web
 
 import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
+import com.fileweft.application.upload.ResumableUploadStateException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -23,6 +24,10 @@ class DevApiExceptionHandler {
     @ExceptionHandler(NoSuchElementException::class)
     fun notFound(failure: NoSuchElementException): ResponseEntity<DevApiError> =
         ResponseEntity.status(HttpStatus.NOT_FOUND).body(DevApiError("NOT_FOUND", failure.message ?: "资源不存在。"))
+
+    @ExceptionHandler(ResumableUploadStateException::class)
+    fun uploadStateConflict(failure: ResumableUploadStateException): ResponseEntity<DevApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(DevApiError("RESUMABLE_UPLOAD_STATE_CONFLICT", failure.message ?: "上传会话状态不允许该操作。"))
 
     @ExceptionHandler(IllegalArgumentException::class)
     fun invalid(failure: IllegalArgumentException): ResponseEntity<DevApiError> =

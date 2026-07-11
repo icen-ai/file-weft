@@ -15,10 +15,10 @@ object DevRolePolicy {
     private val reviewerActions = setOf("document:read", "document:download", "document:audit", "document:doctor", "agent:suggestion:read")
     private val viewerActions = setOf("document:read", "document:download")
     private val proofLabActions = linkedSetOf(
-        "document:read", "document:download", "document:create", "document:rename", "document:version:add", "document:submit",
+        "document:read", "document:download", "document:create", "file:upload", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
-        "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm",
+        "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm", "system:upload:cleanup",
     )
 
     fun allows(role: DevRole, action: String): Boolean = role == DevRole.ADMIN || action in actionsFor(role)

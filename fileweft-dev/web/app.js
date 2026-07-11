@@ -17,8 +17,12 @@ const state = {
   selectedFolderId: null,
   selectedId: null,
   detail: null,
+  resumableBusy: false,
   locale: localStorage.getItem("fileweft.locale") || DEFAULT_LOCALE,
 };
+const RESUMABLE_CHECKPOINT_PREFIX = "fileweft.resumable.v1";
+const MINIMUM_RESUMABLE_CHUNK_BYTES = 5 * 1024 * 1024;
+const MAXIMUM_RESUMABLE_PARTS = 10_000;
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => translate(state.locale, key);
 const can = (action) => state.permissions.has(action);
@@ -75,6 +79,7 @@ function applyTranslations() {
     renderDocuments();
     syncFolderOptions();
     renderFixtures();
+    renderResumableUpload();
     if (state.detail) renderInspector();
   }
 }
@@ -107,6 +112,7 @@ async function login(username, password) {
   await Promise.all([refreshDocuments(), loadDeliveryProfiles()]);
   if (state.detail) renderInspector();
   renderFixtures();
+  renderResumableUpload();
   notice(t("notice.login"));
 }
 
@@ -502,12 +508,210 @@ async function loadPlatform() {
   }
 }
 
+function resumableCheckpointKey() {
+  return `${RESUMABLE_CHECKPOINT_PREFIX}.${state.user?.tenantId || "anonymous"}`;
+}
+
+function readResumableCheckpoint() {
+  try {
+    const checkpoint = JSON.parse(localStorage.getItem(resumableCheckpointKey()) || "null");
+    if (!checkpoint || checkpoint.version !== 1 || typeof checkpoint.idempotencyKey !== "string" ||
+      typeof checkpoint.fileName !== "string" || !Number.isSafeInteger(checkpoint.contentLength) || checkpoint.contentLength <= 0 ||
+      !Number.isSafeInteger(checkpoint.chunkSizeBytes) || checkpoint.chunkSizeBytes < MINIMUM_RESUMABLE_CHUNK_BYTES) return null;
+    return checkpoint;
+  } catch {
+    return null;
+  }
+}
+
+function writeResumableCheckpoint(checkpoint) {
+  localStorage.setItem(resumableCheckpointKey(), JSON.stringify(checkpoint));
+}
+
+function clearResumableCheckpoint() {
+  localStorage.removeItem(resumableCheckpointKey());
+}
+
+function newResumableIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `browser-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function setResumableStatus(message, type = "") {
+  const element = $("#resumable-upload-status");
+  element.className = `resumable-status ${type}`.trim();
+  element.textContent = message;
+}
+
+function setResumableBusy(busy) {
+  state.resumableBusy = busy;
+  const submit = $("#resumable-upload-form button[type=submit]");
+  if (submit) submit.disabled = busy;
+  const abort = $("#resumable-abort");
+  if (abort) abort.disabled = busy;
+}
+
+function renderResumableUpload() {
+  if (!state.user || !can("file:upload")) return;
+  const checkpoint = readResumableCheckpoint();
+  const abort = $("#resumable-abort");
+  if (!checkpoint) {
+    setResumableStatus(t("upload.idle"));
+    abort.classList.add("hidden");
+    return;
+  }
+  const id = checkpoint.sessionId || t("upload.initializing");
+  setResumableStatus(interpolate("upload.resume", {
+    id,
+    count: checkpoint.confirmedParts || 0,
+    time: checkpoint.expiresAt ? formatTime(checkpoint.expiresAt) : "—",
+  }), "active");
+  abort.classList.toggle("hidden", !checkpoint.sessionId);
+  abort.disabled = state.resumableBusy;
+}
+
+function checkpointMatchesFile(checkpoint, file) {
+  return checkpoint.fileName === file.name && checkpoint.contentLength === file.size;
+}
+
+function chunkSizeFromForm() {
+  const requestedMiB = Number($("#resumable-chunk-size").value);
+  if (!Number.isInteger(requestedMiB) || requestedMiB < 5 || requestedMiB > 512) {
+    throw new Error(t("upload.invalidChunk"));
+  }
+  return requestedMiB * 1024 * 1024;
+}
+
+async function startOrResumeUpload(event) {
+  event.preventDefault();
+  if (!can("file:upload") || state.resumableBusy) return;
+  const file = $("#resumable-file").files[0];
+  if (!file || file.size <= 0) {
+    notice(t("upload.emptyFile"), "error");
+    return;
+  }
+  let failureMessage = null;
+  try {
+    const chunkSizeBytes = chunkSizeFromForm();
+    if (Math.ceil(file.size / chunkSizeBytes) > MAXIMUM_RESUMABLE_PARTS) throw new Error(t("upload.tooManyParts"));
+    let checkpoint = readResumableCheckpoint();
+    if (checkpoint && !checkpointMatchesFile(checkpoint, file)) throw new Error(t("upload.fileMismatch"));
+    if (checkpoint && checkpoint.chunkSizeBytes !== chunkSizeBytes) throw new Error(t("upload.chunkMismatch"));
+    if (!checkpoint) {
+      checkpoint = {
+        version: 1,
+        idempotencyKey: newResumableIdempotencyKey(),
+        fileName: file.name,
+        contentLength: file.size,
+        contentType: file.type || null,
+        chunkSizeBytes,
+        sessionId: null,
+        expiresAt: null,
+        confirmedParts: 0,
+      };
+      // Persists the idempotency key before the first request so a lost response can be recovered safely.
+      writeResumableCheckpoint(checkpoint);
+    }
+    setResumableBusy(true);
+    let session = checkpoint.sessionId ? await api(`/api/resumable-uploads/${checkpoint.sessionId}`) : null;
+    if (session?.status === "COMPLETED") {
+      clearResumableCheckpoint();
+      $("#resumable-abort").classList.add("hidden");
+      setResumableStatus(t("upload.alreadyCompleted"), "complete");
+      return;
+    }
+    if (session && session.status !== "ACTIVE") throw new Error(interpolate("upload.unavailable", { status: session.status }));
+    if (!session) {
+      setResumableStatus(t("upload.initializing"), "active");
+      session = await api("/api/resumable-uploads", json({
+        fileName: checkpoint.fileName,
+        contentLength: checkpoint.contentLength,
+        assetType: "DOCUMENT",
+        idempotencyKey: checkpoint.idempotencyKey,
+        contentType: checkpoint.contentType,
+      }));
+      checkpoint.sessionId = session.id;
+      checkpoint.expiresAt = session.expiresAt;
+      checkpoint.confirmedParts = session.parts.length;
+      writeResumableCheckpoint(checkpoint);
+    }
+    await uploadResumableParts(file, checkpoint, session);
+  } catch (error) {
+    failureMessage = error.message;
+    setResumableStatus(error.message, "active");
+    notice(error.message, "error");
+  } finally {
+    setResumableBusy(false);
+    if (readResumableCheckpoint()) renderResumableUpload();
+    if (failureMessage) setResumableStatus(failureMessage, "active");
+  }
+}
+
+async function uploadResumableParts(file, checkpoint, session) {
+  const totalParts = Math.ceil(file.size / checkpoint.chunkSizeBytes);
+  const acknowledged = new Map(session.parts.map((part) => [part.partNumber, part]));
+  for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
+    const start = (partNumber - 1) * checkpoint.chunkSizeBytes;
+    const part = file.slice(start, Math.min(start + checkpoint.chunkSizeBytes, file.size));
+    const known = acknowledged.get(partNumber);
+    if (!known || known.contentLength !== part.size) {
+      setResumableStatus(interpolate("upload.progress", {
+        current: partNumber,
+        total: totalParts,
+        percent: Math.floor((start / file.size) * 100),
+      }), "active");
+      const accepted = await api(`/api/resumable-uploads/${checkpoint.sessionId}/parts/${partNumber}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream", "X-FileWeft-Part-Length": String(part.size) },
+        body: part,
+      });
+      if (accepted.partNumber !== partNumber || accepted.contentLength !== part.size) {
+        throw new Error(t("upload.partRejected"));
+      }
+      acknowledged.set(partNumber, accepted);
+      checkpoint.confirmedParts = acknowledged.size;
+      writeResumableCheckpoint(checkpoint);
+    }
+  }
+  setResumableStatus(interpolate("upload.progress", { current: totalParts, total: totalParts, percent: 100 }), "active");
+  const completed = await api(`/api/resumable-uploads/${checkpoint.sessionId}/complete`, { method: "POST" });
+  clearResumableCheckpoint();
+  $("#resumable-file").value = "";
+  $("#resumable-abort").classList.add("hidden");
+  setResumableStatus(interpolate("upload.completed", { assetId: completed.fileAssetId }), "complete");
+  notice(interpolate("upload.completed", { assetId: completed.fileAssetId }));
+}
+
+async function abortResumableUpload() {
+  if (state.resumableBusy) return;
+  const checkpoint = readResumableCheckpoint();
+  if (!checkpoint) return;
+  let failureMessage = null;
+  try {
+    setResumableBusy(true);
+    if (checkpoint.sessionId) await api(`/api/resumable-uploads/${checkpoint.sessionId}`, { method: "DELETE" });
+    clearResumableCheckpoint();
+    $("#resumable-abort").classList.add("hidden");
+    setResumableStatus(t("upload.aborted"));
+    notice(t("upload.aborted"));
+  } catch (error) {
+    failureMessage = error.message;
+    setResumableStatus(error.message, "active");
+    notice(error.message, "error");
+  } finally {
+    setResumableBusy(false);
+    if (readResumableCheckpoint()) renderResumableUpload();
+    if (failureMessage) setResumableStatus(failureMessage, "active");
+  }
+}
+
 function activatePanel(panel) {
   const target = panel === "doctor" && !can("document:doctor") ? "documents" : panel;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === target));
-  ["documents", "fixtures", "platform", "doctor"].forEach((name) => $(`#${name}-panel`).classList.toggle("hidden", name !== target));
+  ["documents", "fixtures", "platform", "doctor", "uploads"].forEach((name) => $(`#${name}-panel`).classList.toggle("hidden", name !== target));
   if (target === "platform") loadPlatform();
   if (target === "fixtures") renderFixtures();
+  if (target === "uploads") renderResumableUpload();
 }
 
 async function processOutbox() {
@@ -571,9 +775,11 @@ $("#version-form").addEventListener("submit", async (event) => {
     await refreshDocuments();
   } catch (error) { notice(error.message, "error"); }
 });
+$("#resumable-upload-form").addEventListener("submit", startOrResumeUpload);
+$("#resumable-abort").addEventListener("click", abortResumableUpload);
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

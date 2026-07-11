@@ -55,6 +55,7 @@ class DevAcceptanceIntegrationTest {
         val admin = loginResponse("admin@alpha", "dev-admin")
 
         assertTrue(editor.path("permissions").any { it.asText() == "document:create" })
+        assertTrue(editor.path("permissions").any { it.asText() == "file:upload" })
         assertTrue(editor.path("permissions").none { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "agent:suggestion:read" })
@@ -130,6 +131,42 @@ class DevAcceptanceIntegrationTest {
         val updated = getJson("$apiUrl/api/documents/$documentId", editor)
         assertAuditActor(updated, "document:download", "alpha-editor", "Alpha 编辑者")
         assertTrue(updated.path("operationLogs").any { it.path("action").asText() == "document:download" })
+    }
+
+    @Test
+    fun `persists a resumable upload session across part checkpoints and completes it once`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val idempotencyKey = "e2e-resumable-${UUID.randomUUID()}"
+        val started = postJson(
+            "$apiUrl/api/resumable-uploads",
+            """{"fileName":"resumable.txt","contentLength":7,"assetType":"DOCUMENT","contentType":"text/plain","idempotencyKey":"$idempotencyKey"}""",
+            editor,
+        )
+        val sessionId = started.path("id").asText()
+        assertEquals("ACTIVE", started.path("status").asText())
+        assertEquals(0, started.path("parts").size())
+
+        val uploaded = putBytes("$apiUrl/api/resumable-uploads/$sessionId/parts/1", "content".toByteArray(), editor)
+        assertEquals(1, uploaded.path("partNumber").asInt())
+        val checkpoint = getJson("$apiUrl/api/resumable-uploads/$sessionId", editor)
+        assertEquals(1, checkpoint.path("parts").size())
+        assertEquals(7, checkpoint.path("parts").first().path("contentLength").asLong())
+
+        val viewer = login("viewer@alpha", "dev-viewer")
+        val forbidden = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/resumable-uploads/$sessionId"))
+                .header("Authorization", "Bearer $viewer")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(403, forbidden.statusCode())
+
+        val completed = post("$apiUrl/api/resumable-uploads/$sessionId/complete", null, editor, "application/json")
+        val repeated = post("$apiUrl/api/resumable-uploads/$sessionId/complete", null, editor, "application/json")
+        assertEquals(completed.path("fileObjectId").asText(), repeated.path("fileObjectId").asText())
+        assertTrue(completed.path("fileAssetId").asText().isNotBlank())
+        assertEquals("COMPLETED", getJson("$apiUrl/api/resumable-uploads/$sessionId", editor).path("status").asText())
     }
 
     @Test
@@ -539,6 +576,15 @@ class DevAcceptanceIntegrationTest {
 
     private fun postJson(url: String, body: String, token: String?, traceId: String? = null): JsonNode =
         post(url, body.toByteArray(StandardCharsets.UTF_8), token, "application/json", traceId)
+
+    private fun putBytes(url: String, body: ByteArray, token: String): JsonNode = response(
+        HttpRequest.newBuilder(URI(url))
+            .header("Authorization", "Bearer $token")
+            .header("Content-Type", "application/octet-stream")
+            .header("X-FileWeft-Part-Length", body.size.toString())
+            .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
+            .build(),
+    )
 
     private fun requestJson(method: String, url: String, body: String, token: String): JsonNode {
         val builder = HttpRequest.newBuilder(URI(url))

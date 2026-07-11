@@ -28,4 +28,19 @@ class FileWeftWorkerSchedulerTest {
             FileWeftWorkerScheduler(FileWeftProperties.WorkerProperties(), {}, null)
         }
     }
+
+    @Test
+    fun `can run only resumable upload cleanup in an explicit worker role`() {
+        val properties = FileWeftProperties.WorkerProperties().apply {
+            enabled = true
+            processOutbox = false
+            processTasks = false
+        }
+        var cleanupCalls = 0
+        val scheduler = FileWeftWorkerScheduler(properties, null, null) { cleanupCalls++ }
+
+        scheduler.processAvailable()
+
+        assertEquals(1, cleanupCalls)
+    }
 }

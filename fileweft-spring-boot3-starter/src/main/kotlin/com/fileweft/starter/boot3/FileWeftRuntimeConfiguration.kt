@@ -25,6 +25,8 @@ import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.sync.*
 import com.fileweft.application.task.*
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.application.upload.ResumableUploadService
+import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.IdentifierGenerator
@@ -121,6 +123,11 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(AgentResultRepository::class)
     fun agentResults(objectMapper: ObjectMapper, clock: Clock): AgentResultRepository = JdbcAgentResultRepository(objectMapper, clock)
+
+    @Bean
+    @ConditionalOnMissingBean(ResumableUploadSessionRepository::class)
+    fun resumableUploadSessions(objectMapper: ObjectMapper): ResumableUploadSessionRepository =
+        JdbcResumableUploadSessionRepository(objectMapper)
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
@@ -284,6 +291,20 @@ class FileWeftRuntimeConfiguration {
         fileObjects: FileObjectRepository, assets: FileAssetRepository, outbox: OutboxEventRepository,
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, metrics: FileWeftMetrics,
     ) = UploadApplicationService(tenants, users, authorization, storage, fileObjects, assets, outbox, identifiers, transaction, clock, metrics)
+
+    @Bean
+    @ConditionalOnMissingBean(ResumableUploadService::class)
+    fun resumableUploadService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        storage: StorageAdapter, sessions: ResumableUploadSessionRepository,
+        fileObjects: FileObjectRepository, assets: FileAssetRepository, outbox: OutboxEventRepository,
+        identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock,
+        properties: FileWeftProperties, metrics: FileWeftMetrics,
+    ) = ResumableUploadService(
+        tenants, users, authorization, storage, sessions, fileObjects, assets, outbox, identifiers, transaction, clock,
+        sessionTtl = Duration.ofMillis(properties.upload.resumableSessionTtlMillis),
+        metrics = metrics,
+    )
 
     @Bean
     @ConditionalOnMissingBean(DocumentCommandService::class)

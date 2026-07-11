@@ -8,6 +8,8 @@ class FileWeftProperties {
 
     var storage: StorageProperties = StorageProperties()
 
+    var upload: UploadProperties = UploadProperties()
+
     var sync: SyncProperties = SyncProperties()
 
     var task: TaskProperties = TaskProperties()
@@ -16,6 +18,12 @@ class FileWeftProperties {
 
     class StorageProperties {
         var localRoot: String = "./fileweft-data"
+    }
+
+    class UploadProperties {
+        /** TTL for an unfinished resumable multipart session before worker cleanup. */
+        var resumableSessionTtlMillis: Long = 86_400_000
+        var resumableCleanupBatchSize: Int = 100
     }
 
     class SyncProperties {
@@ -64,5 +72,6 @@ class FileWeftProperties {
         var taskBatchSize: Int = 50
         var processOutbox: Boolean = true
         var processTasks: Boolean = true
+        var processUploadCleanup: Boolean = true
     }
 }

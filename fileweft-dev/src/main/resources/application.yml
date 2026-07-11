@@ -39,6 +39,9 @@ fileweft:
     task:
       fixed-delay-millis: 1000
       batch-size: 20
+    upload:
+      cleanup-fixed-delay-millis: 60000
+      cleanup-batch-size: 100
     users:
       - id: alpha-admin
         username: admin@alpha

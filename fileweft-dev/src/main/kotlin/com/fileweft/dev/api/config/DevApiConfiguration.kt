@@ -6,6 +6,7 @@ import com.fileweft.adapter.s3.S3StorageConfiguration
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.task.TaskWorker
+import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
@@ -179,6 +180,12 @@ class DevApiConfiguration {
     @Bean
     fun devTaskRunner(properties: FileWeftDevProperties, worker: TaskWorker): DevTaskRunner =
         DevTaskRunner(properties.task.batchSize, worker)
+
+    @Bean
+    fun devResumableUploadRunner(
+        properties: FileWeftDevProperties,
+        uploads: ResumableUploadService,
+    ): DevResumableUploadRunner = DevResumableUploadRunner(properties.upload.cleanupBatchSize, uploads::cleanupExpired)
 
     @Bean
     fun devOperationsService(
