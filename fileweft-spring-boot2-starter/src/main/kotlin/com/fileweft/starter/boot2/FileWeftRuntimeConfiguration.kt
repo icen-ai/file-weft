@@ -30,6 +30,7 @@ import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.delivery.StaticDocumentDeliveryProfileProvider
 import com.fileweft.application.doctor.ConnectorDoctorChecker
 import com.fileweft.application.doctor.CatalogDoctorChecker
+import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.doctor.DoctorReportRepository
 import com.fileweft.application.doctor.DocumentDoctorTaskHandler
@@ -535,10 +536,17 @@ class FileWeftRuntimeConfiguration {
     ): ConnectorDoctorChecker = ConnectorDoctorChecker(resilience.protectAll(plugins.mergeConnectors(connectors)).values.toList())
 
     @Bean
+    @ConditionalOnMissingBean(DeliveryProfileDoctorChecker::class)
+    fun fileWeftDeliveryProfileDoctorChecker(
+        profiles: DocumentDeliveryProfileProvider, connectors: DeliveryConnectorResolver,
+    ): DeliveryProfileDoctorChecker = DeliveryProfileDoctorChecker(profiles, connectors)
+
+    @Bean
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun fileWeftDoctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
         storage: StorageDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
+        deliveryProfile: DeliveryProfileDoctorChecker,
         agent: AgentDoctorChecker, transaction: ApplicationTransaction,
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
     ): DoctorApplicationService {
@@ -550,6 +558,7 @@ class FileWeftRuntimeConfiguration {
                 TransactionalDoctorChecker(lifecycle, transaction),
                 storage,
             ) + listOfNotNull(catalogChecker) + listOf(
+                deliveryProfile,
                 connector,
                 agent,
             ) + plugins.doctorCheckers(),
