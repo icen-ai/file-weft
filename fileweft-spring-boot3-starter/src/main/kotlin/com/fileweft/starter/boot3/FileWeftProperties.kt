@@ -12,6 +12,8 @@ class FileWeftProperties {
 
     var sync: SyncProperties = SyncProperties()
 
+    var workflow: WorkflowProperties = WorkflowProperties()
+
     var task: TaskProperties = TaskProperties()
 
     var worker: WorkerProperties = WorkerProperties()
@@ -40,6 +42,11 @@ class FileWeftProperties {
         /** Bounded queue used when all connector invocation threads are busy. */
         var connectorInvocationQueueCapacity: Int = 256
         var profiles: MutableList<DeliveryProfileProperties> = mutableListOf()
+    }
+
+    class WorkflowProperties {
+        /** Route used when a caller does not explicitly select one. */
+        var defaultReviewRouteId: String = "default"
     }
 
     class DeliveryProfileProperties {

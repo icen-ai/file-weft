@@ -8,6 +8,7 @@ import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.plugin.FileWeftPlugin
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.task.FileWeftTaskHandler
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
 import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.ServiceLoader
@@ -55,6 +56,8 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
     fun outboxEventHandlers(): List<OutboxEventHandler> = contributions { it.outboxEventHandlers() }
 
     fun taskHandlers(): List<FileWeftTaskHandler> = contributions { it.taskHandlers() }
+
+    fun reviewRouteProviders(): List<DocumentReviewRouteProvider> = contributions { it.reviewRouteProviders() }
 
     private fun <T> contributions(extract: (FileWeftPlugin) -> List<T>): List<T> =
         Collections.unmodifiableList(plugins().flatMap(extract))

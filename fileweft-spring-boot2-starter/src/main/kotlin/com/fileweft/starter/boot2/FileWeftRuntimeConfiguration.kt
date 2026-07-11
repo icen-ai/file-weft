@@ -50,6 +50,8 @@ import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.upload.UploadApplicationService
+import com.fileweft.application.workflow.DefaultDocumentReviewRouteProvider
+import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecordRepository
@@ -89,6 +91,7 @@ import com.fileweft.spi.observability.TraceContextScope
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.task.FileWeftTaskHandler
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
@@ -403,13 +406,28 @@ class FileWeftRuntimeConfiguration {
     ): ArchiveDocumentService = ArchiveDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
 
     @Bean
+    fun fileWeftDefaultDocumentReviewRouteProvider(): DocumentReviewRouteProvider = DefaultDocumentReviewRouteProvider
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentReviewRouteResolver::class)
+    fun fileWeftDocumentReviewRouteResolver(
+        providers: List<DocumentReviewRouteProvider>,
+        plugins: FileWeftPluginRegistry,
+        properties: FileWeftProperties,
+    ): DocumentReviewRouteResolver = DocumentReviewRouteResolver(
+        providers = providers + plugins.reviewRouteProviders(),
+        defaultRouteId = properties.workflow.defaultReviewRouteId,
+    )
+
+    @Bean
     @ConditionalOnMissingBean(DocumentReviewWorkflowService::class)
     fun fileWeftReviewWorkflowService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, workflows: WorkflowInstanceRepository, planner: DocumentDeliveryPlanner,
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail,
+        reviewRoutes: DocumentReviewRouteResolver,
     ): DocumentReviewWorkflowService = DocumentReviewWorkflowService(
-        tenants, users, authorization, documents, workflows, planner, identifiers, transaction, auditTrail,
+        tenants, users, authorization, documents, workflows, planner, identifiers, transaction, auditTrail, reviewRoutes,
     )
 
     @Bean

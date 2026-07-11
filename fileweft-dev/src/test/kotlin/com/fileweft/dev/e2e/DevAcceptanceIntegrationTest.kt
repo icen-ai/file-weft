@@ -263,6 +263,48 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `holds a dual control route pending until its reviewer and administrator both approve`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-DUAL-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+
+        val workflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewRouteId":"dual-control"}""",
+            editor,
+        )
+        assertEquals(2, workflow.path("taskIds").size())
+        val reviewerTaskId = workflow.path("taskIds")[0].asText()
+        val administratorTaskId = workflow.path("taskIds")[1].asText()
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/$reviewerTaskId/approve",
+            """{"comment":"专业审批已完成"}""",
+            reviewer,
+        )
+
+        val afterReviewer = getJson("$apiUrl/api/documents/$documentId", editor)
+        assertEquals("PENDING_REVIEW", afterReviewer.path("document").path("lifecycleState").asText())
+        assertEquals("PENDING", afterReviewer.path("workflows").first().path("state").asText())
+        assertEquals(0, afterReviewer.path("outboxEvents").size())
+        assertTrue(afterReviewer.path("audits").first { it.path("action").asText() == "document:review:submit" }
+            .path("details").asText().contains("dual-control"))
+
+        val administrator = login("admin@alpha", "dev-admin")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/$administratorTaskId/approve",
+            """{"comment":"职责审批已完成","deliveryProfileId":"internal"}""",
+            administrator,
+        )
+        val readyForDelivery = getJson("$apiUrl/api/documents/$documentId", administrator)
+        assertEquals("PUBLISHING", readyForDelivery.path("document").path("lifecycleState").asText())
+        assertEquals("APPROVED", readyForDelivery.path("workflows").first().path("state").asText())
+        assertEquals(1, readyForDelivery.path("deliveries").size())
+
+        post("$apiUrl/api/outbox/process?limit=20", null, administrator, "application/json")
+        assertEquals("PUBLISHED", awaitPublished(documentId, administrator).path("document").path("lifecycleState").asText())
+    }
+
+    @Test
     fun `updates versions rejects review and returns a document to draft`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentId = createDraft(editor, "E2E-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()

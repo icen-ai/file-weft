@@ -17,6 +17,7 @@ import com.fileweft.domain.workflow.WorkflowTask
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
+import com.fileweft.spi.workflow.DocumentReviewRouteRequest
 
 /** Local, persistent review workflow that gates document publication. */
 class DocumentReviewWorkflowService(
@@ -29,18 +30,42 @@ class DocumentReviewWorkflowService(
     private val identifierGenerator: IdentifierGenerator,
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,
+    private val reviewRoutes: DocumentReviewRouteResolver = DocumentReviewRouteResolver(),
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
-    fun submit(documentId: Identifier, reviewerId: Identifier? = null): WorkflowInstance {
+    fun submit(documentId: Identifier, reviewerId: Identifier? = null): WorkflowInstance =
+        submit(documentId, reviewerId, null)
+
+    fun submit(documentId: Identifier, reviewerId: Identifier?, reviewRouteId: String?): WorkflowInstance {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, SUBMIT_ACTION)
+        val routeRequest = transaction.execute {
+            val document = documentRepository.findById(tenant.tenantId, documentId)
+                ?: throw DocumentNotFoundException(documentId)
+            require(workflowRepository.findActiveByDocument(tenant.tenantId, documentId) == null) {
+                "Document already has an active review workflow."
+            }
+            DocumentReviewRouteRequest(
+                tenantId = tenant.tenantId,
+                documentId = document.id,
+                documentNumber = document.documentNumber,
+                documentTitle = document.title,
+                submittedBy = operator?.id,
+                requestedReviewerId = reviewerId,
+            )
+        }
+        // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
+        val resolvedRoute = reviewRoutes.resolve(reviewRouteId, routeRequest)
         return transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             require(workflowRepository.findActiveByDocument(tenant.tenantId, documentId) == null) {
                 "Document already has an active review workflow."
+            }
+            require(document.documentNumber == routeRequest.documentNumber && document.title == routeRequest.documentTitle) {
+                "Document changed while its review route was resolved; retry submission."
             }
             document.transition(LifecycleCommand.SUBMIT)
             val workflowId = identifierGenerator.nextId()
@@ -48,15 +73,15 @@ class DocumentReviewWorkflowService(
                 id = workflowId,
                 tenantId = tenant.tenantId,
                 documentId = document.id,
-                workflowType = REVIEW_WORKFLOW_TYPE,
-                tasks = listOf(
+                workflowType = resolvedRoute.route.workflowType,
+                tasks = resolvedRoute.route.tasks.map { routeTask ->
                     WorkflowTask(
                         id = identifierGenerator.nextId(),
                         tenantId = tenant.tenantId,
                         workflowId = workflowId,
-                        assigneeId = reviewerId,
-                    ),
-                ),
+                        assigneeId = routeTask.assigneeId,
+                    )
+                },
             )
             documentRepository.save(document)
             workflowRepository.save(workflow)
@@ -67,7 +92,12 @@ class DocumentReviewWorkflowService(
                 action = SUBMITTED_AUDIT_ACTION,
                 operatorId = operator?.id,
                 operatorName = operator?.displayName,
-                details = mapOf("workflowId" to workflow.id.value, "reviewerId" to (reviewerId?.value ?: "UNASSIGNED")),
+                details = mapOf(
+                    "workflowId" to workflow.id.value,
+                    "reviewerId" to (reviewerId?.value ?: "UNASSIGNED"),
+                    "reviewRouteId" to resolvedRoute.routeId,
+                    "reviewerIds" to workflow.tasks.joinToString(",") { task -> task.assigneeId?.value ?: "UNASSIGNED" },
+                ),
             )
             workflow
         }
@@ -102,8 +132,10 @@ class DocumentReviewWorkflowService(
                 ?: throw DocumentNotFoundException(workflow.documentId)
             if (approved) {
                 workflow.approve(taskId, operator.id, comment)
-                document.transition(LifecycleCommand.APPROVE)
-                deliveryPlanner.plan(document, deliveryProfileId)
+                if (workflow.state == com.fileweft.domain.workflow.WorkflowState.APPROVED) {
+                    document.transition(LifecycleCommand.APPROVE)
+                    deliveryPlanner.plan(document, deliveryProfileId)
+                }
             } else {
                 workflow.reject(taskId, operator.id, comment)
                 document.transition(LifecycleCommand.REJECT)
@@ -120,6 +152,7 @@ class DocumentReviewWorkflowService(
                 details = linkedMapOf<String, String>().apply {
                     put("workflowId", workflow.id.value)
                     put("taskId", taskId.value)
+                    put("workflowState", workflow.state.name)
                     comment?.let { put("comment", it) }
                 },
             )

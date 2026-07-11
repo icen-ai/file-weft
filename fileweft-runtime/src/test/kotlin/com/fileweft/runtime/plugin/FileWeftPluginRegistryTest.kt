@@ -8,6 +8,10 @@ import com.fileweft.spi.connector.ConnectorSyncRequest
 import com.fileweft.spi.connector.ConnectorSyncResult
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.plugin.FileWeftPlugin
+import com.fileweft.spi.workflow.DocumentReviewRoute
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
+import com.fileweft.spi.workflow.DocumentReviewRouteRequest
+import com.fileweft.spi.workflow.DocumentReviewRouteTask
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -37,6 +41,20 @@ class FileWeftPluginRegistryTest {
         assertFailsWith<IllegalArgumentException> {
             FileWeftPluginRegistry(listOf(plugin("duplicate"), plugin("duplicate")), javaClass.classLoader)
         }
+    }
+
+    @Test
+    fun `exposes review route providers contributed by a plugin`() {
+        val provider = object : DocumentReviewRouteProvider {
+            override fun id(): String = "dual"
+            override fun resolve(request: DocumentReviewRouteRequest) = DocumentReviewRoute("DUAL", listOf(DocumentReviewRouteTask()))
+        }
+        val registry = FileWeftPluginRegistry(listOf(object : FileWeftPlugin {
+            override fun id(): String = "workflow-plugin"
+            override fun reviewRouteProviders(): List<DocumentReviewRouteProvider> = listOf(provider)
+        }), javaClass.classLoader)
+
+        assertEquals(listOf(provider), registry.reviewRouteProviders())
     }
 
     private fun plugin(id: String, connectors: Map<String, FileConnector> = emptyMap()): FileWeftPlugin = object : FileWeftPlugin {

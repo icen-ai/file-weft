@@ -38,10 +38,16 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.nio.charset.StandardCharsets
 
 data class DevRenameDocumentRequest(val title: String)
-data class DevSubmitDocumentRequest(val reviewerId: String? = null)
+data class DevSubmitDocumentRequest(val reviewerId: String? = null, val reviewRouteId: String? = null)
 data class DevWorkflowDecisionRequest(val comment: String? = null, val deliveryProfileId: String? = null)
 data class DevPublishDocumentRequest(val deliveryProfileId: String? = null)
-data class DevWorkflowResponse(val workflowId: String, val state: String, val taskId: String)
+data class DevWorkflowResponse(
+    val workflowId: String,
+    val state: String,
+    /** Retained for existing development clients; use taskIds for a multi-task route. */
+    val taskId: String,
+    val taskIds: List<String>,
+)
 data class DevDoctorTaskResponse(val taskId: String, val status: String)
 data class DevAgentSuggestionConfirmationResponse(val taskId: String, val suggestionId: String, val confirmedBy: String, val confirmedTime: Long)
 
@@ -120,7 +126,7 @@ class DevDocumentController(
 
     @PostMapping("/{documentId}/submit")
     fun submit(@PathVariable documentId: String, @RequestBody request: DevSubmitDocumentRequest): DevWorkflowResponse =
-        reviews.submit(Identifier(documentId), request.reviewerId).toResponse()
+        reviews.submit(Identifier(documentId), request.reviewerId, request.reviewRouteId).toResponse()
 
     @PostMapping("/{documentId}/revise")
     fun revise(@PathVariable documentId: String): DevDocumentDetail {
@@ -198,7 +204,8 @@ class DevDocumentController(
     private fun WorkflowInstance.toResponse(): DevWorkflowResponse = DevWorkflowResponse(
         id.value,
         state.name,
-        tasks.single().id.value,
+        tasks.first().id.value,
+        tasks.map { it.id.value },
     )
 
     private fun requiredFileName(file: MultipartFile): String = file.originalFilename?.takeIf { it.isNotBlank() }

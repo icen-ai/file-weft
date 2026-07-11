@@ -24,6 +24,7 @@ import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
+import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
@@ -51,6 +52,10 @@ import com.fileweft.spi.storage.StorageDownload
 import com.fileweft.spi.storage.StorageObjectLocation
 import com.fileweft.spi.storage.StorageUploadRequest
 import com.fileweft.spi.storage.StoredObject
+import com.fileweft.spi.workflow.DocumentReviewRoute
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
+import com.fileweft.spi.workflow.DocumentReviewRouteRequest
+import com.fileweft.spi.workflow.DocumentReviewRouteTask
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.autoconfigure.AutoConfigurations
@@ -164,7 +169,18 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(ConnectorInvocationExecutor::class.java) != null)
             assertTrue(context.getBean(ConnectorResiliencePolicy::class.java) != null)
             assertTrue(context.getBean(ConnectorResilienceRegistry::class.java) != null)
+            assertTrue(context.getBean(DocumentReviewRouteResolver::class.java).routeIds().contains("default"))
         }
+    }
+
+    @Test
+    fun `combines a host review route with the configured default route id`() {
+        contextRunner().withUserConfiguration(DatabaseConfiguration::class.java, ReviewRouteConfiguration::class.java)
+            .withPropertyValues("fileweft.workflow.default-review-route-id=host-route")
+            .run { context ->
+                val routes = context.getBean(DocumentReviewRouteResolver::class.java)
+                assertTrue(routes.routeIds().containsAll(setOf("default", "host-route")))
+            }
     }
 
     @Test
@@ -228,6 +244,16 @@ class FileWeftAutoConfigurationTest {
         fun testStoragePlugin(): FileWeftPlugin = object : FileWeftPlugin {
             override fun id(): String = "test-storage-plugin"
             override fun storageAdapters(): List<StorageAdapter> = listOf(CustomerStorageAdapter)
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class ReviewRouteConfiguration {
+        @Bean
+        fun hostReviewRoute(): DocumentReviewRouteProvider = object : DocumentReviewRouteProvider {
+            override fun id(): String = "host-route"
+            override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute =
+                DocumentReviewRoute("HOST_REVIEW", listOf(DocumentReviewRouteTask()))
         }
     }
 

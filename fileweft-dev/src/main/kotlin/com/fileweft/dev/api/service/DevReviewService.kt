@@ -12,7 +12,7 @@ class DevReviewService(
     private val tenants: TenantProvider,
     private val workflows: DocumentReviewWorkflowService,
 ) {
-    fun submit(documentId: Identifier, reviewerId: String?): WorkflowInstance {
+    fun submit(documentId: Identifier, reviewerId: String?, reviewRouteId: String?): WorkflowInstance {
         val reviewer = reviewerId?.takeIf { it.isNotBlank() }?.let(::Identifier)?.let { users.findById(it) }
         if (reviewer != null) {
             require(reviewer.tenantId == tenants.currentTenant().tenantId) { "Reviewer must belong to the current tenant." }
@@ -22,6 +22,6 @@ class DevReviewService(
         } else {
             require(reviewerId.isNullOrBlank()) { "Reviewer was not found." }
         }
-        return workflows.submit(documentId, reviewer?.id)
+        return workflows.submit(documentId, reviewer?.id, reviewRouteId)
     }
 }

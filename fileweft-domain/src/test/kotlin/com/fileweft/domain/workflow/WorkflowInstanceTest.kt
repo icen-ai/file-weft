@@ -30,6 +30,27 @@ class WorkflowInstanceTest {
     }
 
     @Test
+    fun `keeps a parallel workflow pending until every task is approved including after reload`() {
+        val workflow = WorkflowInstance(
+            Identifier("workflow-1"), Identifier("tenant-1"), Identifier("document-1"), "DUAL_REVIEW",
+            tasks = listOf(
+                WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-1")),
+                WorkflowTask(Identifier("task-2"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-2")),
+            ),
+        )
+
+        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
+
+        assertEquals(WorkflowState.PENDING, workflow.state)
+        val reloaded = WorkflowInstance(
+            workflow.id, workflow.tenantId, workflow.documentId, workflow.workflowType, workflow.state, workflow.tasks,
+        )
+        reloaded.approve(Identifier("task-2"), Identifier("reviewer-2"))
+
+        assertEquals(WorkflowState.APPROVED, reloaded.state)
+    }
+
+    @Test
     fun `enforces task tenant assignment and lifecycle invariants`() {
         assertFailsWith<IllegalArgumentException> {
             WorkflowInstance(

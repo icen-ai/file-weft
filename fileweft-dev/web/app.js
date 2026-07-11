@@ -335,7 +335,9 @@ function renderActions() {
   if (can("document:doctor")) actions.push(actionButton("action.doctor", "doctor"), actionButton("action.scheduleDoctor", "scheduleDoctor"));
   if (can("document:rename")) actions.push(actionButton("action.rename", "rename"));
   if (["DRAFT", "REJECTED"].includes(document.lifecycleState) && can("document:version:add")) actions.push(actionButton("action.addVersion", "version"));
-  if (document.lifecycleState === "DRAFT" && can("document:submit")) actions.push(actionButton("action.submit", "submit"));
+  if (document.lifecycleState === "DRAFT" && can("document:submit")) {
+    actions.push(actionButton("action.submit", "submit"), actionButton("action.submitDualControl", "submitDualControl"));
+  }
   const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
   const task = workflow?.tasks.find((item) => item.state === "PENDING");
   const isAssignedReviewer = task && (!task.assigneeId || task.assigneeId === state.user.userId);
@@ -366,9 +368,12 @@ async function runAction(action) {
       await refreshDocuments();
       return;
     }
-    if (action === "submit") {
-      await api(`/api/documents/${id}/submit`, json({ reviewerId: `${state.user.tenantId}-reviewer` }));
-      notice(t("notice.submitted"));
+    if (["submit", "submitDualControl"].includes(action)) {
+      const dualControl = action === "submitDualControl";
+      await api(`/api/documents/${id}/submit`, json(dualControl
+        ? { reviewRouteId: "dual-control" }
+        : { reviewerId: `${state.user.tenantId}-reviewer` }));
+      notice(t(dualControl ? "notice.submittedDualControl" : "notice.submitted"));
     }
     if (["approve", "reject"].includes(action)) {
       const workflow = state.detail.workflows.find((item) => item.state === "PENDING");

@@ -7,6 +7,7 @@ import com.fileweft.spi.doctor.DoctorChecker
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.task.FileWeftTaskHandler
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
 
 /**
  * Optional extension bundle discovered either as a Spring bean or with Java's
@@ -31,4 +32,6 @@ interface FileWeftPlugin {
     fun outboxEventHandlers(): List<OutboxEventHandler> = emptyList()
 
     fun taskHandlers(): List<FileWeftTaskHandler> = emptyList()
+
+    fun reviewRouteProviders(): List<DocumentReviewRouteProvider> = emptyList()
 }

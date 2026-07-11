@@ -37,6 +37,10 @@ import com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
+import com.fileweft.spi.workflow.DocumentReviewRoute
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
+import com.fileweft.spi.workflow.DocumentReviewRouteRequest
+import com.fileweft.spi.workflow.DocumentReviewRouteTask
 import org.junit.jupiter.api.Test
 import java.time.Clock
 import java.time.Instant
@@ -118,6 +122,64 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     @Test
+    fun `holds publication until every parallel route task approves outside the database transaction`() {
+        val document = draftDocument()
+        val documents = InMemoryDocuments(document)
+        val workflows = InMemoryWorkflows()
+        val outbox = RecordingOutbox()
+        var transactionDepth = 0
+        val transaction = object : ApplicationTransaction {
+            override fun <T> execute(action: () -> T): T {
+                transactionDepth += 1
+                return try {
+                    action()
+                } finally {
+                    transactionDepth -= 1
+                }
+            }
+        }
+        val dualRoute = object : DocumentReviewRouteProvider {
+            override fun id(): String = "dual"
+
+            override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute {
+                assertEquals(0, transactionDepth, "Route resolution must not run in FileWeft's database transaction.")
+                return DocumentReviewRoute(
+                    "DOCUMENT_DUAL_CONTROL",
+                    listOf(DocumentReviewRouteTask(Identifier("reviewer-1")), DocumentReviewRouteTask(Identifier("reviewer-2"))),
+                )
+            }
+        }
+        val routes = DocumentReviewRouteResolver(listOf(dualRoute), "dual")
+        val firstReviewer = service(
+            documents, workflows, outbox, listOf("workflow-1", "task-1", "task-2"),
+            currentUser = UserIdentity(Identifier("reviewer-1"), "审批者一"),
+            authorization = { AuthorizationDecision(true) },
+            reviewRoutes = routes,
+            transaction = transaction,
+        )
+
+        val workflow = firstReviewer.submit(document.id, null, "dual")
+        val afterFirstApproval = firstReviewer.approve(workflow.id, workflow.tasks[0].id, "first approval")
+
+        assertEquals(LifecycleState.PENDING_REVIEW, afterFirstApproval.lifecycleState)
+        assertEquals(WorkflowState.PENDING, workflows.workflow?.state)
+        assertEquals(emptyList(), outbox.events)
+
+        val secondReviewer = service(
+            documents, workflows, outbox, emptyList(),
+            currentUser = UserIdentity(Identifier("reviewer-2"), "审批者二"),
+            authorization = { AuthorizationDecision(true) },
+            reviewRoutes = routes,
+            transaction = transaction,
+        )
+        val published = secondReviewer.approve(workflow.id, workflow.tasks[1].id, "second approval")
+
+        assertEquals(LifecycleState.PUBLISHING, published.lifecycleState)
+        assertEquals(WorkflowState.APPROVED, workflows.workflow?.state)
+        assertEquals("document.delivery.target.requested", outbox.events.single().type)
+    }
+
+    @Test
     fun `enforces workflow tenant lookup`() {
         val service = service(InMemoryDocuments(draftDocument()), InMemoryWorkflows(), RecordingOutbox(), emptyList()) { AuthorizationDecision(true) }
 
@@ -133,6 +195,8 @@ class DocumentReviewWorkflowServiceTest {
         identifiers: List<String>,
         currentUser: UserIdentity = UserIdentity(Identifier("reviewer-1"), "审批者"),
         auditTrail: AuditTrail? = null,
+        reviewRoutes: DocumentReviewRouteResolver = DocumentReviewRouteResolver(),
+        transaction: ApplicationTransaction = DirectTransaction,
         authorization: (AuthorizationRequest) -> AuthorizationDecision,
     ): DocumentReviewWorkflowService {
         val ids = ArrayDeque(identifiers)
@@ -147,8 +211,9 @@ class DocumentReviewWorkflowServiceTest {
             workflowRepository = workflows,
             deliveryPlanner = deliveryPlanner(outbox),
             identifierGenerator = object : IdentifierGenerator { override fun nextId() = Identifier(ids.removeFirst()) },
-            transaction = DirectTransaction,
+            transaction = transaction,
             auditTrail = auditTrail,
+            reviewRoutes = reviewRoutes,
         )
     }
 

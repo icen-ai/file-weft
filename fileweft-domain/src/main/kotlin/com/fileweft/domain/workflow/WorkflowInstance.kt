@@ -34,10 +34,9 @@ class WorkflowInstance(
     fun approve(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
         require(state == WorkflowState.PENDING) { "Only pending workflows can be approved." }
         task(taskId).approve(operatorId, comment)
-        require(mutableTasks.all { it.state == WorkflowTaskState.APPROVED }) {
-            "All workflow tasks must be approved before the workflow can be approved."
+        if (mutableTasks.all { it.state == WorkflowTaskState.APPROVED }) {
+            state = WorkflowState.APPROVED
         }
-        state = WorkflowState.APPROVED
     }
 
     fun reject(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
@@ -52,8 +51,11 @@ class WorkflowInstance(
 
     private fun requireStateAndTasksAreConsistent() {
         when (state) {
-            WorkflowState.PENDING -> require(mutableTasks.all { it.state == WorkflowTaskState.PENDING }) {
-                "Pending workflow tasks must all be pending."
+            WorkflowState.PENDING -> require(
+                mutableTasks.none { it.state == WorkflowTaskState.REJECTED } &&
+                    mutableTasks.any { it.state == WorkflowTaskState.PENDING },
+            ) {
+                "Pending workflow must have pending tasks and no rejected task."
             }
 
             WorkflowState.APPROVED -> require(mutableTasks.all { it.state == WorkflowTaskState.APPROVED }) {

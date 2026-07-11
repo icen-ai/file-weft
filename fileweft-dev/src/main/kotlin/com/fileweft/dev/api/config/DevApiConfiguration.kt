@@ -9,6 +9,7 @@ import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.agent.DevClassificationAgent
 import com.fileweft.dev.api.agent.DevPublishClassificationTrigger
@@ -38,6 +39,10 @@ import com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.tenant.TenantProvider
+import com.fileweft.spi.workflow.DocumentReviewRoute
+import com.fileweft.spi.workflow.DocumentReviewRouteProvider
+import com.fileweft.spi.workflow.DocumentReviewRouteRequest
+import com.fileweft.spi.workflow.DocumentReviewRouteTask
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -166,6 +171,26 @@ class DevApiConfiguration {
         override fun listProfiles(tenantId: com.fileweft.core.id.Identifier): List<DocumentDeliveryProfile> = profiles
 
         override fun defaultProfile(tenantId: com.fileweft.core.id.Identifier): DocumentDeliveryProfile = profiles.first()
+    }
+
+    /** A visible two-person route for exercising parallel review with both seeded tenants. */
+    @Bean
+    fun devDualControlReviewRoute(): DocumentReviewRouteProvider = object : DocumentReviewRouteProvider {
+        override fun id(): String = "dual-control"
+
+        override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute {
+            val tenantPrefix = request.tenantId.value
+            require(tenantPrefix == "alpha" || tenantPrefix == "beta") {
+                "The development dual-control route supports only the seeded alpha and beta tenants."
+            }
+            return DocumentReviewRoute(
+                workflowType = "DOCUMENT_DUAL_CONTROL",
+                tasks = listOf(
+                    DocumentReviewRouteTask(Identifier("$tenantPrefix-reviewer")),
+                    DocumentReviewRouteTask(Identifier("$tenantPrefix-admin")),
+                ),
+            )
+        }
     }
 
     @Bean
