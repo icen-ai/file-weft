@@ -196,6 +196,45 @@ class JdbcResumableUploadSessionRepository(
             }
         }
 
+    override fun findExpiredCompleting(now: Long, limit: Int): List<ResumableUploadSession> =
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            """
+            SELECT $SESSION_COLUMNS
+            FROM fw_upload_session
+            WHERE session_status = 'COMPLETING' AND expires_at <= ?
+            ORDER BY expires_at, id
+            LIMIT ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setLong(1, now)
+            statement.setInt(2, limit)
+            statement.executeQuery().use { result ->
+                val sessions = ArrayList<ResumableUploadSession>()
+                while (result.next()) sessions += mapSession(result)
+                sessions
+            }
+        }
+
+    override fun findExpiredCompleting(tenantId: Identifier, now: Long, limit: Int): List<ResumableUploadSession> =
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            """
+            SELECT $SESSION_COLUMNS
+            FROM fw_upload_session
+            WHERE tenant_id = ? AND session_status = 'COMPLETING' AND expires_at <= ?
+            ORDER BY expires_at, id
+            LIMIT ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setLong(2, now)
+            statement.setInt(3, limit)
+            statement.executeQuery().use { result ->
+                val sessions = ArrayList<ResumableUploadSession>()
+                while (result.next()) sessions += mapSession(result)
+                sessions
+            }
+        }
+
     private fun querySession(sql: String, bind: (java.sql.PreparedStatement) -> Unit): ResumableUploadSession? =
         JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
             bind(statement)

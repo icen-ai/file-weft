@@ -255,11 +255,42 @@ class ResumableUploadService @JvmOverloads constructor(
         return ExpiredResumableUploadCleanupResult(candidates.size, expired, failed)
     }
 
+    /**
+     * Returns an intentionally redacted, cross-tenant maintenance view. A completed remote object may exist,
+     * so this method reports stale completion work without attempting a destructive cleanup.
+     */
+    fun inspectStalledCompletionsAsSystem(limit: Int = DEFAULT_CLEANUP_LIMIT): List<StalledResumableUploadSession> {
+        require(limit in 1..MAX_CLEANUP_LIMIT) { "Upload maintenance limit must be between 1 and $MAX_CLEANUP_LIMIT." }
+        return transaction.execute {
+            sessions.findExpiredCompleting(clock.millis(), limit).map(::stalledView)
+        }
+    }
+
+    /** Tenant-safe maintenance view for an authorized tenant administrator. */
+    fun inspectStalledCompletions(limit: Int = DEFAULT_CLEANUP_LIMIT): List<StalledResumableUploadSession> {
+        require(limit in 1..MAX_CLEANUP_LIMIT) { "Upload maintenance limit must be between 1 and $MAX_CLEANUP_LIMIT." }
+        val tenantId = tenantProvider.currentTenant().tenantId
+        authorization.requireAction(tenantId, Identifier(MAINTENANCE_RESOURCE_ID), FILE_OBJECT_RESOURCE_TYPE, UPLOAD_MAINTENANCE_ACTION)
+        return transaction.execute {
+            sessions.findExpiredCompleting(tenantId, clock.millis(), limit).map(::stalledView)
+        }
+    }
+
     private fun completionClaimFailure(original: ResumableUploadSession): UploadFileResult {
         val current = requiredSession(original.tenantId, original.id)
         if (current.status == ResumableUploadSessionStatus.COMPLETED) return completedResult(current)
         throw ResumableUploadStateException("Upload session ${current.id.value} cannot be completed from ${current.status.name}.")
     }
+
+    private fun stalledView(session: ResumableUploadSession): StalledResumableUploadSession = StalledResumableUploadSession(
+        id = session.id,
+        tenantId = session.tenantId,
+        fileName = session.fileName,
+        contentLength = session.contentLength,
+        expiresAt = session.expiresAt,
+        updatedTime = session.updatedTime,
+        lastError = session.lastError,
+    )
 
     private fun abortClaimFailure(original: ResumableUploadSession): ResumableUploadSession {
         val current = requiredSession(original.tenantId, original.id)
@@ -395,6 +426,8 @@ class ResumableUploadService @JvmOverloads constructor(
     private companion object {
         const val FILE_OBJECT_RESOURCE_TYPE = "FILE_OBJECT"
         const val UPLOAD_ACTION = "file:upload"
+        const val UPLOAD_MAINTENANCE_ACTION = "file:upload:maintenance"
+        const val MAINTENANCE_RESOURCE_ID = "resumable-upload-maintenance"
         const val FILE_UPLOADED_EVENT_TYPE = "file.uploaded"
         const val DEFAULT_CLEANUP_LIMIT = 100
         const val MAX_CLEANUP_LIMIT = 1_000

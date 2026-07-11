@@ -142,7 +142,8 @@
               <button class="primary" type="submit"><span data-i18n="upload.start">Start or resume</span><span>→</span></button>
             </form>
             <div id="resumable-upload-status" class="resumable-status" aria-live="polite"></div>
-            <div class="resumable-actions"><button id="resumable-abort" class="ghost hidden" type="button" data-i18n="upload.abort">Abort checkpoint</button></div>
+            <div class="resumable-actions"><button id="resumable-maintenance" class="ghost hidden" type="button" data-permission="file:upload:maintenance" data-i18n="upload.maintenance">Inspect uncertain completions</button><button id="resumable-abort" class="ghost hidden" type="button" data-i18n="upload.abort">Abort checkpoint</button></div>
+            <div id="resumable-maintenance-output" class="resumable-maintenance hidden" aria-live="polite"></div>
           </section>
         </section>
 

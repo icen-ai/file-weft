@@ -135,6 +135,34 @@ class ResumableUploadServiceTest {
     }
 
     @Test
+    fun `reports expired completion work for manual maintenance without deleting its object`() {
+        val clock = MutableClock(100)
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, clock, ttl = Duration.ofMillis(5))
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        state.sessions.claimForCompletion(session.tenantId, session.id, clock.millis())
+        state.tenant = Identifier("tenant-2")
+        val otherTenantSession = service.start(command())
+        service.uploadPart(otherTenantSession.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        state.sessions.claimForCompletion(otherTenantSession.tenantId, otherTenantSession.id, clock.millis())
+        state.tenant = Identifier("tenant-1")
+        clock.advance(5)
+
+        val stalled = service.inspectStalledCompletionsAsSystem()
+        val tenantStalled = service.inspectStalledCompletions()
+        val cleanup = service.cleanupExpired()
+
+        assertEquals(setOf(session.id, otherTenantSession.id), stalled.map { it.id }.toSet())
+        assertEquals(setOf(session.tenantId, otherTenantSession.tenantId), stalled.map { it.tenantId }.toSet())
+        assertEquals(listOf(session.id), tenantStalled.map { it.id })
+        assertEquals(0, cleanup.inspected)
+        assertTrue(storage.aborted.isEmpty())
+        assertTrue(storage.deleted.isEmpty())
+    }
+
+    @Test
     fun `does not allow a tenant scoped session lookup to cross tenants`() {
         val state = State()
         val service = service(FakeMultipartStorage(), state, MutableClock(100))
@@ -263,6 +291,14 @@ class ResumableUploadServiceTest {
 
         override fun findExpired(now: Long, limit: Int): List<ResumableUploadSession> = sessions.values
             .filter { it.expiresAt <= now && it.status in setOf(ResumableUploadSessionStatus.ACTIVE, ResumableUploadSessionStatus.ABORTING, ResumableUploadSessionStatus.FAILED) }
+            .take(limit)
+
+        override fun findExpiredCompleting(now: Long, limit: Int): List<ResumableUploadSession> = sessions.values
+            .filter { it.expiresAt <= now && it.status == ResumableUploadSessionStatus.COMPLETING }
+            .take(limit)
+
+        override fun findExpiredCompleting(tenantId: Identifier, now: Long, limit: Int): List<ResumableUploadSession> = sessions.values
+            .filter { it.tenantId == tenantId && it.expiresAt <= now && it.status == ResumableUploadSessionStatus.COMPLETING }
             .take(limit)
 
         private fun transition(

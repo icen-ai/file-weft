@@ -92,6 +92,15 @@ class JdbcResumableUploadSessionRepositoryIntegrationTest {
         assertEquals(ResumableUploadSessionStatus.COMPLETING, transaction.execute {
             repository.claimForCompletion(Identifier("tenant-1"), Identifier("future-active"), 50)
         }?.status)
+        assertEquals(listOf("future-active"), transaction.execute {
+            repository.findExpiredCompleting(500, 10)
+        }.map { it.id.value })
+        assertEquals(listOf("future-active"), transaction.execute {
+            repository.findExpiredCompleting(Identifier("tenant-1"), 500, 10)
+        }.map { it.id.value })
+        assertEquals(emptyList(), transaction.execute {
+            repository.findExpiredCompleting(Identifier("tenant-2"), 500, 10)
+        })
     }
 
     private fun session(tenant: String, id: String, key: String, expiresAt: Long) = ResumableUploadSession(

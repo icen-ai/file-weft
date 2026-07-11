@@ -34,4 +34,10 @@ interface ResumableUploadSessionRepository {
 
     /** Includes safely abortable expired sessions across all tenants, excluding an in-flight completion. */
     fun findExpired(now: Long, limit: Int): List<ResumableUploadSession>
+
+    /** Read-only operational query for expired completions that must never be deleted automatically. */
+    fun findExpiredCompleting(now: Long, limit: Int): List<ResumableUploadSession>
+
+    /** Tenant-scoped form for an administrator who is not a platform-wide operator. */
+    fun findExpiredCompleting(tenantId: Identifier, now: Long, limit: Int): List<ResumableUploadSession>
 }

@@ -117,6 +117,24 @@ data class ExpiredResumableUploadCleanupResult(
     val failed: Int,
 )
 
+/** Safe operational summary for a completion whose remote outcome must be reconciled manually. */
+class StalledResumableUploadSession(
+    val id: Identifier,
+    val tenantId: Identifier,
+    val fileName: String,
+    val contentLength: Long,
+    val expiresAt: Long,
+    val updatedTime: Long,
+    val lastError: String? = null,
+) {
+    init {
+        require(fileName.isNotBlank()) { "Stalled upload file name must not be blank." }
+        require(contentLength > 0) { "Stalled upload content length must be positive." }
+        require(expiresAt > 0 && updatedTime >= 0) { "Stalled upload timestamps are invalid." }
+        require(lastError == null || lastError.isNotBlank()) { "Stalled upload error must not be blank when provided." }
+    }
+}
+
 class ResumableUploadNotFoundException(sessionId: Identifier) : NoSuchElementException(
     "Upload session ${sessionId.value} was not found in the current tenant.",
 )

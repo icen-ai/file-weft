@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.PutMapping
@@ -46,6 +47,15 @@ data class DevResumableUploadSessionResponse(
 data class DevResumableUploadCompletionResponse(val sessionId: String, val fileObjectId: String, val fileAssetId: String)
 
 data class DevResumableUploadCleanupResponse(val inspected: Int, val expired: Int, val failed: Int)
+
+data class DevStalledResumableUploadResponse(
+    val id: String,
+    val fileName: String,
+    val contentLength: Long,
+    val expiresAt: Long,
+    val updatedTime: Long,
+    val lastError: String?,
+)
 
 /** Development surface for verifying resumable browser uploads against the actual storage adapter. */
 @RestController
@@ -92,6 +102,20 @@ class DevResumableUploadController(
     fun cleanup(): DevResumableUploadCleanupResponse {
         access.requireAction(Identifier(CLEANUP_RESOURCE_ID), "SYSTEM", CLEANUP_ACTION)
         return uploads.cleanupExpired().let { DevResumableUploadCleanupResponse(it.inspected, it.expired, it.failed) }
+    }
+
+    @GetMapping("/maintenance")
+    fun stalledCompletions(@RequestParam(defaultValue = "100") limit: Int): List<DevStalledResumableUploadResponse> {
+        return uploads.inspectStalledCompletions(limit).map { session ->
+            DevStalledResumableUploadResponse(
+                id = session.id.value,
+                fileName = session.fileName,
+                contentLength = session.contentLength,
+                expiresAt = session.expiresAt,
+                updatedTime = session.updatedTime,
+                lastError = session.lastError,
+            )
+        }
     }
 
     private fun ResumableUploadSessionView.toResponse() = DevResumableUploadSessionResponse(

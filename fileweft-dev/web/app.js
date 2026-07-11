@@ -18,6 +18,7 @@ const state = {
   selectedId: null,
   detail: null,
   resumableBusy: false,
+  stalledResumableCompletions: null,
   locale: localStorage.getItem("fileweft.locale") || DEFAULT_LOCALE,
 };
 const RESUMABLE_CHECKPOINT_PREFIX = "fileweft.resumable.v1";
@@ -80,6 +81,7 @@ function applyTranslations() {
     syncFolderOptions();
     renderFixtures();
     renderResumableUpload();
+    renderStalledResumableCompletions();
     if (state.detail) renderInspector();
   }
 }
@@ -94,6 +96,7 @@ function syncPermissionSurface() {
   document.querySelectorAll("[data-permission]").forEach((element) => {
     element.classList.toggle("hidden", !can(element.dataset.permission));
   });
+  if (!can("file:upload:maintenance")) $("#resumable-maintenance-output").classList.add("hidden");
 }
 
 async function login(username, password) {
@@ -101,6 +104,7 @@ async function login(username, password) {
   state.token = result.token;
   state.user = result;
   state.permissions = new Set(result.permissions || []);
+  state.stalledResumableCompletions = null;
   $("#login-view").classList.add("hidden");
   $("#app-view").classList.remove("hidden");
   $("#identity-name").textContent = result.displayName;
@@ -705,6 +709,45 @@ async function abortResumableUpload() {
   }
 }
 
+function renderStalledResumableCompletions() {
+  const output = $("#resumable-maintenance-output");
+  if (!state.user || !can("file:upload:maintenance") || state.stalledResumableCompletions === null) {
+    output.classList.add("hidden");
+    return;
+  }
+  output.replaceChildren();
+  output.classList.remove("hidden");
+  const title = document.createElement("b");
+  title.textContent = t("upload.maintenanceTitle");
+  output.append(title);
+  if (!state.stalledResumableCompletions.length) {
+    const empty = document.createElement("small");
+    empty.textContent = t("upload.maintenanceEmpty");
+    output.append(empty);
+    return;
+  }
+  state.stalledResumableCompletions.forEach((session) => {
+    const item = document.createElement("small");
+    const error = session.lastError ? ` · ${session.lastError}` : "";
+    item.textContent = interpolate("upload.maintenanceItem", {
+      id: session.id,
+      name: session.fileName,
+      time: formatTime(session.expiresAt),
+    }) + error;
+    output.append(item);
+  });
+}
+
+async function loadStalledResumableCompletions() {
+  if (!can("file:upload:maintenance")) return;
+  try {
+    state.stalledResumableCompletions = await api("/api/resumable-uploads/maintenance?limit=20");
+    renderStalledResumableCompletions();
+  } catch (error) {
+    notice(error.message, "error");
+  }
+}
+
 function activatePanel(panel) {
   const target = panel === "doctor" && !can("document:doctor") ? "documents" : panel;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === target));
@@ -777,9 +820,10 @@ $("#version-form").addEventListener("submit", async (event) => {
 });
 $("#resumable-upload-form").addEventListener("submit", startOrResumeUpload);
 $("#resumable-abort").addEventListener("click", abortResumableUpload);
+$("#resumable-maintenance").addEventListener("click", loadStalledResumableCompletions);
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false; state.stalledResumableCompletions = null;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

@@ -162,6 +162,22 @@ class DevAcceptanceIntegrationTest {
         )
         assertEquals(403, forbidden.statusCode())
 
+        val forbiddenMaintenance = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/resumable-uploads/maintenance"))
+                .header("Authorization", "Bearer $viewer")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(403, forbiddenMaintenance.statusCode())
+
+        val admin = login("admin@alpha", "dev-admin")
+        val maintenance = getJson("$apiUrl/api/resumable-uploads/maintenance?limit=10", admin)
+        assertTrue(maintenance.isArray)
+        assertTrue(maintenance.all { item ->
+            !item.has("tenantId") && !item.has("storageUploadId") && !item.has("storagePath")
+        })
+
         val completed = post("$apiUrl/api/resumable-uploads/$sessionId/complete", null, editor, "application/json")
         val repeated = post("$apiUrl/api/resumable-uploads/$sessionId/complete", null, editor, "application/json")
         assertEquals(completed.path("fileObjectId").asText(), repeated.path("fileObjectId").asText())
