@@ -17,11 +17,24 @@ fileweft:
     task-batch-size: 50
     process-outbox: true
     process-tasks: true
+    process-upload-cleanup: true
+
+  upload:
+    resumable-session-ttl-millis: 86400000
+    resumable-cleanup-batch-size: 100
 ```
 
-若需要拆分资源池，可让下游同步节点只开启 `process-outbox`，让 Doctor/Agent 节点只开启 `process-tasks`。所有节点可以水平扩展：Outbox 与后台任务均通过数据库租约/锁领取，重复投递由事件或任务的幂等键约束。
+若需要拆分资源池，可让下游同步节点只开启 `process-outbox`，让 Doctor/Agent 节点只开启 `process-tasks`，让存储维护节点只开启 `process-upload-cleanup`。所有节点可以水平扩展：Outbox 与后台任务均通过数据库租约/锁领取，重复投递由事件或任务的幂等键约束。
 
 Worker 每轮失败只记录日志，不会丢弃待处理记录；下一轮会继续领取符合重试时间或租约已过期的工作。生产报警应至少覆盖同步失败、任务失败、Doctor 失败和持久化 Outbox 积压。
+
+## 断点续传与对象完整性
+
+`ResumableUploadService` 把 multipart 状态持久化到 `fw_upload_session` 与 `fw_upload_session_part`，并以租户和调用方幂等键隔离。接入方的 HTTP API 应仅把会话 ID、已确认分片号、过期时间和完成结果返回给浏览器；`storageUploadId`、对象路径和对象存储凭据始终只能留在服务端。
+
+推荐的服务端调用顺序是：`start` 创建或恢复幂等会话，`uploadPart` 逐片确认，`inspect` 在刷新或网络恢复后读取服务端确认点，`complete` 幂等完成，用户放弃时调用 `abort`。Worker 只会自动清理仍可安全取消的过期会话。`COMPLETING` 状态意味着对象存储可能已经接受完成请求，清理任务不会删除其对象，以免把刚完成的文件变成悬空记录；运营者应通过会话检查接口和存储日志处理这类不确定状态。
+
+普通上传、文档初版与新增版本都会在落库前检查对象存储返回的长度；调用方提供 `contentHash` 时还会校验 SHA-256。任一失配都会补偿删除对象，文件、资产、文档和 Outbox 都不会落库。
 
 ## 下游连接器韧性
 
