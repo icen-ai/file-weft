@@ -366,6 +366,7 @@ class FileWeftRuntimeConfiguration {
         auditTrail = auditTrail,
         removalPlanner = removalPlanner,
         metrics = metrics,
+        sourceAccessUrlTtl = Duration.ofMillis(properties.sync.sourceAccessUrlTtlMillis),
     )
 
     @Bean
@@ -605,6 +606,7 @@ class FileWeftRuntimeConfiguration {
         connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,
         metrics = metrics,
+        sourceAccessUrlTtl = Duration.ofMillis(properties.sync.sourceAccessUrlTtlMillis),
     )
 
     @Bean

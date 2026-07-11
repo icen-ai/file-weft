@@ -38,6 +38,7 @@ import java.net.URI
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class DocumentSyncServiceTest {
@@ -73,6 +74,64 @@ class DocumentSyncServiceTest {
         assertEquals("event-1", idempotencyKey)
         assertEquals(ConnectorSyncStatus.SUCCESS, records.record?.status)
         assertEquals("external-1", records.record?.externalId)
+    }
+
+    @Test
+    fun `uses a fifteen minute source URL lifetime without extending the connector RPC timeout`() {
+        var requestedSourceTtl: Duration? = null
+        var connectorInvocationTimeout: Duration? = null
+        val service = service(
+            InMemoryDocuments(publishingDocument()),
+            InMemorySyncRecords(),
+            TrackingTransaction(),
+            storage = object : StorageStub() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI {
+                    requestedSourceTtl = expiresIn
+                    return URI.create("https://storage.example/document-1")
+                }
+            },
+            connector = connector { request ->
+                connectorInvocationTimeout = request.invocation.timeout
+                ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, "external-1")
+            },
+            connectorTimeout = Duration.ofSeconds(2),
+        )
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, service.synchronize(event()).status)
+
+        assertEquals(Duration.ofMinutes(15), requestedSourceTtl)
+        assertEquals(Duration.ofSeconds(2), connectorInvocationTimeout)
+    }
+
+    @Test
+    fun `rejects invalid source URL lifetime combinations`() {
+        assertFailsWith<IllegalArgumentException> {
+            service(
+                InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+                object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+                connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+                sourceAccessUrlTtl = Duration.ZERO,
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            service(
+                InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+                object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+                connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+                connectorTimeout = Duration.ofSeconds(2),
+                sourceAccessUrlTtl = Duration.ofSeconds(1),
+            )
+        }
+    }
+
+    @Test
+    fun `retains the prior Java constructor after adding source URL lifetime`() {
+        assertTrue(
+            DocumentSyncService::class.java.constructors.any { constructor ->
+                constructor.parameterTypes.size == 11 &&
+                    constructor.parameterTypes.last() == FileWeftMetrics::class.java
+            },
+        )
     }
 
     @Test
@@ -217,6 +276,8 @@ class DocumentSyncServiceTest {
         connector: FileConnector,
         auditTrail: AuditTrail? = null,
         metrics: FileWeftMetrics? = null,
+        connectorTimeout: Duration = Duration.ofSeconds(30),
+        sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
     ) = DocumentSyncService(
         documents,
         InMemoryFiles(fileObject()),
@@ -226,8 +287,10 @@ class DocumentSyncServiceTest {
         records,
         object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("sync-1") },
         transaction,
+        connectorTimeout = connectorTimeout,
         auditTrail = auditTrail,
         metrics = metrics,
+        sourceAccessUrlTtl = sourceAccessUrlTtl,
     )
 
     private fun event() = OutboxEvent(

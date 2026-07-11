@@ -32,7 +32,7 @@ import java.time.Duration
  * lifecycle writes are isolated in short transactions; storage and connector
  * calls always happen after the preparation transaction has completed.
  */
-class DocumentSyncService(
+class DocumentSyncService @JvmOverloads constructor(
     private val documentRepository: DocumentRepository,
     private val fileObjectRepository: FileObjectRepository,
     private val storageAdapter: StorageAdapter,
@@ -44,10 +44,22 @@ class DocumentSyncService(
     private val connectorTimeout: Duration = Duration.ofSeconds(30),
     private val auditTrail: AuditTrail? = null,
     private val metrics: FileWeftMetrics? = null,
+    /**
+     * Lifetime of the storage URL handed to a downstream connector. This is
+     * intentionally independent from [connectorTimeout]: an asynchronous
+     * downstream can acknowledge the RPC before it fetches the file.
+     */
+    private val sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
 ) {
     init {
         require(connectorName.isNotBlank()) { "Connector name must not be blank." }
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
+        require(!sourceAccessUrlTtl.isNegative && !sourceAccessUrlTtl.isZero) {
+            "Source access URL TTL must be positive."
+        }
+        require(sourceAccessUrlTtl >= connectorTimeout) {
+            "Source access URL TTL must be at least the connector timeout."
+        }
     }
 
     fun synchronize(sourceEvent: OutboxEvent): OutboxHandlingResult {
@@ -96,7 +108,7 @@ class DocumentSyncService(
         val source = ConnectorFileSource(
             downloadUri = storageAdapter.accessUrl(
                 StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
-                connectorTimeout,
+                sourceAccessUrlTtl,
             ),
             fileName = fileObject.fileName,
             contentType = fileObject.contentType,

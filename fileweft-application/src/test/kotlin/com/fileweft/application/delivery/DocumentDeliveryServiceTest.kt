@@ -356,6 +356,49 @@ class DocumentDeliveryServiceTest {
     }
 
     @Test
+    fun `uses a source URL lifetime independent from the downstream RPC timeout`() {
+        var requestedSourceTtl: Duration? = null
+        val connectorTimeout = Duration.ofSeconds(2)
+        val sourceAccessUrlTtl = Duration.ofMinutes(5)
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            storageAdapter = object : TestStorage() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI {
+                    requestedSourceTtl = expiresIn
+                    return URI("https://storage.test/${location.path}")
+                }
+            },
+            connectorTimeout = connectorTimeout,
+            sourceAccessUrlTtl = sourceAccessUrlTtl,
+        )
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, fixture.sync.synchronize(fixture.events.events.single()).status)
+
+        assertEquals(sourceAccessUrlTtl, requestedSourceTtl)
+        assertEquals(connectorTimeout, fixture.connectors.getValue("archive").requests.single().invocation.timeout)
+    }
+
+    @Test
+    fun `rejects non-positive or shorter source URL lifetimes`() {
+        assertFailsWith<IllegalArgumentException> {
+            fixture(
+                listOf(target("archive", DeliveryRequirement.REQUIRED)),
+                mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+                sourceAccessUrlTtl = Duration.ZERO,
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            fixture(
+                listOf(target("archive", DeliveryRequirement.REQUIRED)),
+                mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+                connectorTimeout = Duration.ofSeconds(2),
+                sourceAccessUrlTtl = Duration.ofSeconds(1),
+            )
+        }
+    }
+
+    @Test
     fun `resolves synchronization and withdrawal connectors outside database transactions`() {
         val transaction = TrackingTransaction()
         val fixture = fixture(
@@ -570,11 +613,17 @@ class DocumentDeliveryServiceTest {
     }
 
     @Test
-    fun `retains the pre metrics Java constructor overloads for custom host wiring`() {
+    fun `retains Java constructor overloads for custom host wiring`() {
         assertTrue(
             DocumentDeliverySyncService::class.java.constructors.any { constructor ->
                 constructor.parameterTypes.size == 9 &&
                     constructor.parameterTypes.last() == DocumentDeliveryRemovalPlanner::class.java
+            },
+        )
+        assertTrue(
+            DocumentDeliverySyncService::class.java.constructors.any { constructor ->
+                constructor.parameterTypes.size == 10 &&
+                    constructor.parameterTypes.last() == FileWeftMetrics::class.java
             },
         )
         assertTrue(
@@ -597,6 +646,9 @@ class DocumentDeliveryServiceTest {
         metrics: FileWeftMetrics? = null,
         resolverTransaction: TrackingTransaction? = null,
         afterConnectorResolution: ((String) -> Unit)? = null,
+        storageAdapter: StorageAdapter = TestStorage(),
+        connectorTimeout: Duration = Duration.ofSeconds(30),
+        sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
     ): Fixture {
         val document = publishingDocument()
         val documents = MemoryDocuments(document)
@@ -639,10 +691,11 @@ class DocumentDeliveryServiceTest {
                 override fun findById(tenantId: Identifier, fileObjectId: Identifier) = file.takeIf { tenantId == TENANT && fileObjectId == file.id }
                 override fun save(fileObject: FileObject) = Unit
             },
-            storageAdapter = TestStorage,
+            storageAdapter = storageAdapter,
             connectors = connectorResolver,
             deliveries = deliveries,
             transaction = transaction,
+            connectorTimeout = connectorTimeout,
             removalPlanner = DocumentDeliveryRemovalPlanner(
                 deliveries,
                 events,
@@ -650,6 +703,7 @@ class DocumentDeliveryServiceTest {
                 CLOCK,
             ),
             metrics = metrics,
+            sourceAccessUrlTtl = sourceAccessUrlTtl,
         )
         val removal = DocumentDeliveryRemovalService(connectorResolver, deliveries, transaction, metrics = metrics)
         return Fixture(document, documents, deliveries, events, connectors, connectorResolver, sync, removal, planner)
@@ -712,8 +766,8 @@ class DocumentDeliveryServiceTest {
         override fun nextId() = Identifier(values.removeFirst())
     }
 
-    private object TestStorage : StorageAdapter {
-        override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI("https://storage.test/${location.path}")
+    private open class TestStorage : StorageAdapter {
+        override open fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI("https://storage.test/${location.path}")
         override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = throw UnsupportedOperationException()
         override fun download(location: StorageObjectLocation): StorageDownload = throw UnsupportedOperationException()
         override fun delete(location: StorageObjectLocation) = Unit

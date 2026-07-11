@@ -42,9 +42,21 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     private val auditTrail: AuditTrail? = null,
     private val removalPlanner: DocumentDeliveryRemovalPlanner? = null,
     private val metrics: FileWeftMetrics? = null,
+    /**
+     * Lifetime of the storage URL handed to a downstream connector. This is
+     * intentionally independent from [connectorTimeout]: an asynchronous
+     * downstream can acknowledge the RPC before it fetches the file.
+     */
+    private val sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
 ) {
     init {
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
+        require(!sourceAccessUrlTtl.isNegative && !sourceAccessUrlTtl.isZero) {
+            "Source access URL TTL must be positive."
+        }
+        require(sourceAccessUrlTtl >= connectorTimeout) {
+            "Source access URL TTL must be at least the connector timeout."
+        }
     }
 
     fun synchronize(sourceEvent: OutboxEvent): OutboxHandlingResult {
@@ -189,7 +201,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 source = ConnectorFileSource(
                     downloadUri = storageAdapter.accessUrl(
                         StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
-                        connectorTimeout,
+                        sourceAccessUrlTtl,
                     ),
                     fileName = fileObject.fileName,
                     contentType = fileObject.contentType,

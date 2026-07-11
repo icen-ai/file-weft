@@ -33,6 +33,12 @@ class FileWeftProperties {
         var defaultProfileId: String = "default"
         /** Hard upper bound for one downstream connector invocation. */
         var connectorTimeoutMillis: Long = 30_000
+        /**
+         * Lifetime of the signed/storage source URL delivered to a downstream.
+         * It must be no shorter than [connectorTimeoutMillis] because a remote
+         * platform can acknowledge the hand-off before it retrieves the file.
+         */
+        var sourceAccessUrlTtlMillis: Long = 900_000
         /** Consecutive retryable outcomes before the connector circuit opens. */
         var circuitBreakerFailureThreshold: Int = 3
         /** How long an open connector circuit rejects work before one recovery probe. */

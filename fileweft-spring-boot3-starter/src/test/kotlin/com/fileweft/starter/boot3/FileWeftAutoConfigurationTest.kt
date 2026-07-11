@@ -22,6 +22,7 @@ import com.fileweft.application.doctor.CatalogDoctorChecker
 import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.doctor.WorkflowDoctorChecker
+import com.fileweft.application.delivery.DocumentDeliverySyncService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.upload.ResumableUploadService
@@ -95,6 +96,24 @@ class FileWeftAutoConfigurationTest {
         contextRunner().withPropertyValues("fileweft.default-tenant-id=tenant-a").run { context ->
             assertEquals("tenant-a", context.getBean(TenantProvider::class.java).currentTenant().tenantId.value)
         }
+    }
+
+    @Test
+    fun `binds the independent source URL lifetime into delivery runtime wiring`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.sync.connector-timeout-millis=2000",
+                "fileweft.sync.source-access-url-ttl-millis=9000",
+            )
+            .run { context ->
+                assertEquals(9_000, context.getBean(FileWeftProperties::class.java).sync.sourceAccessUrlTtlMillis)
+                val delivery = context.getBean(DocumentDeliverySyncService::class.java)
+                val sourceUrlTtl = delivery.javaClass.getDeclaredField("sourceAccessUrlTtl")
+                    .apply { isAccessible = true }
+                    .get(delivery)
+                assertEquals(Duration.ofSeconds(9), sourceUrlTtl)
+            }
     }
 
     @Test
