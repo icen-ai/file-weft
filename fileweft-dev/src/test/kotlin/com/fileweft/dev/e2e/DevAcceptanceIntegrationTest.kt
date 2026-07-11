@@ -572,7 +572,10 @@ class DevAcceptanceIntegrationTest {
 
         val detail = awaitDoctorRecord(documentId, admin)
         assertTrue(detail.path("tasks").any { it.path("id").asText() == scheduled.path("taskId").asText() && it.path("status").asText() == "SUCCESS" })
-        assertTrue(detail.path("doctorRecords").any { it.path("taskId").asText() == scheduled.path("taskId").asText() })
+        val report = mapper.readTree(
+            detail.path("doctorRecords").first { it.path("taskId").asText() == scheduled.path("taskId").asText() }.path("report").asText(),
+        )
+        assertTrue(report.path("checks").any { it.path("checkerName").asText() == "catalog" && it.path("status").asText() == "HEALTHY" })
         assertAuditActor(detail, "document:doctor:schedule", "alpha-editor", "Alpha 编辑者")
     }
 

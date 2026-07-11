@@ -455,6 +455,13 @@ class FileWeftRuntimeConfiguration {
     ) = StorageDoctorChecker(documents, fileObjects, storage, transaction)
 
     @Bean
+    @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
+    @ConditionalOnMissingBean(CatalogDoctorChecker::class)
+    fun catalogDoctor(
+        documents: DocumentRepository, assets: FileAssetRepository, catalog: DocumentCatalogProvider, transaction: ApplicationTransaction,
+    ) = CatalogDoctorChecker(documents, assets, catalog, transaction)
+
+    @Bean
     @ConditionalOnMissingBean(ConnectorDoctorChecker::class)
     fun connectorDoctor(
         connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, resilience: ConnectorResilienceRegistry,
@@ -464,19 +471,24 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun doctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
-        storage: StorageDoctorChecker, connector: ConnectorDoctorChecker, agent: AgentDoctorChecker, transaction: ApplicationTransaction,
+        storage: StorageDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
+        agent: AgentDoctorChecker, transaction: ApplicationTransaction,
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
-    ) = DoctorApplicationService(
-        tenants, permission,
-        listOf<DoctorChecker>(
-            TransactionalDoctorChecker(lifecycle, transaction),
-            storage,
-            connector,
-            agent,
-        ) + plugins.doctorCheckers(),
-        clock,
-        metrics,
-    )
+    ): DoctorApplicationService {
+        val catalogChecker = catalog.getIfAvailable()
+        return DoctorApplicationService(
+            tenants, permission,
+            listOf<DoctorChecker>(
+                TransactionalDoctorChecker(lifecycle, transaction),
+                storage,
+            ) + listOfNotNull(catalogChecker) + listOf(
+                connector,
+                agent,
+            ) + plugins.doctorCheckers(),
+            clock,
+            metrics,
+        )
+    }
 
     @Bean
     @ConditionalOnMissingBean(DocumentDoctorTaskHandler::class)

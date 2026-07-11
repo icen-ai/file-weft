@@ -18,6 +18,7 @@ import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
+import com.fileweft.application.doctor.CatalogDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownloadService
@@ -188,11 +189,12 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
-    fun `auto configures catalog access only when the host provides one catalog provider`() {
+    fun `auto configures catalog integration only when the host provides one catalog provider`() {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java, CustomerConfiguration::class.java, CatalogConfiguration::class.java)
             .run { context ->
                 assertTrue(context.getBean(DocumentCatalogAccessService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogBindingService::class.java) != null)
+                assertTrue(context.getBean(CatalogDoctorChecker::class.java) != null)
             }
     }
 

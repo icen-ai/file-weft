@@ -13,7 +13,7 @@
 | Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |
 | Starter | Boot 2 / Boot 3 自动装配、安全默认实现与客户替换点 | Starter 上下文测试 |
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 指标 | Adapter 与 TestKit 合约测试 |
-| Doctor | 权限、生命周期、存储、连接器与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
+| Doctor | 权限、生命周期、存储、连接器、宿主目录绑定与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
 | Hardening | 多租户隔离、Outbox、重试、熔断、限流、Trace、完整性校验、断点续传、下游撤回 | 全仓检查与 Compose 验收 |
 
