@@ -19,6 +19,16 @@ FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle depend
 
 最后再次运行不带写入参数的 `check`，并在提交前审阅所有 `*.lockfile` 和 `gradle/verification-metadata.xml` 的增量。不要手工修改这些 Gradle 生成文件；若出现未知组件、意外版本或校验和变化，应先确认其来源和升级理由。
 
+## 发布 SBOM
+
+发版流水线应在锁定依赖、验证 SHA-256 后执行：
+
+```powershell
+.\gradlew.bat verifySbom --no-daemon
+```
+
+该任务通过 CycloneDX Gradle 插件聚合所有子模块已解析的依赖，并在 `build/reports/cyclonedx/bom.json` 与 `build/reports/cyclonedx/bom.xml` 生成 JSON/XML 物料清单；`verifySbom` 会拒绝空文件或不声明 `bomFormat: CycloneDX` 的 JSON。物料清单包含生成时刻和构建序列号，属于本次发布的审计证据而非应提交的可复现源码文件。发布系统应将两份文件与工件、签名和版本号一起归档。
+
 ## Docker 开发编排
 
 `.docker/docker-compose.dev.yaml` 与 `.docker/Dockerfile.dev` 中的外部基础镜像都使用不可变 digest，`name: fw-dev` 不应修改。更新镜像时，先审阅目标镜像的官方 manifest 摘要，再同时更新 Dockerfile 或 Compose 中的 tag 与 digest；不能把 RustFS 等依赖改回 `latest`。

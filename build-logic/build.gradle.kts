@@ -50,5 +50,9 @@ gradlePlugin {
             id = "fileweft.architecture-guard"
             implementationClass = "com.fileweft.buildlogic.ArchitectureGuardPlugin"
         }
+        register("fileweftSbomVerification") {
+            id = "fileweft.sbom-verification"
+            implementationClass = "com.fileweft.buildlogic.SbomVerificationPlugin"
+        }
     }
 }

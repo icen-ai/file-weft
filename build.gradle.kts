@@ -1,5 +1,7 @@
 plugins {
     id("fileweft.architecture-guard")
+    id("org.cyclonedx.bom") version "3.2.4"
+    id("fileweft.sbom-verification")
 }
 
 group = "com.fileweft"

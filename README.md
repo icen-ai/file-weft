@@ -16,9 +16,10 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
 ```powershell
 .\gradlew.bat check
+.\gradlew.bat verifySbom
 ```
 
-依赖版本通过 `gradle/libs.versions.toml` 管理，所有配置启用依赖锁定。
+依赖版本通过 `gradle/libs.versions.toml` 管理，所有配置启用依赖锁定。`verifySbom` 生成并校验全仓 CycloneDX JSON/XML 物料清单，适合在发版流水线中归档。
 
 ## 本地开发
 

@@ -15,12 +15,14 @@
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 指标 | Adapter 与 TestKit 合约测试 |
 | Doctor | 权限、生命周期、存储、连接器、宿主目录绑定与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
-| Hardening | 多租户隔离、Outbox、重试、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标与有界连接器诊断 | 全仓检查与 Compose 验收 |
+| Hardening | 多租户隔离、Outbox、重试、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验与 CycloneDX SBOM | 全仓检查、`verifySbom` 与 Compose 验收 |
 
 目前的关键验收命令：
 
 ```powershell
 .\gradlew.bat check --no-daemon
+
+.\gradlew.bat verifySbom --no-daemon
 
 $env:FILEWEFT_RUN_POSTGRES_TESTS='true'
 .\gradlew.bat :fileweft-persistence:test --no-daemon
