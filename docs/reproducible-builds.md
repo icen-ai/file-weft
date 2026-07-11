@@ -18,3 +18,15 @@ FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle depend
 ```
 
 最后再次运行不带写入参数的 `check`，并在提交前审阅所有 `*.lockfile` 和 `gradle/verification-metadata.xml` 的增量。不要手工修改这些 Gradle 生成文件；若出现未知组件、意外版本或校验和变化，应先确认其来源和升级理由。
+
+## Docker 开发编排
+
+`.docker/docker-compose.dev.yaml` 与 `.docker/Dockerfile.dev` 中的外部基础镜像都使用不可变 digest，`name: fw-dev` 不应修改。更新镜像时，先审阅目标镜像的官方 manifest 摘要，再同时更新 Dockerfile 或 Compose 中的 tag 与 digest；不能把 RustFS 等依赖改回 `latest`。
+
+提交前至少运行：
+
+```powershell
+docker compose -f .docker/docker-compose.dev.yaml config -q
+```
+
+涉及应用镜像或运行行为的改动还应重建开发镜像并执行 Dev 验收测试。镜像 digest 的固定保证后续重建使用同一镜像内容，但不会自动替换已经运行的 `fw-dev` 容器。
