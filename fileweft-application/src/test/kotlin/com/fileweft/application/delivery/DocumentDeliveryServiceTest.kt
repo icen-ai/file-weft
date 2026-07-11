@@ -31,6 +31,8 @@ import com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition
 import com.fileweft.spi.event.OutboxHandlingStatus
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.*
 import com.fileweft.spi.tenant.TenantProvider
 import org.junit.jupiter.api.Test
@@ -42,6 +44,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class DocumentDeliveryServiceTest {
     @Test
@@ -280,12 +283,74 @@ class DocumentDeliveryServiceTest {
         assertEquals(emptyList(), fixture.deliveries.findByDocument(TENANT, fixture.document.id))
     }
 
+    @Test
+    fun `records per target delivery outcomes outside transactions and skips idempotent replays`() {
+        val transaction = TrackingTransaction()
+        val metrics = RecordingMetrics(transaction)
+        val fixture = fixture(
+            listOf(
+                target("archive", DeliveryRequirement.REQUIRED),
+                target("search", DeliveryRequirement.REQUIRED),
+            ),
+            mapOf(
+                "archive" to ConnectorSyncStatus.SUCCESS,
+                "search" to ConnectorSyncStatus.PERMANENT_FAILURE,
+            ),
+            transaction = transaction,
+            metrics = metrics,
+        )
+
+        fixture.events.events.forEach { fixture.sync.synchronize(it) }
+        fixture.sync.synchronize(fixture.events.events.first())
+
+        assertEquals(
+            listOf(
+                MetricCall(FileWeftMetric.SYNC_SUCCESS, mapOf("tenantId" to TENANT.value, "connector" to "archive")),
+                MetricCall(FileWeftMetric.SYNC_FAILURE, mapOf("tenantId" to TENANT.value, "connector" to "search")),
+            ),
+            metrics.calls,
+        )
+    }
+
+    @Test
+    fun `metric failures do not alter retryable delivery acknowledgement or exhaustion handling`() {
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.RETRYABLE_FAILURE),
+            metrics = object : FileWeftMetrics {
+                override fun increment(metric: FileWeftMetric, tags: Map<String, String>) {
+                    throw IllegalStateException("metrics unavailable")
+                }
+            },
+        )
+        val event = fixture.events.events.single()
+
+        val result = fixture.sync.synchronize(event)
+        fixture.sync.exhaust(event, "outbox retry limit reached")
+
+        assertEquals(OutboxHandlingStatus.RETRYABLE_FAILURE, result.status)
+        assertEquals(DocumentDeliveryStatus.FAILED, fixture.deliveries.findByDocument(TENANT, fixture.document.id).single().status)
+        assertEquals(LifecycleState.SYNC_ERROR, fixture.document.lifecycleState)
+    }
+
+    @Test
+    fun `retains the pre metrics Java constructor overload for custom host wiring`() {
+        assertTrue(
+            DocumentDeliverySyncService::class.java.constructors.any { constructor ->
+                constructor.parameterTypes.size == 9 &&
+                    constructor.parameterTypes.last() == DocumentDeliveryRemovalPlanner::class.java
+            },
+        )
+    }
+
     private fun fixture(
         definitions: List<DocumentDeliveryTargetDefinition>,
         outcomes: Map<String, ConnectorSyncStatus>,
         removalOutcomes: Map<String, ConnectorSyncStatus> = emptyMap(),
         plan: Boolean = true,
         beforeConnectorResult: ((String, Document) -> Unit)? = null,
+        transaction: ApplicationTransaction = DirectTransaction,
+        metrics: FileWeftMetrics? = null,
     ): Fixture {
         val document = publishingDocument()
         val documents = MemoryDocuments(document)
@@ -323,15 +388,16 @@ class DocumentDeliveryServiceTest {
             storageAdapter = TestStorage,
             connectors = connectorResolver,
             deliveries = deliveries,
-            transaction = DirectTransaction,
+            transaction = transaction,
             removalPlanner = DocumentDeliveryRemovalPlanner(
                 deliveries,
                 events,
                 SequenceIds("late-removal-event-archive", "late-removal-event-search"),
                 CLOCK,
             ),
+            metrics = metrics,
         )
-        val removal = DocumentDeliveryRemovalService(connectorResolver, deliveries, DirectTransaction)
+        val removal = DocumentDeliveryRemovalService(connectorResolver, deliveries, transaction)
         return Fixture(document, documents, deliveries, events, connectors, connectorResolver, sync, removal, planner)
     }
 
@@ -402,6 +468,32 @@ class DocumentDeliveryServiceTest {
     }
 
     private object DirectTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = action() }
+
+    private class TrackingTransaction : ApplicationTransaction {
+        var active = false
+            private set
+
+        override fun <T> execute(action: () -> T): T {
+            check(!active) { "Nested transaction is not expected in this fixture." }
+            active = true
+            return try {
+                action()
+            } finally {
+                active = false
+            }
+        }
+    }
+
+    private data class MetricCall(val metric: FileWeftMetric, val tags: Map<String, String>)
+
+    private class RecordingMetrics(private val transaction: TrackingTransaction) : FileWeftMetrics {
+        val calls = mutableListOf<MetricCall>()
+
+        override fun increment(metric: FileWeftMetric, tags: Map<String, String>) {
+            check(!transaction.active) { "Metrics must be emitted outside the application transaction." }
+            calls += MetricCall(metric, tags)
+        }
+    }
 
     private data class Fixture(
         val document: Document,

@@ -304,12 +304,13 @@ class FileWeftRuntimeConfiguration {
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
         connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
         transaction: ApplicationTransaction, auditTrail: AuditTrail, properties: FileWeftProperties,
-        removalPlanner: DocumentDeliveryRemovalPlanner,
+        removalPlanner: DocumentDeliveryRemovalPlanner, metrics: FileWeftMetrics,
     ) = DocumentDeliverySyncService(
         documents, fileObjects, storage, connectors, deliveries, transaction,
         connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,
         removalPlanner = removalPlanner,
+        metrics = metrics,
     )
 
     @Bean

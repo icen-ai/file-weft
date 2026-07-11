@@ -20,6 +20,8 @@ import com.fileweft.spi.delivery.DeliveryConnectorResolver
 import com.fileweft.spi.delivery.DeliveryRequirement
 import com.fileweft.spi.event.OutboxHandlingResult
 import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.storage.StorageAdapter
 import com.fileweft.spi.storage.StorageObjectLocation
 import java.time.Duration
@@ -29,7 +31,7 @@ import java.time.Duration
  * keeps its own idempotency key, so retrying one downstream never replays the
  * other successful destinations.
  */
-class DocumentDeliverySyncService(
+class DocumentDeliverySyncService @JvmOverloads constructor(
     private val documentRepository: DocumentRepository,
     private val fileObjectRepository: FileObjectRepository,
     private val storageAdapter: StorageAdapter,
@@ -39,6 +41,7 @@ class DocumentDeliverySyncService(
     private val connectorTimeout: Duration = Duration.ofSeconds(30),
     private val auditTrail: AuditTrail? = null,
     private val removalPlanner: DocumentDeliveryRemovalPlanner? = null,
+    private val metrics: FileWeftMetrics? = null,
 ) {
     init {
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
@@ -63,6 +66,7 @@ class DocumentDeliverySyncService(
                 invokeConnector(preparation),
             )
         }
+        recordMetric(preparation, handling, sourceEvent.tenantId.value)
         return handling
     }
 
@@ -90,27 +94,45 @@ class DocumentDeliverySyncService(
     private fun prepare(tenantId: Identifier, deliveryId: Identifier): Preparation {
         val delivery = deliveries.findById(tenantId, deliveryId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
-        if (delivery.status == DocumentDeliveryStatus.SUCCEEDED) return Preparation.AlreadySucceeded
+        if (delivery.status == DocumentDeliveryStatus.SUCCEEDED) return Preparation.AlreadySucceeded(delivery.connectorId)
         if (delivery.status == DocumentDeliveryStatus.FAILED) {
-            return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target requires a manual retry.")
+            return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Delivery target requires a manual retry.",
+                delivery.connectorId,
+            )
         }
         val document = documentRepository.findById(tenantId, delivery.documentId)
-            ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was not found in the event tenant.")
-        if (delivery.deliveryGeneration != document.deliveryGeneration) return Preparation.Superseded
+            ?: return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Document was not found in the event tenant.",
+                delivery.connectorId,
+            )
+        if (delivery.deliveryGeneration != document.deliveryGeneration) return Preparation.Superseded(delivery.connectorId)
         if (document.lifecycleState !in setOf(LifecycleState.PUBLISHING, LifecycleState.SYNC_ERROR, LifecycleState.PUBLISHED)) {
             return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Document is not available for delivery from lifecycle state ${document.lifecycleState.name}.",
+                delivery.connectorId,
             )
         }
         val version = currentVersion(document)
-            ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document has no active version.")
+            ?: return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Document has no active version.",
+                delivery.connectorId,
+            )
         val fileObject = fileObjectRepository.findById(tenantId, version.fileObjectId)
-            ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Active document version references a missing file object.")
+            ?: return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Active document version references a missing file object.",
+                delivery.connectorId,
+            )
         val connector = connectors.findConnector(delivery.connectorId)
             ?: return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Delivery connector '${delivery.connectorId}' is no longer configured.",
+                delivery.connectorId,
             )
         return Preparation.Ready(delivery, document.id, fileObject, connector)
     }
@@ -218,17 +240,46 @@ class DocumentDeliverySyncService(
         )
     }
 
+    /** Metrics are emitted after all database work, and must not affect acknowledgement semantics. */
+    private fun recordMetric(preparation: Preparation, handling: OutboxHandlingResult, tenantId: String) {
+        if (preparation is Preparation.AlreadySucceeded || preparation is Preparation.Superseded) return
+        val metric = if (handling.status == OutboxHandlingStatus.SUCCEEDED) {
+            FileWeftMetric.SYNC_SUCCESS
+        } else {
+            FileWeftMetric.SYNC_FAILURE
+        }
+        try {
+            metrics?.increment(
+                metric,
+                buildMap {
+                    put("tenantId", tenantId)
+                    preparation.connectorId?.let { connectorId -> put("connector", connectorId) }
+                },
+            )
+        } catch (_: Exception) {
+            // Observability failures must never alter outbox acknowledgement semantics.
+        }
+    }
+
     private sealed class Preparation {
-        data object AlreadySucceeded : Preparation()
-        data object Superseded : Preparation()
+        abstract val connectorId: String?
+
+        data class AlreadySucceeded(override val connectorId: String) : Preparation()
+        data class Superseded(override val connectorId: String) : Preparation()
         data class Ready(
             val delivery: DocumentDeliveryTarget,
             val documentId: Identifier,
             val fileObject: FileObject,
             val connector: com.fileweft.spi.connector.FileConnector,
-        ) : Preparation()
+        ) : Preparation() {
+            override val connectorId: String = delivery.connectorId
+        }
 
-        data class Failure(val status: ConnectorSyncStatus, val message: String) : Preparation()
+        data class Failure(
+            val status: ConnectorSyncStatus,
+            val message: String,
+            override val connectorId: String? = null,
+        ) : Preparation()
     }
 
     private companion object {
