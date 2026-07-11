@@ -5,7 +5,7 @@ import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryPreparation
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.security.ApplicationAuthorization
-import com.fileweft.application.security.ApplicationAuthorizationException
+import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
@@ -125,7 +125,7 @@ class DocumentReviewWorkflowService(
             workflowRepository.findById(tenant.tenantId, workflowId) ?: throw WorkflowNotFoundException(workflowId)
         }
         val operator = userRealmProvider.currentUser()
-            ?: throw ApplicationAuthorizationException("A current user is required.")
+            ?: throw ApplicationUnauthenticatedException()
         authorization.requireDocumentAction(tenant.tenantId, workflowSnapshot.documentId, AUDIT_ACTION)
         var preparation: DocumentDeliveryPreparation? = if (
             approved && workflowSnapshot.willCompleteAfterApproval(taskId, operator.id)

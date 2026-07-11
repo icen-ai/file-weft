@@ -3,8 +3,8 @@ package com.fileweft.dev.api.config
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.adapter.s3.S3StorageAdapter
 import com.fileweft.adapter.s3.S3StorageConfiguration
-import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.catalog.DocumentCatalogAccessService
+import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
@@ -98,9 +98,8 @@ class DevApiConfiguration {
 
     @Bean
     fun devCatalogDocumentService(
-        drafts: DocumentDraftService,
-        catalogAccess: DocumentCatalogAccessService,
-    ): DevCatalogDocumentService = DevCatalogDocumentService(drafts, catalogAccess)
+        catalogDrafts: DocumentCatalogDraftService,
+    ): DevCatalogDocumentService = DevCatalogDocumentService(catalogDrafts)
 
     @Bean
     fun devDocumentQueryService(

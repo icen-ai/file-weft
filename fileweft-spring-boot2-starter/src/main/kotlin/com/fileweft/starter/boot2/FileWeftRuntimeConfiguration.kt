@@ -16,9 +16,13 @@ import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
+import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.document.DocumentDraftService
+import com.fileweft.application.document.DocumentFolderReadAccess
+import com.fileweft.application.document.DocumentQueryRepository
+import com.fileweft.application.document.DocumentQueryService
 import com.fileweft.application.delivery.DocumentDeliveryOutboxEventHandler
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
@@ -74,6 +78,7 @@ import com.fileweft.persistence.jdbc.JdbcApplicationTransaction
 import com.fileweft.persistence.jdbc.JdbcAgentResultRepository
 import com.fileweft.persistence.jdbc.JdbcAuditRecordRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentRepository
+import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
 import com.fileweft.persistence.jdbc.JdbcDoctorReportRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentDeliveryTargetRepository
 import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
@@ -127,6 +132,10 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DocumentRepository::class)
     fun fileWeftDocumentRepository(clock: Clock): DocumentRepository = JdbcDocumentRepository(clock)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentQueryRepository::class)
+    fun fileWeftDocumentQueryRepository(): DocumentQueryRepository = JdbcDocumentQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(FileObjectRepository::class)
@@ -254,6 +263,14 @@ class FileWeftRuntimeConfiguration {
         transaction,
         auditTrail,
     )
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogDraftService::class)
+    fun fileWeftDocumentCatalogDraftService(
+        drafts: DocumentDraftService,
+        catalogAccess: DocumentCatalogAccessService,
+    ): DocumentCatalogDraftService = DocumentCatalogDraftService(drafts, catalogAccess)
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
@@ -464,6 +481,16 @@ class FileWeftRuntimeConfiguration {
         tenants, users, authorization, storage, sessions, fileObjects, assets, outbox, identifiers, transaction, clock,
         sessionTtl = Duration.ofMillis(properties.upload.resumableSessionTtlMillis),
         metrics = metrics,
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentQueryService::class)
+    fun fileWeftDocumentQueryService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        queries: DocumentQueryRepository, transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ): DocumentQueryService = DocumentQueryService(
+        tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
     )
 
     @Bean

@@ -48,14 +48,16 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
                 val forbiddenSyntax = forbiddenSyntaxByModule[module].orEmpty()
 
                 sourceRoot.walkTopDown()
-                    .filter { source -> source.isFile && source.extension == "kt" }
+                    .filter { source -> source.isFile && source.extension in SOURCE_EXTENSIONS }
                     .toList()
                     .sortedBy { source -> source.invariantSeparatorsPath }
                     .forEach { source ->
                         source.readLines(StandardCharsets.UTF_8).forEachIndexed { index, line ->
-                            val importedType = line.trim()
+                            val trimmedLine = line.trim()
+                            val importedType = trimmedLine
                                 .takeIf { it.startsWith("import ") }
                                 ?.removePrefix("import ")
+                                ?.removePrefix("static ")
                                 ?.substringBefore(" as ")
                             if (importedType != null) {
                                 val forbiddenPrefix = forbiddenPrefixes.firstOrNull(importedType::startsWith)
@@ -66,6 +68,20 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
                                         ?: "not approved for $module"
                                     violations += "$module/$relativePath:${index + 1} imports $importedType ($reason)"
                                 }
+                            } else {
+                                val relativePath = source.relativeTo(sourceRoot).invariantSeparatorsPath
+                                forbiddenPrefixes.firstOrNull { prefix -> line.contains(prefix) }?.let { prefix ->
+                                    violations += "$module/$relativePath:${index + 1} references $prefix (forbidden prefix: $prefix)"
+                                }
+                                FILEWEFT_TYPE_REFERENCE.findAll(line)
+                                    .map { match -> match.value }
+                                    .distinct()
+                                    .filterNot { reference -> approvedPrefixes.any { prefix ->
+                                        reference == prefix.removeSuffix(".") || reference.startsWith(prefix)
+                                    } }
+                                    .forEach { reference ->
+                                        violations += "$module/$relativePath:${index + 1} references $reference (not approved for $module)"
+                                    }
                             }
 
                             forbiddenSyntax.firstOrNull { syntax -> line.contains(syntax) }?.let { syntax ->
@@ -82,5 +98,10 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
                     "\nUse an SPI, Java-friendly API type, or move the infrastructure concern to the appropriate outer module.",
             )
         }
+    }
+
+    private companion object {
+        val SOURCE_EXTENSIONS = setOf("kt", "java")
+        val FILEWEFT_TYPE_REFERENCE = Regex("\\bcom\\.fileweft\\.[A-Za-z0-9_.]+")
     }
 }

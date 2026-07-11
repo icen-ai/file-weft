@@ -18,6 +18,7 @@ import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
+import com.fileweft.spi.catalog.DocumentCatalogBinding
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetric
@@ -69,6 +70,30 @@ class DocumentDraftServiceTest {
         assertEquals(DocumentDraftService.CREATE_ACTION, audits.records.single().action)
         assertEquals("user-1", audits.records.single().operatorId?.value)
         assertEquals("测试编辑者", audits.records.single().operatorName)
+    }
+
+    @Test
+    fun `snapshots create metadata before an untrusted storage adapter can mutate it`() {
+        val storage = RecordingStorage().apply { attemptMetadataMutation = true }
+        val assets = RecordingAssets()
+        val audits = RecordingAudits()
+        val service = service(
+            storage = storage,
+            assets = assets,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            auditTrail = auditTrail(audits, listOf("audit-1")),
+        )
+        val metadata = linkedMapOf(
+            "source" to "host",
+            DocumentCatalogBinding.METADATA_KEY to "inbox",
+        )
+
+        service.create(createCommand().copy(metadata = metadata), ByteArrayInputStream("content".toByteArray()))
+
+        assertTrue(storage.metadataMutationRejected)
+        assertEquals("host", assets.saved.single().metadata["source"])
+        assertEquals("inbox", assets.saved.single().metadata[DocumentCatalogBinding.METADATA_KEY])
+        assertEquals("inbox", audits.records.single().details["folderId"])
     }
 
     @Test
@@ -149,6 +174,26 @@ class DocumentDraftServiceTest {
         assertEquals(listOf("1.0", "1.1"), updated.versions.map { it.versionNumber })
         assertEquals("file-2", updated.versions.last().fileObjectId.value)
         assertEquals("file-2", fileObjects.saved.single().id.value)
+    }
+
+    @Test
+    fun `snapshots version metadata before an untrusted storage adapter can mutate it`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage().apply { attemptMetadataMutation = true }
+        val service = service(
+            storage = storage,
+            documents = RecordingDocuments(existing),
+            identifiers = listOf("file-2", "version-2"),
+        )
+
+        service.addVersion(
+            existing.id,
+            AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain", metadata = mapOf("source" to "host")),
+            ByteArrayInputStream("content".toByteArray()),
+        )
+
+        assertTrue(storage.metadataMutationRejected)
+        assertEquals("host", storage.uploads.single().metadata["source"])
     }
 
     @Test
@@ -319,8 +364,20 @@ class DocumentDraftServiceTest {
         val uploads = mutableListOf<StorageUploadRequest>()
         val deleted = mutableListOf<StorageObjectLocation>()
         var storedContentLength: Long? = null
+        var attemptMetadataMutation: Boolean = false
+        var metadataMutationRejected: Boolean = false
         override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject {
             uploads += request
+            if (attemptMetadataMutation) {
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    (request.metadata as MutableMap<String, String>)["source"] = "tampered"
+                } catch (_: UnsupportedOperationException) {
+                    metadataMutationRejected = true
+                } catch (_: ClassCastException) {
+                    metadataMutationRejected = true
+                }
+            }
             return StoredObject(location, storedContentLength ?: request.contentLength, request.contentType, "sha256:test")
         }
         override fun delete(location: StorageObjectLocation) { deleted += location }

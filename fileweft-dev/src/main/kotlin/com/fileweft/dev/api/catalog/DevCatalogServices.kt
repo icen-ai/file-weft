@@ -1,10 +1,9 @@
 package com.fileweft.dev.api.catalog
 
 import com.fileweft.application.document.CreateDocumentDraftCommand
-import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.catalog.DocumentCatalogAccessService
+import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.domain.document.Document
-import com.fileweft.spi.catalog.DocumentCatalogBinding
 import java.io.InputStream
 
 data class DevCatalogFolderView(
@@ -24,21 +23,15 @@ class DevCatalogQueryService(
 }
 
 /**
- * Binds an uploaded FileWeft document to an externally owned folder reference.
- * Only the opaque folder ID is stored on the asset; folder contents remain in
- * the host-owned [DocumentCatalogAccessService].
+ * Supplies the Dev UI's default inbox while delegating all folder ACL,
+ * metadata validation, and atomic binding work to the application service.
  */
 class DevCatalogDocumentService(
-    private val drafts: DocumentDraftService,
-    private val catalogAccess: DocumentCatalogAccessService,
+    private val catalogDrafts: DocumentCatalogDraftService,
 ) {
     fun create(command: CreateDocumentDraftCommand, folderId: String?, content: InputStream): Document {
         val resolvedFolderId = folderId?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_FOLDER_ID
-        catalogAccess.requireFolderForDocumentCreation(resolvedFolderId)
-        return drafts.create(
-            command.copy(metadata = command.metadata + (DocumentCatalogBinding.METADATA_KEY to resolvedFolderId)),
-            content,
-        )
+        return catalogDrafts.createInFolder(command, resolvedFolderId, content)
     }
 
     private companion object {

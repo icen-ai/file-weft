@@ -19,7 +19,7 @@ internal class ApplicationAuthorization(
 
     fun requireAction(tenantId: Identifier, resourceId: Identifier, resourceType: String, action: String) {
         val user = userRealmProvider.currentUser()
-            ?: throw ApplicationAuthorizationException("A current user is required.")
+            ?: throw ApplicationUnauthenticatedException()
         val decision = authorizationProvider.authorize(
             AuthorizationRequest(
                 subject = AuthorizationSubject(user.id, "USER", user.attributes),
@@ -29,9 +29,39 @@ internal class ApplicationAuthorization(
             ),
         )
         if (!decision.allowed) {
-            throw ApplicationAuthorizationException(decision.reason ?: "Access denied for $action.")
+            throw ApplicationForbiddenException(decision.reason ?: ApplicationForbiddenException.DEFAULT_MESSAGE)
         }
     }
 }
 
-class ApplicationAuthorizationException(message: String) : SecurityException(message)
+/**
+ * Compatibility base type for all application-level authorization failures.
+ *
+ * HTTP adapters must classify the concrete child type rather than inspecting
+ * a human-readable message. Existing consumers catching this base type remain
+ * source and binary compatible.
+ */
+open class ApplicationAuthorizationException @JvmOverloads constructor(
+    message: String,
+    cause: Throwable? = null,
+) : SecurityException(message, cause)
+
+/** No trusted current user was available to authenticate the operation. */
+class ApplicationUnauthenticatedException @JvmOverloads constructor(
+    message: String = DEFAULT_MESSAGE,
+    cause: Throwable? = null,
+) : ApplicationAuthorizationException(message, cause) {
+    companion object {
+        const val DEFAULT_MESSAGE: String = "A current user is required."
+    }
+}
+
+/** A trusted user was present but the authorization provider denied access. */
+class ApplicationForbiddenException @JvmOverloads constructor(
+    message: String = DEFAULT_MESSAGE,
+    cause: Throwable? = null,
+) : ApplicationAuthorizationException(message, cause) {
+    companion object {
+        const val DEFAULT_MESSAGE: String = "Access denied."
+    }
+}

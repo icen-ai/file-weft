@@ -5,6 +5,7 @@ import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.outbox.OutboxEventRepository
+import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.event.OutboxEvent
@@ -252,12 +253,30 @@ class DocumentReviewWorkflowServiceTest {
         }
     }
 
+    @Test
+    fun `classifies a missing reviewer during a workflow decision as unauthenticated`() {
+        val document = pendingReviewDocument()
+        val workflow = pendingWorkflow(document.id)
+        val service = service(
+            documents = InMemoryDocuments(document),
+            workflows = InMemoryWorkflows(workflow),
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            currentUser = null,
+            authorization = { AuthorizationDecision(true) },
+        )
+
+        assertFailsWith<ApplicationUnauthenticatedException> {
+            service.approve(workflow.id, workflow.tasks.single().id, "approved")
+        }
+    }
+
     private fun service(
         documents: InMemoryDocuments,
         workflows: InMemoryWorkflows,
         outbox: RecordingOutbox,
         identifiers: List<String>,
-        currentUser: UserIdentity = UserIdentity(Identifier("reviewer-1"), "审批者"),
+        currentUser: UserIdentity? = UserIdentity(Identifier("reviewer-1"), "审批者"),
         auditTrail: AuditTrail? = null,
         reviewRoutes: DocumentReviewRouteResolver = DocumentReviewRouteResolver(),
         transaction: ApplicationTransaction = DirectTransaction,
@@ -268,7 +287,7 @@ class DocumentReviewWorkflowServiceTest {
         return DocumentReviewWorkflowService(
             tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(Identifier("tenant-1")) },
             userRealmProvider = object : UserRealmProvider {
-                override fun currentUser(): UserIdentity = currentUser
+                override fun currentUser(): UserIdentity? = currentUser
                 override fun findUser(userId: Identifier): UserIdentity? = null
             },
             authorizationProvider = object : AuthorizationProvider { override fun authorize(request: AuthorizationRequest) = authorization(request) },

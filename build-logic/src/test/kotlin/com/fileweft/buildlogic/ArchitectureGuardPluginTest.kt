@@ -66,9 +66,99 @@ class ArchitectureGuardPluginTest {
         val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
 
         assertTrue(result.output.contains("forbidden prefix: java.sql."))
-        assertTrue(result.output.contains("not approved for fileweft-core"))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
         assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
         assertTrue(result.output.contains("Reusing configuration cache."))
+    }
+
+    @Test
+    fun `guard rejects servlet references from Java web API sources without imports`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-web-api/src/main/java/com/fileweft/web/api/ForbiddenServletReference.java",
+            """
+            package com.fileweft.web.api;
+
+            final class ForbiddenServletReference {
+                private javax.servlet.ServletRequest request;
+            }
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("fileweft-web-api/com/fileweft/web/api/ForbiddenServletReference.java:4"))
+        assertTrue(result.output.contains("references javax.servlet."))
+        assertTrue(result.output.contains("forbidden prefix: javax.servlet."))
+    }
+
+    @Test
+    fun `guard rejects a runtime project dependency from the pure web API contract`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-web-api/build.gradle.kts",
+            """
+            plugins {
+                `java-library`
+            }
+
+            dependencies {
+                api(project(":fileweft-core"))
+            }
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftWebApiDependencies").buildAndFail()
+
+        assertTrue(result.output.contains("fileweft-web-api must remain a pure transport contract"))
+        assertTrue(result.output.contains("project::fileweft-core"))
+    }
+
+    @Test
+    fun `guard permits the outer web runtime boundary but rejects framework imports`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-web-runtime/src/main/kotlin/com/fileweft/web/runtime/AllowedBoundary.kt",
+            """
+            package com.fileweft.web.runtime
+
+            import com.fileweft.application.document.DocumentQueryService
+            import com.fileweft.core.id.Identifier
+            import com.fileweft.domain.document.LifecycleState
+            import com.fileweft.web.api.ApiPage
+            import java.util.Base64
+
+            internal class AllowedBoundary(
+                val queries: DocumentQueryService,
+                val id: Identifier,
+                val state: LifecycleState,
+                val page: ApiPage<String>,
+                val encoder: Base64.Encoder,
+            )
+            """.trimIndent(),
+        )
+
+        runner(projectDir, "verifyFileWeftArchitecture").build()
+
+        writeFile(
+            projectDir,
+            "fileweft-web-runtime/src/main/kotlin/com/fileweft/web/runtime/ForbiddenFramework.kt",
+            """
+            package com.fileweft.web.runtime
+
+            import org.springframework.context.ApplicationContext
+
+            internal class ForbiddenFramework(val context: ApplicationContext)
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("fileweft-web-runtime/com/fileweft/web/runtime/ForbiddenFramework.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
     }
 
     private fun writeProject(projectDir: File) {
@@ -78,6 +168,8 @@ class ArchitectureGuardPluginTest {
             """
             rootProject.name = "architecture-guard-fixture"
             include(":fileweft-core")
+            include(":fileweft-web-api")
+            include(":fileweft-web-runtime")
             """.trimIndent(),
         )
         writeFile(
@@ -92,6 +184,24 @@ class ArchitectureGuardPluginTest {
         writeFile(
             projectDir,
             "fileweft-core/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-api/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-runtime/build.gradle.kts",
             """
             plugins {
                 base

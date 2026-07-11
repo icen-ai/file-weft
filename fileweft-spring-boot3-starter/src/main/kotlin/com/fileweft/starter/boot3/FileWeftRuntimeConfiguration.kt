@@ -16,8 +16,12 @@ import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
+import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
+import com.fileweft.application.document.DocumentFolderReadAccess
+import com.fileweft.application.document.DocumentQueryRepository
+import com.fileweft.application.document.DocumentQueryService
 import com.fileweft.application.doctor.*
 import com.fileweft.application.delivery.*
 import com.fileweft.application.document.DocumentDraftService
@@ -83,6 +87,10 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DocumentRepository::class)
     fun documents(clock: Clock): DocumentRepository = JdbcDocumentRepository(clock)
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentQueryRepository::class)
+    fun documentQueries(): DocumentQueryRepository = JdbcDocumentQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(FileObjectRepository::class)
@@ -199,6 +207,14 @@ class FileWeftRuntimeConfiguration {
         transaction: ApplicationTransaction,
         auditTrail: AuditTrail,
     ) = DocumentCatalogBindingService(tenants, users, catalogAccess, documents, assets, transaction, auditTrail)
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogDraftService::class)
+    fun documentCatalogDraftService(
+        drafts: DocumentDraftService,
+        catalogAccess: DocumentCatalogAccessService,
+    ) = DocumentCatalogDraftService(drafts, catalogAccess)
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
@@ -400,6 +416,16 @@ class FileWeftRuntimeConfiguration {
         tenants, users, authorization, storage, sessions, fileObjects, assets, outbox, identifiers, transaction, clock,
         sessionTtl = Duration.ofMillis(properties.upload.resumableSessionTtlMillis),
         metrics = metrics,
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentQueryService::class)
+    fun documentQueryService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        queries: DocumentQueryRepository, transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ) = DocumentQueryService(
+        tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
     )
 
     @Bean

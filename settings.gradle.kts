@@ -24,6 +24,8 @@ include(
     ":fileweft-spi",
     ":fileweft-domain",
     ":fileweft-application",
+    ":fileweft-web-api",
+    ":fileweft-web-runtime",
     ":fileweft-persistence",
     ":fileweft-runtime",
     ":fileweft-spring-boot2-starter",

@@ -15,6 +15,7 @@ import com.fileweft.domain.file.FileAssetRepository
 import com.fileweft.domain.file.FileObject
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.catalog.DocumentCatalogBinding
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.FileWeftMetric
 import com.fileweft.spi.observability.FileWeftMetrics
@@ -24,6 +25,8 @@ import com.fileweft.spi.storage.StorageUploadRequest
 import com.fileweft.spi.storage.StoredObject
 import com.fileweft.spi.tenant.TenantProvider
 import java.io.InputStream
+import java.util.Collections
+import java.util.LinkedHashMap
 
 /**
  * Creates and edits draft documents while keeping object storage outside the
@@ -48,6 +51,7 @@ class DocumentDraftService(
     fun create(command: CreateDocumentDraftCommand, content: InputStream): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
+        val metadata = immutableMetadata(command.metadata)
         val documentId = identifierGenerator.nextId()
         authorization.requireDocumentAction(tenant.tenantId, documentId, CREATE_ACTION)
         transaction.execute {
@@ -60,13 +64,13 @@ class DocumentDraftService(
         val versionId = identifierGenerator.nextId()
         var stored: StoredObject? = null
         try {
-            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)
+            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
             val document = transaction.execute {
                 val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
-                val asset = FileAsset(assetId, tenant.tenantId, fileObject.id, DOCUMENT_ASSET_TYPE, command.metadata)
+                val asset = FileAsset(assetId, tenant.tenantId, fileObject.id, DOCUMENT_ASSET_TYPE, metadata)
                 val version = DocumentVersion(versionId, tenant.tenantId, documentId, INITIAL_VERSION, fileObject.id)
                 val created = Document(
                     id = documentId,
@@ -87,7 +91,7 @@ class DocumentDraftService(
                     action = CREATE_ACTION,
                     operatorId = operator?.id,
                     operatorName = operator?.displayName,
-                    details = mapOf("documentNumber" to created.documentNumber, "version" to INITIAL_VERSION),
+                    details = createAuditDetails(created, metadata),
                 )
                 created
             }
@@ -103,12 +107,13 @@ class DocumentDraftService(
     fun addVersion(documentId: Identifier, command: AddDocumentVersionCommand, content: InputStream): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
+        val metadata = immutableMetadata(command.metadata)
         val fileObjectId = identifierGenerator.nextId()
         val versionId = identifierGenerator.nextId()
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
         var stored: StoredObject? = null
         try {
-            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)
+            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
@@ -193,6 +198,28 @@ class DocumentDraftService(
             failure.addSuppressed(cleanupFailure)
         }
     }
+
+    /**
+     * The catalog-safe creation path contributes this reserved key only after
+     * host ACL validation. Direct draft callers retain their existing behavior
+     * when no catalog binding is present.
+     */
+    private fun createAuditDetails(document: Document, metadata: Map<String, String>): Map<String, String> =
+        linkedMapOf<String, String>().apply {
+            put("documentNumber", document.documentNumber)
+            put("version", INITIAL_VERSION)
+            metadata[DocumentCatalogBinding.METADATA_KEY]
+                ?.takeIf { it.isNotBlank() }
+                ?.let { folderId -> put("folderId", folderId) }
+        }
+
+    /**
+     * Storage adapters are external code. Snapshot metadata before handing it
+     * to an adapter so it cannot mutate the asset or audit state that follows
+     * a successful upload.
+     */
+    private fun immutableMetadata(metadata: Map<String, String>): Map<String, String> =
+        Collections.unmodifiableMap(LinkedHashMap(metadata))
 
     private fun recordMetric(metric: FileWeftMetric, tenantId: String) {
         try {

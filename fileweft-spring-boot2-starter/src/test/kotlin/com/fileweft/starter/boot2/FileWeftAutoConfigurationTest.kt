@@ -19,6 +19,7 @@ import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
+import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.doctor.CatalogDoctorChecker
 import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
@@ -26,6 +27,11 @@ import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.delivery.DocumentDeliverySyncService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownloadService
+import com.fileweft.application.document.DocumentFolderReadAccess
+import com.fileweft.application.document.DocumentPageRequest
+import com.fileweft.application.document.DocumentPageResult
+import com.fileweft.application.document.DocumentQueryRepository
+import com.fileweft.application.document.DocumentQueryService
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
@@ -35,6 +41,7 @@ import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
+import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
@@ -324,11 +331,16 @@ class FileWeftAutoConfigurationTest {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java).run { context ->
             assertTrue(context.getBean(ApplicationTransaction::class.java) != null)
             assertTrue(context.getBean(DocumentRepository::class.java) != null)
+            assertTrue(context.getBean(DocumentQueryRepository::class.java) is JdbcDocumentQueryRepository)
+            assertTrue(context.getBean(DocumentQueryService::class.java) != null)
+            assertTrue(context.getBeansOfType(DocumentFolderReadAccess::class.java).isEmpty())
+            assertNull(privateField(context.getBean(DocumentQueryService::class.java), "folderReadAccess"))
             assertTrue(context.getBean(WorkflowInstanceRepository::class.java) != null)
             assertTrue(context.getBean(UploadApplicationService::class.java) != null)
             assertTrue(context.getBean(ResumableUploadService::class.java) != null)
             assertTrue(context.getBean(ResumableUploadSessionRepository::class.java) != null)
             assertTrue(context.getBean(DocumentDraftService::class.java) != null)
+            assertTrue(context.getBeansOfType(DocumentCatalogDraftService::class.java).isEmpty())
             assertTrue(context.getBean(DocumentDownloadService::class.java) != null)
             assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
@@ -377,7 +389,16 @@ class FileWeftAutoConfigurationTest {
             .run { context ->
                 assertTrue(context.getBean(DocumentCatalogAccessService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogBindingService::class.java) != null)
+                assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(CatalogDoctorChecker::class.java) != null)
+                assertSame(
+                    context.getBean(DocumentCatalogAccessService::class.java),
+                    context.getBean(DocumentFolderReadAccess::class.java),
+                )
+                assertSame(
+                    context.getBean(DocumentCatalogAccessService::class.java),
+                    privateField(context.getBean(DocumentQueryService::class.java), "folderReadAccess"),
+                )
             }
     }
 
@@ -395,6 +416,33 @@ class FileWeftAutoConfigurationTest {
         contextRunner().withUserConfiguration(DatabaseWithDocumentRepositoryConfiguration::class.java).run { context ->
             assertSame(context.getBean("customerDocumentRepository"), context.getBean(DocumentRepository::class.java))
         }
+    }
+
+    @Test
+    fun `does not replace a customer catalog draft service`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                CustomerConfiguration::class.java,
+                CatalogConfiguration::class.java,
+                CustomerCatalogDraftConfiguration::class.java,
+            )
+            .run { context ->
+                assertSame(
+                    context.getBean("customerCatalogDraftService"),
+                    context.getBean(DocumentCatalogDraftService::class.java),
+                )
+            }
+    }
+
+    @Test
+    fun `does not replace customer document query ports or services when assembling runtime services`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java, CustomerDocumentQueryConfiguration::class.java)
+            .run { context ->
+                assertSame(context.getBean("customerDocumentQueryRepository"), context.getBean(DocumentQueryRepository::class.java))
+                assertSame(context.getBean("customerDocumentQueryService"), context.getBean(DocumentQueryService::class.java))
+            }
     }
 
     private fun contextRunner(): ApplicationContextRunner = ApplicationContextRunner()
@@ -469,6 +517,15 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
+    class CustomerCatalogDraftConfiguration {
+        @Bean
+        fun customerCatalogDraftService(
+            drafts: DocumentDraftService,
+            catalogAccess: DocumentCatalogAccessService,
+        ): DocumentCatalogDraftService = DocumentCatalogDraftService(drafts, catalogAccess)
+    }
+
+    @Configuration(proxyBeanMethods = false)
     class MicrometerConfiguration {
         @Bean
         fun meterRegistry(): MeterRegistry = SimpleMeterRegistry()
@@ -484,6 +541,32 @@ class FileWeftAutoConfigurationTest {
             override fun findById(tenantId: Identifier, documentId: Identifier) = null
             override fun save(document: com.fileweft.domain.document.Document) = Unit
         }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CustomerDocumentQueryConfiguration {
+        @Bean
+        fun customerDocumentQueryRepository(): DocumentQueryRepository = object : DocumentQueryRepository {
+            override fun findDetail(
+                tenantId: Identifier,
+                documentId: Identifier,
+                folderReadScope: com.fileweft.application.document.DocumentFolderReadScope?,
+            ) = null
+            override fun findPage(
+                tenantId: Identifier,
+                request: DocumentPageRequest,
+                folderReadScope: com.fileweft.application.document.DocumentFolderReadScope?,
+            ) = DocumentPageResult(emptyList())
+        }
+
+        @Bean
+        fun customerDocumentQueryService(
+            tenants: TenantProvider,
+            users: UserRealmProvider,
+            authorization: AuthorizationProvider,
+            queries: DocumentQueryRepository,
+            transaction: ApplicationTransaction,
+        ): DocumentQueryService = DocumentQueryService(tenants, users, authorization, queries, transaction)
     }
 
     private object CustomerStorageAdapter : StorageAdapter {

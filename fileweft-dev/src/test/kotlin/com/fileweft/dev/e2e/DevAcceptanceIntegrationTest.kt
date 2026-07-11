@@ -317,7 +317,8 @@ class DevAcceptanceIntegrationTest {
         val betaEditor = login("editor@beta", "dev-editor")
         val alphaNumber = "E2E-ALPHA-${UUID.randomUUID().toString().take(8)}"
         val betaNumber = "E2E-BETA-${UUID.randomUUID().toString().take(8)}"
-        val alphaDocument = createDraft(alphaEditor, alphaNumber, "contracts").path("document").path("id").asText()
+        val alphaCreated = createDraft(alphaEditor, alphaNumber, "contracts")
+        val alphaDocument = alphaCreated.path("document").path("id").asText()
         val betaDocument = createDraft(betaEditor, betaNumber, "projects").path("document").path("id").asText()
 
         val alphaFolders = getJson("$apiUrl/api/catalog/folders", alphaEditor)
@@ -326,6 +327,11 @@ class DevAcceptanceIntegrationTest {
         assertTrue(alphaFolders.none { it.path("id").asText() == "projects" })
         assertTrue(betaFolders.any { it.path("id").asText() == "projects" })
         assertTrue(betaFolders.none { it.path("id").asText() == "contracts" })
+
+        val alphaCreatedDetail = getJson("$apiUrl/api/documents/$alphaDocument", alphaEditor)
+        val createAudit = alphaCreatedDetail.path("audits").firstOrNull { it.path("action").asText() == "document:create" }
+            ?: throw AssertionError("Catalog-bound document creation audit was not found.")
+        assertEquals("contracts", mapper.readTree(createAudit.path("details").asText()).path("folderId").asText())
 
         val betaCannotBindAlphaFolder = uploadFileResponse(
             "$apiUrl/api/documents",
