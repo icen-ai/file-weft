@@ -5,11 +5,13 @@ import com.fileweft.web.api.v1.doctor.DoctorReportDto
 import com.fileweft.web.api.v1.doctor.ScheduleDocumentDoctorCommand
 import com.fileweft.web.api.v1.document.AddDocumentVersionCommand
 import com.fileweft.web.api.v1.document.CreateDocumentDraftCommand
+import com.fileweft.web.api.v1.document.DocumentCommandResultDto
 import com.fileweft.web.api.v1.document.DocumentDetailDto
 import com.fileweft.web.api.v1.document.DocumentDto
 import com.fileweft.web.api.v1.document.DocumentPageQuery
 import com.fileweft.web.api.v1.document.DocumentVersionDto
 import com.fileweft.web.api.v1.document.RenameDocumentCommand
+import com.fileweft.web.api.v1.document.RenameDocumentRequest
 import com.fileweft.web.api.v1.workflow.ApproveWorkflowTaskCommand
 import com.fileweft.web.api.v1.workflow.RejectWorkflowTaskCommand
 import com.fileweft.web.api.v1.workflow.SubmitDocumentReviewCommand
@@ -53,6 +55,7 @@ class ApiContractTest {
         assertEquals("FORBIDDEN", ApiErrorCodes.FORBIDDEN)
         assertEquals("CONFLICT", ApiErrorCodes.CONFLICT)
         assertEquals("FEATURE_UNAVAILABLE", ApiErrorCodes.FEATURE_UNAVAILABLE)
+        assertEquals("CONTENT_UNAVAILABLE", ApiErrorCodes.CONTENT_UNAVAILABLE)
         assertEquals("INTERNAL_ERROR", ApiErrorCodes.INTERNAL_ERROR)
     }
 
@@ -110,6 +113,7 @@ class ApiContractTest {
         val commandTypes = listOf(
             CreateDocumentDraftCommand::class.java,
             RenameDocumentCommand::class.java,
+            RenameDocumentRequest::class.java,
             AddDocumentVersionCommand::class.java,
             DocumentPageQuery::class.java,
             SubmitDocumentReviewCommand::class.java,
@@ -135,6 +139,9 @@ class ApiContractTest {
         assertEquals("route-1", SubmitDocumentReviewCommand("route-1").reviewRouteId)
         assertEquals("Approved", ApproveWorkflowTaskCommand("Approved").comment)
         assertEquals("Rejected", RejectWorkflowTaskCommand("Rejected").comment)
+
+        val renameRequest = RenameDocumentRequest().apply { title = "清税证明" }
+        assertEquals("清税证明", RenameDocumentCommand(requireNotNull(renameRequest.title)).title)
     }
 
     @Test
@@ -144,6 +151,7 @@ class ApiContractTest {
         val errorFields = ApiError::class.java.declaredFields.map { it.name }.toSet()
         val documentFields = DocumentDto::class.java.declaredFields.map { it.name }.toSet()
         val versionFields = DocumentVersionDto::class.java.declaredFields.map { it.name }.toSet()
+        val commandResultFields = DocumentCommandResultDto::class.java.declaredFields.map { it.name }.toSet()
 
         assertTrue("assignedToCurrentUser" in workflowFields)
         assertTrue(setOf("assigneeId", "assignee", "comment", "reviewerId").intersect(workflowFields).isEmpty())
@@ -151,6 +159,7 @@ class ApiContractTest {
         assertTrue(setOf("attributes", "stackTrace", "cause").intersect(errorFields).isEmpty())
         assertTrue(setOf("tenantId", "assetId", "storagePath", "fileObjectId").intersect(documentFields).isEmpty())
         assertTrue(setOf("contentHash", "storagePath", "fileObjectId", "tenantId").intersect(versionFields).isEmpty())
+        assertTrue(setOf("tenantId", "assetId", "fileObjectId", "storagePath").intersect(commandResultFields).isEmpty())
     }
 
     @Test
@@ -172,8 +181,24 @@ class ApiContractTest {
             AddDocumentVersionCommand("1.0", "proof.pdf", -1)
         }
         assertThrows<IllegalArgumentException> {
+            CreateDocumentDraftCommand("DOC-1", "Title", "../proof.pdf", 5)
+        }
+        assertThrows<IllegalArgumentException> {
+            AddDocumentVersionCommand("1.0", "folder\\proof.pdf", 5)
+        }
+        assertThrows<IllegalArgumentException> {
             RenameDocumentCommand(" ")
         }
+
+    }
+
+    @Test
+    fun `command results expose only the committed public document state`() {
+        val result = DocumentCommandResultDto("document-1", "version-1")
+
+        assertEquals("document-1", result.documentId)
+        assertEquals("version-1", result.versionId)
+        assertEquals(setOf("documentId", "versionId"), DocumentCommandResultDto::class.java.declaredFields.map { it.name }.toSet())
     }
 
     private fun document(): DocumentDto =

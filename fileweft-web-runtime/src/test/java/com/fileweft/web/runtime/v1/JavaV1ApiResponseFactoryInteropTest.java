@@ -1,6 +1,7 @@
 package com.fileweft.web.runtime.v1;
 
 import com.fileweft.application.security.ApplicationForbiddenException;
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException;
 import com.fileweft.web.api.ApiResponse;
 import org.junit.jupiter.api.Test;
 
@@ -15,6 +16,7 @@ class JavaV1ApiResponseFactoryInteropTest {
 
         ApiResponse<String> success = factory.success("payload", "trace-java");
         ApiHttpFailure failure = factory.failure(new ApplicationForbiddenException("host policy detail"), "trace-java");
+        ApiHttpFailure conflict = factory.failure(new DocumentNumberAlreadyExistsException("private-number"), "trace-java");
 
         assertEquals("payload", success.getData());
         assertEquals("trace-java", success.getTraceId());
@@ -22,5 +24,7 @@ class JavaV1ApiResponseFactoryInteropTest {
         assertEquals(403, failure.getStatus().getStatusCode());
         assertEquals("FORBIDDEN", failure.getResponse().getCode());
         assertEquals("Access denied.", failure.getResponse().getMessage());
+        assertEquals(409, conflict.getStatus().getStatusCode());
+        assertEquals("CONFLICT", conflict.getResponse().getCode());
     }
 }

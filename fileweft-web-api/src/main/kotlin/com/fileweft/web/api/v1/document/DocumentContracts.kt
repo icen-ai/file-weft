@@ -2,6 +2,7 @@ package com.fileweft.web.api.v1.document
 
 import com.fileweft.web.api.immutableList
 import com.fileweft.web.api.optionalText
+import com.fileweft.web.api.requiredFileName
 import com.fileweft.web.api.requiredText
 
 /** Immutable public representation of a document; it never exposes a domain aggregate. */
@@ -68,6 +69,22 @@ class DocumentDetailDto(document: DocumentDto, versions: List<DocumentVersionDto
 }
 
 /**
+ * Minimal result returned by a successful document mutation.
+ *
+ * It deliberately avoids a follow-up read after commit: a caller may be
+ * allowed to mutate a document without holding the separate read permission,
+ * and a failed second query must never make a committed command look failed.
+ */
+class DocumentCommandResultDto @JvmOverloads constructor(
+    val documentId: String,
+    val versionId: String? = null,
+) {
+    // These values originate from a committed domain aggregate rather than an
+    // untrusted request. Do not add post-commit validation here: a transport
+    // mapping failure must never make a successful mutation look rolled back.
+}
+
+/**
  * Public metadata for a multipart draft upload. The HTTP adapter owns the
  * binary stream; arbitrary asset/storage metadata is deliberately not a v1
  * client input. Folder binding is validated through the host catalog before
@@ -83,7 +100,7 @@ class CreateDocumentDraftCommand @JvmOverloads constructor(
 ) {
     val documentNumber: String = requiredText(documentNumber, "Document number", 128)
     val title: String = requiredText(title, "Document title", 512)
-    val fileName: String = requiredText(fileName, "Document file name", 512)
+    val fileName: String = requiredFileName(fileName, "Document file name", 512)
     val contentType: String? = optionalText(contentType, "Document content type", 128)
     val folderId: String? = optionalText(folderId, "Document folder id", 512)
 
@@ -96,6 +113,15 @@ class RenameDocumentCommand(title: String) {
     val title: String = requiredText(title, "Document title", 512)
 }
 
+/**
+ * Zero-argument transport bean for Jackson installations without the Kotlin
+ * module (notably minimal Spring Boot 2 hosts). Controllers must immediately
+ * convert it to [RenameDocumentCommand], which performs the actual validation.
+ */
+class RenameDocumentRequest {
+    var title: String? = null
+}
+
 /** Public metadata for a multipart version upload; the HTTP adapter owns the binary stream. */
 class AddDocumentVersionCommand @JvmOverloads constructor(
     versionNumber: String,
@@ -104,7 +130,7 @@ class AddDocumentVersionCommand @JvmOverloads constructor(
     contentType: String? = null,
 ) {
     val versionNumber: String = requiredText(versionNumber, "Document version number", 32)
-    val fileName: String = requiredText(fileName, "Document version file name", 512)
+    val fileName: String = requiredFileName(fileName, "Document version file name", 512)
     val contentType: String? = optionalText(contentType, "Document version content type", 128)
 
     init {

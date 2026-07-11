@@ -1,2 +1,3 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-com.fileweft.web.spring.boot2.FileWeftWebBoot2AutoConfiguration
+com.fileweft.web.spring.boot2.FileWeftWebBoot2AutoConfiguration,\
+com.fileweft.web.spring.boot2.FileWeftWebBoot2WriteAutoConfiguration

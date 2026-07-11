@@ -1,11 +1,15 @@
 package com.fileweft.web.runtime.v1
 
 import com.fileweft.application.document.DocumentFolderReadAccessUnavailableException
+import com.fileweft.application.document.DocumentContentUnavailableException
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.upload.StoredObjectIntegrityException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.core.id.Identifier
+import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.web.api.ApiErrorCodes
+import com.fileweft.web.runtime.v1.document.V1FeatureUnavailableException
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -22,7 +26,26 @@ class V1ApiResponseFactoryTest {
             ApplicationForbiddenException("policy=restricted-folder") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             DocumentNotFoundException(Identifier("private-document")) to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
             DocumentFolderReadAccessUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
+            V1FeatureUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
+            DocumentNumberAlreadyExistsException("private-number") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            DocumentContentUnavailableException(
+                "s3://private-bucket/internal-object is unavailable",
+                IllegalStateException("sdk credential detail"),
+            ) to Triple(
+                503,
+                ApiErrorCodes.CONTENT_UNAVAILABLE,
+                "Document content is unavailable.",
+            ),
             IllegalArgumentException("cursor=secret-token") to Triple(400, ApiErrorCodes.INVALID_REQUEST, "Request is invalid."),
+            StoredObjectIntegrityException("storage acknowledged a private path") to Triple(
+                500,
+                ApiErrorCodes.INTERNAL_ERROR,
+                "An unexpected error occurred.",
+            ),
             IllegalStateException("jdbc://internal") to Triple(500, ApiErrorCodes.INTERNAL_ERROR, "An unexpected error occurred."),
         )
 

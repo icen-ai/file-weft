@@ -9,11 +9,11 @@
 当前已交付的工件是：
 
 - `fileweft-web-api`：JDK 8 基线的纯契约、响应模型、错误码与 DTO；不依赖 Spring、JDBC、领域实体或任意 FileWeft 运行时模块。
-- `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读取门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，只将应用层已授权、已脱敏的文档查询视图映射为公共 DTO。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
-- `fileweft-web-spring-boot2-starter`：JDK 8 / Spring Boot 2.7 的可选 MVC 适配器；通过 `spring.factories` 注册，只在安全的 `DocumentQueryService` 已存在时暴露 v1 读取路由。
-- `fileweft-web-spring-boot3-starter`：JDK 17 / Spring Boot 3 的可选 MVC 适配器；通过 `AutoConfiguration.imports` 注册，并与 Boot 2 保持同一路径、状态码和响应外层。
+- `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读写门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，将应用层已授权、已脱敏的读取视图和草稿命令结果映射为公共 DTO。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
+- `fileweft-web-spring-boot2-starter`：JDK 8 / Spring Boot 2.7 的可选 MVC 适配器；通过 `spring.factories` 注册。读取路由以安全的 `DocumentQueryService` 为条件，首批写入路由以 `DocumentDraftService` 为条件，能力未安装时不会伪装成可用接口。
+- `fileweft-web-spring-boot3-starter`：JDK 17 / Spring Boot 3 的可选 MVC 适配器；通过 `AutoConfiguration.imports` 注册，并与 Boot 2 保持同一路径、状态码和响应外层及条件装配语义。
 
-Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；若安全查询服务未装配，Controller 会保持不可用。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
+Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；未装配某项安全应用服务时，对应 Controller 会保持不可用。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
 
 ## 信任边界
 
@@ -30,7 +30,7 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 ## 协议稳定性
 
-所有正式业务路由将以 `/fileweft/v1` 开头，并只生产 `application/json`。已匹配的 FileWeft 业务路由，其成功与业务执行错误均使用统一外层；未匹配路由、请求体解码和内容协商错误仍由宿主 Spring Web 的全局异常策略处理：
+所有正式业务路由将以 `/fileweft/v1` 开头。除后续明确提供的授权内容流外，业务成功响应与业务执行错误均生产 `application/json` 并使用统一外层；multipart 只改变请求的 `Content-Type`。未匹配路由、请求体解码和内容协商错误仍由宿主 Spring Web 的全局异常策略处理：
 
 ```json
 {
@@ -42,19 +42,25 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 }
 ```
 
-失败响应的 `data` 为 `null`，`error` 只包含与外层一致的固定 `code`/`message`；它不接受任意 attributes。错误不返回 SQL、对象存储路径、下游外部 ID、Outbox payload、凭据或未脱敏异常栈。稳定错误码至少区分 `INVALID_REQUEST`、`UNAUTHENTICATED`、`FORBIDDEN`、`NOT_FOUND`、`CONFLICT`、`FEATURE_UNAVAILABLE` 和 `INTERNAL_ERROR`。时间使用 epoch milliseconds；标识均为不透明字符串。
+失败响应的 `data` 为 `null`，`error` 只包含与外层一致的固定 `code`/`message`；它不接受任意 attributes。错误不返回 SQL、对象存储路径、下游外部 ID、Outbox payload、凭据或未脱敏异常栈。稳定错误码至少区分 `INVALID_REQUEST`、`UNAUTHENTICATED`、`FORBIDDEN`、`NOT_FOUND`、`CONFLICT`、`FEATURE_UNAVAILABLE`、`CONTENT_UNAVAILABLE` 和 `INTERNAL_ERROR`。时间使用 epoch milliseconds；标识均为不透明字符串。
 
-`fileweft-web-api` 已定义 `DocumentDetailDto(document, versions)`，保证 `GET` 文档不会临时返回领域聚合或无版本归属的 Map。公开版本元数据不含存储路径、文件对象 ID、租户 ID、资产 ID 或内容哈希；内容哈希如确有业务必要，必须由后续单独的完整性读取权限与 DTO 提供。审批任务不公开宿主用户 ID 或评论，只能在经过当前调用者计算后返回 `assignedToCurrentUser`。Doctor DTO 不接受原始 evidence；Web 映射层还必须将 checker 的自由文本归一为安全文案，不能直接透传下游信息。
+`fileweft-web-api` 已定义 `DocumentDetailDto(document, versions)`，保证 `GET` 文档不会临时返回领域聚合或无版本归属的 Map。公开版本元数据不含存储路径、文件对象 ID、租户 ID、资产 ID 或内容哈希；内容哈希如确有业务必要，必须由后续单独的完整性读取权限与 DTO 提供。写命令只返回 `{documentId, versionId?}`：不做提交后查询，也不向只有写权限的调用者泄漏标题、文档号、生命周期或旧版本信息。审批任务不公开宿主用户 ID 或评论，只能在经过当前调用者计算后返回 `assignedToCurrentUser`。Doctor DTO 不接受原始 evidence；Web 映射层还必须将 checker 的自由文本归一为安全文案，不能直接透传下游信息。
 
 当前已交付并通过两代 MVC 契约测试的正式路由是：
 
 - `GET /fileweft/v1/documents/{documentId}`：当前租户、当前用户已授权且位于可读目录范围内的文档和版本视图。
 - `GET /fileweft/v1/documents`：使用不透明 cursor 的文档摘要分页，可选生命周期和目录筛选。
+- `POST /fileweft/v1/documents`：multipart 创建草稿；`documentNumber`、`title`、`file` 必须各出现一次，`folderId` 最多一次。
+- `POST /fileweft/v1/documents/{documentId}/versions`：multipart 新增草稿版本；`versionNumber`、`file` 必须各出现一次。
+- `PATCH /fileweft/v1/documents/{documentId}`：以 JSON `{\"title\": \"...\"}` 修改草稿标题。
+
+上传文件名、长度和内容类型只从服务器收到的 multipart file part 派生，客户端不能另行提交对象键、资产 ID、哈希或存储 metadata；文件名拒绝路径分隔符、`.` 和 `..`。创建和新增版本返回 `201`，改名返回 `200`。成功创建后仅当文档 ID 是长度受限的安全单路径段时才附带相对 `Location`；自定义标识不满足这个条件时仍返回成功 body，不会在业务提交后制造一次失败。
+
+未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。接入目录 SPI 后，创建必须给出目录并通过应用层目录授权与保留绑定；现阶段新增版本和改名同样安全失败为 `503 FEATURE_UNAVAILABLE`，直到应用层提供在文档修改锁内重新核验当前目录绑定和 ACL 的 mutation guard。正式 API 不会退化调用无目录保护的通用写服务。
 
 后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
 
-- `POST /fileweft/v1/documents`：multipart 创建草稿。`folderId` 先经可信当前用户的宿主目录 ACL 验证，再由应用层写入保留目录绑定；客户端不能直接提交任意资产/存储 metadata。
-- `PATCH /fileweft/v1/documents/{documentId}`、`POST /versions`、`submit`、`revise`、`publish`、`offline`、`restore`、`archive`：受控生命周期与版本操作。
+- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：受控生命周期操作；目录模式的版本和标题修改将在 mutation guard 完成后开放。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 - `GET /fileweft/v1/documents/{documentId}/content`：经应用层下载授权后的流式响应。
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。
@@ -68,6 +74,7 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - 下载保持 `DocumentDownloadService` 的授权和审计，不向前端暴露存储地址或凭据。
 - Controller 必须使用安全的 `Content-Disposition` 文件名编码、白名单/回退内容类型，并关闭异常详情回显。
 - CORS、CSRF、会话、OAuth/OIDC、mTLS 和 Actuator 暴露由宿主安全策略决定；Web Adapter 不提供弱默认认证。
+- 正式写路由尚未承诺 `Idempotency-Key`。生产发布前必须提供与业务结果一起持久化的租户级请求幂等记录，使断线重试可以返回第一次已提交的结果；Controller 进程内缓存不能代替该能力。
 
 ## 测试与迁移门槛
 

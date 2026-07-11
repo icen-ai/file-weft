@@ -5,7 +5,6 @@ import com.fileweft.application.document.DocumentPageRequest
 import com.fileweft.application.document.DocumentQueryService
 import com.fileweft.application.document.DocumentSummaryView
 import com.fileweft.application.document.DocumentVersionView
-import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.LifecycleState
 import com.fileweft.web.api.ApiPage
 import com.fileweft.web.api.v1.document.DocumentDetailDto
@@ -26,7 +25,7 @@ class DocumentApiReadFacade(
     private val cursorCodec = DocumentPageCursorCodec()
 
     fun detail(documentId: String): DocumentDetailDto =
-        documents.detail(toDocumentIdentifier(documentId)).toPublicDetail()
+        documents.detail(DocumentApiInputs.documentId(documentId)).toPublicDetail()
 
     fun page(query: DocumentPageQuery): ApiPage<DocumentDto> {
         val request = DocumentPageRequest(
@@ -40,13 +39,6 @@ class DocumentApiReadFacade(
             items = result.items.map { view -> view.toPublicDocument() },
             nextCursor = result.nextCursor?.let(cursorCodec::encode),
         )
-    }
-
-    private fun toDocumentIdentifier(value: String): Identifier {
-        require(value.isNotBlank()) { "Document id must not be blank." }
-        require(value.length <= MAX_DOCUMENT_ID_LENGTH) { "Document id must not exceed $MAX_DOCUMENT_ID_LENGTH characters." }
-        require(value.none(::isUnsafeControlCharacter)) { "Document id must not contain control characters." }
-        return Identifier(value)
     }
 
     private fun toLifecycleState(value: String): LifecycleState = try {
@@ -78,11 +70,4 @@ class DocumentApiReadFacade(
         updatedTime = updatedTime,
         contentType = contentType,
     )
-
-    private companion object {
-        const val MAX_DOCUMENT_ID_LENGTH: Int = 128
-    }
 }
-
-private fun isUnsafeControlCharacter(character: Char): Boolean =
-    character.code in 0..31 || character.code in 127..159

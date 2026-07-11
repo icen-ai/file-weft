@@ -10,6 +10,14 @@ internal fun requiredText(value: String, field: String, maximumLength: Int = DEF
     require(it.none(::isUnsafeControlCharacter)) { "$field must not contain control characters." }
 }
 
+internal fun requiredFileName(value: String, field: String, maximumLength: Int = DEFAULT_MAX_TEXT_LENGTH): String =
+    requiredText(value, field, maximumLength).also { fileName ->
+        require(fileName != "." && fileName != "..") { "$field must name a file." }
+        require(fileName.none { character -> character == '/' || character == '\\' }) {
+            "$field must not contain path separators."
+        }
+    }
+
 internal fun optionalText(
     value: String?,
     field: String,

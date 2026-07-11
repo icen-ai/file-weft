@@ -1,12 +1,16 @@
 package com.fileweft.web.runtime.v1
 
 import com.fileweft.application.document.DocumentFolderReadAccessUnavailableException
+import com.fileweft.application.document.DocumentContentUnavailableException
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.publish.ActiveDocumentReviewWorkflowException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
+import com.fileweft.domain.document.DocumentConflictException
 import com.fileweft.web.api.ApiError
 import com.fileweft.web.api.ApiErrorCodes
 import com.fileweft.web.api.ApiResponse
+import com.fileweft.web.runtime.v1.document.V1FeatureUnavailableException
 
 /**
  * Transport-neutral v1 response and failure classifier shared by the Boot 2
@@ -33,10 +37,24 @@ class V1ApiResponseFactory {
             is DocumentNotFoundException,
             is NoSuchElementException,
             -> MappedFailure(ApiHttpStatus.NOT_FOUND, ApiErrorCodes.NOT_FOUND, "Resource was not found.")
-            is DocumentFolderReadAccessUnavailableException -> MappedFailure(
+            is DocumentContentUnavailableException -> MappedFailure(
+                ApiHttpStatus.SERVICE_UNAVAILABLE,
+                ApiErrorCodes.CONTENT_UNAVAILABLE,
+                "Document content is unavailable.",
+            )
+            is DocumentFolderReadAccessUnavailableException,
+            is V1FeatureUnavailableException,
+            -> MappedFailure(
                 ApiHttpStatus.SERVICE_UNAVAILABLE,
                 ApiErrorCodes.FEATURE_UNAVAILABLE,
                 "The requested feature is unavailable.",
+            )
+            is DocumentConflictException,
+            is ActiveDocumentReviewWorkflowException,
+            -> MappedFailure(
+                ApiHttpStatus.CONFLICT,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
             )
             is IllegalArgumentException -> MappedFailure(
                 ApiHttpStatus.BAD_REQUEST,
