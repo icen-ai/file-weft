@@ -13,6 +13,7 @@ import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
 import com.fileweft.domain.file.FileAsset
+import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileObject
 import com.fileweft.persistence.migration.FlywayMigrationRunner
 import com.fileweft.spi.delivery.DeliveryRequirement
@@ -198,6 +199,74 @@ class JdbcRepositoriesIntegrationTest {
         requireNotNull(updated)
         assertEquals("reviewed", updated.metadata["source"])
         assertEquals(1, countRows("fw_asset"))
+    }
+
+    @Test
+    fun `locks asset mutations against competing updates and locks without crossing tenants`() {
+        val repository: FileAssetMutationRepository = JdbcFileAssetRepository(ObjectMapper(), clock)
+        val asset = FileAsset(
+            Identifier("asset-locked"),
+            Identifier("tenant-1"),
+            Identifier("file-locked"),
+            "DOCUMENT",
+            mapOf("catalog.folder-id" to "contracts"),
+        )
+        JdbcApplicationTransaction(dataSource).execute { repository.save(asset) }
+
+        dataSource.connection.use { firstConnection ->
+            firstConnection.autoCommit = false
+            try {
+                JdbcConnectionContext.withConnection(firstConnection) {
+                    val locked = requireNotNull(repository.findForMutation(asset.tenantId, asset.id))
+                    assertEquals("contracts", locked.metadata["catalog.folder-id"])
+                    assertNull(repository.findForMutation(Identifier("tenant-2"), asset.id))
+                }
+
+                dataSource.connection.use { updateConnection ->
+                    updateConnection.autoCommit = false
+                    try {
+                        updateConnection.createStatement().use { statement ->
+                            statement.execute("SET LOCAL lock_timeout = '250ms'")
+                        }
+                        val failure = assertFailsWith<PSQLException> {
+                            JdbcConnectionContext.withConnection(updateConnection) {
+                                repository.save(
+                                    FileAsset(
+                                        asset.id,
+                                        asset.tenantId,
+                                        asset.fileObjectId,
+                                        asset.assetType,
+                                        mapOf("catalog.folder-id" to "finance"),
+                                    ),
+                                )
+                            }
+                        }
+                        assertEquals("55P03", failure.sqlState)
+                    } finally {
+                        updateConnection.rollback()
+                    }
+                }
+
+                dataSource.connection.use { lockConnection ->
+                    lockConnection.autoCommit = false
+                    try {
+                        lockConnection.createStatement().use { statement ->
+                            statement.execute("SET LOCAL lock_timeout = '250ms'")
+                        }
+                        val failure = assertFailsWith<PSQLException> {
+                            JdbcConnectionContext.withConnection(lockConnection) {
+                                repository.findForMutation(asset.tenantId, asset.id)
+                            }
+                        }
+                        assertEquals("55P03", failure.sqlState)
+                    } finally {
+                        lockConnection.rollback()
+                    }
+                }
+            } finally {
+                firstConnection.rollback()
+            }
+        }
     }
 
     @Test

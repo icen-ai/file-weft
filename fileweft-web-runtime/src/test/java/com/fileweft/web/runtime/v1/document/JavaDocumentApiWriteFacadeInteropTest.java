@@ -1,6 +1,7 @@
 package com.fileweft.web.runtime.v1.document;
 
 import com.fileweft.application.catalog.DocumentCatalogDraftService;
+import com.fileweft.application.catalog.DocumentCatalogMutationService;
 import com.fileweft.application.document.DocumentDraftService;
 import com.fileweft.web.api.v1.document.AddDocumentVersionCommand;
 import com.fileweft.web.api.v1.document.CreateDocumentDraftCommand;
@@ -22,6 +23,11 @@ class JavaDocumentApiWriteFacadeInteropTest {
         assertNotNull(DocumentApiWriteFacade.class.getConstructor(
             DocumentDraftService.class,
             DocumentCatalogDraftService.class
+        ));
+        assertNotNull(DocumentApiWriteFacade.class.getConstructor(
+            DocumentDraftService.class,
+            DocumentCatalogDraftService.class,
+            DocumentCatalogMutationService.class
         ));
 
         Method create = DocumentApiWriteFacade.class.getMethod(

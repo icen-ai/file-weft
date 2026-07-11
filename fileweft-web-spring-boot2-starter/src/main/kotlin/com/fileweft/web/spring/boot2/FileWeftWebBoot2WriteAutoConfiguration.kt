@@ -1,6 +1,7 @@
 package com.fileweft.web.spring.boot2
 
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.web.runtime.v1.V1ApiResponseFactory
@@ -33,10 +34,12 @@ class FileWeftWebBoot2WriteAutoConfiguration {
     fun fileWeftV1DocumentApiWriteFacade(
         drafts: DocumentDraftService,
         catalogDrafts: ObjectProvider<DocumentCatalogDraftService>,
+        catalogMutations: ObjectProvider<DocumentCatalogMutationService>,
     ): DocumentApiWriteFacade = DocumentApiWriteFacade(
         drafts = drafts,
         // getIfAvailable intentionally fails on multiple catalog services rather than silently dropping folder ACLs.
         catalogDrafts = catalogDrafts.getIfAvailable(),
+        catalogMutations = catalogMutations.getIfAvailable(),
     )
 
     @Bean

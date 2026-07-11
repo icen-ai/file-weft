@@ -17,6 +17,7 @@ import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.document.DocumentFolderReadAccess
@@ -42,6 +43,7 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.file.FileAssetRepository
+import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.domain.operation.OperationLogRepository
 import com.fileweft.domain.workflow.WorkflowInstanceRepository
@@ -98,7 +100,8 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(FileAssetRepository::class)
-    fun fileAssets(objectMapper: ObjectMapper, clock: Clock): FileAssetRepository = JdbcFileAssetRepository(objectMapper, clock)
+    fun fileAssets(objectMapper: ObjectMapper, clock: Clock): FileAssetRepository =
+        JdbcFileAssetRepository(objectMapper, clock)
 
     @Bean
     @ConditionalOnMissingBean(WorkflowInstanceRepository::class)
@@ -198,6 +201,8 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(DocumentCatalogBindingService::class)
+    // Nullable by design: keep the existing FileAssetRepository factory ABI while
+    // withholding unsafe catalog writes from custom repositories without a real lock.
     fun documentCatalogBindingService(
         tenants: TenantProvider,
         users: UserRealmProvider,
@@ -206,7 +211,11 @@ class FileWeftRuntimeConfiguration {
         assets: FileAssetRepository,
         transaction: ApplicationTransaction,
         auditTrail: AuditTrail,
-    ) = DocumentCatalogBindingService(tenants, users, catalogAccess, documents, assets, transaction, auditTrail)
+    ): DocumentCatalogBindingService? = if (assets is FileAssetMutationRepository) {
+        DocumentCatalogBindingService(tenants, users, catalogAccess, documents, assets, transaction, auditTrail)
+    } else {
+        null
+    }
 
     @Bean
     @ConditionalOnBean(DocumentCatalogAccessService::class)
@@ -215,6 +224,17 @@ class FileWeftRuntimeConfiguration {
         drafts: DocumentDraftService,
         catalogAccess: DocumentCatalogAccessService,
     ) = DocumentCatalogDraftService(drafts, catalogAccess)
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogMutationService::class)
+    // See the binding service above: read/create remain available, mutations fail closed.
+    fun documentCatalogMutationService(
+        drafts: DocumentDraftService,
+        catalogAccess: DocumentCatalogAccessService,
+        assets: FileAssetRepository,
+    ): DocumentCatalogMutationService? =
+        if (assets is FileAssetMutationRepository) DocumentCatalogMutationService(drafts, catalogAccess) else null
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)

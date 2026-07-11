@@ -56,11 +56,11 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 上传文件名、长度和内容类型只从服务器收到的 multipart file part 派生，客户端不能另行提交对象键、资产 ID、哈希或存储 metadata；文件名拒绝路径分隔符、`.` 和 `..`。创建和新增版本返回 `201`，改名返回 `200`。成功创建后仅当文档 ID 是长度受限的安全单路径段时才附带相对 `Location`；自定义标识不满足这个条件时仍返回成功 body，不会在业务提交后制造一次失败。
 
-未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。接入目录 SPI 后，创建必须给出目录并通过应用层目录授权与保留绑定；现阶段新增版本和改名同样安全失败为 `503 FEATURE_UNAVAILABLE`，直到应用层提供在文档修改锁内重新核验当前目录绑定和 ACL 的 mutation guard。正式 API 不会退化调用无目录保护的通用写服务。
+未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。接入唯一的目录 SPI 后，默认 Starter 会同时装配目录创建与目录感知修改服务：创建必须给出目录并通过应用层目录授权与保留绑定；新增版本和改名会先快照并授权文档的当前源目录，新增版本在上传后还会再次检查源目录权限，再按 document → asset 顺序取得两级 mutation lock 并复核原始绑定。Catalog SPI 始终在 FileWeft 管理的数据库事务外调用，权限撤销或绑定竞态会在提交前失败，新增版本已上传的对象会被补偿删除。自定义装配若只提供目录创建、或资产仓储没有安全 mutation lock 能力，新增版本和改名仍安全失败为 `503 FEATURE_UNAVAILABLE`，绝不退化调用无目录保护的通用写服务。
 
 后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
 
-- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：受控生命周期操作；目录模式的版本和标题修改将在 mutation guard 完成后开放。
+- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：受控生命周期操作。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 - `GET /fileweft/v1/documents/{documentId}/content`：经应用层下载授权后的流式响应。
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。

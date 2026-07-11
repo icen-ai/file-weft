@@ -3,6 +3,7 @@ package com.fileweft.application.catalog
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.application.document.DocumentFolderReadAccess
+import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.catalog.DocumentCatalogAccessRequest
@@ -53,6 +54,28 @@ class DocumentCatalogAccessService(
             DocumentCatalogOperation.BIND_DOCUMENT,
         )
 
+    /** Performs base document authorization without invoking the host catalog or a repository. */
+    internal fun requireDocumentUpdateAuthorization(documentId: Identifier) {
+        val tenant = tenantProvider.currentTenant()
+        authorization.requireDocumentAction(tenant.tenantId, documentId, DOCUMENT_EDIT_ACTION)
+    }
+
+    /**
+     * Authorizes a binding read from trusted persistence. An unavailable source
+     * folder is hidden as a missing document so callers cannot enumerate a
+     * document that sits outside their catalog view.
+     */
+    internal fun requireCurrentFolderForDocumentUpdate(
+        documentId: Identifier,
+        folderId: String,
+    ): DocumentCatalogFolder = try {
+        requireFolderForDocumentUpdate(documentId, folderId)
+    } catch (_: DocumentCatalogFolderUnavailableException) {
+        throw DocumentNotFoundException(documentId)
+    } catch (failure: IllegalArgumentException) {
+        throw IllegalStateException("Persisted document catalog binding is invalid.", failure)
+    }
+
     override fun requireFolderForDocumentRead(folderId: String) {
         requireFolder(
             folderId,
@@ -82,8 +105,21 @@ class DocumentCatalogAccessService(
             "Document catalog folder id must not contain control characters."
         }
         return access(operation, resourceId, resourceType, actionName) { request ->
-            catalog.findFolder(request, normalizedFolderId)
-                ?: throw IllegalArgumentException("Folder '$normalizedFolderId' is not available to the current user in this tenant catalog.")
+            val folder = catalog.findFolder(request, normalizedFolderId)
+                ?: throw DocumentCatalogFolderUnavailableException()
+            requireValidCanonicalFolder(folder)
+            folder
+        }
+    }
+
+    /** Provider output is an integration boundary, not caller input. */
+    private fun requireValidCanonicalFolder(folder: DocumentCatalogFolder) {
+        if (
+            folder.id.isBlank() ||
+            folder.id.length > MAX_FOLDER_ID_LENGTH ||
+            folder.id.any { character -> Character.isISOControl(character) }
+        ) {
+            throw IllegalStateException("Document catalog provider returned an invalid canonical folder id.")
         }
     }
 
@@ -116,3 +152,7 @@ class DocumentCatalogAccessService(
         const val MAX_FOLDER_ID_LENGTH = 256
     }
 }
+
+/** Missing and user-invisible target folders retain the existing invalid-input contract. */
+internal class DocumentCatalogFolderUnavailableException :
+    IllegalArgumentException("Document catalog folder is unavailable.")

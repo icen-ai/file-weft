@@ -1,6 +1,8 @@
 package com.fileweft.application.catalog
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
@@ -10,101 +12,488 @@ import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.file.FileAsset
+import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileAssetRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
 import com.fileweft.spi.catalog.DocumentCatalogAccessRequest
+import com.fileweft.spi.catalog.DocumentCatalogBinding
 import com.fileweft.spi.catalog.DocumentCatalogFolder
 import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class DocumentCatalogBindingServiceTest {
     @Test
-    fun `moves only the opaque folder metadata and records an audit trail`() {
-        val tenant = Identifier("tenant-a")
-        val document = Document(
-            id = Identifier("document-1"), tenantId = tenant, assetId = Identifier("asset-1"),
-            documentNumber = "DOC-001", title = "Contract",
-        )
-        val assets = MemoryAssets(
-            FileAsset(document.assetId, tenant, Identifier("file-1"), "DOCUMENT", mapOf("catalog.folder-id" to "inbox", "source" to "host")),
-        )
-        val authorization = RecordingAuthorization()
-        val audits = MemoryAudits()
-        val access = DocumentCatalogAccessService(
-            tenantProvider = tenantProvider(tenant),
-            userRealmProvider = userRealm(),
-            authorizationProvider = authorization,
-            catalog = object : DocumentCatalogProvider {
-                override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = emptyList()
-                override fun listFolders(request: DocumentCatalogAccessRequest): List<DocumentCatalogFolder> = listOf(
-                    DocumentCatalogFolder("inbox", null, "Inbox"),
-                    DocumentCatalogFolder("contracts", null, "Contracts"),
-                )
-            },
-        )
-        val service = DocumentCatalogBindingService(
-            tenantProvider = tenantProvider(tenant),
-            userRealmProvider = userRealm(),
-            catalogAccess = access,
-            documents = object : DocumentRepository {
-                override fun findById(tenantId: Identifier, documentId: Identifier) = document.takeIf { it.tenantId == tenantId && it.id == documentId }
-                override fun save(document: Document) = Unit
-            },
-            assets = assets,
-            transaction = DirectTransaction,
-            auditTrail = AuditTrail(audits, SequenceIds(), Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC)),
-        )
+    fun `moves only opaque folder metadata under the document lock and remains idempotent`() {
+        val fixture = Fixture()
 
-        service.move(document.id, "contracts")
-        service.move(document.id, "contracts")
+        fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
 
-        assertEquals("contracts", assets.asset.metadata["catalog.folder-id"])
-        assertEquals("host", assets.asset.metadata["source"])
-        assertEquals("document:edit", authorization.lastRequest?.action?.name)
-        assertEquals(1, audits.records.size)
-        assertEquals("document:catalog:move", audits.records.single().action)
-        assertEquals("inbox", audits.records.single().details["previousFolderId"])
-        assertEquals("contracts", audits.records.single().details["folderId"])
-        assertEquals("Editor A", audits.records.single().operatorName)
+        assertEquals(TARGET_FOLDER_ID, fixture.assets.asset.metadata[DocumentCatalogBinding.METADATA_KEY])
+        assertEquals("host", fixture.assets.asset.metadata["source"])
+        assertEquals(1, fixture.assets.saved.size)
+        assertEquals(2, fixture.documents.mutationReads)
+        assertEquals(
+            listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID, TARGET_FOLDER_ID, TARGET_FOLDER_ID),
+            fixture.catalog.folderRequests,
+        )
+        assertTrue(fixture.catalog.transactionStates.all { active -> !active })
+        assertTrue(
+            fixture.events.indexOf("document:find-for-mutation") <
+                fixture.events.indexOf("asset:find-for-mutation"),
+        )
+        assertEquals(2, fixture.assets.ordinaryReads)
+        assertEquals(2, fixture.assets.mutationReads)
+        assertEquals(1, fixture.audits.records.size)
+        assertEquals("document:catalog:move", fixture.audits.records.single().action)
+        assertEquals(SOURCE_FOLDER_ID, fixture.audits.records.single().details["previousFolderId"])
+        assertEquals(TARGET_FOLDER_ID, fixture.audits.records.single().details["folderId"])
+        assertEquals("Editor A", fixture.audits.records.single().operatorName)
     }
 
-    private fun tenantProvider(tenant: Identifier) = object : TenantProvider {
-        override fun currentTenant() = TenantContext(tenant)
+    @Test
+    fun `checks base authorization before any database or catalog access`() {
+        val fixture = Fixture(authorized = false)
+
+        assertThrows<SecurityException> {
+            fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        }
+
+        assertEquals(0, fixture.transaction.executions)
+        assertEquals(0, fixture.documents.ordinaryReads)
+        assertEquals(0, fixture.documents.mutationReads)
+        assertTrue(fixture.assets.reads.isEmpty())
+        assertTrue(fixture.catalog.folderRequests.isEmpty())
+        assertTrue(fixture.assets.saved.isEmpty())
+        assertTrue(fixture.audits.records.isEmpty())
     }
 
-    private fun userRealm() = object : UserRealmProvider {
-        override fun currentUser() = UserIdentity(Identifier("editor-a"), "Editor A")
-        override fun findUser(userId: Identifier): UserIdentity? = null
+    @Test
+    fun `rejects a missing current user before any database or catalog access`() {
+        val fixture = Fixture(authenticated = false)
+
+        assertThrows<ApplicationUnauthenticatedException> {
+            fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        }
+
+        assertEquals(0, fixture.transaction.executions)
+        assertEquals(0, fixture.documents.ordinaryReads)
+        assertTrue(fixture.catalog.folderRequests.isEmpty())
+        assertTrue(fixture.assets.saved.isEmpty())
+        assertTrue(fixture.audits.records.isEmpty())
     }
 
-    private class RecordingAuthorization : AuthorizationProvider {
-        var lastRequest: AuthorizationRequest? = null
-        override fun authorize(request: AuthorizationRequest): AuthorizationDecision {
-            lastRequest = request
-            return AuthorizationDecision(true)
+    @Test
+    fun `fails fast when the asset repository has no mutation capability`() {
+        val failure = assertThrows<IllegalArgumentException> {
+            Fixture(mutationCapable = false)
+        }
+
+        assertTrue(failure.message.orEmpty().contains("FileAssetMutationRepository"))
+    }
+
+    @Test
+    fun `rejects malicious snapshot identities before catalog access or writes`() {
+        val foreignDocumentFixture = Fixture()
+        foreignDocumentFixture.documents.findByIdOverride = { _, _ ->
+            Document(
+                id = foreignDocumentFixture.document.id,
+                tenantId = Identifier("tenant-b"),
+                assetId = foreignDocumentFixture.document.assetId,
+                documentNumber = "DOC-FOREIGN",
+                title = "Foreign document",
+            )
+        }
+
+        assertThrows<DocumentNotFoundException> {
+            foreignDocumentFixture.service.move(foreignDocumentFixture.document.id, TARGET_FOLDER_ID)
+        }
+        assertTrue(foreignDocumentFixture.catalog.folderRequests.isEmpty())
+        assertTrue(foreignDocumentFixture.assets.saved.isEmpty())
+        assertTrue(foreignDocumentFixture.audits.records.isEmpty())
+
+        val wrongAssetFixture = Fixture()
+        wrongAssetFixture.assets.findByIdOverride = { _, _ ->
+            FileAsset(
+                id = Identifier("asset-wrong"),
+                tenantId = TENANT_ID,
+                fileObjectId = Identifier("file-wrong"),
+                assetType = "DOCUMENT",
+            )
+        }
+
+        assertThrows<IllegalStateException> {
+            wrongAssetFixture.service.move(wrongAssetFixture.document.id, TARGET_FOLDER_ID)
+        }
+        assertTrue(wrongAssetFixture.catalog.folderRequests.isEmpty())
+        assertTrue(wrongAssetFixture.assets.saved.isEmpty())
+        assertTrue(wrongAssetFixture.audits.records.isEmpty())
+    }
+
+    @Test
+    fun `does not reveal or move a hidden source even when the target is visible`() {
+        val fixture = Fixture(
+            rawFolderId = HIDDEN_FOLDER_ID,
+            visibleFolderIds = setOf(TARGET_FOLDER_ID),
+        )
+
+        assertThrows<DocumentNotFoundException> {
+            fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        }
+
+        assertEquals(listOf(HIDDEN_FOLDER_ID), fixture.catalog.folderRequests)
+        assertEquals(1, fixture.documents.ordinaryReads)
+        assertEquals(0, fixture.documents.mutationReads)
+        assertTrue(fixture.assets.saved.isEmpty())
+        assertTrue(fixture.audits.records.isEmpty())
+    }
+
+    @Test
+    fun `keeps an unavailable target as invalid input after authorizing the source`() {
+        val fixture = Fixture(visibleFolderIds = setOf(SOURCE_FOLDER_ID))
+
+        val failure = assertThrows<IllegalArgumentException> {
+            fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        }
+
+        assertFalse(DocumentNotFoundException::class.java.isInstance(failure))
+        assertEquals(listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID), fixture.catalog.folderRequests)
+        assertEquals(0, fixture.documents.mutationReads)
+        assertTrue(fixture.assets.saved.isEmpty())
+        assertTrue(fixture.audits.records.isEmpty())
+    }
+
+    @Test
+    fun `rejects invalid canonical target ids as provider failures without persisting`() {
+        listOf("x".repeat(257), "unsafe\u0000canonical").forEach { invalidCanonicalId ->
+            val fixture = Fixture(
+                folderOverrides = mapOf(
+                    TARGET_FOLDER_ID to DocumentCatalogFolder(invalidCanonicalId, null, "Invalid canonical folder"),
+                ),
+            )
+
+            val failure = assertThrows<IllegalStateException> {
+                fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+            }
+
+            assertTrue(failure.message.orEmpty().contains("provider returned an invalid canonical folder id"))
+            assertEquals(listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID), fixture.catalog.folderRequests)
+            assertEquals(0, fixture.documents.mutationReads)
+            assertTrue(fixture.assets.saved.isEmpty())
+            assertTrue(fixture.audits.records.isEmpty())
         }
     }
 
-    private class MemoryAssets(initial: FileAsset) : FileAssetRepository {
-        var asset: FileAsset = initial
-        override fun findById(tenantId: Identifier, fileAssetId: Identifier) = asset.takeIf { it.tenantId == tenantId && it.id == fileAssetId }
-        override fun save(fileAsset: FileAsset) { asset = fileAsset }
+    @Test
+    fun `rechecks the raw source binding after locking and rejects a race without writes`() {
+        val fixture = Fixture()
+        fixture.documents.beforeFindForMutation = {
+            fixture.assets.replaceBinding("finance")
+        }
+
+        assertThrows<DocumentCatalogBindingChangedException> {
+            fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+        }
+
+        assertEquals(listOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID), fixture.catalog.folderRequests)
+        assertEquals(1, fixture.documents.mutationReads)
+        assertTrue(fixture.assets.saved.isEmpty())
+        assertTrue(fixture.audits.records.isEmpty())
     }
 
-    private class MemoryAudits : AuditRecordRepository {
+    @Test
+    fun `rejects malicious locked identities without moving or auditing`() {
+        listOf("document", "asset").forEach { maliciousResult ->
+            val fixture = Fixture()
+            if (maliciousResult == "document") {
+                fixture.documents.findForMutationOverride = { _, _ ->
+                    Document(
+                        id = fixture.document.id,
+                        tenantId = Identifier("tenant-b"),
+                        assetId = fixture.document.assetId,
+                        documentNumber = "DOC-FOREIGN",
+                        title = "Foreign document",
+                    )
+                }
+            } else {
+                fixture.assets.findForMutationOverride = { _, _ ->
+                    FileAsset(
+                        id = Identifier("asset-wrong"),
+                        tenantId = TENANT_ID,
+                        fileObjectId = Identifier("file-wrong"),
+                        assetType = "DOCUMENT",
+                    )
+                }
+            }
+
+            assertThrows<DocumentCatalogBindingChangedException> {
+                fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+            }
+
+            assertTrue(fixture.assets.saved.isEmpty())
+            assertTrue(fixture.audits.records.isEmpty())
+        }
+    }
+
+    @Test
+    fun `does not move or audit when the final document or asset disappears`() {
+        listOf("document", "asset").forEach { missingResource ->
+            val fixture = Fixture()
+            if (missingResource == "document") {
+                fixture.documents.findForMutationOverride = { _, _ -> null }
+            } else {
+                fixture.assets.findForMutationOverride = { _, _ -> null }
+            }
+
+            assertThrows<RuntimeException> {
+                fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+            }
+
+            assertTrue(fixture.assets.saved.isEmpty())
+            assertTrue(fixture.audits.records.isEmpty())
+        }
+    }
+
+    private class Fixture(
+        rawFolderId: String? = SOURCE_FOLDER_ID,
+        visibleFolderIds: Set<String> = setOf(SOURCE_FOLDER_ID, TARGET_FOLDER_ID),
+        folderOverrides: Map<String, DocumentCatalogFolder> = emptyMap(),
+        authorized: Boolean = true,
+        authenticated: Boolean = true,
+        mutationCapable: Boolean = true,
+    ) {
+        val events = mutableListOf<String>()
+        val transaction = TrackingTransaction(events)
+        val document = Document(
+            id = Identifier("document-1"),
+            tenantId = TENANT_ID,
+            assetId = Identifier("asset-1"),
+            documentNumber = "DOC-001",
+            title = "Contract",
+        )
+        val documents = RecordingDocuments(document, transaction, events)
+        val assets = RecordingAssets(
+            FileAsset(
+                document.assetId,
+                TENANT_ID,
+                Identifier("file-1"),
+                "DOCUMENT",
+                linkedMapOf<String, String>().apply {
+                    rawFolderId?.let { folderId -> put(DocumentCatalogBinding.METADATA_KEY, folderId) }
+                    put("source", "host")
+                },
+            ),
+            transaction,
+            events,
+        )
+        private val assetRepository: FileAssetRepository = if (mutationCapable) {
+            assets
+        } else {
+            NonLockingAssets(assets.asset)
+        }
+        val audits = RecordingAudits(transaction)
+        val catalog = RecordingCatalog(visibleFolderIds, folderOverrides, transaction, events)
+        private val authorization = RecordingAuthorization(authorized, events)
+        private val tenants = object : TenantProvider {
+            override fun currentTenant() = TenantContext(TENANT_ID)
+        }
+        private val users = object : UserRealmProvider {
+            override fun currentUser() = if (authenticated) {
+                UserIdentity(Identifier("editor-a"), "Editor A")
+            } else {
+                null
+            }
+            override fun findUser(userId: Identifier): UserIdentity? = null
+        }
+        private val access = DocumentCatalogAccessService(tenants, users, authorization, catalog)
+        val service = DocumentCatalogBindingService(
+            tenantProvider = tenants,
+            userRealmProvider = users,
+            catalogAccess = access,
+            documents = documents,
+            assets = assetRepository,
+            transaction = transaction,
+            auditTrail = AuditTrail(
+                audits,
+                SequenceIds(),
+                Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+            ),
+        )
+    }
+
+    private class TrackingTransaction(
+        private val events: MutableList<String>,
+    ) : ApplicationTransaction {
+        var active: Boolean = false
+            private set
+        var executions: Int = 0
+            private set
+
+        override fun <T> execute(action: () -> T): T {
+            check(!active) { "Nested test transactions are not expected." }
+            executions++
+            events += "transaction:start"
+            active = true
+            return try {
+                action()
+            } finally {
+                active = false
+                events += "transaction:end"
+            }
+        }
+    }
+
+    private class RecordingDocuments(
+        private val document: Document,
+        private val transaction: TrackingTransaction,
+        private val events: MutableList<String>,
+    ) : DocumentRepository {
+        var ordinaryReads: Int = 0
+        var mutationReads: Int = 0
+        var beforeFindForMutation: (() -> Unit)? = null
+        var findByIdOverride: ((Identifier, Identifier) -> Document?)? = null
+        var findForMutationOverride: ((Identifier, Identifier) -> Document?)? = null
+
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? {
+            assertTrue(transaction.active)
+            ordinaryReads++
+            events += "document:find"
+            findByIdOverride?.let { provider -> return provider(tenantId, documentId) }
+            return document.takeIf { candidate -> candidate.tenantId == tenantId && candidate.id == documentId }
+        }
+
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? {
+            assertTrue(transaction.active)
+            mutationReads++
+            events += "document:find-for-mutation"
+            beforeFindForMutation?.invoke()
+            findForMutationOverride?.let { provider -> return provider(tenantId, documentId) }
+            return document.takeIf { candidate -> candidate.tenantId == tenantId && candidate.id == documentId }
+        }
+
+        override fun save(document: Document) = Unit
+    }
+
+    private class RecordingAssets(
+        var asset: FileAsset,
+        private val transaction: TrackingTransaction,
+        private val events: MutableList<String>,
+    ) : FileAssetMutationRepository {
+        var ordinaryReads: Int = 0
+        var mutationReads: Int = 0
+        var findByIdOverride: ((Identifier, Identifier) -> FileAsset?)? = null
+        var findForMutationOverride: ((Identifier, Identifier) -> FileAsset?)? = null
+        val reads = mutableListOf<Identifier>()
+        val saved = mutableListOf<FileAsset>()
+
+        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? {
+            assertTrue(transaction.active)
+            ordinaryReads++
+            reads += fileAssetId
+            events += "asset:find"
+            findByIdOverride?.let { provider -> return provider(tenantId, fileAssetId) }
+            return asset.takeIf { candidate -> candidate.tenantId == tenantId && candidate.id == fileAssetId }
+        }
+
+        override fun findForMutation(tenantId: Identifier, fileAssetId: Identifier): FileAsset? {
+            assertTrue(transaction.active)
+            mutationReads++
+            reads += fileAssetId
+            events += "asset:find-for-mutation"
+            findForMutationOverride?.let { provider -> return provider(tenantId, fileAssetId) }
+            return asset.takeIf { candidate -> candidate.tenantId == tenantId && candidate.id == fileAssetId }
+        }
+
+        override fun save(fileAsset: FileAsset) {
+            assertTrue(transaction.active)
+            asset = fileAsset
+            saved += fileAsset
+        }
+
+        fun replaceBinding(folderId: String) {
+            asset = FileAsset(
+                asset.id,
+                asset.tenantId,
+                asset.fileObjectId,
+                asset.assetType,
+                asset.metadata + (DocumentCatalogBinding.METADATA_KEY to folderId),
+            )
+        }
+    }
+
+    private class NonLockingAssets(
+        private val asset: FileAsset,
+    ) : FileAssetRepository {
+        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
+            asset.takeIf { candidate -> candidate.tenantId == tenantId && candidate.id == fileAssetId }
+
+        override fun save(fileAsset: FileAsset) = Unit
+    }
+
+    private class RecordingCatalog(
+        private val visibleFolderIds: Set<String>,
+        private val folderOverrides: Map<String, DocumentCatalogFolder>,
+        private val transaction: TrackingTransaction,
+        private val events: MutableList<String>,
+    ) : DocumentCatalogProvider {
+        val folderRequests = mutableListOf<String>()
+        val transactionStates = mutableListOf<Boolean>()
+
+        override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = emptyList()
+
+        override fun findFolder(request: DocumentCatalogAccessRequest, folderId: String): DocumentCatalogFolder? {
+            transactionStates += transaction.active
+            assertFalse(transaction.active, "A host catalog must never be called inside a database transaction.")
+            folderRequests += folderId
+            events += "catalog:$folderId"
+            if (folderId !in visibleFolderIds) {
+                return null
+            }
+            return folderOverrides[folderId]
+                ?: DocumentCatalogFolder(folderId, null, "Folder $folderId")
+        }
+    }
+
+    private class RecordingAuthorization(
+        private val allowed: Boolean,
+        private val events: MutableList<String>,
+    ) : AuthorizationProvider {
+        override fun authorize(request: AuthorizationRequest): AuthorizationDecision {
+            events += "authorization:${request.action.name}"
+            return AuthorizationDecision(allowed, "denied")
+        }
+    }
+
+    private class RecordingAudits(
+        private val transaction: TrackingTransaction,
+    ) : AuditRecordRepository {
         val records = mutableListOf<AuditRecord>()
-        override fun append(record: AuditRecord) { records += record }
-        override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int) =
-            records.filter { it.tenantId == tenantId && it.resourceType == resourceType && it.resourceId == resourceId }.take(limit)
+
+        override fun append(record: AuditRecord) {
+            assertTrue(transaction.active)
+            records += record
+        }
+
+        override fun findByResource(
+            tenantId: Identifier,
+            resourceType: String,
+            resourceId: Identifier,
+            limit: Int,
+        ): List<AuditRecord> = records.filter { record ->
+            record.tenantId == tenantId && record.resourceType == resourceType && record.resourceId == resourceId
+        }.take(limit)
     }
 
     private class SequenceIds : IdentifierGenerator {
@@ -112,7 +501,10 @@ class DocumentCatalogBindingServiceTest {
         override fun nextId() = Identifier("audit-${++counter}")
     }
 
-    private object DirectTransaction : ApplicationTransaction {
-        override fun <T> execute(action: () -> T): T = action()
+    private companion object {
+        val TENANT_ID = Identifier("tenant-a")
+        const val SOURCE_FOLDER_ID = "inbox"
+        const val TARGET_FOLDER_ID = "contracts"
+        const val HIDDEN_FOLDER_ID = "executive"
     }
 }

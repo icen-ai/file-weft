@@ -2,6 +2,7 @@ package com.fileweft.web.runtime.v1.document
 
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
@@ -10,7 +11,7 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.file.FileAsset
-import com.fileweft.domain.file.FileAssetRepository
+import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileObject
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
@@ -122,8 +123,30 @@ class DocumentApiWriteFacadeTest {
     }
 
     @Test
-    fun `fails closed for catalog document edits until current binding checks are available`() {
+    fun `uses catalog aware mutations for version and rename when the current binding can be guarded`() {
         val fixture = Fixture(withCatalog = true)
+        fixture.facade.create(
+            CreateDocumentDraftCommand("DOC-1", "Title", "v1.txt", 2, folderId = "finance"),
+            ByteArrayInputStream("v1".toByteArray()),
+        )
+
+        val version = fixture.facade.addVersion(
+            "document-1",
+            AddDocumentVersionCommand("2.0", "v2.txt", 2),
+            ByteArrayInputStream("v2".toByteArray()),
+        )
+        val renamed = fixture.facade.rename("document-1", RenameDocumentCommand("Renamed"))
+
+        assertEquals("version-2", version.versionId)
+        assertEquals("document-1", renamed.documentId)
+        assertEquals(2, fixture.storage.requests.size)
+        assertEquals(2, fixture.documents.mutationReads)
+        assertEquals("Renamed", fixture.documents.values.values.single().title)
+    }
+
+    @Test
+    fun `still fails closed when a catalog host has not installed the guarded mutation service`() {
+        val fixture = Fixture(withCatalog = true, withCatalogMutations = false)
         fixture.facade.create(
             CreateDocumentDraftCommand("DOC-1", "Title", "v1.txt", 2, folderId = "finance"),
             ByteArrayInputStream("v1".toByteArray()),
@@ -185,7 +208,10 @@ class DocumentApiWriteFacadeTest {
         assertEquals(0, fixture.documents.mutationReads)
     }
 
-    private class Fixture(withCatalog: Boolean = false) {
+    private class Fixture(
+        withCatalog: Boolean = false,
+        withCatalogMutations: Boolean = withCatalog,
+    ) {
         val documents = MemoryDocuments()
         val assets = MemoryAssets()
         val storage = RecordingStorage()
@@ -210,8 +236,8 @@ class DocumentApiWriteFacadeTest {
             ),
             transaction = DirectTransaction,
         )
-        private val catalogDrafts: DocumentCatalogDraftService? = if (withCatalog) {
-            val catalogAccess = DocumentCatalogAccessService(
+        private val catalogAccess: DocumentCatalogAccessService? = if (withCatalog) {
+            DocumentCatalogAccessService(
                 tenantProvider = tenants,
                 userRealmProvider = users,
                 authorizationProvider = authorization,
@@ -221,11 +247,16 @@ class DocumentApiWriteFacadeTest {
                     )
                 },
             )
-            DocumentCatalogDraftService(drafts, catalogAccess)
         } else {
             null
         }
-        val facade = DocumentApiWriteFacade(drafts, catalogDrafts)
+        private val catalogDrafts = catalogAccess?.let { access -> DocumentCatalogDraftService(drafts, access) }
+        private val catalogMutations = catalogAccess
+            ?.takeIf { withCatalogMutations }
+            ?.let { access ->
+                DocumentCatalogMutationService(drafts, access)
+            }
+        val facade = DocumentApiWriteFacade(drafts, catalogDrafts, catalogMutations)
     }
 
     private class RecordingAuthorization : AuthorizationProvider {
@@ -269,10 +300,13 @@ class DocumentApiWriteFacadeTest {
         }
     }
 
-    private class MemoryAssets : FileAssetRepository {
+    private class MemoryAssets : FileAssetMutationRepository {
         val saved = mutableListOf<FileAsset>()
         override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
             saved.firstOrNull { asset -> asset.tenantId == tenantId && asset.id == fileAssetId }
+
+        override fun findForMutation(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
+            findById(tenantId, fileAssetId)
 
         override fun save(fileAsset: FileAsset) {
             saved += fileAsset

@@ -3,6 +3,7 @@ package com.fileweft.web.spring.boot2
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
@@ -12,7 +13,7 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.file.FileAsset
-import com.fileweft.domain.file.FileAssetRepository
+import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileObject
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
@@ -180,9 +181,48 @@ class DocumentV1WriteControllerMockMvcTest {
     }
 
     @Test
-    fun `fails closed for catalog hosts until catalog-aware version and rename services exist`() {
+    fun `adds a version and renames for catalog hosts with complete mutation services`() {
         val fixture = DocumentV1WriteControllerTestFixture()
         val mockMvc = mvc(fixture, catalogMode = true)
+
+        mockMvc.perform(createRequest(folderId = "finance"))
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.data.documentId").value("document-1"))
+
+        mockMvc.perform(
+            multipart("/fileweft/v1/documents/document-1/versions")
+                .file(file("version.txt", "version-two"))
+                .param("versionNumber", "2.0"),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.data.documentId").value("document-1"))
+            .andExpect(jsonPath("$.data.versionId").value("version-2"))
+
+        mockMvc.perform(
+            patch("/fileweft/v1/documents/document-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Renamed document\"}"),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.documentId").value("document-1"))
+
+        assertEquals(2, fixture.storage.uploads.size)
+        assertEquals(
+            listOf(Identifier("asset-1"), Identifier("asset-1")),
+            fixture.assetMutationReads,
+        )
+        assertEquals("Renamed document", fixture.documents.values.getValue(Identifier("document-1")).title)
+    }
+
+    @Test
+    fun `fails closed for catalog hosts when the catalog mutation service is absent`() {
+        val fixture = DocumentV1WriteControllerTestFixture()
+        val mockMvc = mvc(fixture, catalogMode = true, catalogMutationsAvailable = false)
+
+        mockMvc.perform(createRequest(folderId = "finance"))
+            .andExpect(status().isCreated)
+
+        val uploadCountBeforeMutation = fixture.storage.uploads.size
 
         mockMvc.perform(
             multipart("/fileweft/v1/documents/document-1/versions")
@@ -200,7 +240,8 @@ class DocumentV1WriteControllerMockMvcTest {
             .andExpect(status().isServiceUnavailable)
             .andExpect(jsonPath("$.code").value("FEATURE_UNAVAILABLE"))
 
-        assertTrue(fixture.storage.uploads.isEmpty())
+        assertEquals(uploadCountBeforeMutation, fixture.storage.uploads.size)
+        assertEquals("Draft", fixture.documents.values.getValue(Identifier("document-1")).title)
     }
 
     @Test
@@ -282,10 +323,11 @@ class DocumentV1WriteControllerMockMvcTest {
         fixture: DocumentV1WriteControllerTestFixture,
         traceId: String? = null,
         catalogMode: Boolean = false,
+        catalogMutationsAvailable: Boolean = true,
     ): MockMvc =
         MockMvcBuilders.standaloneSetup(
             DocumentV1WriteController(
-                documents = fixture.facade(catalogMode),
+                documents = fixture.facade(catalogMode, catalogMutationsAvailable),
                 responses = V1ApiResponseFactory(),
                 traceContextProvider = traceId?.let(DocumentV1WriteControllerTestFixture::traceProvider),
             ),
@@ -313,6 +355,9 @@ internal class DocumentV1WriteControllerTestFixture(
     var authorizationDecision: AuthorizationDecision = AuthorizationDecision(true)
     val documents = MemoryDocuments()
     val storage = RecordingStorage()
+    private val assets = MemoryAssets()
+    val assetMutationReads: List<Identifier>
+        get() = assets.mutationReads.toList()
     private val tenants = object : TenantProvider {
         override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-a"))
     }
@@ -324,6 +369,7 @@ internal class DocumentV1WriteControllerTestFixture(
     private val authorization = object : AuthorizationProvider {
         override fun authorize(request: AuthorizationRequest): AuthorizationDecision = authorizationDecision
     }
+    private val catalogAccess = DocumentCatalogAccessService(tenants, users, authorization, CatalogProvider)
     val drafts = DocumentDraftService(
         tenantProvider = tenants,
         userRealmProvider = users,
@@ -331,18 +377,26 @@ internal class DocumentV1WriteControllerTestFixture(
         storageAdapter = storage,
         documentRepository = documents,
         fileObjectRepository = MemoryFileObjects(),
-        fileAssetRepository = MemoryAssets(),
+        fileAssetRepository = assets,
         identifierGenerator = SequenceIdentifiers(identifiers),
         transaction = DirectTransaction,
     )
 
-    fun facade(catalogMode: Boolean = false): DocumentApiWriteFacade = if (catalogMode) {
+    fun catalogDraftService(): DocumentCatalogDraftService = DocumentCatalogDraftService(drafts, catalogAccess)
+
+    fun catalogMutationService(): DocumentCatalogMutationService = DocumentCatalogMutationService(
+        drafts = drafts,
+        catalogAccess = catalogAccess,
+    )
+
+    fun facade(
+        catalogMode: Boolean = false,
+        catalogMutationsAvailable: Boolean = true,
+    ): DocumentApiWriteFacade = if (catalogMode) {
         DocumentApiWriteFacade(
             drafts = drafts,
-            catalogDrafts = DocumentCatalogDraftService(
-                drafts,
-                DocumentCatalogAccessService(tenants, users, authorization, CatalogProvider),
-            ),
+            catalogDrafts = catalogDraftService(),
+            catalogMutations = if (catalogMutationsAvailable) catalogMutationService() else null,
         )
     } else {
         DocumentApiWriteFacade(drafts)
@@ -422,10 +476,21 @@ internal class DocumentV1WriteControllerTestFixture(
         override fun save(fileObject: FileObject) = Unit
     }
 
-    private class MemoryAssets : FileAssetRepository {
-        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? = null
+    private class MemoryAssets : FileAssetMutationRepository {
+        private val values = linkedMapOf<Identifier, FileAsset>()
+        val mutationReads = mutableListOf<Identifier>()
 
-        override fun save(fileAsset: FileAsset) = Unit
+        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
+            values[fileAssetId]?.takeIf { asset -> asset.tenantId == tenantId }
+
+        override fun findForMutation(tenantId: Identifier, fileAssetId: Identifier): FileAsset? {
+            mutationReads += fileAssetId
+            return findById(tenantId, fileAssetId)
+        }
+
+        override fun save(fileAsset: FileAsset) {
+            values[fileAsset.id] = fileAsset
+        }
     }
 
     private class SequenceIdentifiers(values: List<String>) : IdentifierGenerator {

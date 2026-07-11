@@ -3,6 +3,7 @@ package com.fileweft.web.spring.boot3
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentDetailView
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentFolderReadScope
@@ -19,7 +20,7 @@ import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.file.FileAsset
-import com.fileweft.domain.file.FileAssetRepository
+import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileObject
 import com.fileweft.domain.file.FileObjectRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
@@ -288,11 +289,60 @@ class V1DocumentWriteControllerTest {
     }
 
     @Test
-    fun `fails closed for generic version and rename mutations when catalog mode is installed`() {
-        val fixture = V1DocumentWriteTestFixture(listOf("file-2", "version-2"))
-        fixture.documents.seed(title = "Original")
+    fun `creates versions and renames when both catalog mutation capabilities are installed`() {
+        val fixture = V1DocumentWriteTestFixture(
+            listOf("document-1", "file-1", "asset-1", "version-1", "file-2", "version-2"),
+        )
+        val mvc = mockMvc(
+            fixture,
+            fixture.catalogDraftService(),
+            fixture.catalogMutationService(),
+        )
+
+        mvc.perform(
+            multipart(DOCUMENTS_PATH)
+                .file(trackingFile("proof.pdf"))
+                .param("documentNumber", "DOC-1")
+                .param("title", "Original")
+                .param("folderId", "finance"),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.data.versionId").value("version-1"))
+
+        mvc.perform(
+            multipart("$DOCUMENTS_PATH/document-1/versions")
+                .file(trackingFile("revision.pdf"))
+                .param("versionNumber", "2.0"),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.data.versionId").value("version-2"))
+
+        mvc.perform(
+            patch("$DOCUMENTS_PATH/document-1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Renamed\"}"),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.documentId").value("document-1"))
+
+        assertEquals(2, fixture.storage.uploads.size)
+        assertEquals("version-2", fixture.documents.values.getValue(Identifier("document-1")).currentVersionId?.value)
+        assertEquals("Renamed", fixture.documents.values.getValue(Identifier("document-1")).title)
+    }
+
+    @Test
+    fun `fails closed without extra uploads when catalog mutation capability is incomplete`() {
+        val fixture = V1DocumentWriteTestFixture()
         val file = trackingFile("revision.pdf")
         val mvc = mockMvc(fixture, fixture.catalogDraftService())
+
+        mvc.perform(
+            multipart(DOCUMENTS_PATH)
+                .file(trackingFile("proof.pdf"))
+                .param("documentNumber", "DOC-1")
+                .param("title", "Original")
+                .param("folderId", "finance"),
+        ).andExpect(status().isCreated)
 
         mvc.perform(
             multipart("$DOCUMENTS_PATH/document-1/versions")
@@ -312,7 +362,7 @@ class V1DocumentWriteControllerTest {
 
         assertEquals(1, file.openCount)
         assertTrue(file.openedStreams.single().closed)
-        assertTrue(fixture.storage.uploads.isEmpty())
+        assertEquals(1, fixture.storage.uploads.size)
         assertEquals("Original", fixture.documents.values.getValue(Identifier("document-1")).title)
     }
 
@@ -423,9 +473,10 @@ class V1DocumentWriteControllerTest {
     private fun mockMvc(
         fixture: V1DocumentWriteTestFixture,
         catalogDrafts: DocumentCatalogDraftService? = null,
+        catalogMutations: DocumentCatalogMutationService? = null,
     ): MockMvc = MockMvcBuilders.standaloneSetup(
         V1DocumentWriteController(
-            documents = DocumentApiWriteFacade(fixture.drafts, catalogDrafts),
+            documents = DocumentApiWriteFacade(fixture.drafts, catalogDrafts, catalogMutations),
             responses = V1ApiResponseFactory(),
             traceContextProvider = TRACE_CONTEXT_PROVIDER,
         ),
@@ -489,6 +540,7 @@ internal class V1DocumentWriteTestFixture(
     var authorizationDecision: AuthorizationDecision = AuthorizationDecision(true)
     val documents = MemoryDocuments()
     val storage = RecordingStorage()
+    private val assets = MemoryAssets()
 
     private val tenantProvider = object : TenantProvider {
         override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
@@ -500,6 +552,16 @@ internal class V1DocumentWriteTestFixture(
     private val authorizationProvider = object : AuthorizationProvider {
         override fun authorize(request: AuthorizationRequest): AuthorizationDecision = authorizationDecision
     }
+    private val catalogProvider = object : DocumentCatalogProvider {
+        override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
+            listOf(DocumentCatalogFolder("finance", null, "Finance"))
+    }
+    private val catalogAccess = DocumentCatalogAccessService(
+        tenantProvider = tenantProvider,
+        userRealmProvider = userRealmProvider,
+        authorizationProvider = authorizationProvider,
+        catalog = catalogProvider,
+    )
 
     val drafts = DocumentDraftService(
         tenantProvider = tenantProvider,
@@ -508,24 +570,17 @@ internal class V1DocumentWriteTestFixture(
         storageAdapter = storage,
         documentRepository = documents,
         fileObjectRepository = MemoryFileObjects(),
-        fileAssetRepository = MemoryAssets(),
+        fileAssetRepository = assets,
         identifierGenerator = SequenceIdentifiers(identifierValues),
         transaction = DirectTransaction,
     )
 
-    fun catalogDraftService(): DocumentCatalogDraftService {
-        val catalog = object : DocumentCatalogProvider {
-            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
-                listOf(DocumentCatalogFolder("finance", null, "Finance"))
-        }
-        val access = DocumentCatalogAccessService(
-            tenantProvider = tenantProvider,
-            userRealmProvider = userRealmProvider,
-            authorizationProvider = authorizationProvider,
-            catalog = catalog,
-        )
-        return DocumentCatalogDraftService(drafts, access)
-    }
+    fun catalogDraftService(): DocumentCatalogDraftService = DocumentCatalogDraftService(drafts, catalogAccess)
+
+    fun catalogMutationService(): DocumentCatalogMutationService = DocumentCatalogMutationService(
+        drafts = drafts,
+        catalogAccess = catalogAccess,
+    )
 
     fun queryService(): DocumentQueryService = DocumentQueryService(
         tenantProvider = tenantProvider,
@@ -641,9 +696,18 @@ internal class V1DocumentWriteTestFixture(
         override fun save(fileObject: FileObject) = Unit
     }
 
-    private class MemoryAssets : FileAssetRepository {
-        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? = null
-        override fun save(fileAsset: FileAsset) = Unit
+    private class MemoryAssets : FileAssetMutationRepository {
+        private val values = linkedMapOf<Identifier, FileAsset>()
+
+        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
+            values[fileAssetId]?.takeIf { asset -> asset.tenantId == tenantId }
+
+        override fun findForMutation(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
+            findById(tenantId, fileAssetId)
+
+        override fun save(fileAsset: FileAsset) {
+            values[fileAsset.id] = fileAsset
+        }
     }
 
     private class SequenceIdentifiers(values: List<String>) : IdentifierGenerator {

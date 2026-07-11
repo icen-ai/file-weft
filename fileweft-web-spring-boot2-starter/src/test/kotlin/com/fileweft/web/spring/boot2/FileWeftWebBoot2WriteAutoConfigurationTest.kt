@@ -1,18 +1,27 @@
 package com.fileweft.web.spring.boot2
 
+import com.fileweft.application.catalog.DocumentCatalogDraftService
+import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentQueryService
+import com.fileweft.spi.catalog.DocumentCatalogBinding
+import com.fileweft.web.api.v1.document.AddDocumentVersionCommand
+import com.fileweft.web.api.v1.document.CreateDocumentDraftCommand
+import com.fileweft.web.api.v1.document.RenameDocumentCommand
 import com.fileweft.web.runtime.v1.V1ApiResponseFactory
 import com.fileweft.web.runtime.v1.document.DocumentApiReadFacade
 import com.fileweft.web.runtime.v1.document.DocumentApiWriteFacade
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.io.support.SpringFactoriesLoader
+import java.io.ByteArrayInputStream
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class FileWeftWebBoot2WriteAutoConfigurationTest {
@@ -39,6 +48,111 @@ class FileWeftWebBoot2WriteAutoConfigurationTest {
     }
 
     @Test
+    fun `keeps catalog mutations fail closed when only catalog draft service is available`() {
+        contextRunner()
+            .withUserConfiguration(CatalogDraftOnlyConfiguration::class.java)
+            .run { context ->
+                val fixture = context.getBean(DocumentV1WriteControllerTestFixture::class.java)
+                val facade = context.getBean(DocumentApiWriteFacade::class.java)
+
+                ByteArrayInputStream(byteArrayOf(1, 2, 3)).use { content ->
+                    facade.create(
+                        CreateDocumentDraftCommand(
+                            documentNumber = "DOC-1",
+                            title = "Catalog draft",
+                            fileName = "draft.txt",
+                            contentLength = 3,
+                            contentType = "text/plain",
+                            folderId = "finance",
+                        ),
+                        content,
+                    )
+                }
+                val uploadCountBeforeMutation = fixture.storage.uploads.size
+
+                assertFailsWith<IllegalStateException> {
+                    ByteArrayInputStream(byteArrayOf(4, 5, 6)).use { content ->
+                        facade.addVersion(
+                            "document-1",
+                            AddDocumentVersionCommand("2.0", "revision.txt", 3, "text/plain"),
+                            content,
+                        )
+                    }
+                }
+                assertFailsWith<IllegalStateException> {
+                    facade.rename("document-1", RenameDocumentCommand("Renamed catalog draft"))
+                }
+
+                assertEquals(uploadCountBeforeMutation, fixture.storage.uploads.size)
+                assertEquals(
+                    "finance",
+                    fixture.storage.uploads.single().metadata[DocumentCatalogBinding.METADATA_KEY],
+                )
+                assertEquals("Catalog draft", fixture.documents.values.values.single().title)
+            }
+    }
+
+    @Test
+    fun `passes complete catalog draft and mutation services into the write facade`() {
+        contextRunner()
+            .withUserConfiguration(CompleteCatalogConfiguration::class.java)
+            .run { context ->
+                val fixture = context.getBean(DocumentV1WriteControllerTestFixture::class.java)
+                val facade = context.getBean(DocumentApiWriteFacade::class.java)
+
+                ByteArrayInputStream(byteArrayOf(1, 2, 3)).use { content ->
+                    val created = facade.create(
+                        CreateDocumentDraftCommand(
+                            documentNumber = "DOC-1",
+                            title = "Catalog draft",
+                            fileName = "draft.txt",
+                            contentLength = 3,
+                            contentType = "text/plain",
+                            folderId = "finance",
+                        ),
+                        content,
+                    )
+                    assertEquals("document-1", created.documentId)
+                }
+                ByteArrayInputStream(byteArrayOf(4, 5, 6)).use { content ->
+                    val added = facade.addVersion(
+                        "document-1",
+                        AddDocumentVersionCommand("2.0", "revision.txt", 3, "text/plain"),
+                        content,
+                    )
+                    assertEquals("version-2", added.versionId)
+                }
+                val renamed = facade.rename("document-1", RenameDocumentCommand("Renamed catalog draft"))
+
+                assertEquals("document-1", renamed.documentId)
+                assertEquals(2, fixture.storage.uploads.size)
+                assertEquals(
+                    "finance",
+                    fixture.storage.uploads.first().metadata[DocumentCatalogBinding.METADATA_KEY],
+                )
+                assertEquals("Renamed catalog draft", fixture.documents.values.values.single().title)
+            }
+    }
+
+    @Test
+    fun `fails startup when the host provides multiple catalog draft services`() {
+        contextRunner()
+            .withUserConfiguration(MultipleCatalogDraftServicesConfiguration::class.java)
+            .run { context ->
+                assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
+            }
+    }
+
+    @Test
+    fun `fails startup when the host provides multiple catalog mutation services`() {
+        contextRunner()
+            .withUserConfiguration(MultipleCatalogMutationServicesConfiguration::class.java)
+            .run { context ->
+                assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
+            }
+    }
+
+    @Test
     fun `registers both boot 2 web auto configurations through spring factories`() {
         val factories = SpringFactoriesLoader.loadFactoryNames(
             EnableAutoConfiguration::class.java,
@@ -57,6 +171,9 @@ class FileWeftWebBoot2WriteAutoConfigurationTest {
             ),
         )
 
+    private fun Throwable.hasCause(type: Class<out Throwable>): Boolean =
+        generateSequence(this) { throwable -> throwable.cause }.any { throwable -> type.isInstance(throwable) }
+
     @Configuration(proxyBeanMethods = false)
     class ReadOnlyConfiguration {
         @Bean
@@ -67,5 +184,76 @@ class FileWeftWebBoot2WriteAutoConfigurationTest {
     class DraftServiceConfiguration {
         @Bean
         fun documentDraftService(): DocumentDraftService = DocumentV1WriteControllerTestFixture().drafts
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    internal class CatalogDraftOnlyConfiguration {
+        @Bean
+        fun documentV1WriteControllerTestFixture(): DocumentV1WriteControllerTestFixture =
+            DocumentV1WriteControllerTestFixture()
+
+        @Bean
+        fun documentDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentDraftService = fixture.drafts
+
+        @Bean
+        fun documentCatalogDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentCatalogDraftService =
+            fixture.catalogDraftService()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    internal class CompleteCatalogConfiguration {
+        @Bean
+        fun documentV1WriteControllerTestFixture(): DocumentV1WriteControllerTestFixture =
+            DocumentV1WriteControllerTestFixture()
+
+        @Bean
+        fun documentDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentDraftService = fixture.drafts
+
+        @Bean
+        fun documentCatalogDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentCatalogDraftService =
+            fixture.catalogDraftService()
+
+        @Bean
+        fun documentCatalogMutationService(
+            fixture: DocumentV1WriteControllerTestFixture,
+        ): DocumentCatalogMutationService = fixture.catalogMutationService()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    internal class MultipleCatalogDraftServicesConfiguration {
+        @Bean
+        fun documentV1WriteControllerTestFixture(): DocumentV1WriteControllerTestFixture =
+            DocumentV1WriteControllerTestFixture()
+
+        @Bean
+        fun documentDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentDraftService = fixture.drafts
+
+        @Bean
+        fun firstCatalogDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentCatalogDraftService =
+            fixture.catalogDraftService()
+
+        @Bean
+        fun secondCatalogDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentCatalogDraftService =
+            fixture.catalogDraftService()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    internal class MultipleCatalogMutationServicesConfiguration {
+        @Bean
+        fun documentV1WriteControllerTestFixture(): DocumentV1WriteControllerTestFixture =
+            DocumentV1WriteControllerTestFixture()
+
+        @Bean
+        fun documentDraftService(fixture: DocumentV1WriteControllerTestFixture): DocumentDraftService = fixture.drafts
+
+        @Bean
+        fun firstCatalogMutationService(
+            fixture: DocumentV1WriteControllerTestFixture,
+        ): DocumentCatalogMutationService = fixture.catalogMutationService()
+
+        @Bean
+        fun secondCatalogMutationService(
+            fixture: DocumentV1WriteControllerTestFixture,
+        ): DocumentCatalogMutationService = fixture.catalogMutationService()
     }
 }

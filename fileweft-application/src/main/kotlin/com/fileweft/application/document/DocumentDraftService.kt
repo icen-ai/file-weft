@@ -47,6 +47,11 @@ class DocumentDraftService(
     private val metrics: FileWeftMetrics? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
+    internal val mutationComponents = DocumentMutationComponents(
+        documentRepository,
+        fileAssetRepository,
+        transaction,
+    )
 
     fun create(command: CreateDocumentDraftCommand, content: InputStream): Document {
         val tenant = tenantProvider.currentTenant()
@@ -104,22 +109,37 @@ class DocumentDraftService(
         }
     }
 
-    fun addVersion(documentId: Identifier, command: AddDocumentVersionCommand, content: InputStream): Document {
+    fun addVersion(documentId: Identifier, command: AddDocumentVersionCommand, content: InputStream): Document =
+        addVersion(documentId, command, content, null)
+
+    internal fun addVersion(
+        documentId: Identifier,
+        command: AddDocumentVersionCommand,
+        content: InputStream,
+        mutationGuard: DocumentMutationGuard?,
+    ): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         val metadata = immutableMetadata(command.metadata)
         val fileObjectId = identifierGenerator.nextId()
         val versionId = identifierGenerator.nextId()
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
+        val mutationPermit = mutationGuard?.prepare(tenant.tenantId, documentId)
         var stored: StoredObject? = null
         try {
             val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
+            if (mutationGuard != null) {
+                mutationGuard.revalidate(tenant.tenantId, documentId, checkNotNull(mutationPermit))
+            }
             val document = transaction.execute {
                 val existing = documentRepository.findForMutation(tenant.tenantId, documentId)
                     ?: throw DocumentNotFoundException(documentId)
+                if (mutationGuard != null) {
+                    mutationGuard.verifyLocked(tenant.tenantId, existing, checkNotNull(mutationPermit))
+                }
                 val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
                 existing.addVersion(
                     DocumentVersion(versionId, tenant.tenantId, existing.id, command.versionNumber, fileObject.id),
@@ -146,13 +166,23 @@ class DocumentDraftService(
         }
     }
 
-    fun rename(documentId: Identifier, title: String): Document {
+    fun rename(documentId: Identifier, title: String): Document = rename(documentId, title, null)
+
+    internal fun rename(
+        documentId: Identifier,
+        title: String,
+        mutationGuard: DocumentMutationGuard?,
+    ): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
+        val mutationPermit = mutationGuard?.prepare(tenant.tenantId, documentId)
         return transaction.execute {
             val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
+            if (mutationGuard != null) {
+                mutationGuard.verifyLocked(tenant.tenantId, document, checkNotNull(mutationPermit))
+            }
             document.rename(title)
             documentRepository.save(document)
             auditTrail?.record(

@@ -1,6 +1,7 @@
 package com.fileweft.application.catalog
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.document.DocumentMutationComponents
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -16,6 +17,14 @@ import com.fileweft.spi.tenant.TenantProvider
  * Moves a document between host-owned folders without changing the document
  * lifecycle, object storage location, or any already published downstream
  * representation. The only persisted change is the opaque asset metadata.
+ *
+ * This service is a top-level application boundary and must not be wrapped in
+ * a host-owned database transaction because catalog authorization is external.
+ * All catalog binding writers must acquire the document mutation lock and then
+ * the asset mutation lock as done here; hosts must never edit
+ * [DocumentCatalogBinding.METADATA_KEY] directly.
+ * Catalog authorization is a short-lived snapshot and cannot be atomic with
+ * permission changes made by the host catalog during this call.
  */
 class DocumentCatalogBindingService(
     private val tenantProvider: TenantProvider,
@@ -26,15 +35,24 @@ class DocumentCatalogBindingService(
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,
 ) {
+    private val mutationGuard = DocumentCatalogMutationGuard(
+        catalogAccess,
+        DocumentMutationComponents(documents, assets, transaction),
+    )
+
     fun move(documentId: Identifier, folderId: String): Document {
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
+        // Base authorization must happen before the source binding snapshot.
+        catalogAccess.requireDocumentUpdateAuthorization(documentId)
+        val sourcePermit = mutationGuard.prepare(tenant.tenantId, documentId)
+        // Source visibility is established by prepare; only then may the
+        // requested target folder be evaluated.
         val folder = catalogAccess.requireFolderForDocumentUpdate(documentId, folderId)
         return transaction.execute {
-            val document = documents.findById(tenant.tenantId, documentId)
+            val document = documents.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
-            val asset = assets.findById(tenant.tenantId, document.assetId)
-                ?: throw IllegalStateException("Document ${document.id.value} references a missing file asset.")
+            val asset = mutationGuard.verifyAndLoadAssetLocked(tenant.tenantId, document, sourcePermit)
             val previousFolderId = asset.metadata[DocumentCatalogBinding.METADATA_KEY]
             if (previousFolderId != folder.id) {
                 assets.save(
