@@ -6,6 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 class FileWeftDevProperties {
     var storage: Storage = Storage()
     var platform: Platform = Platform()
+    /** Keeps the all-in-one local launcher convenient while allowing Compose to run a dedicated worker role. */
+    var worker: Worker = Worker()
     var outbox: Outbox = Outbox()
     var task: Task = Task()
     var upload: Upload = Upload()
@@ -23,6 +25,10 @@ class FileWeftDevProperties {
         var baseUrl: String = "http://127.0.0.1:8081/"
         var connectTimeoutMillis: Int = 3_000
         var readTimeoutMillis: Int = 10_000
+    }
+
+    class Worker {
+        var enabled: Boolean = true
     }
 
     class Outbox {

@@ -263,6 +263,31 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `dedicated compose worker delivers without an API initiated worker cycle`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-DEDICATED-WORKER-${UUID.randomUUID().toString().take(12)}")
+            .path("document").path("id").asText()
+        val workflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+            """{"comment":"独立 Worker 验收","deliveryProfileId":"internal"}""",
+            reviewer,
+        )
+
+        val delivered = awaitPublished(documentId, editor)
+
+        assertEquals("PUBLISHED", delivered.path("document").path("lifecycleState").asText())
+        assertEquals(1, delivered.path("deliveries").size())
+        assertEquals("SUCCEEDED", delivered.path("deliveries").single().path("status").asText())
+        assertTrue(delivered.path("outboxEvents").all { it.path("status").asText() == "SUCCESS" })
+    }
+
+    @Test
     fun `holds a dual control route pending until its reviewer and administrator both approve`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentId = createDraft(editor, "E2E-DUAL-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()

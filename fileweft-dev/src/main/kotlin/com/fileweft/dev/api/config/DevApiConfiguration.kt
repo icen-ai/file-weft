@@ -44,6 +44,7 @@ import com.fileweft.spi.workflow.DocumentReviewRouteProvider
 import com.fileweft.spi.workflow.DocumentReviewRouteRequest
 import com.fileweft.spi.workflow.DocumentReviewRouteTask
 import org.springframework.boot.ApplicationRunner
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.core.JdbcTemplate
@@ -199,14 +200,17 @@ class DevApiConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(prefix = "fileweft.dev.worker", name = ["enabled"], havingValue = "true", matchIfMissing = true)
     fun devOutboxRunner(properties: FileWeftDevProperties, worker: OutboxWorker): DevOutboxRunner =
         DevOutboxRunner(properties.outbox.fixedDelayMillis, properties.outbox.batchSize, worker)
 
     @Bean
+    @ConditionalOnProperty(prefix = "fileweft.dev.worker", name = ["enabled"], havingValue = "true", matchIfMissing = true)
     fun devTaskRunner(properties: FileWeftDevProperties, worker: TaskWorker): DevTaskRunner =
         DevTaskRunner(properties.task.batchSize, worker)
 
     @Bean
+    @ConditionalOnProperty(prefix = "fileweft.dev.worker", name = ["enabled"], havingValue = "true", matchIfMissing = true)
     fun devResumableUploadRunner(
         properties: FileWeftDevProperties,
         uploads: ResumableUploadService,

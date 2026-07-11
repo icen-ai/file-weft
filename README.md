@@ -30,7 +30,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d postgres
 
 ## 开发验收台
 
-仓库内的 `fileweft-dev` 是开发专用的可运行验收应用，不会被核心、领域或 SPI 依赖。它通过真实 PostgreSQL、RustFS（S3 兼容）、Outbox Worker 和独立 HTTP 下游平台覆盖上传、版本、审批、发布、多下游交付、审计与 Doctor。
+仓库内的 `fileweft-dev` 是开发专用的可运行验收应用，不会被核心、领域或 SPI 依赖。它通过真实 PostgreSQL、RustFS（S3 兼容）、独立 `fw-dev-worker`、Outbox Worker 和独立 HTTP 下游平台覆盖上传、版本、审批、发布、多下游交付、审计与 Doctor。Compose 中 API 节点不消费异步队列，后台执行由 Worker 容器承担，用于验收生产推荐的角色拆分。
 
 启动完整编排：
 
