@@ -15,6 +15,9 @@ import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
 import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.document.LifecycleState
+import com.fileweft.domain.workflow.WorkflowInstance
+import com.fileweft.domain.workflow.WorkflowInstanceRepository
+import com.fileweft.domain.workflow.WorkflowTask
 import com.fileweft.domain.audit.AuditRecord
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.spi.authorization.AuthorizationDecision
@@ -39,6 +42,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class PublishDocumentServiceTest {
     @Test
@@ -67,6 +71,7 @@ class PublishDocumentServiceTest {
                 object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("audit-1") },
                 Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
             ),
+            workflows = EmptyWorkflows,
         )
 
         service.publish(document.id)
@@ -79,6 +84,55 @@ class PublishDocumentServiceTest {
         assertEquals(100, outbox.events.single().timestamp)
         assertEquals("document:publish:request", audits.records.single().action)
         assertEquals("发布管理员", audits.records.single().operatorName)
+    }
+
+    @Test
+    fun `refuses direct publication while a local review workflow remains active`() {
+        val document = pendingReviewDocument()
+        val documentRepository = InMemoryDocumentRepository(document)
+        val outbox = RecordingOutbox()
+        val activeWorkflow = WorkflowInstance(
+            id = Identifier("workflow-1"),
+            tenantId = document.tenantId,
+            documentId = document.id,
+            workflowType = "DOCUMENT_REVIEW",
+            tasks = listOf(
+                WorkflowTask(Identifier("task-1"), document.tenantId, Identifier("workflow-1"), Identifier("reviewer-1")),
+            ),
+        )
+        val service = PublishDocumentService(
+            tenantProvider = object : TenantProvider {
+                override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
+            },
+            userRealmProvider = object : UserRealmProvider {
+                override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "发布管理员")
+                override fun findUser(userId: Identifier): UserIdentity? = null
+            },
+            authorizationProvider = object : AuthorizationProvider {
+                override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
+            },
+            documentRepository = documentRepository,
+            deliveryPlanner = deliveryPlanner(outbox, listOf("delivery-1", "event-1")),
+            transaction = DirectTransaction,
+            workflows = object : WorkflowInstanceRepository {
+                override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? = activeWorkflow
+                    .takeIf { it.tenantId == tenantId && it.id == workflowId }
+
+                override fun findForDecision(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? =
+                    findById(tenantId, workflowId)
+
+                override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? = activeWorkflow
+                    .takeIf { it.tenantId == tenantId && it.documentId == documentId }
+
+                override fun save(workflow: WorkflowInstance) = Unit
+            },
+        )
+
+        assertFailsWith<ActiveDocumentReviewWorkflowException> { service.publish(document.id) }
+
+        assertEquals(LifecycleState.PENDING_REVIEW, document.lifecycleState)
+        assertEquals(null, documentRepository.savedDocument)
+        assertEquals(emptyList(), outbox.events)
     }
 
     private fun pendingReviewDocument(): Document {
@@ -109,6 +163,9 @@ class PublishDocumentServiceTest {
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document?.takeIf { it.tenantId == tenantId && it.id == documentId }
 
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
+            findById(tenantId, documentId)
+
         override fun save(document: Document) {
             this.document = document
             savedDocument = document
@@ -131,6 +188,13 @@ class PublishDocumentServiceTest {
 
     private object DirectTransaction : ApplicationTransaction {
         override fun <T> execute(action: () -> T): T = action()
+    }
+
+    private object EmptyWorkflows : WorkflowInstanceRepository {
+        override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? = null
+        override fun findForDecision(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? = null
+        override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? = null
+        override fun save(workflow: WorkflowInstance) = Unit
     }
 
     private fun deliveryPlanner(outbox: RecordingOutbox, ids: List<String>): DocumentDeliveryPlanner {

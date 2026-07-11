@@ -219,7 +219,10 @@ class DocumentDeliveryServiceTest {
             clock = CLOCK,
         )
 
-        val generationTwo = republicationPlanner.plan(fixture.document, "regulated").deliveries.single()
+        val generationTwo = republicationPlanner.plan(
+            fixture.document,
+            republicationPlanner.prepare(TENANT, "regulated"),
+        ).deliveries.single()
         val allDeliveries = fixture.deliveries.findByDocument(TENANT, fixture.document.id)
 
         assertEquals(2, fixture.document.deliveryGeneration)
@@ -277,10 +280,50 @@ class DocumentDeliveryServiceTest {
             plan = false,
         )
 
-        assertFailsWith<IllegalArgumentException> { fixture.planner.plan(fixture.document, "unknown-profile") }
+        assertFailsWith<IllegalArgumentException> { fixture.planner.prepare(TENANT, "unknown-profile") }
 
         assertEquals(emptyList(), fixture.events.events)
         assertEquals(emptyList(), fixture.deliveries.findByDocument(TENANT, fixture.document.id))
+    }
+
+    @Test
+    fun `freezes a prepared delivery profile without resolving integration SPI during planning`() {
+        val document = publishingDocument()
+        val definitions = mutableListOf(target("archive", DeliveryRequirement.REQUIRED))
+        val deliveries = MemoryDeliveries()
+        val events = RecordingOutbox()
+        var connectorResolutions = 0
+        val planner = DocumentDeliveryPlanner(
+            profiles = object : DocumentDeliveryProfileProvider {
+                override fun listProfiles(tenantId: Identifier): List<DocumentDeliveryProfile> =
+                    listOf(DocumentDeliveryProfile("regulated", "Regulated", definitions))
+            },
+            connectors = object : DeliveryConnectorResolver {
+                override fun findConnector(connectorId: String): FileConnector? {
+                    connectorResolutions++
+                    return RecordingConnector(
+                        connectorId,
+                        ConnectorSyncStatus.SUCCESS,
+                        ConnectorSyncStatus.SUCCESS,
+                        "ok",
+                        "removed",
+                    )
+                }
+            },
+            deliveries = deliveries,
+            outbox = events,
+            identifiers = SequenceIds("delivery-archive", "event-archive"),
+            clock = CLOCK,
+        )
+
+        val preparation = planner.prepare(TENANT, "regulated")
+        definitions += target("search", DeliveryRequirement.OPTIONAL)
+        val plan = planner.plan(document, preparation)
+
+        assertEquals(1, connectorResolutions)
+        assertEquals(listOf("archive"), plan.deliveries.map { it.targetId })
+        assertEquals(listOf("archive"), deliveries.findByDocument(TENANT, document.id).map { it.targetId })
+        assertEquals(1, events.events.size)
     }
 
     @Test
@@ -310,6 +353,51 @@ class DocumentDeliveryServiceTest {
             ),
             metrics.calls,
         )
+    }
+
+    @Test
+    fun `resolves synchronization and withdrawal connectors outside database transactions`() {
+        val transaction = TrackingTransaction()
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            transaction = transaction,
+            resolverTransaction = transaction,
+        )
+
+        fixture.sync.synchronize(fixture.events.events.single())
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK)
+            .plan(fixture.document)
+        val removalResult = fixture.removal.remove(fixture.events.events.last())
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, removalResult.status)
+        assertEquals(1, fixture.connectors.getValue("archive").requests.size)
+        assertEquals(1, fixture.connectors.getValue("archive").removalRequests.size)
+    }
+
+    @Test
+    fun `acknowledges a stale synchronization result without overwriting a newer target state`() {
+        lateinit var fixture: Fixture
+        var mutateDuringResolution = false
+        fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.PERMANENT_FAILURE),
+            afterConnectorResolution = {
+                if (mutateDuringResolution) {
+                    fixture.deliveries.findByDocument(TENANT, fixture.document.id).single().markSucceeded("newer-result")
+                }
+            },
+        )
+
+        mutateDuringResolution = true
+        val result = fixture.sync.synchronize(fixture.events.events.single())
+        val delivery = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+        assertEquals(DocumentDeliveryStatus.SUCCEEDED, delivery.status)
+        assertEquals("newer-result", delivery.externalId)
+        assertEquals(1, fixture.connectors.getValue("archive").requests.size)
     }
 
     @Test
@@ -362,6 +450,34 @@ class DocumentDeliveryServiceTest {
             ),
             metrics.calls,
         )
+    }
+
+    @Test
+    fun `acknowledges a stale withdrawal result without overwriting a newer target state`() {
+        lateinit var fixture: Fixture
+        var mutateDuringResolution = false
+        fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            removalOutcomes = mapOf("archive" to ConnectorSyncStatus.PERMANENT_FAILURE),
+            afterConnectorResolution = {
+                if (mutateDuringResolution) {
+                    fixture.deliveries.findByDocument(TENANT, fixture.document.id).single().markRemovalSucceeded()
+                }
+            },
+        )
+        fixture.sync.synchronize(fixture.events.events.single())
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK)
+            .plan(fixture.document)
+
+        mutateDuringResolution = true
+        val result = fixture.removal.remove(fixture.events.events.last())
+        val delivery = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+        assertEquals(DocumentDeliveryRemovalStatus.SUCCEEDED, delivery.removalStatus)
+        assertEquals(1, fixture.connectors.getValue("archive").removalRequests.size)
     }
 
     @Test
@@ -479,6 +595,8 @@ class DocumentDeliveryServiceTest {
         beforeConnectorResult: ((String, Document) -> Unit)? = null,
         transaction: ApplicationTransaction = DirectTransaction,
         metrics: FileWeftMetrics? = null,
+        resolverTransaction: TrackingTransaction? = null,
+        afterConnectorResolution: ((String) -> Unit)? = null,
     ): Fixture {
         val document = publishingDocument()
         val documents = MemoryDocuments(document)
@@ -495,7 +613,13 @@ class DocumentDeliveryServiceTest {
             )
         }
         val connectorResolver = object : DeliveryConnectorResolver {
-            override fun findConnector(connectorId: String): FileConnector? = connectors[connectorId]
+            override fun findConnector(connectorId: String): FileConnector? {
+                check(resolverTransaction?.active != true) {
+                    "Delivery connector resolution must run outside the application transaction."
+                }
+                afterConnectorResolution?.invoke(connectorId)
+                return connectors[connectorId]
+            }
         }
         val planner = DocumentDeliveryPlanner(
             profiles = object : DocumentDeliveryProfileProvider {
@@ -507,7 +631,7 @@ class DocumentDeliveryServiceTest {
             identifiers = SequenceIds(*(definitions.flatMap { listOf("delivery-${it.id}", "event-${it.id}") }).toTypedArray()),
             clock = CLOCK,
         )
-        if (plan) planner.plan(document, "regulated")
+        if (plan) planner.plan(document, planner.prepare(TENANT, "regulated"))
         val sync = DocumentDeliverySyncService(
             documentRepository = documents,
             fileObjectRepository = object : FileObjectRepository {
@@ -545,6 +669,7 @@ class DocumentDeliveryServiceTest {
 
     private class MemoryDocuments(private var document: Document) : DocumentRepository {
         override fun findById(tenantId: Identifier, documentId: Identifier) = document.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier) = findById(tenantId, documentId)
         override fun save(document: Document) { this.document = document }
     }
 

@@ -18,6 +18,12 @@ class JdbcWorkflowInstanceRepository(
             statement.setString(2, workflowId.value)
         }
 
+    override fun findForDecision(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? =
+        find(tenantId, "SELECT id, tenant_id, document_id, workflow_type, state FROM fw_workflow_instance WHERE tenant_id = ? AND id = ? FOR UPDATE") { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, workflowId.value)
+        }
+
     override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? =
         find(
             tenantId,

@@ -1,6 +1,8 @@
 package com.fileweft.dev.api.web
 
+import com.fileweft.application.publish.ActiveDocumentReviewWorkflowException
 import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
+import com.fileweft.domain.document.InvalidLifecycleTransitionException
 import com.fileweft.application.upload.ResumableUploadStateException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -15,6 +17,18 @@ class DevApiExceptionHandler {
     fun documentNumberConflict(failure: DocumentNumberAlreadyExistsException): ResponseEntity<DevApiError> =
         ResponseEntity.status(HttpStatus.CONFLICT).body(
             DevApiError("DOCUMENT_NUMBER_CONFLICT", failure.message ?: "Document number already exists in the current tenant."),
+        )
+
+    @ExceptionHandler(ActiveDocumentReviewWorkflowException::class)
+    fun activeWorkflowConflict(failure: ActiveDocumentReviewWorkflowException): ResponseEntity<DevApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            DevApiError("ACTIVE_REVIEW_WORKFLOW", failure.message ?: "Document has an active local review workflow."),
+        )
+
+    @ExceptionHandler(InvalidLifecycleTransitionException::class)
+    fun lifecycleConflict(failure: InvalidLifecycleTransitionException): ResponseEntity<DevApiError> =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(
+            DevApiError("INVALID_LIFECYCLE_TRANSITION", failure.message ?: "Document lifecycle does not allow this operation."),
         )
 
     @ExceptionHandler(SecurityException::class)

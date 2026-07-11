@@ -30,7 +30,7 @@ class ArchiveDocumentService(
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, "document:archive")
         return transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.transition(LifecycleCommand.ARCHIVE)
             val removalPlan = removalPlanner?.plan(document)

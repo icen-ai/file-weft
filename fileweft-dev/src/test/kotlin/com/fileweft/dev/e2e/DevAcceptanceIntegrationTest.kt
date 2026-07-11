@@ -100,6 +100,35 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `refuses direct publication while a local review workflow is pending`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val admin = login("admin@alpha", "dev-admin")
+        val documentId = createDraft(editor, "E2E-PUBLISH-GUARD-${UUID.randomUUID().toString().take(8)}")
+            .path("document").path("id").asText()
+        val workflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+
+        val blocked = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/publish"))
+                .header("Authorization", "Bearer $admin")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}", StandardCharsets.UTF_8))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+
+        assertEquals(409, blocked.statusCode())
+        assertEquals("ACTIVE_REVIEW_WORKFLOW", mapper.readTree(blocked.body()).path("code").asText())
+        val detail = getJson("$apiUrl/api/documents/$documentId", admin)
+        assertEquals("PENDING_REVIEW", detail.path("document").path("lifecycleState").asText())
+        assertEquals("PENDING", detail.path("workflows").first().path("state").asText())
+        assertEquals(workflow.path("workflowId").asText(), detail.path("workflows").first().path("id").asText())
+    }
+
+    @Test
     fun `mirrors document audit evidence into operation history with the request trace`() {
         val editor = login("editor@alpha", "dev-editor")
         val traceId = "e2e-operation-${UUID.randomUUID().toString().take(12)}"

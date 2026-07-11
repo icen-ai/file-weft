@@ -452,9 +452,9 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(PublishDocumentService::class)
     fun fileWeftPublishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        documents: DocumentRepository, planner: DocumentDeliveryPlanner,
+        documents: DocumentRepository, workflows: WorkflowInstanceRepository, planner: DocumentDeliveryPlanner,
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ): PublishDocumentService = PublishDocumentService(tenants, users, authorization, documents, planner, transaction, auditTrail)
+    ): PublishDocumentService = PublishDocumentService(tenants, users, authorization, documents, planner, transaction, auditTrail, workflows)
 
     @Bean
     @ConditionalOnMissingBean(OfflineDocumentService::class)

@@ -32,7 +32,7 @@ class DocumentCommandService(
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, action)
         return transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.transition(command)
             documentRepository.save(document)

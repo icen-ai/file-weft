@@ -39,6 +39,21 @@ class WorkflowInstance(
         }
     }
 
+    /**
+     * Validates whether approving this task would finish the workflow without
+     * mutating it. Application services use this to resolve remote delivery
+     * policy before acquiring the database transaction for the final decision.
+     */
+    fun willCompleteAfterApproval(taskId: Identifier, operatorId: Identifier): Boolean {
+        require(state == WorkflowState.PENDING) { "Only pending workflows can be approved." }
+        val candidate = task(taskId)
+        require(candidate.state == WorkflowTaskState.PENDING) { "Only pending workflow tasks can be decided." }
+        require(candidate.assigneeId == null || candidate.assigneeId == operatorId) {
+            "Workflow task is assigned to another operator."
+        }
+        return mutableTasks.all { task -> task.id == taskId || task.state == WorkflowTaskState.APPROVED }
+    }
+
     fun reject(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
         require(state == WorkflowState.PENDING) { "Only pending workflows can be rejected." }
         task(taskId).reject(operatorId, comment)

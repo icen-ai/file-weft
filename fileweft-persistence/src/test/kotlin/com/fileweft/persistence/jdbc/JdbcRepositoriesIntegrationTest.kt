@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.postgresql.ds.PGSimpleDataSource
+import org.postgresql.util.PSQLException
 import java.sql.Connection
 import java.time.Clock
 import java.time.Instant
@@ -99,6 +100,41 @@ class JdbcRepositoriesIntegrationTest {
                         title = "Duplicate",
                     ),
                 )
+            }
+        }
+    }
+
+    @Test
+    fun `locks one document mutation so a second transaction cannot read stale state`() {
+        val repository = JdbcDocumentRepository(clock)
+        val document = document()
+        JdbcApplicationTransaction(dataSource).execute { repository.save(document) }
+
+        dataSource.connection.use { firstConnection ->
+            firstConnection.autoCommit = false
+            try {
+                JdbcConnectionContext.withConnection(firstConnection) {
+                    requireNotNull(repository.findForMutation(document.tenantId, document.id))
+                }
+
+                dataSource.connection.use { secondConnection ->
+                    secondConnection.autoCommit = false
+                    try {
+                        secondConnection.createStatement().use { statement ->
+                            statement.execute("SET LOCAL lock_timeout = '250ms'")
+                        }
+                        val failure = assertFailsWith<PSQLException> {
+                            JdbcConnectionContext.withConnection(secondConnection) {
+                                repository.findForMutation(document.tenantId, document.id)
+                            }
+                        }
+                        assertEquals("55P03", failure.sqlState)
+                    } finally {
+                        secondConnection.rollback()
+                    }
+                }
+            } finally {
+                firstConnection.rollback()
             }
         }
     }

@@ -3,6 +3,8 @@ package com.fileweft.agent
 import com.fileweft.application.task.TaskRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
+import com.fileweft.core.id.Identifier
+import com.fileweft.spi.ai.AgentCapability
 import com.fileweft.spi.ai.AgentTaskTrigger
 import com.fileweft.spi.event.OutboxEventHandler
 import com.fileweft.spi.event.OutboxHandlingResult
@@ -23,15 +25,31 @@ class AgentTaskOutboxEventHandler(
     override fun supports(event: OutboxEvent): Boolean = triggers.any { it.supports(event) }
 
     override fun handle(event: OutboxEvent): OutboxHandlingResult = try {
-        transaction.execute {
-            triggers.filter { it.supports(event) }.forEach { trigger ->
-                trigger.capabilities(event).distinct().forEach { capability ->
-                    scheduler.schedule(event, capability, tasks, trigger.businessId(event))
+        // Triggers are extension-owned and may consult a remote policy service.
+        // Freeze their scheduling decision before opening the local task
+        // transaction; only idempotent task persistence belongs in that scope.
+        val plans = triggers
+            .asSequence()
+            .filter { trigger -> trigger.supports(event) }
+            .flatMap { trigger ->
+                val businessId = trigger.businessId(event)
+                trigger.capabilities(event).distinct().asSequence().map { capability ->
+                    AgentTaskSchedulePlan(capability, businessId)
                 }
+            }
+            .toList()
+        transaction.execute {
+            plans.forEach { plan ->
+                scheduler.schedule(event, plan.capability, tasks, plan.businessId)
             }
         }
         OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED)
     } catch (failure: Exception) {
         OutboxHandlingResult(OutboxHandlingStatus.RETRYABLE_FAILURE, "Agent task scheduling failed.")
     }
+
+    private class AgentTaskSchedulePlan(
+        val capability: AgentCapability,
+        val businessId: Identifier?,
+    )
 }

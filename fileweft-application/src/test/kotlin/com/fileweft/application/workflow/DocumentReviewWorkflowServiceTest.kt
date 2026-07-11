@@ -177,6 +177,70 @@ class DocumentReviewWorkflowServiceTest {
         assertEquals(LifecycleState.PUBLISHING, published.lifecycleState)
         assertEquals(WorkflowState.APPROVED, workflows.workflow?.state)
         assertEquals("document.delivery.target.requested", outbox.events.single().type)
+        assertEquals(2, workflows.decisionLookups)
+    }
+
+    @Test
+    fun `resolves delivery profile and connector outside the final approval transaction`() {
+        val document = pendingReviewDocument()
+        val workflow = pendingWorkflow(document.id)
+        val documents = InMemoryDocuments(document)
+        val workflows = InMemoryWorkflows(workflow)
+        val outbox = RecordingOutbox()
+        val transaction = TrackingTransaction()
+        var profileResolutions = 0
+        var connectorResolutions = 0
+        val planner = DocumentDeliveryPlanner(
+            profiles = object : DocumentDeliveryProfileProvider {
+                override fun listProfiles(tenantId: Identifier): List<DocumentDeliveryProfile> {
+                    check(!transaction.active) { "Delivery profiles must not resolve in a FileWeft transaction." }
+                    profileResolutions++
+                    return listOf(
+                        DocumentDeliveryProfile(
+                            "regulated", "Regulated",
+                            listOf(DocumentDeliveryTargetDefinition("archive", "Archive", "archive", DeliveryRequirement.REQUIRED)),
+                        ),
+                    )
+                }
+            },
+            connectors = object : DeliveryConnectorResolver {
+                override fun findConnector(connectorId: String): FileConnector? {
+                    check(!transaction.active) { "Delivery connectors must not resolve in a FileWeft transaction." }
+                    connectorResolutions++
+                    return object : FileConnector {
+                        override fun sync(request: ConnectorSyncRequest) = ConnectorSyncResult(com.fileweft.spi.connector.ConnectorSyncStatus.SUCCESS)
+                        override fun remove(request: ConnectorRemoveRequest) = ConnectorSyncResult(com.fileweft.spi.connector.ConnectorSyncStatus.SUCCESS)
+                        override fun health() = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+                    }
+                }
+            },
+            deliveries = object : DocumentDeliveryTargetRepository {
+                override fun findById(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? = null
+                override fun findByDocument(tenantId: Identifier, documentId: Identifier): List<DocumentDeliveryTarget> = emptyList()
+                override fun save(target: DocumentDeliveryTarget) = Unit
+            },
+            outbox = outbox,
+            identifiers = object : IdentifierGenerator {
+                private val ids = ArrayDeque(listOf("delivery-1", "event-1"))
+                override fun nextId(): Identifier = Identifier(ids.removeFirst())
+            },
+            clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
+        )
+        val service = service(
+            documents = documents,
+            workflows = workflows,
+            outbox = outbox,
+            identifiers = emptyList(),
+            transaction = transaction,
+            authorization = { AuthorizationDecision(true) },
+            deliveryPlannerOverride = planner,
+        )
+
+        service.approve(workflow.id, workflow.tasks.single().id, "approved", "regulated")
+
+        assertEquals(1, profileResolutions)
+        assertEquals(1, connectorResolutions)
+        assertEquals("document.delivery.target.requested", outbox.events.single().type)
     }
 
     @Test
@@ -197,6 +261,7 @@ class DocumentReviewWorkflowServiceTest {
         auditTrail: AuditTrail? = null,
         reviewRoutes: DocumentReviewRouteResolver = DocumentReviewRouteResolver(),
         transaction: ApplicationTransaction = DirectTransaction,
+        deliveryPlannerOverride: DocumentDeliveryPlanner? = null,
         authorization: (AuthorizationRequest) -> AuthorizationDecision,
     ): DocumentReviewWorkflowService {
         val ids = ArrayDeque(identifiers)
@@ -209,7 +274,7 @@ class DocumentReviewWorkflowServiceTest {
             authorizationProvider = object : AuthorizationProvider { override fun authorize(request: AuthorizationRequest) = authorization(request) },
             documentRepository = documents,
             workflowRepository = workflows,
-            deliveryPlanner = deliveryPlanner(outbox),
+            deliveryPlanner = deliveryPlannerOverride ?: deliveryPlanner(outbox),
             identifierGenerator = object : IdentifierGenerator { override fun nextId() = Identifier(ids.removeFirst()) },
             transaction = transaction,
             auditTrail = auditTrail,
@@ -241,11 +306,19 @@ class DocumentReviewWorkflowServiceTest {
 
     private class InMemoryDocuments(var document: Document?) : DocumentRepository {
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
         override fun save(document: Document) { this.document = document }
     }
 
     private class InMemoryWorkflows(var workflow: WorkflowInstance? = null) : WorkflowInstanceRepository {
+        var decisionLookups = 0
+            private set
+
         override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? = workflow?.takeIf { it.tenantId == tenantId && it.id == workflowId }
+        override fun findForDecision(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? {
+            decisionLookups++
+            return findById(tenantId, workflowId)
+        }
         override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? =
             workflow?.takeIf { it.tenantId == tenantId && it.documentId == documentId && it.state == WorkflowState.PENDING }
         override fun save(workflow: WorkflowInstance) { this.workflow = workflow }
@@ -263,6 +336,21 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     private object DirectTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = action() }
+
+    private class TrackingTransaction : ApplicationTransaction {
+        var active = false
+            private set
+
+        override fun <T> execute(action: () -> T): T {
+            check(!active) { "Nested transaction is not expected in this fixture." }
+            active = true
+            return try {
+                action()
+            } finally {
+                active = false
+            }
+        }
+    }
 
     private fun deliveryPlanner(outbox: RecordingOutbox): DocumentDeliveryPlanner {
         val ids = ArrayDeque(listOf("delivery-1", "delivery-event-1"))

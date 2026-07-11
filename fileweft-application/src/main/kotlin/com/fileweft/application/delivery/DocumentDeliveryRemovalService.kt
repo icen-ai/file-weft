@@ -31,11 +31,19 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
     fun remove(sourceEvent: OutboxEvent): OutboxHandlingResult {
         val deliveryId = sourceEvent.deliveryIdOrNull()
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery removal event does not contain deliveryId.")
-        val preparation = transaction.execute { prepare(sourceEvent.tenantId, deliveryId) }
+        val preparation = resolveConnector(
+            transaction.execute { freeze(sourceEvent.tenantId, deliveryId) },
+        )
         val handling = when (preparation) {
             is Preparation.AlreadyRemoved -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already removed downstream.")
-            is Preparation.Failure -> complete(sourceEvent, deliveryId, ConnectorSyncResult(preparation.status, message = preparation.message))
-            is Preparation.Ready -> complete(sourceEvent, deliveryId, invokeConnector(preparation))
+            is Preparation.Frozen -> error("Frozen delivery removal preparation must be resolved before it is handled.")
+            is Preparation.Failure -> complete(
+                sourceEvent,
+                deliveryId,
+                preparation.expectation,
+                ConnectorSyncResult(preparation.status, message = preparation.message),
+            )
+            is Preparation.Ready -> complete(sourceEvent, deliveryId, preparation.expectation, invokeConnector(preparation))
         }
         recordMetric(preparation, handling, sourceEvent.tenantId.value)
         return handling
@@ -54,9 +62,11 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         }
     }
 
-    private fun prepare(tenantId: Identifier, deliveryId: Identifier): Preparation {
+    /** Freezes FileWeft-owned target state before resolving an integration SPI. */
+    private fun freeze(tenantId: Identifier, deliveryId: Identifier): Preparation {
         val delivery = deliveries.findById(tenantId, deliveryId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
+        val target = DeliverySnapshot(delivery)
         when (delivery.removalStatus) {
             DocumentDeliveryRemovalStatus.SUCCEEDED -> return Preparation.AlreadyRemoved(delivery.connectorId)
             DocumentDeliveryRemovalStatus.FAILED -> return Preparation.Failure(
@@ -68,24 +78,50 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Delivery target removal was not requested.",
                 delivery.connectorId,
+                CompletionExpectation(target, setOf(DocumentDeliveryRemovalStatus.NOT_REQUESTED)),
             )
             DocumentDeliveryRemovalStatus.PENDING, DocumentDeliveryRemovalStatus.RETRYING -> Unit
         }
-        val connector = connectors.findConnector(delivery.connectorId) ?: return Preparation.Failure(
-            ConnectorSyncStatus.PERMANENT_FAILURE,
-            "Delivery connector '${delivery.connectorId}' is no longer configured.",
-            delivery.connectorId,
+        return Preparation.Frozen(
+            CompletionExpectation(target, ACTIVE_REMOVAL_STATUSES),
         )
-        return Preparation.Ready(delivery, connector)
+    }
+
+    /** Resolves the connector after [freeze] has completed, never while a transaction is open. */
+    private fun resolveConnector(preparation: Preparation): Preparation = when (preparation) {
+        is Preparation.Frozen -> {
+            val connector = try {
+                connectors.findConnector(preparation.expectation.target.connectorId)
+            } catch (_: Exception) {
+                return Preparation.Failure(
+                    ConnectorSyncStatus.RETRYABLE_FAILURE,
+                    "Delivery connector resolution could not complete.",
+                    preparation.connectorId,
+                    preparation.expectation,
+                )
+            }
+            if (connector == null) {
+                Preparation.Failure(
+                    ConnectorSyncStatus.PERMANENT_FAILURE,
+                    "Delivery connector '${preparation.expectation.target.connectorId}' is no longer configured.",
+                    preparation.connectorId,
+                    preparation.expectation,
+                )
+            } else {
+                Preparation.Ready(preparation.expectation, connector)
+            }
+        }
+
+        else -> preparation
     }
 
     private fun invokeConnector(preparation: Preparation.Ready): ConnectorSyncResult = try {
-        val delivery = preparation.delivery
+        val delivery = preparation.expectation.target
         preparation.connector.remove(
             ConnectorRemoveRequest(
                 tenantId = delivery.tenantId,
                 businessId = delivery.documentId,
-                externalId = delivery.externalId ?: delivery.documentId.value,
+                externalId = delivery.externalId,
                 invocation = ConnectorInvocation("delivery-remove:${delivery.id.value}", connectorTimeout),
             ),
         )
@@ -93,10 +129,30 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Connector removal invocation could not complete.")
     }
 
-    private fun complete(sourceEvent: OutboxEvent, deliveryId: Identifier, result: ConnectorSyncResult): OutboxHandlingResult = transaction.execute {
+    private fun complete(
+        sourceEvent: OutboxEvent,
+        deliveryId: Identifier,
+        expectation: CompletionExpectation?,
+        result: ConnectorSyncResult,
+    ): OutboxHandlingResult = transaction.execute {
         val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
+        if (expectation == null) {
+            return@execute normalizedResult.toOutboxHandlingResult()
+        }
         val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
             ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before downstream withdrawal.")
+        if (!expectation.target.matches(delivery)) {
+            return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before downstream withdrawal completed.")
+        }
+        if (delivery.removalStatus == DocumentDeliveryRemovalStatus.SUCCEEDED) {
+            return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already removed downstream.")
+        }
+        if (
+            delivery.status != DocumentDeliveryStatus.SUCCEEDED ||
+            delivery.removalStatus !in expectation.allowedRemovalStatuses
+        ) {
+            return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before downstream withdrawal completed.")
+        }
         when (normalizedResult.status) {
             ConnectorSyncStatus.SUCCESS -> delivery.markRemovalSucceeded()
             ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRemovalRetrying(normalizedResult.message)
@@ -166,25 +222,64 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         }
     }
 
+    private class DeliverySnapshot(delivery: DocumentDeliveryTarget) {
+        val id: Identifier = delivery.id
+        val tenantId: Identifier = delivery.tenantId
+        val documentId: Identifier = delivery.documentId
+        val profileId: String = delivery.profileId
+        val targetId: String = delivery.targetId
+        val displayName: String = delivery.displayName
+        val connectorId: String = delivery.connectorId
+        val externalId: String = delivery.externalId ?: delivery.documentId.value
+        val deliveryGeneration: Int = delivery.deliveryGeneration
+
+        fun matches(current: DocumentDeliveryTarget): Boolean =
+            current.id == id &&
+                current.tenantId == tenantId &&
+                current.documentId == documentId &&
+                current.profileId == profileId &&
+                current.targetId == targetId &&
+                current.displayName == displayName &&
+                current.connectorId == connectorId &&
+                (current.externalId ?: current.documentId.value) == externalId &&
+                current.deliveryGeneration == deliveryGeneration
+    }
+
+    private class CompletionExpectation(
+        val target: DeliverySnapshot,
+        val allowedRemovalStatuses: Set<DocumentDeliveryRemovalStatus>,
+    )
+
     private sealed class Preparation {
         abstract val connectorId: String?
 
         data class AlreadyRemoved(override val connectorId: String) : Preparation()
+        data class Frozen(
+            val expectation: CompletionExpectation,
+        ) : Preparation() {
+            override val connectorId: String = expectation.target.connectorId
+        }
+
         data class Ready(
-            val delivery: DocumentDeliveryTarget,
+            val expectation: CompletionExpectation,
             val connector: com.fileweft.spi.connector.FileConnector,
         ) : Preparation() {
-            override val connectorId: String = delivery.connectorId
+            override val connectorId: String = expectation.target.connectorId
         }
 
         data class Failure(
             val status: ConnectorSyncStatus,
             val message: String,
             override val connectorId: String? = null,
+            val expectation: CompletionExpectation? = null,
         ) : Preparation()
     }
 
     private companion object {
+        val ACTIVE_REMOVAL_STATUSES = setOf(
+            DocumentDeliveryRemovalStatus.PENDING,
+            DocumentDeliveryRemovalStatus.RETRYING,
+        )
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val DELIVERY_REMOVAL_SUCCEEDED_AUDIT_ACTION = "document:delivery:remove:succeeded"
         const val DELIVERY_REMOVAL_FAILED_AUDIT_ACTION = "document:delivery:remove:failed"

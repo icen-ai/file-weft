@@ -12,34 +12,32 @@ import java.time.Clock
 class JdbcDocumentRepository(
     private val clock: Clock,
 ) : DocumentRepository {
-    override fun findById(tenantId: Identifier, documentId: Identifier): Document? {
-        val connection = JdbcConnectionContext.requireCurrent()
-        connection.prepareStatement(
+    override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
+        find(
+            tenantId,
             "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND id = ?",
-        ).use { statement ->
+        ) { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentId.value)
-            statement.executeQuery().use { result ->
-                if (!result.next()) return null
-                return mapDocument(result, loadVersions(tenantId, documentId))
-            }
         }
-    }
 
-    override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? {
-        val connection = JdbcConnectionContext.requireCurrent()
-        connection.prepareStatement(
+    override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
+        find(
+            tenantId,
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND id = ? FOR UPDATE",
+        ) { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, documentId.value)
+        }
+
+    override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? =
+        find(
+            tenantId,
             "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND doc_no = ?",
-        ).use { statement ->
+        ) { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentNumber)
-            statement.executeQuery().use { result ->
-                if (!result.next()) return null
-                val documentId = Identifier(result.getString("id"))
-                return mapDocument(result, loadVersions(tenantId, documentId))
-            }
         }
-    }
 
     override fun save(document: Document) {
         val connection = JdbcConnectionContext.requireCurrent()
@@ -83,6 +81,19 @@ class JdbcDocumentRepository(
                 while (result.next()) versions.add(mapVersion(result))
                 return versions
             }
+        }
+    }
+
+    private fun find(
+        tenantId: Identifier,
+        sql: String,
+        bind: (java.sql.PreparedStatement) -> Unit,
+    ): Document? = JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
+        bind(statement)
+        statement.executeQuery().use { result ->
+            if (!result.next()) return null
+            val documentId = Identifier(result.getString("id"))
+            mapDocument(result, loadVersions(tenantId, documentId))
         }
     }
 

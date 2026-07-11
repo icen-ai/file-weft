@@ -280,6 +280,8 @@ class DocumentDraftServiceTest {
         val saved = mutableListOf<Document>()
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
+            findById(tenantId, documentId)
         override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? =
             document?.takeIf { it.tenantId == tenantId && it.documentNumber == documentNumber }
         override fun save(document: Document) {

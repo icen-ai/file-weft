@@ -29,7 +29,7 @@ class OfflineDocumentService(
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, "document:offline")
         return transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.transition(LifecycleCommand.OFFLINE)
             val removalPlan = removalPlanner?.plan(document)

@@ -73,26 +73,52 @@ class DocumentDownloadServiceTest {
         assertEquals(emptyList(), storage.requested)
     }
 
+    @Test
+    fun `snapshots the user realm outside the download persistence transaction`() {
+        val transaction = TrackingTransaction()
+        val audits = RecordingAudits()
+        val service = service(
+            storage = RecordingStorage(),
+            audits = audits,
+            transaction = transaction,
+            userRealmProvider = object : UserRealmProvider {
+                override fun currentUser(): UserIdentity {
+                    check(!transaction.active) { "User realm must not be called in the download transaction." }
+                    return UserIdentity(Identifier("user-1"), "Alice")
+                }
+
+                override fun findUser(userId: Identifier): UserIdentity? = null
+            },
+        )
+
+        service.download(Identifier("document-1")).close()
+
+        assertEquals("user-1", audits.records.single().operatorId?.value)
+        assertEquals("Alice", audits.records.single().operatorName)
+    }
+
     private fun service(
         storage: RecordingStorage,
         authorized: Boolean = true,
         documents: RecordingDocuments = RecordingDocuments(mapOf(Identifier("document-1") to document())),
         audits: RecordingAudits? = null,
+        transaction: ApplicationTransaction = DirectTransaction,
+        userRealmProvider: UserRealmProvider = object : UserRealmProvider {
+            override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "Alice")
+            override fun findUser(userId: Identifier): UserIdentity? = null
+        },
     ): DocumentDownloadService = DocumentDownloadService(
         tenantProvider = object : TenantProvider {
             override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
         },
-        userRealmProvider = object : UserRealmProvider {
-            override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "Alice")
-            override fun findUser(userId: Identifier): UserIdentity? = null
-        },
+        userRealmProvider = userRealmProvider,
         authorizationProvider = object : AuthorizationProvider {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(authorized)
         },
         documentRepository = documents,
         fileObjectRepository = RecordingFiles(),
         storageAdapter = storage,
-        transaction = DirectTransaction,
+        transaction = transaction,
         auditTrail = audits?.let { repository ->
             AuditTrail(repository, object : IdentifierGenerator { override fun nextId() = Identifier("audit-1") }, CLOCK)
         },
@@ -141,6 +167,21 @@ class DocumentDownloadServiceTest {
 
     private object DirectTransaction : ApplicationTransaction {
         override fun <T> execute(action: () -> T): T = action()
+    }
+
+    private class TrackingTransaction : ApplicationTransaction {
+        var active = false
+            private set
+
+        override fun <T> execute(action: () -> T): T {
+            check(!active) { "Nested transaction is not expected in this fixture." }
+            active = true
+            return try {
+                action()
+            } finally {
+                active = false
+            }
+        }
     }
 
     private companion object {

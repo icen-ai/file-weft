@@ -7,14 +7,60 @@ import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.LifecycleState
 import com.fileweft.spi.delivery.DeliveryConnectorResolver
+import com.fileweft.spi.delivery.DeliveryRequirement
 import com.fileweft.spi.delivery.DocumentDeliveryProfile
 import com.fileweft.spi.delivery.DocumentDeliveryProfileProvider
 import java.time.Clock
+import java.util.Collections
 
 class DocumentDeliveryPlan(
     val profileId: String,
     val deliveries: List<DocumentDeliveryTarget>,
 )
+
+/**
+ * An immutable, tenant-scoped delivery profile snapshot resolved before a
+ * FileWeft business transaction begins. A provider or connector resolver may
+ * consult a remote policy system, so callers must obtain this preparation
+ * outside their database transaction and later pass it to [DocumentDeliveryPlanner.plan].
+ */
+class DocumentDeliveryPreparation(
+    val tenantId: Identifier,
+    val profileId: String,
+    targets: List<DocumentDeliveryTargetPreparation>,
+) {
+    val targets: List<DocumentDeliveryTargetPreparation> =
+        Collections.unmodifiableList(ArrayList(targets))
+
+    init {
+        require(profileId.isNotBlank()) { "Delivery profile id must not be blank." }
+        require(this.targets.isNotEmpty()) { "Delivery preparation must contain at least one target." }
+        require(this.targets.map { it.id }.distinct().size == this.targets.size) {
+            "Delivery preparation target ids must be unique."
+        }
+        require(this.targets.any { it.requirement == DeliveryRequirement.REQUIRED }) {
+            "Delivery preparation must contain at least one required target."
+        }
+    }
+}
+
+/** Immutable target data copied from an integration-owned delivery profile. */
+class DocumentDeliveryTargetPreparation(
+    val id: String,
+    val displayName: String,
+    val connectorId: String,
+    val requirement: DeliveryRequirement,
+    val ownerRef: String? = null,
+) {
+    init {
+        require(id.isNotBlank()) { "Delivery target id must not be blank." }
+        require(displayName.isNotBlank()) { "Delivery target display name must not be blank." }
+        require(connectorId.isNotBlank()) { "Delivery connector id must not be blank." }
+        require(ownerRef == null || ownerRef.isNotBlank()) {
+            "Delivery target owner reference must not be blank when provided."
+        }
+    }
+}
 
 /**
  * Freezes a delivery profile and writes one independent outbox event per target
@@ -28,19 +74,47 @@ class DocumentDeliveryPlanner(
     private val identifiers: IdentifierGenerator,
     private val clock: Clock,
 ) {
-    fun plan(document: Document, profileId: String?): DocumentDeliveryPlan {
+    /**
+     * Resolves an integration-owned profile and validates its connector ids.
+     * This may call a remote policy or registry implementation and must run
+     * outside a FileWeft database transaction.
+     */
+    fun prepare(tenantId: Identifier, profileId: String?): DocumentDeliveryPreparation {
+        val profile = resolveProfile(tenantId, profileId)
+        return DocumentDeliveryPreparation(
+            tenantId = tenantId,
+            profileId = profile.id,
+            targets = profile.targets.map { definition ->
+                require(connectors.findConnector(definition.connectorId) != null) {
+                    "Delivery connector '${definition.connectorId}' is not configured for profile '${profile.id}'."
+                }
+                DocumentDeliveryTargetPreparation(
+                    id = definition.id,
+                    displayName = definition.displayName,
+                    connectorId = definition.connectorId,
+                    requirement = definition.requirement,
+                    ownerRef = definition.ownerRef,
+                )
+            },
+        )
+    }
+
+    /**
+     * Freezes an already-resolved delivery profile into target and outbox rows.
+     * This method performs persistence only and never resolves an external SPI.
+     */
+    fun plan(document: Document, preparation: DocumentDeliveryPreparation): DocumentDeliveryPlan {
         require(document.lifecycleState == LifecycleState.PUBLISHING) { "Document must be publishing before delivery is planned." }
-        val profile = resolveProfile(document.tenantId, profileId)
-        val planned = profile.targets.map { definition ->
-            require(connectors.findConnector(definition.connectorId) != null) {
-                "Delivery connector '${definition.connectorId}' is not configured for profile '${profile.id}'."
-            }
+        require(document.tenantId == preparation.tenantId) {
+            "Delivery preparation tenant must match the document tenant."
+        }
+        val planned = preparation.targets.map { definition ->
             DocumentDeliveryTarget(
                 id = identifiers.nextId(),
                 tenantId = document.tenantId,
                 documentId = document.id,
                 deliveryGeneration = document.deliveryGeneration,
-                profileId = profile.id,
+                profileId = preparation.profileId,
                 targetId = definition.id,
                 displayName = definition.displayName,
                 connectorId = definition.connectorId,
@@ -59,7 +133,17 @@ class DocumentDeliveryPlanner(
                 )
             }
         }
-        return DocumentDeliveryPlan(profile.id, planned)
+        return DocumentDeliveryPlan(preparation.profileId, planned)
+    }
+
+    /**
+     * Compatibility convenience for callers that already operate outside a
+     * transaction. New publication paths should explicitly call [prepare]
+     * before entering a business transaction.
+     */
+    @Deprecated("Resolve delivery preparation outside a transaction before planning publication.")
+    fun plan(document: Document, profileId: String?): DocumentDeliveryPlan {
+        return plan(document, prepare(document.tenantId, profileId))
     }
 
     private fun resolveProfile(tenantId: Identifier, profileId: String?): DocumentDeliveryProfile {

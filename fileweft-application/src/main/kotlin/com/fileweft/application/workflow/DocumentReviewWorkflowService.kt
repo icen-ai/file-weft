@@ -2,6 +2,7 @@ package com.fileweft.application.workflow
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
+import com.fileweft.application.delivery.DocumentDeliveryPreparation
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.security.ApplicationAuthorizationException
@@ -59,7 +60,7 @@ class DocumentReviewWorkflowService(
         // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
         val resolvedRoute = reviewRoutes.resolve(reviewRouteId, routeRequest)
         return transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             require(workflowRepository.findActiveByDocument(tenant.tenantId, documentId) == null) {
                 "Document already has an active review workflow."
@@ -126,37 +127,62 @@ class DocumentReviewWorkflowService(
         val operator = userRealmProvider.currentUser()
             ?: throw ApplicationAuthorizationException("A current user is required.")
         authorization.requireDocumentAction(tenant.tenantId, workflowSnapshot.documentId, AUDIT_ACTION)
-        return transaction.execute {
-            val workflow = workflowRepository.findById(tenant.tenantId, workflowId) ?: throw WorkflowNotFoundException(workflowId)
-            val document = documentRepository.findById(tenant.tenantId, workflow.documentId)
-                ?: throw DocumentNotFoundException(workflow.documentId)
-            if (approved) {
-                workflow.approve(taskId, operator.id, comment)
-                if (workflow.state == com.fileweft.domain.workflow.WorkflowState.APPROVED) {
-                    document.transition(LifecycleCommand.APPROVE)
-                    deliveryPlanner.plan(document, deliveryProfileId)
+        var preparation: DocumentDeliveryPreparation? = if (
+            approved && workflowSnapshot.willCompleteAfterApproval(taskId, operator.id)
+        ) {
+            deliveryPlanner.prepare(tenant.tenantId, deliveryProfileId)
+        } else {
+            null
+        }
+        while (true) {
+            val completed = transaction.execute<Document?> {
+                // Keep the document before workflow lock order everywhere so a
+                // direct publish, submission, and review decision serialize on
+                // one document aggregate without lock-order deadlocks.
+                val document = documentRepository.findForMutation(tenant.tenantId, workflowSnapshot.documentId)
+                    ?: throw DocumentNotFoundException(workflowSnapshot.documentId)
+                val workflow = workflowRepository.findForDecision(tenant.tenantId, workflowId)
+                    ?: throw WorkflowNotFoundException(workflowId)
+                require(workflow.documentId == document.id) {
+                    "Workflow ${workflow.id.value} does not belong to its locked document."
                 }
-            } else {
-                workflow.reject(taskId, operator.id, comment)
-                document.transition(LifecycleCommand.REJECT)
+                val completingApproval = approved && workflow.willCompleteAfterApproval(taskId, operator.id)
+                if (completingApproval && preparation == null) {
+                    // A parallel reviewer completed another task after the first
+                    // snapshot. Leave state untouched, resolve the remote policy
+                    // outside the transaction, then retry under the row lock.
+                    return@execute null
+                }
+                if (approved) {
+                    workflow.approve(taskId, operator.id, comment)
+                    if (workflow.state == com.fileweft.domain.workflow.WorkflowState.APPROVED) {
+                        document.transition(LifecycleCommand.APPROVE)
+                        deliveryPlanner.plan(document, requireNotNull(preparation))
+                    }
+                } else {
+                    workflow.reject(taskId, operator.id, comment)
+                    document.transition(LifecycleCommand.REJECT)
+                }
+                workflowRepository.save(workflow)
+                documentRepository.save(document)
+                auditTrail?.record(
+                    tenantId = tenant.tenantId,
+                    resourceType = DOCUMENT_RESOURCE_TYPE,
+                    resourceId = document.id,
+                    action = if (approved) APPROVED_AUDIT_ACTION else REJECTED_AUDIT_ACTION,
+                    operatorId = operator.id,
+                    operatorName = operator.displayName,
+                    details = linkedMapOf<String, String>().apply {
+                        put("workflowId", workflow.id.value)
+                        put("taskId", taskId.value)
+                        put("workflowState", workflow.state.name)
+                        comment?.let { put("comment", it) }
+                    },
+                )
+                document
             }
-            workflowRepository.save(workflow)
-            documentRepository.save(document)
-            auditTrail?.record(
-                tenantId = tenant.tenantId,
-                resourceType = DOCUMENT_RESOURCE_TYPE,
-                resourceId = document.id,
-                action = if (approved) APPROVED_AUDIT_ACTION else REJECTED_AUDIT_ACTION,
-                operatorId = operator.id,
-                operatorName = operator.displayName,
-                details = linkedMapOf<String, String>().apply {
-                    put("workflowId", workflow.id.value)
-                    put("taskId", taskId.value)
-                    put("workflowState", workflow.state.name)
-                    comment?.let { put("comment", it) }
-                },
-            )
-            document
+            if (completed != null) return completed
+            preparation = deliveryPlanner.prepare(tenant.tenantId, deliveryProfileId)
         }
     }
 

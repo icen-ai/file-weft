@@ -257,6 +257,8 @@ class DocumentSyncServiceTest {
     private class InMemoryDocuments(var document: Document?) : DocumentRepository {
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
+            findById(tenantId, documentId)
         override fun save(document: Document) { this.document = document }
     }
 

@@ -4,6 +4,8 @@ import com.fileweft.core.id.Identifier
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class WorkflowInstanceTest {
     @Test
@@ -48,6 +50,28 @@ class WorkflowInstanceTest {
         reloaded.approve(Identifier("task-2"), Identifier("reviewer-2"))
 
         assertEquals(WorkflowState.APPROVED, reloaded.state)
+    }
+
+    @Test
+    fun `predicts a completing approval without mutating parallel workflow state`() {
+        val workflow = WorkflowInstance(
+            Identifier("workflow-1"), Identifier("tenant-1"), Identifier("document-1"), "DUAL_REVIEW",
+            tasks = listOf(
+                WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-1")),
+                WorkflowTask(Identifier("task-2"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-2")),
+            ),
+        )
+
+        assertFalse(workflow.willCompleteAfterApproval(Identifier("task-1"), Identifier("reviewer-1")))
+        assertEquals(WorkflowState.PENDING, workflow.state)
+        assertEquals(WorkflowTaskState.PENDING, workflow.tasks.first().state)
+
+        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
+
+        assertTrue(workflow.willCompleteAfterApproval(Identifier("task-2"), Identifier("reviewer-2")))
+        assertFailsWith<IllegalArgumentException> {
+            workflow.willCompleteAfterApproval(Identifier("task-2"), Identifier("other-reviewer"))
+        }
     }
 
     @Test

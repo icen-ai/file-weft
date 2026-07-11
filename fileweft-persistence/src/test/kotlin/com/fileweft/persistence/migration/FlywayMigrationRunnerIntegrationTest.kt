@@ -1,5 +1,7 @@
 package com.fileweft.persistence.migration
 
+import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.FlywayException
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
@@ -8,6 +10,7 @@ import org.postgresql.ds.PGSimpleDataSource
 import java.sql.Connection
 import javax.sql.DataSource
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class FlywayMigrationRunnerIntegrationTest {
@@ -45,7 +48,7 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `applies schema migrations for outbox recovery workflow tasks doctor records agents upload sessions and production indexes`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(16, migrations)
+        assertEquals(17, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -78,7 +81,48 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_document_delivery_target", "delivery_generation"))
             assertTrue(indexExists(connection, "fw_sync_record", "idx_fw_sync_tenant_document_connector_status"))
             assertTrue(indexExists(connection, "fw_task", "idx_fw_task_tenant_status_updated"))
+            assertTrue(indexExists(connection, "fw_workflow_instance", "uq_fw_workflow_instance_tenant_document_pending"))
         }
+    }
+
+    @Test
+    fun `refuses to migrate when historical pending workflows are duplicated for one document`() {
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations("classpath:db/migration")
+            .target("16")
+            .load()
+            .migrate()
+
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                INSERT INTO fw_workflow_instance(id, tenant_id, document_id, workflow_type, state, created_time, updated_time)
+                VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, "workflow-1")
+                statement.setString(2, "tenant-1")
+                statement.setString(3, "document-1")
+                statement.setString(4, "DOCUMENT_REVIEW")
+                statement.setLong(5, 100)
+                statement.setLong(6, 100)
+                statement.executeUpdate()
+                statement.setString(1, "workflow-2")
+                statement.setLong(5, 101)
+                statement.setLong(6, 101)
+                statement.executeUpdate()
+            }
+        }
+
+        val failure = assertFailsWith<FlywayException> {
+            FlywayMigrationRunner(dataSource).migrate()
+        }
+        val messages = generateSequence<Throwable>(failure) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+        assertTrue(messages.contains("Cannot enforce one PENDING workflow per tenant/document"))
+        assertTrue(messages.contains("tenant_id=tenant-1, document_id=document-1, pending_count=2"))
     }
 
     private fun tableExists(connection: Connection, tableName: String): Boolean =

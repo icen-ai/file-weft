@@ -51,18 +51,23 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         val deliveryId = sourceEvent.payload[DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY]
             ?.takeIf { it.isNotBlank() }?.let(::Identifier)
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery event does not contain deliveryId.")
-        val preparation = transaction.execute { prepare(sourceEvent.tenantId, deliveryId) }
+        val preparation = resolveConnector(
+            transaction.execute { freeze(sourceEvent.tenantId, deliveryId) },
+        )
         val handling = when (preparation) {
             is Preparation.AlreadySucceeded -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already synchronized.")
             is Preparation.Superseded -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target belongs to a superseded publication generation.")
+            is Preparation.Frozen -> error("Frozen delivery preparation must be resolved before it is handled.")
             is Preparation.Failure -> complete(
                 sourceEvent,
                 deliveryId,
+                preparation.expectation,
                 ConnectorSyncResult(preparation.status, message = preparation.message),
             )
             is Preparation.Ready -> complete(
                 sourceEvent,
                 deliveryId,
+                preparation.expectation,
                 invokeConnector(preparation),
             )
         }
@@ -92,9 +97,16 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         }
     }
 
-    private fun prepare(tenantId: Identifier, deliveryId: Identifier): Preparation {
+    /**
+     * Reads only FileWeft-owned state while the transaction is open. The
+     * resulting snapshots deliberately contain no connector implementation:
+     * a resolver may consult a remote registry and must never run here.
+     */
+    private fun freeze(tenantId: Identifier, deliveryId: Identifier): Preparation {
         val delivery = deliveries.findById(tenantId, deliveryId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
+        val target = DeliverySnapshot(delivery)
+        val targetExpectation = CompletionExpectation(target)
         if (delivery.status == DocumentDeliveryStatus.SUCCEEDED) return Preparation.AlreadySucceeded(delivery.connectorId)
         if (delivery.status == DocumentDeliveryStatus.FAILED) {
             return Preparation.Failure(
@@ -108,6 +120,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Document was not found in the event tenant.",
                 delivery.connectorId,
+                targetExpectation,
             )
         if (delivery.deliveryGeneration != document.deliveryGeneration) return Preparation.Superseded(delivery.connectorId)
         if (document.lifecycleState !in setOf(LifecycleState.PUBLISHING, LifecycleState.SYNC_ERROR, LifecycleState.PUBLISHED)) {
@@ -115,6 +128,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Document is not available for delivery from lifecycle state ${document.lifecycleState.name}.",
                 delivery.connectorId,
+                targetExpectation,
             )
         }
         val version = currentVersion(document)
@@ -122,28 +136,56 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Document has no active version.",
                 delivery.connectorId,
+                targetExpectation,
             )
         val fileObject = fileObjectRepository.findById(tenantId, version.fileObjectId)
             ?: return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Active document version references a missing file object.",
                 delivery.connectorId,
+                targetExpectation,
             )
-        val connector = connectors.findConnector(delivery.connectorId)
-            ?: return Preparation.Failure(
-                ConnectorSyncStatus.PERMANENT_FAILURE,
-                "Delivery connector '${delivery.connectorId}' is no longer configured.",
-                delivery.connectorId,
-            )
-        return Preparation.Ready(delivery, document.id, fileObject, connector)
+        return Preparation.Frozen(
+            CompletionExpectation(target, document.deliveryGeneration),
+            FileObjectSnapshot(fileObject),
+        )
+    }
+
+    /** Resolves the SPI after [freeze] has committed, never from a database transaction. */
+    private fun resolveConnector(preparation: Preparation): Preparation = when (preparation) {
+        is Preparation.Frozen -> {
+            val connector = try {
+                connectors.findConnector(preparation.expectation.target.connectorId)
+            } catch (_: Exception) {
+                return Preparation.Failure(
+                    ConnectorSyncStatus.RETRYABLE_FAILURE,
+                    "Delivery connector resolution could not complete.",
+                    preparation.connectorId,
+                    preparation.expectation,
+                )
+            }
+            if (connector == null) {
+                Preparation.Failure(
+                    ConnectorSyncStatus.PERMANENT_FAILURE,
+                    "Delivery connector '${preparation.expectation.target.connectorId}' is no longer configured.",
+                    preparation.connectorId,
+                    preparation.expectation,
+                )
+            } else {
+                Preparation.Ready(preparation.expectation, preparation.fileObject, connector)
+            }
+        }
+
+        else -> preparation
     }
 
     private fun invokeConnector(preparation: Preparation.Ready): ConnectorSyncResult = try {
         val fileObject = preparation.fileObject
+        val delivery = preparation.expectation.target
         preparation.connector.sync(
             ConnectorSyncRequest(
-                tenantId = preparation.delivery.tenantId,
-                businessId = preparation.documentId,
+                tenantId = delivery.tenantId,
+                businessId = delivery.documentId,
                 source = ConnectorFileSource(
                     downloadUri = storageAdapter.accessUrl(
                         StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
@@ -153,10 +195,10 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                     contentType = fileObject.contentType,
                     contentHash = fileObject.contentHash,
                 ),
-                invocation = ConnectorInvocation(preparation.delivery.id.value, connectorTimeout),
+                invocation = ConnectorInvocation(delivery.id.value, connectorTimeout),
                 attributes = mapOf(
-                    "deliveryProfileId" to preparation.delivery.profileId,
-                    "deliveryTargetId" to preparation.delivery.targetId,
+                    "deliveryProfileId" to delivery.profileId,
+                    "deliveryTargetId" to delivery.targetId,
                 ),
             ),
         )
@@ -167,18 +209,38 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     private fun complete(
         sourceEvent: OutboxEvent,
         deliveryId: Identifier,
+        expectation: CompletionExpectation?,
         result: ConnectorSyncResult,
     ): OutboxHandlingResult = transaction.execute {
         val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
+        if (expectation == null) {
+            return@execute normalizedResult.toOutboxHandlingResult()
+        }
         val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
             ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before synchronization completed.")
+        if (!expectation.target.matches(delivery)) {
+            return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before synchronization completed.")
+        }
+        val document = expectation.documentDeliveryGeneration?.let { expectedGeneration ->
+            val current = documentRepository.findForMutation(sourceEvent.tenantId, delivery.documentId)
+                ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Document changed before synchronization completed.")
+            if (current.deliveryGeneration != expectedGeneration || !current.canAcceptDeliveryCompletion()) {
+                return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Document changed before synchronization completed.")
+            }
+            current
+        }
+        if (delivery.status == DocumentDeliveryStatus.SUCCEEDED) {
+            return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already synchronized.")
+        }
+        if (delivery.status !in ACTIVE_DELIVERY_STATUSES) {
+            return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before synchronization completed.")
+        }
         when (normalizedResult.status) {
             ConnectorSyncStatus.SUCCESS -> delivery.markSucceeded(normalizedResult.externalId)
             ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRetrying(normalizedResult.message)
             ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markFailed(normalizedResult.message)
         }
         deliveries.save(delivery)
-        val document = documentRepository.findById(sourceEvent.tenantId, delivery.documentId)
         if (
             normalizedResult.status == ConnectorSyncStatus.SUCCESS &&
             document != null &&
@@ -187,7 +249,11 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         ) {
             removalPlanner?.plan(document)
         }
-        reconcileDocument(sourceEvent.tenantId, delivery.documentId)
+        if (document != null) {
+            reconcileDocument(document)
+        } else {
+            reconcileDocument(sourceEvent.tenantId, delivery.documentId)
+        }
         auditTrail?.record(
             tenantId = sourceEvent.tenantId,
             resourceType = DOCUMENT_RESOURCE_TYPE,
@@ -206,8 +272,12 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     }
 
     private fun reconcileDocument(tenantId: Identifier, documentId: Identifier) {
-        val document = documentRepository.findById(tenantId, documentId) ?: return
-        val required = deliveries.findByDocumentGeneration(tenantId, documentId, document.deliveryGeneration)
+        val document = documentRepository.findForMutation(tenantId, documentId) ?: return
+        reconcileDocument(document)
+    }
+
+    private fun reconcileDocument(document: Document) {
+        val required = deliveries.findByDocumentGeneration(document.tenantId, document.id, document.deliveryGeneration)
             .filter { it.requirement == DeliveryRequirement.REQUIRED }
         if (required.isEmpty()) return
         val allRequiredSucceeded = required.all { it.status == DocumentDeliveryStatus.SUCCEEDED }
@@ -263,28 +333,85 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         }
     }
 
+    private class DeliverySnapshot(delivery: DocumentDeliveryTarget) {
+        val id: Identifier = delivery.id
+        val tenantId: Identifier = delivery.tenantId
+        val documentId: Identifier = delivery.documentId
+        val profileId: String = delivery.profileId
+        val targetId: String = delivery.targetId
+        val displayName: String = delivery.displayName
+        val connectorId: String = delivery.connectorId
+        val requirement: DeliveryRequirement = delivery.requirement
+        val ownerRef: String? = delivery.ownerRef
+        val deliveryGeneration: Int = delivery.deliveryGeneration
+
+        fun matches(current: DocumentDeliveryTarget): Boolean =
+            current.id == id &&
+                current.tenantId == tenantId &&
+                current.documentId == documentId &&
+                current.profileId == profileId &&
+                current.targetId == targetId &&
+                current.displayName == displayName &&
+                current.connectorId == connectorId &&
+                current.requirement == requirement &&
+                current.ownerRef == ownerRef &&
+                current.deliveryGeneration == deliveryGeneration
+    }
+
+    /** A frozen target plus the document generation that was validated before SPI resolution. */
+    private class CompletionExpectation(
+        val target: DeliverySnapshot,
+        val documentDeliveryGeneration: Int? = null,
+    )
+
+    /** Copies immutable source details so connector invocation cannot observe a mutable repository object. */
+    private class FileObjectSnapshot(fileObject: FileObject) {
+        val storageType: String = fileObject.storageType
+        val storagePath: String = fileObject.storagePath
+        val fileName: String = fileObject.fileName
+        val contentType: String? = fileObject.contentType
+        val contentHash: String? = fileObject.contentHash
+    }
+
+    private fun Document.canAcceptDeliveryCompletion(): Boolean = lifecycleState in DELIVERY_COMPLETION_STATES
+
     private sealed class Preparation {
         abstract val connectorId: String?
 
         data class AlreadySucceeded(override val connectorId: String) : Preparation()
         data class Superseded(override val connectorId: String) : Preparation()
+        data class Frozen(
+            val expectation: CompletionExpectation,
+            val fileObject: FileObjectSnapshot,
+        ) : Preparation() {
+            override val connectorId: String = expectation.target.connectorId
+        }
+
         data class Ready(
-            val delivery: DocumentDeliveryTarget,
-            val documentId: Identifier,
-            val fileObject: FileObject,
+            val expectation: CompletionExpectation,
+            val fileObject: FileObjectSnapshot,
             val connector: com.fileweft.spi.connector.FileConnector,
         ) : Preparation() {
-            override val connectorId: String = delivery.connectorId
+            override val connectorId: String = expectation.target.connectorId
         }
 
         data class Failure(
             val status: ConnectorSyncStatus,
             val message: String,
             override val connectorId: String? = null,
+            val expectation: CompletionExpectation? = null,
         ) : Preparation()
     }
 
     private companion object {
+        val ACTIVE_DELIVERY_STATUSES = setOf(DocumentDeliveryStatus.PENDING, DocumentDeliveryStatus.RETRYING)
+        val DELIVERY_COMPLETION_STATES = setOf(
+            LifecycleState.PUBLISHING,
+            LifecycleState.SYNC_ERROR,
+            LifecycleState.PUBLISHED,
+            LifecycleState.OFFLINE,
+            LifecycleState.HISTORY,
+        )
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val DELIVERY_SUCCEEDED_AUDIT_ACTION = "document:delivery:succeeded"
         const val DELIVERY_FAILED_AUDIT_ACTION = "document:delivery:failed"

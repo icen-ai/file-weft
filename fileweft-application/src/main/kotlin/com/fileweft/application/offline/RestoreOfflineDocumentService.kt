@@ -36,7 +36,7 @@ class RestoreOfflineDocumentService(
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, RESTORE_ACTION)
         return transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             val currentDeliveries = deliveries.findByDocumentGeneration(
                 tenant.tenantId,

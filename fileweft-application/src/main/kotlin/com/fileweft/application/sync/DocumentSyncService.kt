@@ -66,8 +66,12 @@ class DocumentSyncService(
     }
 
     private fun prepare(tenantId: Identifier, documentId: Identifier): Preparation {
-        val document = documentRepository.findById(tenantId, documentId)
+        var document = documentRepository.findById(tenantId, documentId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was not found in the event tenant.")
+        if (document.lifecycleState == LifecycleState.SYNC_ERROR) {
+            document = documentRepository.findForMutation(tenantId, documentId)
+                ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was removed before synchronization preparation completed.")
+        }
         when (document.lifecycleState) {
             LifecycleState.PUBLISHED -> return Preparation.AlreadyPublished
             LifecycleState.SYNC_ERROR -> {
@@ -118,7 +122,7 @@ class DocumentSyncService(
         message: String?,
     ): OutboxHandlingResult = transaction.execute {
         val normalizedMessage = DeliveryDiagnosticMessage.normalize(message)
-        val document = documentRepository.findById(sourceEvent.tenantId, documentId)
+        val document = documentRepository.findForMutation(sourceEvent.tenantId, documentId)
         if (document == null) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Document was removed before synchronization completed.")
         }

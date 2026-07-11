@@ -35,12 +35,16 @@ class DocumentDownloadService(
     fun download(documentId: Identifier, versionId: Identifier? = null): DocumentDownload {
         val tenant = tenantProvider.currentTenant()
         authorization.requireDocumentAction(tenant.tenantId, documentId, DOWNLOAD_ACTION)
+        // A user realm can be remote. Freeze its audit identity before opening
+        // the short repository transaction so the database transaction never
+        // waits on identity infrastructure.
+        val operator = userRealmProvider.currentUser()
         val target = transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId) ?: throw DocumentNotFoundException(documentId)
             val version = resolveVersion(document, versionId)
             val fileObject = fileObjectRepository.findById(tenant.tenantId, version.fileObjectId)
                 ?: throw DocumentDownloadNotFoundException("File ${version.fileObjectId.value} for document ${document.id.value} was not found.")
-            recordDownloadIntent(tenant.tenantId, document, version, fileObject)
+            recordDownloadIntent(tenant.tenantId, document, version, fileObject, operator)
             DownloadTarget(document.id, version, fileObject)
         }
         val storageDownload = storageAdapter.download(StorageObjectLocation(target.fileObject.storageType, target.fileObject.storagePath))
@@ -59,9 +63,9 @@ class DocumentDownloadService(
         document: Document,
         version: DocumentVersion,
         fileObject: FileObject,
+        operator: com.fileweft.spi.identity.UserIdentity?,
     ) {
         val audit = auditTrail ?: return
-        val operator = userRealmProvider.currentUser()
         audit.record(
             tenantId = tenantId,
             resourceType = DOCUMENT_RESOURCE_TYPE,

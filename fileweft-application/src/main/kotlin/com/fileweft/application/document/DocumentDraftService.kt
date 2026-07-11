@@ -113,7 +113,7 @@ class DocumentDraftService(
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
             val document = transaction.execute {
-                val existing = documentRepository.findById(tenant.tenantId, documentId)
+                val existing = documentRepository.findForMutation(tenant.tenantId, documentId)
                     ?: throw DocumentNotFoundException(documentId)
                 val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
                 existing.addVersion(
@@ -146,7 +146,7 @@ class DocumentDraftService(
         val operator = userRealmProvider.currentUser()
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
         return transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
+            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.rename(title)
             documentRepository.save(document)
