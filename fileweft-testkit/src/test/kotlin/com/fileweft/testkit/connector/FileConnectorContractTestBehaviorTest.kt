@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.net.URI
 import java.time.Duration
+import java.util.concurrent.ConcurrentHashMap
 
 class FileConnectorContractTestBehaviorTest : FileConnectorContractTest() {
     private val connector = IdempotentConnector()
@@ -46,21 +47,21 @@ class FileConnectorContractTestBehaviorTest : FileConnectorContractTest() {
     }
 
     private class IdempotentConnector : FileConnector {
-        val createdExternalIds = linkedMapOf<String, String>()
-        val removedExternalIds = linkedSetOf<String>()
+        val createdExternalIds = ConcurrentHashMap<String, String>()
+        val removedExternalIds = ConcurrentHashMap.newKeySet<String>()
 
         override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
-            val externalId = createdExternalIds.getOrPut(request.invocation.idempotencyKey) {
+            val externalId = createdExternalIds.computeIfAbsent(request.invocation.idempotencyKey) {
                 "external-${request.invocation.idempotencyKey}"
             }
             return ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, externalId)
         }
 
         override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
-            removedExternalIds += request.externalId
+            removedExternalIds.add(request.externalId)
             return ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
         }
 
-        override fun health(): ConnectorHealth = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+        override fun health(): ConnectorHealth = ConnectorHealth(ConnectorHealthStatus.UNHEALTHY, "controlled test endpoint is offline")
     }
 }

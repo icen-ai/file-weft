@@ -2,6 +2,7 @@ package com.fileweft.spi.delivery
 
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.connector.FileConnector
+import java.util.Collections
 
 /** Defines the completion rule for one downstream target in a publication profile. */
 enum class DeliveryRequirement {
@@ -34,14 +35,17 @@ class DocumentDeliveryTargetDefinition(
 class DocumentDeliveryProfile(
     val id: String,
     val displayName: String,
-    val targets: List<DocumentDeliveryTargetDefinition>,
+    targets: List<DocumentDeliveryTargetDefinition>,
 ) {
+    val targets: List<DocumentDeliveryTargetDefinition> =
+        Collections.unmodifiableList(ArrayList(targets))
+
     init {
         require(id.isNotBlank()) { "Delivery profile id must not be blank." }
         require(displayName.isNotBlank()) { "Delivery profile display name must not be blank." }
-        require(targets.isNotEmpty()) { "Delivery profile must define at least one target." }
-        require(targets.map { it.id }.distinct().size == targets.size) { "Delivery profile target ids must be unique." }
-        require(targets.any { it.requirement == DeliveryRequirement.REQUIRED }) {
+        require(this.targets.isNotEmpty()) { "Delivery profile must define at least one target." }
+        require(this.targets.map { it.id }.distinct().size == this.targets.size) { "Delivery profile target ids must be unique." }
+        require(this.targets.any { it.requirement == DeliveryRequirement.REQUIRED }) {
             "Delivery profile must define at least one required target."
         }
     }
