@@ -13,7 +13,7 @@
 | Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |
 | Starter | Boot 2 / Boot 3 自动装配、安全默认实现与客户替换点 | Starter 上下文测试，以及 Java 8/11/21/25（Boot 2）与 Java 17/21/25（Boot 3）运行时矩阵 |
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 指标 | Adapter 与 TestKit 合约测试 |
-| Doctor | 权限、生命周期、存储、连接器、交付档案与连接器映射、宿主目录绑定与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
+| Doctor | 权限、生命周期、工作流一致性、存储、连接器、交付档案与连接器映射、宿主目录绑定与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
 | Hardening | 多租户隔离、Outbox、重试、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom` 与 Compose 验收 |
 
@@ -36,6 +36,14 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。日常 `check` 会继续执行所有 Java 8 基线模块的独立 `java8Test`；发版门禁 `compatibilityCheck` 通过 Gradle 工具链在 Java 8、11、21、25 上执行所有 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。该矩阵已在实际工具链运行通过，而不是只依赖字节码目标声明。
 
 Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
+
+## 本轮核对后仍未闭环的手册项
+
+以下是明确的边界，而不是已交付能力：
+
+- **正式公共 HTTP API**：当前 HTTP 控制器只属于 `fileweft-dev` 的验收应用。手册中列出的文档、同步状态、日志、插件和全局 Doctor 路由，尚未形成可供嵌入方稳定依赖的版本化 Web 契约。特别是多任务审批无法由仅含 `documentId` 的 `audit` 路由唯一表达。需要先确定 API 版本、认证和可信租户注入、统一响应/错误模型、分页、审批 DTO，以及新版多下游交付状态的返回语义；之后应以可选 Web Adapter 交付，而不是把 MVC 依赖放入 Core、Domain 或默认 Starter。
+- **数据库方言与运营策略**：当前唯一经过真实数据库迁移和并发测试的持久化目标是 PostgreSQL。MySQL 8 尚未实现：它需要独立迁移集、JSON/upsert/任务领取 SQL 方言、工作流部分唯一约束的等价实现和 MySQL 实库测试，不能只添加驱动。迁移目前遵循只前进的 Flyway 版本化策略；新增迁移必须附带 preflight 和回滚方案（或明确不可回滚）。审计与操作日志是 append-only，`fw_operation_log` 因而没有 `updated_time`；历史保留、分区和归档年限仍需产品与运维定义后才能实现。
+- **配置与标识策略**：`fw_tenant_config`、Snowflake/ULID 是手册中的可选方向；当前分别由宿主 SPI 和可替换的 UUID `IdentifierGenerator` 承担。是否收回为 FileWeft 持久化责任，需先确定配置所有权、迁移路径和兼容性承诺。
 
 ## 当前明确不包含的厂商实现
 
