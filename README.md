@@ -71,6 +71,28 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 该测试会创建唯一编号文档，验证编辑者上传和提交、单人审批与双人会签、管理员处理 Outbox、下游平台下载 RustFS 对象，并覆盖可选下游失败与必达下游人工恢复。
 
+### 浏览器验收回归
+
+`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、审批者操作以及 Alpha/Beta 租户文件可见性隔离。
+
+首次执行先安装锁定的 Node 依赖和 Chromium：
+
+```powershell
+Push-Location .\fileweft-dev\web
+npm ci
+npx playwright install chromium
+Pop-Location
+```
+
+在完整 Compose 编排健康后执行：
+
+```powershell
+$env:FILEWEFT_RUN_DEV_UI_E2E='true'
+.\gradlew.bat :fileweft-dev:check --no-daemon
+```
+
+也可在 `fileweft-dev/web` 中直接运行 `npm run test:e2e`。需要测试其他本地地址时，设置 `FILEWEFT_DEV_UI_BASE_URL`；测试报告会输出到被 Git 忽略的 `playwright-report/`。
+
 ## 宿主文件树与目录权限
 
 FileWeft 不拥有业务系统的目录，也不会把目录名称写入对象存储路径。宿主实现 `DocumentCatalogProvider`，以租户内不透明字符串 ID 返回文件夹；选中的 ID 仅以 `catalog.folder-id` 元数据绑定到文件资产。这样同一个 `inbox` ID 可以在不同租户中独立存在，目录改名或移动也无需迁移 FileWeft 数据。

@@ -24,3 +24,20 @@ dependencies {
     testImplementation(libs.assertj.core)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
+
+val runDevUiE2e = providers.environmentVariable("FILEWEFT_RUN_DEV_UI_E2E")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+
+val devUiE2e = tasks.register<Exec>("devUiE2e") {
+    group = "verification"
+    description = "Runs the Playwright acceptance suite against the running FileWeft development Compose stack."
+    workingDir(layout.projectDirectory.dir("web"))
+    commandLine(if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "npm.cmd" else "npm", "run", "test:e2e")
+}
+
+if (runDevUiE2e.get()) {
+    tasks.named("check") {
+        dependsOn(devUiE2e)
+    }
+}

@@ -10,8 +10,8 @@
   <body>
     <div class="grain" aria-hidden="true"></div>
     <div class="locale-switch" role="group" aria-label="Language selection">
-      <button type="button" data-locale="en" aria-pressed="true">EN</button>
-      <button type="button" data-locale="zh" aria-pressed="false">中文</button>
+      <button type="button" data-locale="en" data-testid="locale-en" aria-pressed="true">EN</button>
+      <button type="button" data-locale="zh" data-testid="locale-zh" aria-pressed="false">中文</button>
     </div>
     <main class="shell">
       <section id="login-view" class="login-view">
@@ -32,19 +32,19 @@
             <section class="tenant-preset-group alpha">
               <header><span>α</span><b data-i18n="tenant.alpha">Alpha tenant</b></header>
               <div class="preset-grid">
-                <button class="preset" type="button" data-user="admin@alpha" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
-                <button class="preset" type="button" data-user="editor@alpha" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
-                <button class="preset" type="button" data-user="reviewer@alpha" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
-                <button class="preset" type="button" data-user="viewer@alpha" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
+                <button class="preset" type="button" data-testid="login-preset-admin-alpha" data-user="admin@alpha" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
+                <button class="preset" type="button" data-testid="login-preset-editor-alpha" data-user="editor@alpha" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
+                <button class="preset" type="button" data-testid="login-preset-reviewer-alpha" data-user="reviewer@alpha" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
+                <button class="preset" type="button" data-testid="login-preset-viewer-alpha" data-user="viewer@alpha" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
               </div>
             </section>
             <section class="tenant-preset-group beta">
               <header><span>β</span><b data-i18n="tenant.beta">Beta tenant</b></header>
               <div class="preset-grid">
-                <button class="preset" type="button" data-user="admin@beta" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
-                <button class="preset" type="button" data-user="editor@beta" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
-                <button class="preset" type="button" data-user="reviewer@beta" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
-                <button class="preset" type="button" data-user="viewer@beta" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
+                <button class="preset" type="button" data-testid="login-preset-admin-beta" data-user="admin@beta" data-password="dev-admin"><b data-i18n="role.ADMIN">Administrator</b><small data-i18n="preset.ADMIN">Full control</small></button>
+                <button class="preset" type="button" data-testid="login-preset-editor-beta" data-user="editor@beta" data-password="dev-editor"><b data-i18n="role.EDITOR">Editor</b><small data-i18n="preset.EDITOR">Create and submit</small></button>
+                <button class="preset" type="button" data-testid="login-preset-reviewer-beta" data-user="reviewer@beta" data-password="dev-reviewer"><b data-i18n="role.REVIEWER">Reviewer</b><small data-i18n="preset.REVIEWER">Review and diagnose</small></button>
+                <button class="preset" type="button" data-testid="login-preset-viewer-beta" data-user="viewer@beta" data-password="dev-viewer"><b data-i18n="role.VIEWER">Viewer</b><small data-i18n="preset.VIEWER">Read-only proof</small></button>
               </div>
             </section>
           </div>

@@ -208,7 +208,7 @@ function renderDocuments() {
     return;
   }
   list.innerHTML = documents.map((document) => `
-    <button class="document-row ${document.id === state.selectedId ? "selected" : ""}" type="button" data-document-id="${escapeHtml(document.id)}">
+    <button class="document-row ${document.id === state.selectedId ? "selected" : ""}" type="button" data-testid="document-row" data-document-id="${escapeHtml(document.id)}" data-lifecycle-state="${escapeHtml(document.lifecycleState)}">
       <span><b>${escapeHtml(document.documentNumber)}</b><small>${escapeHtml(document.title)}</small></span>
       <span class="state-tag ${document.lifecycleState}">${escapeHtml(localizedState(document.lifecycleState))}</span>
       <span><small>${escapeHtml(formatTime(document.updatedTime))}</small></span>
@@ -246,6 +246,7 @@ function renderInspector() {
   $("#selected-title").textContent = document.title;
   $("#selected-state").textContent = localizedState(document.lifecycleState);
   $("#selected-state").className = `state-tag ${document.lifecycleState}`;
+  $("#selected-state").dataset.lifecycleState = document.lifecycleState;
   renderDeliveryProfile(document);
   $("#version-list").innerHTML = detail.versions.map((version) => {
     const download = can("document:download")
@@ -458,7 +459,7 @@ function renderFixtures() {
       <h3>${escapeHtml(t(`fixture.${fixture.id}.name`))}</h3>
       <p>${escapeHtml(t(`fixture.${fixture.id}.detail`))}</p>
       <div class="fixture-actions"><a href="${fixture.path}" download="${fixture.fileName}">${escapeHtml(t("fixture.download"))}</a>
-      ${canCreate ? `<button type="button" data-fixture-id="${fixture.id}">${escapeHtml(t("fixture.upload"))}</button>` : `<span class="fixture-locked">${escapeHtml(t("fixture.locked"))}</span>`}</div>
+      ${canCreate ? `<button type="button" data-testid="fixture-upload-${fixture.id}" data-fixture-id="${fixture.id}">${escapeHtml(t("fixture.upload"))}</button>` : `<span class="fixture-locked">${escapeHtml(t("fixture.locked"))}</span>`}</div>
     </article>`).join("");
   $("#fixture-grid").querySelectorAll("[data-fixture-id]").forEach((button) => button.addEventListener("click", () => createFixture(button.dataset.fixtureId)));
 }
