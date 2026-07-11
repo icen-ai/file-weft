@@ -3,6 +3,7 @@ package com.fileweft.application.document
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.application.upload.StoredObjectIntegrity
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
@@ -59,7 +60,9 @@ class DocumentDraftService(
         val versionId = identifierGenerator.nextId()
         var stored: StoredObject? = null
         try {
-            stored = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)
+            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)
+            stored = attempted.stored
+            StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
             val document = transaction.execute {
                 val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
@@ -105,7 +108,9 @@ class DocumentDraftService(
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
         var stored: StoredObject? = null
         try {
-            stored = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)
+            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, command.metadata, content)
+            stored = attempted.stored
+            StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
             val document = transaction.execute {
                 val existing = documentRepository.findById(tenant.tenantId, documentId)
@@ -165,10 +170,10 @@ class DocumentDraftService(
         contentType: String?,
         metadata: Map<String, String>,
         content: InputStream,
-    ): StoredObject = storageAdapter.upload(
-        StorageUploadRequest(tenantId, fileName, contentLength, contentType, metadata = metadata),
-        content,
-    )
+    ): StorageUploadAttempt {
+        val request = StorageUploadRequest(tenantId, fileName, contentLength, contentType, metadata = metadata)
+        return StorageUploadAttempt(request, storageAdapter.upload(request, content))
+    }
 
     private fun StoredObject.toFileObject(fileObjectId: Identifier, tenantId: Identifier, fileName: String): FileObject = FileObject(
         id = fileObjectId,
@@ -196,6 +201,11 @@ class DocumentDraftService(
             // Observability must not affect draft persistence or compensation.
         }
     }
+
+    private data class StorageUploadAttempt(
+        val request: StorageUploadRequest,
+        val stored: StoredObject,
+    )
 
     companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"

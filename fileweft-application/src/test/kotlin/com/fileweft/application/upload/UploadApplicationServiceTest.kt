@@ -69,6 +69,36 @@ class UploadApplicationServiceTest {
     }
 
     @Test
+    fun `deletes an object and skips persistence when storage acknowledges a different length`() {
+        val storage = FakeStorage().apply { storedContentLength = 6 }
+        val fileObjects = RecordingFileObjects()
+        val assets = RecordingAssets()
+        val outbox = RecordingOutbox()
+        val service = service(storage, fileObjects, assets, outbox, DirectTransaction)
+
+        assertThrows<IllegalArgumentException> {
+            service.upload(command(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals(listOf(storage.location), storage.deleted)
+        assertTrue(fileObjects.saved.isEmpty())
+        assertTrue(assets.saved.isEmpty())
+        assertTrue(outbox.events.isEmpty())
+    }
+
+    @Test
+    fun `deletes an object when its calculated hash differs from the declared hash`() {
+        val storage = FakeStorage().apply { storedContentHash = "sha256:actual" }
+        val service = service(storage, RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), DirectTransaction)
+
+        assertThrows<IllegalArgumentException> {
+            service.upload(command(contentHash = "sha256:expected"), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals(listOf(storage.location), storage.deleted)
+    }
+
+    @Test
     fun `records committed upload and does not let metrics failures change success`() {
         val metrics = RecordingMetrics()
         val result = service(FakeStorage(), RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), DirectTransaction, metrics)
@@ -109,7 +139,9 @@ class UploadApplicationServiceTest {
         metrics = metrics,
     )
 
-    private fun command() = UploadFileCommand("contract.pdf", 7, "DOCUMENT", "application/pdf")
+    private fun command(contentHash: String? = null) = UploadFileCommand(
+        "contract.pdf", 7, "DOCUMENT", "application/pdf", contentHash,
+    )
 
     private class RecordingFileObjects : FileObjectRepository {
         val saved = mutableListOf<FileObject>()
@@ -128,7 +160,11 @@ class UploadApplicationServiceTest {
     private class FakeStorage : StorageAdapter {
         val location = StorageObjectLocation("local", "tenant-1/contract.pdf")
         val deleted = mutableListOf<StorageObjectLocation>()
-        override fun upload(request: StorageUploadRequest, content: InputStream) = StoredObject(location, request.contentLength, request.contentType)
+        var storedContentLength: Long? = null
+        var storedContentHash: String? = null
+        override fun upload(request: StorageUploadRequest, content: InputStream) = StoredObject(
+            location, storedContentLength ?: request.contentLength, request.contentType, storedContentHash,
+        )
         override fun delete(location: StorageObjectLocation) { deleted.add(location) }
         override fun download(location: StorageObjectLocation) = throw UnsupportedOperationException()
         override fun exists(location: StorageObjectLocation) = true

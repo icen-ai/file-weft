@@ -91,6 +91,27 @@ class DocumentDraftServiceTest {
     }
 
     @Test
+    fun `compensates storage and skips document persistence when storage reports a different length`() {
+        val storage = RecordingStorage().apply { storedContentLength = 6 }
+        val documents = RecordingDocuments()
+        val fileObjects = RecordingFileObjects()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals(listOf(storage.location), storage.deleted)
+        assertTrue(documents.saved.isEmpty())
+        assertTrue(fileObjects.saved.isEmpty())
+    }
+
+    @Test
     fun `rejects a duplicate document number before uploading content`() {
         val storage = RecordingStorage()
         val service = service(
@@ -128,6 +149,33 @@ class DocumentDraftServiceTest {
         assertEquals(listOf("1.0", "1.1"), updated.versions.map { it.versionNumber })
         assertEquals("file-2", updated.versions.last().fileObjectId.value)
         assertEquals("file-2", fileObjects.saved.single().id.value)
+    }
+
+    @Test
+    fun `compensates an added version when storage reports a different length`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage().apply { storedContentLength = 6 }
+        val documents = RecordingDocuments(existing)
+        val fileObjects = RecordingFileObjects()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            identifiers = listOf("file-2", "version-2"),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            service.addVersion(
+                existing.id,
+                AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals(listOf(storage.location), storage.deleted)
+        assertTrue(fileObjects.saved.isEmpty())
+        assertTrue(documents.saved.isEmpty())
+        assertEquals(listOf("1.0"), existing.versions.map { it.versionNumber })
     }
 
     @Test
@@ -268,9 +316,10 @@ class DocumentDraftServiceTest {
         val location = StorageObjectLocation("memory", "objects/tenant/file")
         val uploads = mutableListOf<StorageUploadRequest>()
         val deleted = mutableListOf<StorageObjectLocation>()
+        var storedContentLength: Long? = null
         override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject {
             uploads += request
-            return StoredObject(location, request.contentLength, request.contentType, "sha256:test")
+            return StoredObject(location, storedContentLength ?: request.contentLength, request.contentType, "sha256:test")
         }
         override fun delete(location: StorageObjectLocation) { deleted += location }
         override fun download(location: StorageObjectLocation): StorageDownload = throw UnsupportedOperationException()

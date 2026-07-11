@@ -43,17 +43,17 @@ class UploadApplicationService(
 
         var storedObject: StoredObject? = null
         try {
-            storedObject = storageAdapter.upload(
-                StorageUploadRequest(
-                    tenantId = tenant.tenantId,
-                    objectName = command.fileName,
-                    contentLength = command.contentLength,
-                    contentType = command.contentType,
-                    contentHash = command.contentHash,
-                    metadata = command.metadata,
-                ),
-                content,
+            val request = StorageUploadRequest(
+                tenantId = tenant.tenantId,
+                objectName = command.fileName,
+                contentLength = command.contentLength,
+                contentType = command.contentType,
+                contentHash = command.contentHash,
+                metadata = command.metadata,
             )
+            val stored = storageAdapter.upload(request, content)
+            storedObject = stored
+            StoredObjectIntegrity.requireMatches(request, stored)
             val result = transaction.execute {
                 val fileObject = FileObject(
                     id = fileObjectId,
