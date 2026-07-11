@@ -8,6 +8,7 @@ import com.fileweft.spi.connector.ConnectorSyncRequest
 import com.fileweft.spi.connector.ConnectorSyncResult
 import com.fileweft.spi.connector.ConnectorSyncStatus
 import com.fileweft.spi.connector.FileConnector
+import com.fileweft.dev.platform.DevPlatformAuthenticator
 import java.io.BufferedOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -22,6 +23,7 @@ class DevPlatformConnector(
     private val connectTimeoutMillis: Int,
     private val readTimeoutMillis: Int,
     private val targetId: String,
+    private val sharedSecret: String,
 ) : FileConnector {
     init {
         require(baseUrl.isAbsolute) { "Development platform URL must be absolute." }
@@ -29,6 +31,9 @@ class DevPlatformConnector(
         require(connectTimeoutMillis > 0) { "Development platform connect timeout must be positive." }
         require(readTimeoutMillis > 0) { "Development platform read timeout must be positive." }
         require(targetId.isNotBlank()) { "Development platform target id must not be blank." }
+        require(sharedSecret.length >= MINIMUM_SECRET_LENGTH) {
+            "Development platform shared secret must contain at least $MINIMUM_SECRET_LENGTH characters."
+        }
     }
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
@@ -61,6 +66,7 @@ class DevPlatformConnector(
         val connection = connection("platform/v1/health", "GET", min(connectTimeoutMillis, readTimeoutMillis))
         try {
             connection.setRequestProperty(TARGET_HEADER, targetId)
+            applyAuthentication(connection)
             if (connection.responseCode in 200..299) ConnectorHealth(ConnectorHealthStatus.HEALTHY)
             else ConnectorHealth(ConnectorHealthStatus.UNHEALTHY, "Development platform returned HTTP ${connection.responseCode}.")
         } finally {
@@ -77,6 +83,7 @@ class DevPlatformConnector(
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty(TARGET_HEADER, targetId)
+            applyAuthentication(connection)
             BufferedOutputStream(connection.outputStream).use { output -> output.write(body) }
             val status = connection.responseCode
             when {
@@ -114,6 +121,10 @@ class DevPlatformConnector(
         instanceFollowRedirects = false
     }
 
+    private fun applyAuthentication(connection: HttpURLConnection) {
+        connection.setRequestProperty(DevPlatformAuthenticator.HEADER_NAME, sharedSecret)
+    }
+
     private fun timeoutMillis(value: Long): Int = when {
         value <= 0 -> 1
         value > Int.MAX_VALUE -> Int.MAX_VALUE
@@ -124,5 +135,6 @@ class DevPlatformConnector(
 
     private companion object {
         const val TARGET_HEADER = "X-FileWeft-Target"
+        const val MINIMUM_SECRET_LENGTH = 32
     }
 }

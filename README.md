@@ -41,8 +41,11 @@ docker compose -f .docker\docker-compose.dev.yaml up -d postgres
 启动完整编排：
 
 ```powershell
+$env:FILEWEFT_DEV_PLATFORM_SHARED_SECRET = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
 docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 ```
+
+`FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 是开发 API/Worker 与独立下游模拟器之间的系统凭据，至少 32 个字符且每次新建本地编排时应生成新的值。它不会下发给浏览器，也不能替代用户登录令牌。Compose 会拒绝未设置该变量的完整编排，避免意外以公开固定凭据启动模拟下游。
 
 | 服务 | 地址 | 用途 |
 | --- | --- | --- |
@@ -62,11 +65,15 @@ docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 
 开发应用使用独立的 `fileweft_dev` 和 `fileweft_dev_platform` schema；不会读取或覆写 `public` schema 的测试数据。预置账号和密码只适用于本地开发容器，禁止用于任何生产环境。
 
+模拟下游平台只绑定宿主机 `127.0.0.1`，并且不再经控制台 Nginx 代理暴露 `/platform/`。除健康检查外的所有平台接口都要求该系统凭据；控制台的“下游镜像”通过已登录的 FileWeft API 服务端转发读取，因此浏览器无法获得平台密钥。平台只允许从 `rustfs` 容器拉取 HTTP(S) 文件 URL，拒绝 URI 用户信息、跳转和超过 512 MiB 的响应。需要演练其他受控存储主机时，可显式设置 `FILEWEFT_DEV_PLATFORM_ALLOWED_DOWNLOAD_HOSTS`（逗号分隔）和 `FILEWEFT_DEV_PLATFORM_MAX_DOWNLOAD_BYTES`，不要把任意公网或内网地址加入允许列表。
+
 审计将用户 ID 视为不透明字符串，并同时保存操作发生时的显示名快照。接入方可在 `UserRealmProvider` 中将 Long、Int、UUID 或其他身份系统 ID 转为字符串；FileWeft 不维护用户表，也不会在查询历史审计时反查并改写原有操作者名称。
 
 验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。
 
 运行完整 Compose 验收回归：
+
+请在启动 Compose 的同一终端会话中执行，或显式恢复启动时使用的同一个 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET`；重新生成值会使验收客户端与已运行的平台凭据不一致。
 
 ```powershell
 $env:FILEWEFT_RUN_DEV_E2E='true'

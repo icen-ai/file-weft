@@ -38,13 +38,29 @@ class DevAcceptanceIntegrationTest {
         )
         assertEquals("UP", getJson("$apiUrl/api/health").path("status").asText())
         assertEquals("UP", getJson("$platformUrl/platform/v1/health").path("status").asText())
+        assertTrue(platformSharedSecret().length >= 32, "FILEWEFT_DEV_PLATFORM_SHARED_SECRET must contain at least 32 characters.")
     }
 
     @AfterEach
     fun restoreDevelopmentPlatform() {
         listOf("default", "compliance", "collaboration", "search").forEach { targetId ->
-            postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"$targetId"}""", null)
+            postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"$targetId"}""")
         }
+    }
+
+    @Test
+    fun `rejects unauthenticated platform management reads while preserving its health probe`() {
+        val protected = client.send(
+            HttpRequest.newBuilder(URI("$platformUrl/platform/v1/documents")).GET().build(),
+            HttpResponse.BodyHandlers.discarding(),
+        )
+        assertEquals(401, protected.statusCode())
+
+        val authenticated = client.send(
+            platformRequest("$platformUrl/platform/v1/documents").GET().build(),
+            HttpResponse.BodyHandlers.discarding(),
+        )
+        assertEquals(200, authenticated.statusCode())
     }
 
     @Test
@@ -437,7 +453,7 @@ class DevAcceptanceIntegrationTest {
             """{"reviewerId":"alpha-reviewer"}""",
             editor,
         )
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE","targetId":"compliance"}""", null)
+        postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE","targetId":"compliance"}""")
         val reviewer = login("reviewer@alpha", "dev-reviewer")
         postJson(
             "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
@@ -448,7 +464,7 @@ class DevAcceptanceIntegrationTest {
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
         awaitLifecycle(documentId, admin, "SYNC_ERROR")
 
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""", null)
+        postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""")
         Thread.sleep(10_500)
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
         val recovered = awaitPublished(documentId, admin)
@@ -460,7 +476,7 @@ class DevAcceptanceIntegrationTest {
         val editor = login("editor@alpha", "dev-editor")
         val reviewer = login("reviewer@alpha", "dev-reviewer")
         val admin = login("admin@alpha", "dev-admin")
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE","targetId":"compliance"}""", null)
+        postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"RETRYABLE_FAILURE","targetId":"compliance"}""")
 
         var circuitWasObserved = false
         try {
@@ -490,7 +506,7 @@ class DevAcceptanceIntegrationTest {
             )
             circuitWasObserved = true
         } finally {
-            postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""", null)
+            postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""")
             if (!circuitWasObserved) Thread.sleep(CIRCUIT_COOLDOWN_MILLIS)
         }
 
@@ -520,7 +536,7 @@ class DevAcceptanceIntegrationTest {
             """{"reviewerId":"alpha-reviewer"}""",
             editor,
         )
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"search"}""", null)
+        postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"search"}""")
         val reviewer = login("reviewer@alpha", "dev-reviewer")
         postJson(
             "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
@@ -546,7 +562,7 @@ class DevAcceptanceIntegrationTest {
             """{"reviewerId":"alpha-reviewer"}""",
             editor,
         )
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"compliance"}""", null)
+        postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"compliance"}""")
         val reviewer = login("reviewer@alpha", "dev-reviewer")
         postJson(
             "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
@@ -559,7 +575,7 @@ class DevAcceptanceIntegrationTest {
         val compliance = delivery(failed, "compliance")
         assertEquals("FAILED", compliance.path("status").asText())
 
-        postJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""", null)
+        postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""")
         post("$apiUrl/api/documents/delivery-targets/${compliance.path("id").asText()}/retry", null, admin, "application/json")
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
         val recovered = awaitPublished(documentId, admin)
@@ -728,14 +744,14 @@ class DevAcceptanceIntegrationTest {
             ?: throw AssertionError("Delivery target $targetId was not found.")
 
     private fun getPlatform(targetId: String, documentId: String): JsonNode = response(
-        HttpRequest.newBuilder(URI("$platformUrl/platform/v1/documents/alpha/$documentId"))
+        platformRequest("$platformUrl/platform/v1/documents/alpha/$documentId")
             .header("X-FileWeft-Target", targetId)
             .GET()
             .build(),
     )
 
     private fun platformDocumentStatus(targetId: String, documentId: String): Int = client.send(
-        HttpRequest.newBuilder(URI("$platformUrl/platform/v1/documents/alpha/$documentId"))
+        platformRequest("$platformUrl/platform/v1/documents/alpha/$documentId")
             .header("X-FileWeft-Target", targetId)
             .GET()
             .build(),
@@ -749,6 +765,20 @@ class DevAcceptanceIntegrationTest {
 
     private fun postJson(url: String, body: String, token: String?, traceId: String? = null): JsonNode =
         post(url, body.toByteArray(StandardCharsets.UTF_8), token, "application/json", traceId)
+
+    private fun postPlatformJson(url: String, body: String): JsonNode = response(
+        platformRequest(url)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+            .build(),
+    )
+
+    private fun platformRequest(url: String): HttpRequest.Builder = HttpRequest.newBuilder(URI(url))
+        .header("X-FileWeft-Dev-Platform-Key", platformSharedSecret())
+
+    private fun platformSharedSecret(): String = System.getenv("FILEWEFT_DEV_PLATFORM_SHARED_SECRET")
+        ?.takeIf { it.isNotBlank() }
+        ?: throw IllegalStateException("Set FILEWEFT_DEV_PLATFORM_SHARED_SECRET before running development acceptance tests.")
 
     private fun putBytes(url: String, body: ByteArray, token: String): JsonNode = response(
         HttpRequest.newBuilder(URI(url))

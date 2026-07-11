@@ -70,6 +70,11 @@ async function selectDocument(page, documentId) {
   await expect(page.locator("#document-inspector")).toBeVisible();
 }
 
+test("does not proxy downstream simulator endpoints into the browser origin", async ({ page }) => {
+  const response = await page.request.get("/platform/v1/documents");
+  expect(response.status()).toBe(404);
+});
+
 test("renders Chinese labels and filters the viewer capability surface", async ({ page }) => {
   await page.goto("/");
   const chinese = page.getByTestId("locale-zh");

@@ -25,6 +25,8 @@ class FileWeftDevProperties {
         var baseUrl: String = "http://127.0.0.1:8081/"
         var connectTimeoutMillis: Int = 3_000
         var readTimeoutMillis: Int = 10_000
+        /** Shared system credential for the isolated downstream-platform simulator. */
+        var sharedSecret: String = ""
     }
 
     class Worker {

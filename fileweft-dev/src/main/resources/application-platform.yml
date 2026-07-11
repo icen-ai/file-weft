@@ -13,3 +13,10 @@ spring:
 
 server:
   port: ${FILEWEFT_PLATFORM_PORT:8081}
+
+fileweft:
+  dev:
+    platform:
+      # The production-like development receiver only downloads from this explicit internal service.
+      allowed-download-hosts: ${FILEWEFT_DEV_PLATFORM_ALLOWED_DOWNLOAD_HOSTS:rustfs}
+      max-download-bytes: ${FILEWEFT_DEV_PLATFORM_MAX_DOWNLOAD_BYTES:536870912}

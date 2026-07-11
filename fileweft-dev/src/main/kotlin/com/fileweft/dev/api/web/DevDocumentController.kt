@@ -17,6 +17,7 @@ import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
+import com.fileweft.dev.api.connector.DevPlatformMirrorService
 import com.fileweft.dev.api.service.DevDocumentDetail
 import com.fileweft.dev.api.service.DevDocumentQueryService
 import com.fileweft.dev.api.service.DevOperationsService
@@ -73,6 +74,7 @@ class DevDocumentController(
     private val retryDeliveries: RetryDocumentDeliveryService,
     private val doctorScheduler: ScheduleDocumentDoctorService,
     private val agentSuggestions: ConfirmAgentSuggestionService,
+    private val platformMirror: DevPlatformMirrorService,
 ) {
     @PostMapping(consumes = ["multipart/form-data"])
     @ResponseStatus(HttpStatus.CREATED)
@@ -177,6 +179,12 @@ class DevDocumentController(
 
     @GetMapping("/{documentId}/doctor")
     fun doctor(@PathVariable documentId: String) = operations.inspectDocument(Identifier(documentId))
+
+    @GetMapping("/{documentId}/platform-mirror")
+    fun platformMirror(@PathVariable documentId: String) = Identifier(documentId).let { identifier ->
+        val detail = queries.detail(identifier)
+        platformMirror.readDocument(identifier, detail.deliveries)
+    }
 
     @PostMapping("/{documentId}/doctor/tasks")
     fun scheduleDoctor(@PathVariable documentId: String): DevDoctorTaskResponse {

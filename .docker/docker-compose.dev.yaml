@@ -49,11 +49,14 @@ services:
       FILEWEFT_PLATFORM_DB_URL: jdbc:postgresql://postgres:5432/fileweft?currentSchema=fileweft_dev_platform
       FILEWEFT_PLATFORM_DB_USERNAME: fileweft
       FILEWEFT_PLATFORM_DB_PASSWORD: fileweft-dev
+      FILEWEFT_DEV_PLATFORM_SHARED_SECRET: ${FILEWEFT_DEV_PLATFORM_SHARED_SECRET:?Set FILEWEFT_DEV_PLATFORM_SHARED_SECRET to a random value of at least 32 characters.}
+      FILEWEFT_DEV_PLATFORM_ALLOWED_DOWNLOAD_HOSTS: ${FILEWEFT_DEV_PLATFORM_ALLOWED_DOWNLOAD_HOSTS:-rustfs}
+      FILEWEFT_DEV_PLATFORM_MAX_DOWNLOAD_BYTES: ${FILEWEFT_DEV_PLATFORM_MAX_DOWNLOAD_BYTES:-536870912}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/platform/v1/health >/dev/null"]
       interval: 5s
@@ -75,6 +78,7 @@ services:
       FILEWEFT_DEV_S3_SECRET_KEY: ChangeMe123!
       FILEWEFT_DEV_S3_BUCKET: fileweft-dev
       FILEWEFT_DEV_PLATFORM_URL: http://fileweft-dev-platform:8081/
+      FILEWEFT_DEV_PLATFORM_SHARED_SECRET: ${FILEWEFT_DEV_PLATFORM_SHARED_SECRET:?Set FILEWEFT_DEV_PLATFORM_SHARED_SECRET to a random value of at least 32 characters.}
       FILEWEFT_DEV_WORKER_ENABLED: "false"
       FILEWEFT_SYNC_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS: ${FILEWEFT_DEV_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS:-5000}
     depends_on:
@@ -107,6 +111,7 @@ services:
       FILEWEFT_DEV_S3_SECRET_KEY: ChangeMe123!
       FILEWEFT_DEV_S3_BUCKET: fileweft-dev
       FILEWEFT_DEV_PLATFORM_URL: http://fileweft-dev-platform:8081/
+      FILEWEFT_DEV_PLATFORM_SHARED_SECRET: ${FILEWEFT_DEV_PLATFORM_SHARED_SECRET:?Set FILEWEFT_DEV_PLATFORM_SHARED_SECRET to a random value of at least 32 characters.}
       FILEWEFT_DEV_WORKER_ENABLED: "false"
       FILEWEFT_WORKER_ENABLED: "true"
       FILEWEFT_TASK_WORKER_ID: fw-dev-worker

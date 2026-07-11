@@ -17,6 +17,7 @@ import com.fileweft.dev.api.agent.DevPublishClassificationTrigger
 import com.fileweft.dev.api.catalog.DevCatalogQueryService
 import com.fileweft.dev.api.catalog.DevDocumentCatalogProvider
 import com.fileweft.dev.api.connector.DevPlatformConnector
+import com.fileweft.dev.api.connector.DevPlatformMirrorService
 import com.fileweft.dev.api.security.DevAuthorizationProvider
 import com.fileweft.dev.api.security.DevSessionStore
 import com.fileweft.dev.api.security.DevTraceContextProvider
@@ -126,6 +127,7 @@ class DevApiConfiguration {
         connectTimeoutMillis = properties.platform.connectTimeoutMillis,
         readTimeoutMillis = properties.platform.readTimeoutMillis,
         targetId = "compliance",
+        sharedSecret = properties.platform.sharedSecret,
     )
 
     @Bean("collaborationConnector")
@@ -135,6 +137,7 @@ class DevApiConfiguration {
         connectTimeoutMillis = properties.platform.connectTimeoutMillis,
         readTimeoutMillis = properties.platform.readTimeoutMillis,
         targetId = "collaboration",
+        sharedSecret = properties.platform.sharedSecret,
     )
 
     @Bean("searchConnector")
@@ -144,6 +147,21 @@ class DevApiConfiguration {
         connectTimeoutMillis = properties.platform.connectTimeoutMillis,
         readTimeoutMillis = properties.platform.readTimeoutMillis,
         targetId = "search",
+        sharedSecret = properties.platform.sharedSecret,
+    )
+
+    @Bean
+    fun devPlatformMirrorService(
+        properties: FileWeftDevProperties,
+        objectMapper: ObjectMapper,
+        tenants: TenantProvider,
+    ): DevPlatformMirrorService = DevPlatformMirrorService(
+        tenants,
+        URI(properties.platform.baseUrl),
+        properties.platform.sharedSecret,
+        objectMapper,
+        properties.platform.connectTimeoutMillis,
+        properties.platform.readTimeoutMillis,
     )
 
     @Bean

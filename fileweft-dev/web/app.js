@@ -521,11 +521,7 @@ async function loadPlatform() {
       $("#platform-output").textContent = t("platform.empty");
       return;
     }
-    const records = await Promise.all(deliveries.map(async (delivery) => {
-      const response = await fetch(`/platform/v1/documents/${state.user.tenantId}/${state.selectedId}`, { headers: { "X-FileWeft-Target": delivery.targetId } });
-      const text = await response.text();
-      return { targetId: delivery.targetId, deliveryStatus: delivery.status, platform: response.ok ? safeJson(text) : null };
-    }));
+    const records = await api(`/api/documents/${state.selectedId}/platform-mirror`);
     $("#platform-output").textContent = JSON.stringify(records, null, 2);
   } catch (error) {
     $("#platform-output").textContent = error.message;

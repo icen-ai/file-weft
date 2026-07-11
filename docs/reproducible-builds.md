@@ -48,3 +48,5 @@ docker compose -f .docker/docker-compose.dev.yaml config -q
 ```
 
 涉及应用镜像或运行行为的改动还应重建开发镜像并执行 Dev 验收测试。镜像 digest 的固定保证后续重建使用同一镜像内容，但不会自动替换已经运行的 `fw-dev` 容器。
+
+完整 Dev 编排还要求在执行 `docker compose` 前设置至少 32 字符的 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET`；它是 API/Worker 调用独立下游模拟器的系统凭据，不应提交到 `.env`、源码或测试报告。平台服务仅绑定 `127.0.0.1`，正常控制台访问通过认证后的 FileWeft API 镜像端点完成。
