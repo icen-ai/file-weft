@@ -264,6 +264,13 @@ class FileWeftRuntimeConfiguration {
     ) = DocumentDeliveryPlanner(profiles, connectors, deliveries, outbox, identifiers, clock)
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryRemovalPlanner::class)
+    fun documentDeliveryRemovalPlanner(
+        deliveries: DocumentDeliveryTargetRepository, outbox: OutboxEventRepository,
+        identifiers: IdentifierGenerator, clock: Clock,
+    ) = DocumentDeliveryRemovalPlanner(deliveries, outbox, identifiers, clock)
+
+    @Bean
     @ConditionalOnMissingBean(DocumentDeliverySyncService::class)
     fun documentDeliverySyncService(
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
@@ -276,8 +283,20 @@ class FileWeftRuntimeConfiguration {
     )
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryRemovalService::class)
+    fun documentDeliveryRemovalService(
+        connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
+        transaction: ApplicationTransaction, auditTrail: AuditTrail, properties: FileWeftProperties,
+    ) = DocumentDeliveryRemovalService(
+        connectors, deliveries, transaction,
+        connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
+        auditTrail = auditTrail,
+    )
+
+    @Bean
     @ConditionalOnMissingBean(DocumentDeliveryOutboxEventHandler::class)
-    fun documentDeliveryHandler(sync: DocumentDeliverySyncService) = DocumentDeliveryOutboxEventHandler(sync)
+    fun documentDeliveryHandler(sync: DocumentDeliverySyncService, removal: DocumentDeliveryRemovalService) =
+        DocumentDeliveryOutboxEventHandler(sync, removal)
 
     @Bean
     @ConditionalOnMissingBean(RetryDocumentDeliveryService::class)
@@ -347,14 +366,16 @@ class FileWeftRuntimeConfiguration {
     fun offlineService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ) = OfflineDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
+        removalPlanner: DocumentDeliveryRemovalPlanner,
+    ) = OfflineDocumentService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
 
     @Bean
     @ConditionalOnMissingBean(ArchiveDocumentService::class)
     fun archiveService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ) = ArchiveDocumentService(tenants, users, authorization, documents, transaction, auditTrail)
+        removalPlanner: DocumentDeliveryRemovalPlanner,
+    ) = ArchiveDocumentService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
 
     @Bean
     fun defaultDocumentReviewRouteProvider(): DocumentReviewRouteProvider = DefaultDocumentReviewRouteProvider

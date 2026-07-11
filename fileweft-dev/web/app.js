@@ -262,9 +262,12 @@ function renderInspector() {
     const responsibility = delivery.ownerRef ? ` · ${escapeHtml(delivery.ownerRef)}` : "";
     const error = delivery.errorMessage ? `<small class="delivery-error">${escapeHtml(delivery.errorMessage)}</small>` : "";
     const retry = delivery.retryCount ? ` · ${escapeHtml(interpolate("delivery.retries", { count: delivery.retryCount }))}` : "";
-    const manualRetry = delivery.status === "FAILED" && can("document:delivery:retry")
-      ? `<button class="delivery-retry" type="button" data-delivery-retry="${escapeHtml(delivery.id)}">${escapeHtml(t("action.retryDelivery"))}</button>` : "";
-    return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${manualRetry}</div></article>`;
+    const removal = delivery.removalStatus && delivery.removalStatus !== "NOT_REQUESTED"
+      ? `<small>${escapeHtml(t("delivery.removal"))}: ${escapeHtml(localized("delivery.removal.status", delivery.removalStatus))}${delivery.removalRetryCount ? ` · ${escapeHtml(interpolate("delivery.retries", { count: delivery.removalRetryCount }))}` : ""}${delivery.removalErrorMessage ? ` · ${escapeHtml(delivery.removalErrorMessage)}` : ""}</small>` : "";
+    const canRetry = (delivery.status === "FAILED" || delivery.removalStatus === "FAILED") && can("document:delivery:retry");
+    const manualRetry = canRetry
+      ? `<button class="delivery-retry" type="button" data-delivery-retry="${escapeHtml(delivery.id)}">${escapeHtml(t(delivery.removalStatus === "FAILED" ? "action.retryRemoval" : "action.retryDelivery"))}</button>` : "";
+    return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${removal}${manualRetry}</div></article>`;
   }).join("") || emptyEvidence("empty.delivery");
   $("#delivery-list").querySelectorAll("[data-delivery-retry]").forEach((button) => button.addEventListener("click", () => retryDelivery(button.dataset.deliveryRetry)));
   $("#task-list").innerHTML = detail.tasks.map((task) => evidenceItem(

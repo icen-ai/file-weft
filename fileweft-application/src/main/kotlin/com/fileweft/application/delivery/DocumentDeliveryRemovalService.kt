@@ -1,0 +1,148 @@
+package com.fileweft.application.delivery
+
+import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.core.event.OutboxEvent
+import com.fileweft.core.id.Identifier
+import com.fileweft.spi.connector.ConnectorInvocation
+import com.fileweft.spi.connector.ConnectorRemoveRequest
+import com.fileweft.spi.connector.ConnectorSyncResult
+import com.fileweft.spi.connector.ConnectorSyncStatus
+import com.fileweft.spi.delivery.DeliveryConnectorResolver
+import com.fileweft.spi.event.OutboxHandlingResult
+import com.fileweft.spi.event.OutboxHandlingStatus
+import java.time.Duration
+
+/** Removes one frozen downstream target outside the transaction that marked a document unavailable. */
+class DocumentDeliveryRemovalService(
+    private val connectors: DeliveryConnectorResolver,
+    private val deliveries: DocumentDeliveryTargetRepository,
+    private val transaction: ApplicationTransaction,
+    private val connectorTimeout: Duration = Duration.ofSeconds(30),
+    private val auditTrail: AuditTrail? = null,
+) {
+    init {
+        require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
+    }
+
+    fun remove(sourceEvent: OutboxEvent): OutboxHandlingResult {
+        val deliveryId = sourceEvent.deliveryIdOrNull()
+            ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery removal event does not contain deliveryId.")
+        return when (val preparation = transaction.execute { prepare(sourceEvent.tenantId, deliveryId) }) {
+            is Preparation.AlreadyRemoved -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already removed downstream.")
+            is Preparation.Failure -> complete(sourceEvent, deliveryId, ConnectorSyncResult(preparation.status, message = preparation.message))
+            is Preparation.Ready -> complete(sourceEvent, deliveryId, invokeConnector(preparation))
+        }
+    }
+
+    fun exhaust(sourceEvent: OutboxEvent, message: String) {
+        val deliveryId = sourceEvent.deliveryIdOrNull() ?: return
+        transaction.execute {
+            val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId) ?: return@execute
+            if (delivery.removalStatus != DocumentDeliveryRemovalStatus.SUCCEEDED) {
+                delivery.markRemovalFailed(message)
+                deliveries.save(delivery)
+                audit(sourceEvent, delivery, DELIVERY_REMOVAL_FAILED_AUDIT_ACTION, mapOf("message" to message))
+            }
+        }
+    }
+
+    private fun prepare(tenantId: Identifier, deliveryId: Identifier): Preparation {
+        val delivery = deliveries.findById(tenantId, deliveryId)
+            ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
+        when (delivery.removalStatus) {
+            DocumentDeliveryRemovalStatus.SUCCEEDED -> return Preparation.AlreadyRemoved
+            DocumentDeliveryRemovalStatus.FAILED -> return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Delivery target removal requires a manual retry.",
+            )
+            DocumentDeliveryRemovalStatus.NOT_REQUESTED -> return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Delivery target removal was not requested.",
+            )
+            DocumentDeliveryRemovalStatus.PENDING, DocumentDeliveryRemovalStatus.RETRYING -> Unit
+        }
+        val connector = connectors.findConnector(delivery.connectorId) ?: return Preparation.Failure(
+            ConnectorSyncStatus.PERMANENT_FAILURE,
+            "Delivery connector '${delivery.connectorId}' is no longer configured.",
+        )
+        return Preparation.Ready(delivery, connector)
+    }
+
+    private fun invokeConnector(preparation: Preparation.Ready): ConnectorSyncResult = try {
+        val delivery = preparation.delivery
+        preparation.connector.remove(
+            ConnectorRemoveRequest(
+                tenantId = delivery.tenantId,
+                businessId = delivery.documentId,
+                externalId = delivery.externalId ?: delivery.documentId.value,
+                invocation = ConnectorInvocation("delivery-remove:${delivery.id.value}", connectorTimeout),
+            ),
+        )
+    } catch (_: Exception) {
+        ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Connector removal invocation could not complete.")
+    }
+
+    private fun complete(sourceEvent: OutboxEvent, deliveryId: Identifier, result: ConnectorSyncResult): OutboxHandlingResult = transaction.execute {
+        val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
+            ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before downstream withdrawal.")
+        when (result.status) {
+            ConnectorSyncStatus.SUCCESS -> delivery.markRemovalSucceeded()
+            ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRemovalRetrying(result.message)
+            ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markRemovalFailed(result.message)
+        }
+        deliveries.save(delivery)
+        audit(
+            sourceEvent,
+            delivery,
+            if (result.status == ConnectorSyncStatus.SUCCESS) DELIVERY_REMOVAL_SUCCEEDED_AUDIT_ACTION else DELIVERY_REMOVAL_FAILED_AUDIT_ACTION,
+            linkedMapOf<String, String>().apply {
+                put("status", result.status.name)
+                result.message?.let { put("message", it) }
+            },
+        )
+        result.toOutboxHandlingResult()
+    }
+
+    private fun audit(sourceEvent: OutboxEvent, delivery: DocumentDeliveryTarget, action: String, details: Map<String, String>) {
+        auditTrail?.record(
+            tenantId = sourceEvent.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = delivery.documentId,
+            action = action,
+            details = linkedMapOf<String, String>().apply {
+                put("deliveryId", delivery.id.value)
+                put("targetId", delivery.targetId)
+                put("connector", delivery.connectorId)
+                putAll(details)
+            },
+        )
+    }
+
+    private fun OutboxEvent.deliveryIdOrNull(): Identifier? = payload[DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY]
+        ?.takeIf { it.isNotBlank() }?.let(::Identifier)
+
+    private fun ConnectorSyncResult.toOutboxHandlingResult(): OutboxHandlingResult = when (status) {
+        ConnectorSyncStatus.SUCCESS -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, message)
+        ConnectorSyncStatus.RETRYABLE_FAILURE -> OutboxHandlingResult(
+            OutboxHandlingStatus.RETRYABLE_FAILURE,
+            message ?: "Connector removal should be retried.",
+        )
+        ConnectorSyncStatus.PERMANENT_FAILURE -> OutboxHandlingResult(
+            OutboxHandlingStatus.PERMANENT_FAILURE,
+            message ?: "Connector removal cannot succeed without intervention.",
+        )
+    }
+
+    private sealed class Preparation {
+        data object AlreadyRemoved : Preparation()
+        data class Ready(val delivery: DocumentDeliveryTarget, val connector: com.fileweft.spi.connector.FileConnector) : Preparation()
+        data class Failure(val status: ConnectorSyncStatus, val message: String) : Preparation()
+    }
+
+    private companion object {
+        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        const val DELIVERY_REMOVAL_SUCCEEDED_AUDIT_ACTION = "document:delivery:remove:succeeded"
+        const val DELIVERY_REMOVAL_FAILED_AUDIT_ACTION = "document:delivery:remove:failed"
+    }
+}

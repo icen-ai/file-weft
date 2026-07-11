@@ -305,6 +305,35 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `takes an offline document out of every delivered downstream target through the outbox`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val documentId = createDraft(editor, "E2E-OFFLINE-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
+        val workflow = postJson("$apiUrl/api/documents/$documentId/submit", """{"reviewerId":"alpha-reviewer"}""", editor)
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+            """{"comment":"发布后撤回验收","deliveryProfileId":"internal"}""",
+            reviewer,
+        )
+        val administrator = login("admin@alpha", "dev-admin")
+        post("$apiUrl/api/outbox/process?limit=20", null, administrator, "application/json")
+        awaitPublished(documentId, administrator)
+        assertEquals(200, platformDocumentStatus("collaboration", documentId))
+
+        val offline = post("$apiUrl/api/documents/$documentId/offline", null, editor, "application/json")
+        assertEquals("OFFLINE", offline.path("document").path("lifecycleState").asText())
+        assertTrue(offline.path("outboxEvents").any { it.path("type").asText() == "document.delivery.target.removal.requested" })
+
+        post("$apiUrl/api/outbox/process?limit=20", null, administrator, "application/json")
+        val withdrawn = getJson("$apiUrl/api/documents/$documentId", administrator)
+        assertEquals("OFFLINE", withdrawn.path("document").path("lifecycleState").asText())
+        assertEquals("SUCCEEDED", withdrawn.path("deliveries").single().path("removalStatus").asText())
+        assertEquals(404, platformDocumentStatus("collaboration", documentId))
+        assertAuditActor(withdrawn, "document:offline", "alpha-editor", "Alpha 编辑者")
+        assertTrue(withdrawn.path("audits").any { it.path("action").asText() == "document:delivery:remove:succeeded" })
+    }
+
+    @Test
     fun `updates versions rejects review and returns a document to draft`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentId = createDraft(editor, "E2E-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
@@ -626,6 +655,14 @@ class DevAcceptanceIntegrationTest {
             .GET()
             .build(),
     )
+
+    private fun platformDocumentStatus(targetId: String, documentId: String): Int = client.send(
+        HttpRequest.newBuilder(URI("$platformUrl/platform/v1/documents/alpha/$documentId"))
+            .header("X-FileWeft-Target", targetId)
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.discarding(),
+    ).statusCode()
 
     private fun getJson(url: String, token: String? = null): JsonNode {
         val request = HttpRequest.newBuilder(URI(url)).GET().apply { token?.let { header("Authorization", "Bearer $it") } }.build()

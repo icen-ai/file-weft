@@ -79,6 +79,8 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 - 不执行默认分布式回滚：成功下游不会因为另一个下游失败而被自动删除。删除/撤回必须由业务显式发起，避免误删已生效的外部记录。
 - 重试耗尽后，拥有 `document:delivery:retry` 权限的管理员可只重排失败目标；原目标 ID 同时作为连接器幂等键。
 
+文档下线或归档属于显式撤回：系统会在同一业务事务中为每个已经成功交付的目标冻结一条 `document.delivery.target.removal.requested` Outbox 事件。外部 `FileConnector.remove` 调用仍只在 Worker 中执行；撤回拥有独立于“交付成功”的 `PENDING`、`RETRYING`、`SUCCEEDED`、`FAILED` 状态和重试次数，因此不会把“曾经交付成功”误显示为“已撤回”。暂时性失败由 Worker 自动重试，永久失败可由拥有同一 `document:delivery:retry` 权限的管理员只重排该目标的撤回事件。连接器应返回外部 ID；若历史连接器未返回，框架会以稳定的文档 ID 作为撤回调用的回退外部键，连接器实现必须保证该键可幂等处理。
+
 Starter 可直接使用单连接器兼容默认档案；多连接器可在配置中声明档案，或替换下列 SPI 实现以接入租户自己的策略中心：
 
 ```yaml

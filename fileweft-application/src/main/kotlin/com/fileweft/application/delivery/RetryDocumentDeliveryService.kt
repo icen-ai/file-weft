@@ -37,13 +37,23 @@ class RetryDocumentDeliveryService(
         return transaction.execute {
             val current = deliveries.findById(tenant.tenantId, deliveryId)
                 ?: throw NoSuchElementException("Delivery target ${deliveryId.value} was removed.")
-            current.retryManually()
+            val eventType = when {
+                current.status == DocumentDeliveryStatus.FAILED -> {
+                    current.retryManually()
+                    DocumentDeliveryPlanner.DELIVERY_REQUESTED_EVENT_TYPE
+                }
+                current.removalStatus == DocumentDeliveryRemovalStatus.FAILED -> {
+                    current.retryRemovalManually()
+                    DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE
+                }
+                else -> throw IllegalArgumentException("Delivery target has no failed synchronization or downstream removal to retry.")
+            }
             deliveries.save(current)
             outbox.append(
                 OutboxEvent(
                     id = identifiers.nextId(),
                     tenantId = tenant.tenantId,
-                    type = DocumentDeliveryPlanner.DELIVERY_REQUESTED_EVENT_TYPE,
+                    type = eventType,
                     payload = mapOf(
                         DocumentDeliveryPlanner.DOCUMENT_ID_PAYLOAD_KEY to current.documentId.value,
                         DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY to current.id.value,
@@ -58,7 +68,11 @@ class RetryDocumentDeliveryService(
                 action = RETRY_AUDIT_ACTION,
                 operatorId = operator?.id,
                 operatorName = operator?.displayName,
-                details = mapOf("deliveryId" to current.id.value, "targetId" to current.targetId),
+                details = mapOf(
+                    "deliveryId" to current.id.value,
+                    "targetId" to current.targetId,
+                    "operation" to if (eventType == DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE) "REMOVE" else "SYNC",
+                ),
             )
             current
         }

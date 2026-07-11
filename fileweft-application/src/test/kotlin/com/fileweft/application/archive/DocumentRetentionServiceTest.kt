@@ -1,11 +1,19 @@
 package com.fileweft.application.archive
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
+import com.fileweft.application.delivery.DocumentDeliveryRemovalStatus
+import com.fileweft.application.delivery.DocumentDeliveryStatus
+import com.fileweft.application.delivery.DocumentDeliveryTarget
+import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.offline.OfflineDocumentService
+import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
+import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
+import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
@@ -18,6 +26,7 @@ import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
+import com.fileweft.spi.delivery.DeliveryRequirement
 import com.fileweft.spi.tenant.TenantProvider
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -52,8 +61,11 @@ class DocumentRetentionServiceTest {
     fun `takes a published document offline through the existing lifecycle service`() {
         val repository = InMemoryDocumentRepository(publishedDocument())
         val audits = RecordingAudits()
+        val deliveries = RecordingDeliveries(deliveredTarget())
+        val outbox = RecordingOutbox()
         val service = OfflineDocumentService(
             tenantProvider(), userProvider(), authorizationProvider { AuthorizationDecision(true) }, repository, DirectTransaction, auditTrail(audits),
+            DocumentDeliveryRemovalPlanner(deliveries, outbox, SequenceIds("removal-event"), Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC)),
         )
 
         val offline = service.offline(Identifier("document-1"))
@@ -61,6 +73,9 @@ class DocumentRetentionServiceTest {
         assertEquals(LifecycleState.OFFLINE, offline.lifecycleState)
         assertEquals(offline, repository.saved)
         assertEquals("document:offline", audits.records.single().action)
+        assertEquals("1", audits.records.single().details["downstreamRemovalCount"])
+        assertEquals(DocumentDeliveryRemovalStatus.PENDING, deliveries.target?.removalStatus)
+        assertEquals(DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE, outbox.events.single().type)
     }
 
     @Test
@@ -85,6 +100,19 @@ class DocumentRetentionServiceTest {
         it.transition(LifecycleCommand.APPROVE)
         it.transition(LifecycleCommand.PUBLISH_SUCCEEDED)
     }
+
+    private fun deliveredTarget() = DocumentDeliveryTarget(
+        id = Identifier("delivery-1"),
+        tenantId = Identifier("tenant-1"),
+        documentId = Identifier("document-1"),
+        profileId = "regulated",
+        targetId = "archive",
+        displayName = "Archive",
+        connectorId = "archive-connector",
+        requirement = DeliveryRequirement.REQUIRED,
+        status = DocumentDeliveryStatus.SUCCEEDED,
+        externalId = "archive:tenant-1:document-1",
+    )
 
     private fun tenantProvider(): TenantProvider = object : TenantProvider {
         override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
@@ -128,5 +156,29 @@ class DocumentRetentionServiceTest {
         val records = mutableListOf<AuditRecord>()
         override fun append(record: AuditRecord) { records += record }
         override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
+    }
+
+    private class RecordingDeliveries(var target: DocumentDeliveryTarget?) : DocumentDeliveryTargetRepository {
+        override fun findById(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? =
+            target?.takeIf { it.tenantId == tenantId && it.id == deliveryId }
+
+        override fun findByDocument(tenantId: Identifier, documentId: Identifier): List<DocumentDeliveryTarget> =
+            target?.takeIf { it.tenantId == tenantId && it.documentId == documentId }?.let(::listOf) ?: emptyList()
+
+        override fun save(target: DocumentDeliveryTarget) {
+            this.target = target
+        }
+    }
+
+    private class RecordingOutbox : OutboxEventRepository {
+        val events = mutableListOf<OutboxEvent>()
+        override fun append(event: OutboxEvent) {
+            events += event
+        }
+    }
+
+    private class SequenceIds(vararg values: String) : IdentifierGenerator {
+        private val ids = ArrayDeque(values.toList())
+        override fun nextId(): Identifier = Identifier(ids.removeFirst())
     }
 }

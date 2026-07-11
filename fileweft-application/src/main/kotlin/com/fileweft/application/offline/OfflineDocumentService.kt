@@ -2,6 +2,7 @@ package com.fileweft.application.offline
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -19,6 +20,7 @@ class OfflineDocumentService(
     private val documentRepository: DocumentRepository,
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,
+    private val removalPlanner: DocumentDeliveryRemovalPlanner? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
@@ -30,6 +32,7 @@ class OfflineDocumentService(
             val document = documentRepository.findById(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.transition(LifecycleCommand.OFFLINE)
+            val removalPlan = removalPlanner?.plan(document)
             documentRepository.save(document)
             auditTrail?.record(
                 tenantId = tenant.tenantId,
@@ -38,6 +41,7 @@ class OfflineDocumentService(
                 action = OFFLINE_AUDIT_ACTION,
                 operatorId = operator?.id,
                 operatorName = operator?.displayName,
+                details = removalPlan?.let { plan -> mapOf("downstreamRemovalCount" to plan.deliveries.size.toString()) } ?: emptyMap(),
             )
             document
         }

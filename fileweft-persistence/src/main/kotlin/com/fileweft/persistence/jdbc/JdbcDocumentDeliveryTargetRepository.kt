@@ -1,6 +1,7 @@
 package com.fileweft.persistence.jdbc
 
 import com.fileweft.application.delivery.DocumentDeliveryStatus
+import com.fileweft.application.delivery.DocumentDeliveryRemovalStatus
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.core.id.Identifier
@@ -40,8 +41,8 @@ class JdbcDocumentDeliveryTargetRepository(
             INSERT INTO fw_document_delivery_target(
                 id, tenant_id, document_id, profile_id, target_id, target_name, connector_id,
                 delivery_requirement, owner_ref, delivery_status, external_id, error_message,
-                retry_count, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                retry_count, removal_status, removal_error_message, removal_retry_count, created_time, updated_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (tenant_id, document_id, target_id) DO UPDATE
             SET profile_id = EXCLUDED.profile_id,
                 target_name = EXCLUDED.target_name,
@@ -52,6 +53,9 @@ class JdbcDocumentDeliveryTargetRepository(
                 external_id = EXCLUDED.external_id,
                 error_message = EXCLUDED.error_message,
                 retry_count = EXCLUDED.retry_count,
+                removal_status = EXCLUDED.removal_status,
+                removal_error_message = EXCLUDED.removal_error_message,
+                removal_retry_count = EXCLUDED.removal_retry_count,
                 updated_time = EXCLUDED.updated_time
             """.trimIndent(),
         ).use { statement ->
@@ -68,8 +72,11 @@ class JdbcDocumentDeliveryTargetRepository(
             statement.setString(11, target.externalId)
             statement.setString(12, target.errorMessage)
             statement.setInt(13, target.retryCount)
-            statement.setLong(14, now)
-            statement.setLong(15, now)
+            statement.setString(14, target.removalStatus.name)
+            statement.setString(15, target.removalErrorMessage)
+            statement.setInt(16, target.removalRetryCount)
+            statement.setLong(17, now)
+            statement.setLong(18, now)
             statement.executeUpdate()
         }
     }
@@ -88,9 +95,12 @@ class JdbcDocumentDeliveryTargetRepository(
         externalId = result.getString("external_id"),
         errorMessage = result.getString("error_message"),
         retryCount = result.getInt("retry_count"),
+        removalStatus = DocumentDeliveryRemovalStatus.valueOf(result.getString("removal_status")),
+        removalErrorMessage = result.getString("removal_error_message"),
+        removalRetryCount = result.getInt("removal_retry_count"),
     )
 
     private companion object {
-        const val SELECT_COLUMNS = "SELECT id, tenant_id, document_id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref, delivery_status, external_id, error_message, retry_count"
+        const val SELECT_COLUMNS = "SELECT id, tenant_id, document_id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref, delivery_status, external_id, error_message, retry_count, removal_status, removal_error_message, removal_retry_count"
     }
 }

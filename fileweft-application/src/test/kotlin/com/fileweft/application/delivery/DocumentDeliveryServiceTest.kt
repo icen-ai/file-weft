@@ -28,6 +28,7 @@ import com.fileweft.spi.delivery.DeliveryRequirement
 import com.fileweft.spi.delivery.DocumentDeliveryProfile
 import com.fileweft.spi.delivery.DocumentDeliveryProfileProvider
 import com.fileweft.spi.delivery.DocumentDeliveryTargetDefinition
+import com.fileweft.spi.event.OutboxHandlingStatus
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.storage.*
@@ -104,6 +105,64 @@ class DocumentDeliveryServiceTest {
     }
 
     @Test
+    fun `writes an outbox withdrawal for an offline document and removes each delivered target idempotently`() {
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+        )
+        fixture.sync.synchronize(fixture.events.events.single())
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        val planner = DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK)
+
+        val plan = planner.plan(fixture.document)
+        val removalEvent = fixture.events.events.last()
+        val result = fixture.removal.remove(removalEvent)
+        val delivery = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+
+        assertEquals(1, plan.deliveries.size)
+        assertEquals(DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE, removalEvent.type)
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+        assertEquals(DocumentDeliveryRemovalStatus.SUCCEEDED, delivery.removalStatus)
+        assertEquals("archive-external", fixture.connectors.getValue("archive").removalRequests.single().externalId)
+        assertEquals("delivery-remove:delivery-archive", fixture.connectors.getValue("archive").removalRequests.single().invocation.idempotencyKey)
+    }
+
+    @Test
+    fun `allows an administrator to requeue a permanently failed downstream withdrawal`() {
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            removalOutcomes = mapOf("archive" to ConnectorSyncStatus.PERMANENT_FAILURE),
+        )
+        fixture.sync.synchronize(fixture.events.events.single())
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK).plan(fixture.document)
+        val removalEvent = fixture.events.events.last()
+        fixture.removal.remove(removalEvent)
+        val target = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+        assertEquals(DocumentDeliveryRemovalStatus.FAILED, target.removalStatus)
+
+        RetryDocumentDeliveryService(
+            tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(TENANT) },
+            userRealmProvider = object : UserRealmProvider {
+                override fun currentUser() = UserIdentity(Identifier("operator"), "交付管理员")
+                override fun findUser(userId: Identifier): UserIdentity? = null
+            },
+            authorizationProvider = object : AuthorizationProvider {
+                override fun authorize(request: AuthorizationRequest) = AuthorizationDecision(true)
+            },
+            deliveries = fixture.deliveries,
+            outbox = fixture.events,
+            identifiers = SequenceIds("manual-removal-event"),
+            transaction = DirectTransaction,
+            clock = CLOCK,
+        ).retry(target.id)
+
+        assertEquals(DocumentDeliveryRemovalStatus.PENDING, target.removalStatus)
+        assertEquals(DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE, fixture.events.events.last().type)
+    }
+
+    @Test
     fun `rejects an unavailable selected profile without silently changing the release policy`() {
         val fixture = fixture(
             listOf(target("archive", DeliveryRequirement.REQUIRED)),
@@ -120,20 +179,24 @@ class DocumentDeliveryServiceTest {
     private fun fixture(
         definitions: List<DocumentDeliveryTargetDefinition>,
         outcomes: Map<String, ConnectorSyncStatus>,
+        removalOutcomes: Map<String, ConnectorSyncStatus> = emptyMap(),
         plan: Boolean = true,
     ): Fixture {
         val document = publishingDocument()
         val documents = MemoryDocuments(document)
         val deliveries = MemoryDeliveries()
         val events = RecordingOutbox()
-        val connectors = outcomes.mapValues { (id, outcome) -> RecordingConnector(id, outcome) }
+        val connectors = outcomes.mapValues { (id, outcome) ->
+            RecordingConnector(id, outcome, removalOutcomes[id] ?: ConnectorSyncStatus.SUCCESS)
+        }
+        val connectorResolver = object : DeliveryConnectorResolver {
+            override fun findConnector(connectorId: String): FileConnector? = connectors[connectorId]
+        }
         val planner = DocumentDeliveryPlanner(
             profiles = object : DocumentDeliveryProfileProvider {
                 override fun listProfiles(tenantId: Identifier) = listOf(DocumentDeliveryProfile("regulated", "Regulated", definitions))
             },
-            connectors = object : DeliveryConnectorResolver {
-                override fun findConnector(connectorId: String): FileConnector? = connectors[connectorId]
-            },
+            connectors = connectorResolver,
             deliveries = deliveries,
             outbox = events,
             identifiers = SequenceIds(*(definitions.flatMap { listOf("delivery-${it.id}", "event-${it.id}") }).toTypedArray()),
@@ -148,13 +211,12 @@ class DocumentDeliveryServiceTest {
                 override fun save(fileObject: FileObject) = Unit
             },
             storageAdapter = TestStorage,
-            connectors = object : DeliveryConnectorResolver {
-                override fun findConnector(connectorId: String): FileConnector? = connectors[connectorId]
-            },
+            connectors = connectorResolver,
             deliveries = deliveries,
             transaction = DirectTransaction,
         )
-        return Fixture(document, deliveries, events, connectors, sync, planner)
+        val removal = DocumentDeliveryRemovalService(connectorResolver, deliveries, DirectTransaction)
+        return Fixture(document, deliveries, events, connectors, sync, removal, planner)
     }
 
     private fun target(id: String, requirement: DeliveryRequirement) =
@@ -186,13 +248,21 @@ class DocumentDeliveryServiceTest {
         override fun append(event: OutboxEvent) { events += event }
     }
 
-    private class RecordingConnector(private val targetId: String, private val outcome: ConnectorSyncStatus) : FileConnector {
+    private class RecordingConnector(
+        private val targetId: String,
+        private val outcome: ConnectorSyncStatus,
+        private val removalOutcome: ConnectorSyncStatus,
+    ) : FileConnector {
         val requests = mutableListOf<ConnectorSyncRequest>()
+        val removalRequests = mutableListOf<ConnectorRemoveRequest>()
         override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
             requests += request
             return ConnectorSyncResult(outcome, if (outcome == ConnectorSyncStatus.SUCCESS) "$targetId-external" else null, "simulated-$targetId")
         }
-        override fun remove(request: ConnectorRemoveRequest) = ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
+        override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
+            removalRequests += request
+            return ConnectorSyncResult(removalOutcome, message = "simulated-remove-$targetId")
+        }
         override fun health() = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
     }
 
@@ -221,6 +291,7 @@ class DocumentDeliveryServiceTest {
         val events: RecordingOutbox,
         val connectors: Map<String, RecordingConnector>,
         val sync: DocumentDeliverySyncService,
+        val removal: DocumentDeliveryRemovalService,
         val planner: DocumentDeliveryPlanner,
     )
 

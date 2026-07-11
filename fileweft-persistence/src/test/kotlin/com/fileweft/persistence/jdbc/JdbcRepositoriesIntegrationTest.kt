@@ -1,6 +1,9 @@
 package com.fileweft.persistence.jdbc
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fileweft.application.delivery.DocumentDeliveryRemovalStatus
+import com.fileweft.application.delivery.DocumentDeliveryStatus
+import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
@@ -12,6 +15,7 @@ import com.fileweft.domain.document.LifecycleState
 import com.fileweft.domain.file.FileAsset
 import com.fileweft.domain.file.FileObject
 import com.fileweft.persistence.migration.FlywayMigrationRunner
+import com.fileweft.spi.delivery.DeliveryRequirement
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
@@ -157,6 +161,29 @@ class JdbcRepositoriesIntegrationTest {
         requireNotNull(updated)
         assertEquals("reviewed", updated.metadata["source"])
         assertEquals(1, countRows("fw_asset"))
+    }
+
+    @Test
+    fun `persists a target withdrawal state separately from its delivery state`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val deliveries = JdbcDocumentDeliveryTargetRepository(clock)
+        val target = DocumentDeliveryTarget(
+            id = Identifier("delivery-1"), tenantId = Identifier("tenant-1"), documentId = Identifier("document-1"),
+            profileId = "regulated", targetId = "archive", displayName = "Archive", connectorId = "archive-connector",
+            requirement = DeliveryRequirement.REQUIRED, status = DocumentDeliveryStatus.SUCCEEDED, externalId = "archive:document-1",
+        )
+        target.requestRemoval()
+        target.markRemovalRetrying("platform unavailable")
+
+        transaction.execute { deliveries.save(target) }
+        val restored = transaction.execute { deliveries.findById(Identifier("tenant-1"), target.id) }
+
+        requireNotNull(restored)
+        assertEquals(DocumentDeliveryStatus.SUCCEEDED, restored.status)
+        assertEquals(DocumentDeliveryRemovalStatus.RETRYING, restored.removalStatus)
+        assertEquals("platform unavailable", restored.removalErrorMessage)
+        assertEquals(1, restored.removalRetryCount)
+        assertNull(transaction.execute { deliveries.findById(Identifier("tenant-2"), target.id) })
     }
 
     private fun document(): Document {

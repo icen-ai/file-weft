@@ -2,6 +2,7 @@ package com.fileweft.application.archive
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -20,6 +21,7 @@ class ArchiveDocumentService(
     private val documentRepository: DocumentRepository,
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,
+    private val removalPlanner: DocumentDeliveryRemovalPlanner? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
 
@@ -31,6 +33,7 @@ class ArchiveDocumentService(
             val document = documentRepository.findById(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
             document.transition(LifecycleCommand.ARCHIVE)
+            val removalPlan = removalPlanner?.plan(document)
             documentRepository.save(document)
             auditTrail?.record(
                 tenantId = tenant.tenantId,
@@ -39,6 +42,7 @@ class ArchiveDocumentService(
                 action = ARCHIVE_AUDIT_ACTION,
                 operatorId = operator?.id,
                 operatorName = operator?.displayName,
+                details = removalPlan?.let { plan -> mapOf("downstreamRemovalCount" to plan.deliveries.size.toString()) } ?: emptyMap(),
             )
             document
         }
