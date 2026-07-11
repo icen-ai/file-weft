@@ -6,21 +6,23 @@
 
 | 阶段 | 已交付能力 | 验证方式 |
 | --- | --- | --- |
-| Core | 标识、上下文、结果、错误与 Outbox 模型，不依赖 Spring 或厂商 SDK | Core 单元测试、分层依赖与 Java 互操作语法门禁，以及 Java 8 运行时回归 |
+| Core | 标识、上下文、结果、错误与 Outbox 模型，不依赖 Spring 或厂商 SDK | Core 单元测试、分层依赖与 Java 互操作语法门禁，以及 Java 8/11/21/25 运行时矩阵 |
 | SPI | 身份、授权、租户、存储、连接器、交付、任务、诊断、Agent、审批路由与宿主目录契约 | SPI 模型与合约测试、Java 互操作语法门禁 |
 | Domain | 文件、文档版本、生命周期、工作流、审计与操作日志领域规则；受控恢复草稿与发布代次 | Domain 单元测试 |
 | Application | 上传、下载、审批、并行会签、发布、下线/归档撤回、受控新版本再发布、同步、Doctor、任务与 Agent 用例 | Application 单元测试 |
 | Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |
-| Starter | Boot 2 / Boot 3 自动装配、安全默认实现与客户替换点 | Starter 上下文测试 |
+| Starter | Boot 2 / Boot 3 自动装配、安全默认实现与客户替换点 | Starter 上下文测试，以及 Java 8/11/21/25（Boot 2）与 Java 17/21/25（Boot 3）运行时矩阵 |
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 指标 | Adapter 与 TestKit 合约测试 |
 | Doctor | 权限、生命周期、存储、连接器、交付档案与连接器映射、宿主目录绑定与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
-| Hardening | 多租户隔离、Outbox、重试、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验与 CycloneDX SBOM | 全仓检查、`verifySbom` 与 Compose 验收 |
+| Hardening | 多租户隔离、Outbox、重试、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom` 与 Compose 验收 |
 
 目前的关键验收命令：
 
 ```powershell
 .\gradlew.bat check --no-daemon
+
+.\gradlew.bat compatibilityCheck --no-daemon
 
 .\gradlew.bat verifySbom --no-daemon
 
@@ -31,7 +33,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 .\gradlew.bat :fileweft-dev:test --tests 'com.fileweft.dev.e2e.DevAcceptanceIntegrationTest' --no-daemon
 ```
 
-根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。所有 Java 8 基线模块还会以独立 `java8Test` 在 Java 8 虚拟机执行测试；Boot 3 Starter 和开发验收应用保持 Java 17 基线。
+根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。日常 `check` 会继续执行所有 Java 8 基线模块的独立 `java8Test`；发版门禁 `compatibilityCheck` 通过 Gradle 工具链在 Java 8、11、21、25 上执行所有 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。该矩阵已在实际工具链运行通过，而不是只依赖字节码目标声明。
 
 Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
 

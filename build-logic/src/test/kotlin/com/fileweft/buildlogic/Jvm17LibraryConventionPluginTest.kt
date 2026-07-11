@@ -5,18 +5,16 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import kotlin.test.Test
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class Jvm8LibraryConventionPluginTest {
-
+class Jvm17LibraryConventionPluginTest {
     @Test
-    fun `registers the Java 8 baseline runtime matrix without slowing normal check`() = withTestProject { projectDir ->
+    fun `registers the Java 17 runtime matrix`() = withTestProject { projectDir ->
         writeFile(
             projectDir,
             "settings.gradle.kts",
             """
-            rootProject.name = "jvm8-convention-fixture"
+            rootProject.name = "jvm17-convention-fixture"
 
             dependencyResolutionManagement {
                 repositories {
@@ -30,32 +28,21 @@ class Jvm8LibraryConventionPluginTest {
             "build.gradle.kts",
             """
             plugins {
-                id("fileweft.jvm8-library")
+                id("fileweft.jvm17-library")
             }
             """.trimIndent(),
         )
 
-        val normalCheck = GradleRunner.create()
-            .withProjectDir(projectDir)
-            .withPluginClasspath()
-            .withArguments("--configuration-cache", "check", "--dry-run")
-            .build()
-
-        assertTrue(normalCheck.output.contains(":java8Test SKIPPED"))
-        assertFalse(normalCheck.output.contains(":java11Test SKIPPED"))
-        assertTrue(normalCheck.output.contains(":check SKIPPED"))
-
-        val matrix = GradleRunner.create()
+        val result = GradleRunner.create()
             .withProjectDir(projectDir)
             .withPluginClasspath()
             .withArguments("compatibilityTest", "--dry-run")
             .build()
 
-        assertTrue(matrix.output.contains(":java8Test SKIPPED"))
-        assertTrue(matrix.output.contains(":java11Test SKIPPED"))
-        assertTrue(matrix.output.contains(":java21Test SKIPPED"))
-        assertTrue(matrix.output.contains(":java25Test SKIPPED"))
-        assertTrue(matrix.output.contains(":compatibilityTest SKIPPED"))
+        assertTrue(result.output.contains(":java17Test SKIPPED"))
+        assertTrue(result.output.contains(":java21Test SKIPPED"))
+        assertTrue(result.output.contains(":java25Test SKIPPED"))
+        assertTrue(result.output.contains(":compatibilityTest SKIPPED"))
     }
 
     private fun writeFile(projectDir: File, relativePath: String, content: String) {
@@ -65,7 +52,7 @@ class Jvm8LibraryConventionPluginTest {
     }
 
     private fun withTestProject(action: (File) -> Unit) {
-        val projectDir = Files.createTempDirectory("fileweft-jvm8-convention-").toFile()
+        val projectDir = Files.createTempDirectory("fileweft-jvm17-convention-").toFile()
         try {
             action(projectDir)
         } finally {

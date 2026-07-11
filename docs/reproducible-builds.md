@@ -10,6 +10,14 @@ FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle depend
 .\gradlew.bat check --no-daemon
 ```
 
+发版前还应执行完整的 JVM 运行时矩阵：
+
+```powershell
+.\gradlew.bat compatibilityCheck --no-daemon
+```
+
+该门禁使用 Gradle 工具链，而不是依赖执行 Gradle 的 JVM：Java 8 基线模块在 Java 8、11、21、25 上运行测试；Java 17 模块在 Java 17、21、25 上运行测试。缺失的 JDK 由已配置的 Foojay 工具链解析器自动取得；首次运行的下载耗时应由发布流水线预留。
+
 有意识地升级依赖后，先审阅版本目录和构建脚本，再重新生成两类状态：
 
 ```powershell

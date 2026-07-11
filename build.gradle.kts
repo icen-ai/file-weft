@@ -18,12 +18,26 @@ val verifyFileWeftBuildLogic = tasks.register("verifyFileWeftBuildLogic") {
     dependsOn(gradle.includedBuild("build-logic").task(":check"))
 }
 
+val compatibilityCheck = tasks.register("compatibilityCheck") {
+    group = "verification"
+    description = "Runs the supported Java runtime matrices for all FileWeft modules."
+}
+
 subprojects {
+    val moduleCompatibilityTaskPath = "$path:compatibilityTest"
     dependencyLocking {
         lockAllConfigurations()
     }
 
     tasks.matching { task -> task.name == "check" }.configureEach {
         dependsOn(rootProject.tasks.named("verifyFileWeftBuildLogic"))
+    }
+
+    listOf("fileweft.jvm8-library", "fileweft.jvm17-library").forEach { conventionPluginId ->
+        pluginManager.withPlugin(conventionPluginId) {
+            rootProject.tasks.named("compatibilityCheck").configure {
+                dependsOn(moduleCompatibilityTaskPath)
+            }
+        }
     }
 }

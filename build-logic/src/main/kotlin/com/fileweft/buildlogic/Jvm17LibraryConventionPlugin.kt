@@ -25,5 +25,16 @@ class Jvm17LibraryConventionPlugin : Plugin<Project> {
         tasks.withType(Test::class.java).configureEach {
             useJUnitPlatform()
         }
+        val compatibilityTests = listOf(
+            registerJvmRuntimeTest("java17Test", 17, "Runs this Java 17 module's test suite on a Java 17 runtime."),
+            registerJvmRuntimeTest("java21Test", 21, "Runs this Java 17 module's test suite on a Java 21 runtime."),
+            registerJvmRuntimeTest("java25Test", 25, "Runs this Java 17 module's test suite on a Java 25 runtime."),
+        )
+        tasks.register("compatibilityTest") {
+            group = "verification"
+            description = "Runs this Java 17 module across its supported Java runtimes."
+            dependsOn(compatibilityTests)
+        }
+        Unit
     }
 }

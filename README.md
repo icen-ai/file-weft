@@ -16,8 +16,11 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
 ```powershell
 .\gradlew.bat check
+.\gradlew.bat compatibilityCheck
 .\gradlew.bat verifySbom
 ```
+
+`compatibilityCheck` 是发版前的 JVM 运行时门禁：Java 8 基线模块会在 Java 8、11、21、25 上运行测试；Java 17 模块会在 Java 17、21、25 上运行测试。Gradle 工具链会自动取得本机缺失的受支持 JDK，首次执行可能需要下载并花费较长时间；日常 `check` 仍只强制 Java 8 基线回归。
 
 依赖版本通过 `gradle/libs.versions.toml` 管理，所有配置启用依赖锁定。`verifySbom` 生成并校验全仓 CycloneDX JSON/XML 物料清单，适合在发版流水线中归档。
 
