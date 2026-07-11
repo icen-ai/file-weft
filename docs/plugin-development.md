@@ -28,4 +28,4 @@ META-INF/services/com.fileweft.spi.plugin.FileWeftPlugin
 
 连接器必须自行做到超时、重试、幂等和健康检查。事件及任务处理器会被重试，因此必须以事件 ID 或任务 ID 实现幂等。Agent 的输出只会成为可审计的建议；业务 API 应调用 `ConfirmAgentSuggestionService`，它会校验当前租户、`agent:suggestion:confirm` 权限并写审计/操作日志。确认本身不会改变业务数据，后续变更仍必须由独立应用用例明确执行。
 
-发布插件前至少运行对应的 `fileweft-testkit` 合约测试：存储适配器使用 `StorageAdapterContractTest`，连接器使用 `FileConnectorContractTest`，授权实现使用 `AuthorizationContractTest`。
+发布插件前至少运行对应的 `fileweft-testkit` 合约测试：存储适配器使用 `StorageAdapterContractTest`（普通上传、下载、删除，以及 multipart 完成和可重试取消），连接器使用 `FileConnectorContractTest`，授权实现使用 `AuthorizationContractTest`。若对象存储对非末片有最小大小限制，适配器测试可覆写 `multipartParts()` 提供符合该服务约束的分片。
