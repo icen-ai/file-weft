@@ -16,6 +16,11 @@ class MicrometerFileWeftMetricsTest {
         val counter = registry.find("fileweft.task_success").tag("taskType", "agent.execute").counter()
         assertEquals(1.0, counter?.count())
         assertEquals(null, registry.find("fileweft.task_success").tag("tenantId", "tenant-a").counter())
+
+        metrics.increment(FileWeftMetric.DELIVERY_REMOVAL_FAILURE, mapOf("tenantId" to "tenant-a", "connector" to "archive"))
+        val removalCounter = registry.find("fileweft.delivery_removal_failure").tag("connector", "archive").counter()
+        assertEquals(1.0, removalCounter?.count())
+        assertEquals(null, registry.find("fileweft.delivery_removal_failure").tag("tenantId", "tenant-a").counter())
     }
 
     @Test
