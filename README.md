@@ -9,7 +9,7 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 ## 构建要求
 
 - 构建运行时：JDK 17+（当前验证环境为 JDK 21）
-- 核心及除 Spring Boot 3 Starter 外的模块：产物字节码兼容 Java 8
+- 核心及除 Spring Boot 3 Starter 与开发验收应用外的模块：产物字节码兼容 Java 8，`check` 会额外在 Java 8 运行时执行其测试
 - Spring Boot 3 Starter：产物字节码兼容 Java 17
 
 ## 验证
