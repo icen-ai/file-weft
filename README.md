@@ -4,6 +4,8 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
 当前实现已完成任务书定义的基础链路：`core → spi → domain → application → persistence → starter → adapter → doctor → agent`，并提供本地存储、诊断、确认式 Agent 任务与可重试 Outbox Worker 基线。
 
+`.ai` 手册的基础能力对照、验证命令以及开源发布前仍需由项目所有者决定的事项见[实现对照与发布门槛](docs/implementation-status.md)。
+
 ## 构建要求
 
 - 构建运行时：JDK 17+（当前验证环境为 JDK 21）
