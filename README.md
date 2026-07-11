@@ -34,7 +34,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d postgres
 
 ## 开发验收台
 
-仓库内的 `fileweft-dev` 是开发专用的可运行验收应用，不会被核心、领域或 SPI 依赖。它通过真实 PostgreSQL、RustFS（S3 兼容）、独立 `fw-dev-worker`、Outbox Worker 和独立 HTTP 下游平台覆盖上传、版本、审批、发布、多下游交付、审计与 Doctor。Compose 中 API 节点不消费异步队列，后台执行由 Worker 容器承担，用于验收生产推荐的角色拆分。
+仓库内的 `fileweft-dev` 是开发专用的可运行验收应用，不会被核心、领域或 SPI 依赖。它真实装配正式的 `fileweft-web-spring-boot3-starter`，控制台 Nginx 将 `/fileweft/` 代理到开发 API；同时通过真实 PostgreSQL、RustFS（S3 兼容）、独立 `fw-dev-worker`、Outbox Worker 和独立 HTTP 下游平台覆盖上传、版本、审批、发布、多下游交付、审计与 Doctor。Compose 中 API 节点不消费异步队列，后台执行由 Worker 容器承担，用于验收生产推荐的角色拆分。
 
 依赖版本和 SHA-256 校验已提交到仓库；升级依赖时请遵循[可复现构建说明](docs/reproducible-builds.md)。
 
@@ -69,7 +69,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 
 审计将用户 ID 视为不透明字符串，并同时保存操作发生时的显示名快照。接入方可在 `UserRealmProvider` 中将 Long、Int、UUID 或其他身份系统 ID 转为字符串；FileWeft 不维护用户表，也不会在查询历史审计时反查并改写原有操作者名称。
 
-验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。
+验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。控制台的创建、改名、新增版本和授权下载已经走 `/fileweft/v1` 正式协议；包含审批、Doctor、同步与审计投影的丰富 Dev 详情仍走 `/api`，不能被嵌入方当作公共协议。
 
 运行完整 Compose 验收回归：
 
@@ -84,7 +84,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 ### 浏览器验收回归
 
-`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、单人与双人审批、驳回修订、直接创建、重命名、版本、授权下载、目录移动、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 租户文件可见性隔离。
+`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、单人与双人审批、驳回修订、直接创建、重命名、版本、授权下载、目录移动、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 租户文件可见性隔离。本里程碑的常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 均已通过；浏览器侧共 9 条 Playwright 用例通过，其中包含一条独立的 formal-v1 协议验收。
 
 首次执行先安装锁定的 Node 依赖和 Chromium：
 
@@ -199,7 +199,7 @@ Outbox 将 Trace 作为独立的 `trace_id` 持久化字段，而不是混入业
 
 正式 Web Starter 提供 `/fileweft/v1/documents/{documentId}/content` 与 `/fileweft/v1/documents/{documentId}/versions/{versionId}/content`。成功响应使用 `attachment`、RFC 5987 文件名、安全 ASCII fallback、内容类型白名单、`nosniff` 与 `private, no-store`；只有对象存储已报告并与持久化值核对的长度才会成为 `Content-Length`。首版协议不承诺断点续传：任何 `Range` 都在打开下载前固定返回 416，显式 `HEAD` 固定返回 405 和 `Allow: GET`，且不返回 ETag、`Accept-Ranges`、内容哈希或存储地址。开始流式输出前的失败使用固定 JSON 外层；开始输出后的 I/O 中断只关闭流并终止响应，不会把 JSON 拼到二进制尾部。
 
-开发验收 API 提供当前版本和指定历史版本的流式端点。Dev 控制台只为服务端下发了 `document:download` 的角色显示下载控件；按钮使用带 Bearer Token 的 API 请求而非裸 S3 地址，便于演示下载授权与跨租户拒绝。
+开发验收 API 仍保留当前版本和指定历史版本的流式兼容端点。Dev 控制台只为服务端下发了 `document:download` 的角色显示下载控件；按钮已经使用带 Bearer Token 的正式 `/fileweft/v1` 授权下载请求而非裸 S3 地址，便于演示下载授权与跨租户拒绝。
 
 Spring Boot Starter 默认使用本地存储；可通过以下配置修改根目录：
 

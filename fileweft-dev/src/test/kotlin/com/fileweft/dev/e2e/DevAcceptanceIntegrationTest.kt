@@ -260,6 +260,225 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `exercises the formal v1 document contract against the compose database and RustFS`() {
+        val nonce = UUID.randomUUID().toString().replace("-", "")
+        val editor = login("editor@alpha", "dev-editor")
+        val viewer = login("viewer@alpha", "dev-viewer")
+        val betaEditor = login("editor@beta", "dev-editor")
+        val documentNumber = "V1-E2E-${nonce.take(20)}"
+        val originalTitle = "正式接口验收-$nonce"
+        val renamedTitle = "正式接口已重命名-$nonce"
+        val historicalFileName = "formal-history-$nonce.txt"
+        val currentFileName = "formal-current-$nonce.txt"
+        val historicalContent = "formal-v1-history-$nonce".toByteArray(StandardCharsets.UTF_8)
+        val currentContent = "formal-v1-current-$nonce".toByteArray(StandardCharsets.UTF_8)
+        val createTraceId = "e2e-v1-create-${nonce.take(24)}"
+
+        val forbiddenWrite = uploadFileResponse(
+            "$apiUrl/fileweft/v1/documents",
+            mapOf(
+                "documentNumber" to "V1-VIEWER-${nonce.take(20)}",
+                "title" to "viewer must not create",
+                "folderId" to "contracts",
+            ),
+            viewer,
+            content = "viewer-denied-$nonce".toByteArray(StandardCharsets.UTF_8),
+            fileName = "viewer-denied-$nonce.txt",
+        )
+        assertEquals(403, forbiddenWrite.statusCode())
+        assertJsonContentType(forbiddenWrite)
+        assertV1FailureEnvelope(mapper.readTree(forbiddenWrite.body()), "FORBIDDEN", "Access denied.")
+
+        val createdResponse = uploadFileResponse(
+            "$apiUrl/fileweft/v1/documents",
+            mapOf(
+                "documentNumber" to documentNumber,
+                "title" to originalTitle,
+                "folderId" to "contracts",
+            ),
+            editor,
+            traceId = createTraceId,
+            content = historicalContent,
+            fileName = historicalFileName,
+        )
+        assertEquals(201, createdResponse.statusCode())
+        assertJsonContentType(createdResponse)
+        assertEquals(createTraceId, createdResponse.headers().firstValue("X-Trace-Id").orElse(""))
+        val created = mapper.readTree(createdResponse.body())
+        assertV1SuccessEnvelope(created)
+        assertEquals(createTraceId, created.path("traceId").asText())
+        assertEquals(setOf("documentId", "versionId"), created.path("data").fieldNames().asSequence().toSet())
+        val documentId = created.path("data").path("documentId").asText()
+        val historicalVersionId = created.path("data").path("versionId").asText()
+        assertTrue(documentId.isNotBlank())
+        assertTrue(historicalVersionId.isNotBlank())
+        assertEquals(
+            "/fileweft/v1/documents/$documentId",
+            createdResponse.headers().firstValue("Location").orElse(""),
+        )
+        assertNoInternalV1Fields(created)
+
+        val initialDetailResponse = getResponse("$apiUrl/fileweft/v1/documents/$documentId", editor)
+        assertEquals(200, initialDetailResponse.statusCode())
+        assertJsonContentType(initialDetailResponse)
+        val initialDetail = mapper.readTree(initialDetailResponse.body())
+        assertV1SuccessEnvelope(initialDetail)
+        assertNoInternalV1Fields(initialDetail)
+        val initialDocument = initialDetail.path("data").path("document")
+        val initialVersion = initialDetail.path("data").path("versions")
+            .firstOrNull { version -> version.path("id").asText() == historicalVersionId }
+            ?: throw AssertionError("The formal v1 detail did not contain its created version.")
+        assertEquals(documentId, initialDocument.path("id").asText())
+        assertEquals(documentNumber, initialDocument.path("documentNumber").asText())
+        assertEquals(originalTitle, initialDocument.path("title").asText())
+        assertEquals("DRAFT", initialDocument.path("lifecycleState").asText())
+        assertEquals("contracts", initialDocument.path("folderId").asText())
+        assertEquals(historicalVersionId, initialDocument.path("currentVersionId").asText())
+        assertEquals(historicalFileName, initialVersion.path("fileName").asText())
+        assertEquals(historicalContent.size.toLong(), initialVersion.path("contentLength").asLong())
+
+        val pageResponse = getResponse(
+            "$apiUrl/fileweft/v1/documents?folderId=contracts&lifecycleState=DRAFT&limit=100",
+            editor,
+        )
+        assertEquals(200, pageResponse.statusCode())
+        assertJsonContentType(pageResponse)
+        val page = mapper.readTree(pageResponse.body())
+        assertV1SuccessEnvelope(page)
+        assertNoInternalV1Fields(page)
+        val pageDocument = page.path("data").path("items")
+            .firstOrNull { document -> document.path("id").asText() == documentId }
+            ?: throw AssertionError("The formal v1 page did not contain the newly created document.")
+        assertEquals(documentNumber, pageDocument.path("documentNumber").asText())
+        assertEquals("contracts", pageDocument.path("folderId").asText())
+
+        val renamedResponse = jsonRequestResponse(
+            "PATCH",
+            "$apiUrl/fileweft/v1/documents/$documentId",
+            mapper.writeValueAsString(mapOf("title" to renamedTitle)),
+            editor,
+        )
+        assertEquals(200, renamedResponse.statusCode())
+        assertJsonContentType(renamedResponse)
+        assertTrue(!renamedResponse.headers().firstValue("Location").isPresent)
+        val renamed = mapper.readTree(renamedResponse.body())
+        assertV1SuccessEnvelope(renamed)
+        assertEquals(documentId, renamed.path("data").path("documentId").asText())
+        assertTrue(renamed.path("data").path("versionId").isNull)
+        assertNoInternalV1Fields(renamed)
+
+        val addedVersionResponse = uploadFileResponse(
+            "$apiUrl/fileweft/v1/documents/$documentId/versions",
+            mapOf("versionNumber" to "2.0"),
+            editor,
+            content = currentContent,
+            fileName = currentFileName,
+        )
+        assertEquals(201, addedVersionResponse.statusCode())
+        assertJsonContentType(addedVersionResponse)
+        assertEquals(
+            "/fileweft/v1/documents/$documentId",
+            addedVersionResponse.headers().firstValue("Location").orElse(""),
+        )
+        val addedVersion = mapper.readTree(addedVersionResponse.body())
+        assertV1SuccessEnvelope(addedVersion)
+        assertNoInternalV1Fields(addedVersion)
+        assertEquals(documentId, addedVersion.path("data").path("documentId").asText())
+        val currentVersionId = addedVersion.path("data").path("versionId").asText()
+        assertTrue(currentVersionId.isNotBlank() && currentVersionId != historicalVersionId)
+
+        val finalDetailResponse = getResponse("$apiUrl/fileweft/v1/documents/$documentId", editor)
+        assertEquals(200, finalDetailResponse.statusCode())
+        assertJsonContentType(finalDetailResponse)
+        val finalDetail = mapper.readTree(finalDetailResponse.body())
+        assertV1SuccessEnvelope(finalDetail)
+        assertNoInternalV1Fields(finalDetail)
+        assertEquals(renamedTitle, finalDetail.path("data").path("document").path("title").asText())
+        assertEquals(currentVersionId, finalDetail.path("data").path("document").path("currentVersionId").asText())
+        val versions = finalDetail.path("data").path("versions")
+        assertEquals(setOf(historicalVersionId, currentVersionId), versions.map { it.path("id").asText() }.toSet())
+        assertEquals(
+            historicalFileName,
+            versions.first { version -> version.path("id").asText() == historicalVersionId }.path("fileName").asText(),
+        )
+        assertEquals(
+            currentFileName,
+            versions.first { version -> version.path("id").asText() == currentVersionId }.path("fileName").asText(),
+        )
+
+        assertEquals(0, downloadAuditCount(documentId, editor))
+        val currentDownloadPath = "$apiUrl/fileweft/v1/documents/$documentId/content"
+        val historicalDownloadPath =
+            "$apiUrl/fileweft/v1/documents/$documentId/versions/$historicalVersionId/content"
+        val currentDownload = getBinary(currentDownloadPath, editor)
+        assertV1Download(currentDownload, currentContent, currentFileName)
+        val historicalDownload = getBinary(historicalDownloadPath, editor)
+        assertV1Download(historicalDownload, historicalContent, historicalFileName)
+        assertEquals(2, downloadAuditCount(documentId, editor))
+
+        // The application persists download intent before it opens RustFS. An
+        // unchanged count therefore proves these transport rejections never
+        // entered the download service or opened object content.
+        listOf(currentDownloadPath to "bytes=0-2", historicalDownloadPath to "").forEach { (path, range) ->
+            val rejectedRange = getBinary(path, editor, mapOf("Range" to range))
+            assertEquals(416, rejectedRange.statusCode())
+            assertJsonContentType(rejectedRange)
+            assertV1FailureEnvelope(
+                mapper.readTree(rejectedRange.body()),
+                "RANGE_NOT_SUPPORTED",
+                "Range requests are not supported.",
+            )
+            assertEquals("private, no-store", rejectedRange.headers().firstValue("Cache-Control").orElse(""))
+            assertEquals("nosniff", rejectedRange.headers().firstValue("X-Content-Type-Options").orElse(""))
+            assertTrue(!rejectedRange.headers().firstValue("Accept-Ranges").isPresent)
+        }
+        assertEquals(2, downloadAuditCount(documentId, editor))
+
+        listOf(currentDownloadPath, historicalDownloadPath).forEach { path ->
+            val rejectedHead = client.send(
+                authorizedRequest(path, editor)
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .build(),
+                HttpResponse.BodyHandlers.discarding(),
+            )
+            assertEquals(405, rejectedHead.statusCode())
+            assertJsonContentType(rejectedHead)
+            assertEquals("GET", rejectedHead.headers().firstValue("Allow").orElse(""))
+            assertEquals("private, no-store", rejectedHead.headers().firstValue("Cache-Control").orElse(""))
+            assertEquals("nosniff", rejectedHead.headers().firstValue("X-Content-Type-Options").orElse(""))
+            assertTrue(!rejectedHead.headers().firstValue("Accept-Ranges").isPresent)
+        }
+        assertEquals(2, downloadAuditCount(documentId, editor))
+
+        val betaDetail = getResponse("$apiUrl/fileweft/v1/documents/$documentId", betaEditor)
+        assertEquals(404, betaDetail.statusCode())
+        assertJsonContentType(betaDetail)
+        assertV1FailureEnvelope(mapper.readTree(betaDetail.body()), "NOT_FOUND", "Resource was not found.")
+        val betaPageResponse = getResponse(
+            "$apiUrl/fileweft/v1/documents?limit=100",
+            betaEditor,
+        )
+        assertEquals(200, betaPageResponse.statusCode())
+        assertJsonContentType(betaPageResponse)
+        val betaPage = mapper.readTree(betaPageResponse.body())
+        assertV1SuccessEnvelope(betaPage)
+        assertTrue(betaPage.path("data").path("items").none { item -> item.path("id").asText() == documentId })
+        assertNoInternalV1Fields(betaPage)
+        val betaContent = getBinary(currentDownloadPath, betaEditor)
+        assertEquals(404, betaContent.statusCode())
+        assertJsonContentType(betaContent)
+        assertV1FailureEnvelope(mapper.readTree(betaContent.body()), "NOT_FOUND", "Resource was not found.")
+        assertEquals(2, downloadAuditCount(documentId, editor))
+
+        val downloadAudits = documentLogs(documentId, editor).filter { entry ->
+            entry.path("source").asText() == "AUDIT" && entry.path("action").asText() == "document:download"
+        }
+        assertEquals(2, downloadAudits.size)
+        assertTrue(downloadAudits.all { entry -> entry.path("operatorId").asText() == "alpha-editor" })
+        assertTrue(downloadAudits.all { entry -> entry.path("operatorName").asText() == "Alpha 编辑者" })
+    }
+
+    @Test
     fun `persists a resumable upload session across part checkpoints and completes it once`() {
         val editor = login("editor@alpha", "dev-editor")
         val idempotencyKey = "e2e-resumable-${UUID.randomUUID()}"
@@ -785,14 +1004,16 @@ class DevAcceptanceIntegrationTest {
         fields: Map<String, String>,
         token: String,
         traceId: String? = null,
+        content: ByteArray = "development acceptance payload".toByteArray(StandardCharsets.UTF_8),
+        fileName: String = "acceptance.txt",
+        contentType: String = "text/plain",
     ): HttpResponse<String> {
         val boundary = "FileWeft-${UUID.randomUUID()}"
-        val content = "development acceptance payload".toByteArray(StandardCharsets.UTF_8)
         val body = ByteArrayOutputStream().apply {
             fields.forEach { (name, value) ->
                 writeText("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n")
             }
-            writeText("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"acceptance.txt\"\r\nContent-Type: text/plain\r\n\r\n")
+            writeText("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\nContent-Type: $contentType\r\n\r\n")
             write(content)
             writeText("\r\n--$boundary--\r\n")
         }.toByteArray()
@@ -878,6 +1099,107 @@ class DevAcceptanceIntegrationTest {
         return response(request)
     }
 
+    private fun getResponse(url: String, token: String): HttpResponse<String> = client.send(
+        authorizedRequest(url, token).GET().build(),
+        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+    )
+
+    private fun getBinary(
+        url: String,
+        token: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpResponse<ByteArray> {
+        val request = authorizedRequest(url, token).GET()
+        headers.forEach { (name, value) -> request.header(name, value) }
+        return client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray())
+    }
+
+    private fun authorizedRequest(url: String, token: String): HttpRequest.Builder =
+        HttpRequest.newBuilder(URI(url)).header("Authorization", "Bearer $token")
+
+    private fun jsonRequestResponse(
+        method: String,
+        url: String,
+        body: String,
+        token: String,
+    ): HttpResponse<String> = client.send(
+        authorizedRequest(url, token)
+            .header("Content-Type", "application/json")
+            .method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+            .build(),
+        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+    )
+
+    private fun documentLogs(documentId: String, token: String): JsonNode =
+        getJson("$apiUrl/api/documents/$documentId/logs?limit=100", token)
+
+    private fun downloadAuditCount(documentId: String, token: String): Int =
+        documentLogs(documentId, token).count { entry ->
+            entry.path("source").asText() == "AUDIT" && entry.path("action").asText() == "document:download"
+        }
+
+    private fun assertV1SuccessEnvelope(response: JsonNode) {
+        assertEquals(V1_ENVELOPE_FIELDS, response.fieldNames().asSequence().toSet())
+        assertEquals("OK", response.path("code").asText())
+        assertEquals("OK", response.path("message").asText())
+        assertTrue(response.path("data").isContainerNode)
+        assertTrue(response.path("error").isNull)
+        assertTrue(response.path("traceId").isTextual && response.path("traceId").asText().isNotBlank())
+    }
+
+    private fun assertV1FailureEnvelope(response: JsonNode, code: String, message: String) {
+        assertEquals(V1_ENVELOPE_FIELDS, response.fieldNames().asSequence().toSet())
+        assertEquals(code, response.path("code").asText())
+        assertEquals(message, response.path("message").asText())
+        assertTrue(response.path("data").isNull)
+        assertEquals(setOf("code", "message"), response.path("error").fieldNames().asSequence().toSet())
+        assertEquals(code, response.path("error").path("code").asText())
+        assertEquals(message, response.path("error").path("message").asText())
+        assertTrue(response.path("traceId").isTextual && response.path("traceId").asText().isNotBlank())
+    }
+
+    private fun assertNoInternalV1Fields(response: JsonNode) {
+        V1_INTERNAL_FIELDS.forEach { field ->
+            assertTrue(response.findValue(field) == null, "Formal v1 response exposed internal field '$field': $response")
+        }
+    }
+
+    private fun assertV1Download(
+        response: HttpResponse<ByteArray>,
+        expectedContent: ByteArray,
+        expectedFileName: String,
+    ) {
+        assertEquals(200, response.statusCode())
+        assertTrue(expectedContent.contentEquals(response.body()), "Downloaded RustFS bytes did not match the uploaded payload.")
+        assertEquals("text/plain", response.headers().firstValue("Content-Type").orElse(""))
+        assertEquals("private, no-store", response.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals("nosniff", response.headers().firstValue("X-Content-Type-Options").orElse(""))
+        val contentLength = response.headers().firstValue("Content-Length")
+        assertTrue(contentLength.isPresent, "RustFS must provide a verified length for the acceptance payload.")
+        assertEquals(expectedContent.size.toLong(), contentLength.get().toLong())
+        val disposition = response.headers().firstValue("Content-Disposition").orElse("")
+        assertTrue(disposition.startsWith("attachment; "))
+        assertTrue(disposition.contains("filename=\"$expectedFileName\""))
+        assertTrue(disposition.contains("filename*=UTF-8''$expectedFileName"))
+        assertTrue(disposition.all { character -> character.code in 0x20..0x7e })
+        assertTrue(!response.headers().firstValue("ETag").isPresent)
+        assertTrue(!response.headers().firstValue("Accept-Ranges").isPresent)
+        assertTrue(!response.headers().firstValue("Content-Range").isPresent)
+        assertTrue(!response.headers().firstValue("Location").isPresent)
+        assertTrue(response.headers().map().keys.none { name ->
+            val normalized = name.lowercase()
+            normalized.contains("hash") || normalized.contains("storage") || normalized.contains("bucket") ||
+                normalized.contains("object-key")
+        })
+    }
+
+    private fun assertJsonContentType(response: HttpResponse<*>) {
+        assertTrue(
+            response.headers().firstValue("Content-Type").orElse("").lowercase().startsWith("application/json"),
+            "Expected a JSON response but received ${response.headers().firstValue("Content-Type").orElse("<missing>")}.",
+        )
+    }
+
     private fun postJson(url: String, body: String, token: String?, traceId: String? = null): JsonNode =
         post(url, body.toByteArray(StandardCharsets.UTF_8), token, "application/json", traceId)
 
@@ -931,5 +1253,23 @@ class DevAcceptanceIntegrationTest {
 
     private companion object {
         const val CIRCUIT_COOLDOWN_MILLIS = 5_100L
+        val V1_ENVELOPE_FIELDS = setOf("code", "message", "data", "error", "traceId")
+        val V1_INTERNAL_FIELDS = setOf(
+            "tenantId",
+            "assetId",
+            "fileAssetId",
+            "fileObjectId",
+            "storagePath",
+            "storageUrl",
+            "storageType",
+            "storageLocation",
+            "contentUrl",
+            "downloadUrl",
+            "contentHash",
+            "bucket",
+            "objectKey",
+            "ownerRef",
+            "connectorId",
+        )
     }
 }

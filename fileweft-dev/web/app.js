@@ -24,6 +24,7 @@ const state = {
 const RESUMABLE_CHECKPOINT_PREFIX = "fileweft.resumable.v1";
 const MINIMUM_RESUMABLE_CHUNK_BYTES = 5 * 1024 * 1024;
 const MAXIMUM_RESUMABLE_PARTS = 10_000;
+const V1_DOCUMENTS_PATH = "/fileweft/v1/documents";
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => translate(state.locale, key);
 const can = (action) => state.permissions.has(action);
@@ -40,8 +41,10 @@ const localizedTaskStatus = (value) => localized("task.status", value);
 const formatTime = (value) => value ? new Date(Number(value)).toLocaleString(state.locale === "zh" ? "zh-CN" : "en-GB", { hour12: false }) : "—";
 
 const localizedApiError = (payload, status) => {
-  const key = payload?.code === "DOCUMENT_NUMBER_CONFLICT" ? "error.documentNumberConflict" : null;
-  return key ? t(key) : (payload?.message || `Request failed (${status})`);
+  if (payload?.code === "DOCUMENT_NUMBER_CONFLICT") return t("error.documentNumberConflict");
+  const key = payload?.code ? `error.v1.${payload.code}` : null;
+  const translated = key ? t(key) : null;
+  return translated && translated !== key ? translated : (payload?.message || `Request failed (${status})`);
 };
 
 const api = async (path, options = {}) => {
@@ -52,6 +55,12 @@ const api = async (path, options = {}) => {
   const payload = text ? safeJson(text) : null;
   if (!response.ok) throw new Error(localizedApiError(payload, response.status));
   return payload;
+};
+
+const v1Api = async (path, options = {}) => {
+  const envelope = await api(path, options);
+  if (envelope?.code !== "OK") throw new Error(t("error.v1.invalidResponse"));
+  return envelope.data;
 };
 
 function interpolate(key, values) {
@@ -421,7 +430,7 @@ async function downloadDocument(versionId, fileName) {
   try {
     const headers = new Headers();
     if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-    const response = await fetch(`/api/documents/${state.selectedId}/versions/${versionId}/content`, { headers });
+    const response = await fetch(`${V1_DOCUMENTS_PATH}/${state.selectedId}/versions/${versionId}/content`, { headers });
     if (!response.ok) {
       const text = await response.text();
       throw new Error(localizedApiError(text ? safeJson(text) : null, response.status));
@@ -502,10 +511,10 @@ async function createFixture(fixtureId) {
     form.append("title", t(`fixture.${fixture.id}.title`));
     form.append("folderId", state.selectedFolderId === "root" ? "inbox" : (state.selectedFolderId || "inbox"));
     form.append("file", new File([blob], fixture.fileName, { type: fixture.contentType }));
-    const detail = await api("/api/documents", { method: "POST", body: form });
-    state.selectedId = detail.document.id;
+    const result = await v1Api(V1_DOCUMENTS_PATH, { method: "POST", body: form });
+    state.selectedId = result.documentId;
     await refreshDocuments();
-    if (state.detail?.document.id !== detail.document.id) await selectDocument(detail.document.id, false);
+    if (state.detail?.document.id !== result.documentId) await selectDocument(result.documentId, false);
     activatePanel("documents");
     notice(t("notice.fixtureCreated"));
   } catch (error) {
@@ -812,19 +821,19 @@ $("#create-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    const detail = await api("/api/documents", { method: "POST", body: new FormData(form) });
+    const result = await v1Api(V1_DOCUMENTS_PATH, { method: "POST", body: new FormData(form) });
     $("#create-drawer").classList.add("hidden");
     form.reset();
-    state.selectedId = detail.document.id;
+    state.selectedId = result.documentId;
     await refreshDocuments();
-    if (state.detail?.document.id !== detail.document.id) await selectDocument(detail.document.id, false);
+    if (state.detail?.document.id !== result.documentId) await selectDocument(result.documentId, false);
   } catch (error) { notice(error.message, "error"); }
 });
 $("#rename-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    await api(`/api/documents/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(form).get("title") }) });
+    await v1Api(`${V1_DOCUMENTS_PATH}/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(form).get("title") }) });
     form.reset();
     await refreshDocuments();
   } catch (error) { notice(error.message, "error"); }
@@ -833,7 +842,7 @@ $("#version-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    await api(`/api/documents/${state.selectedId}/versions`, { method: "POST", body: new FormData(form) });
+    await v1Api(`${V1_DOCUMENTS_PATH}/${state.selectedId}/versions`, { method: "POST", body: new FormData(form) });
     form.reset();
     await refreshDocuments();
   } catch (error) { notice(error.message, "error"); }

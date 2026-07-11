@@ -1,6 +1,6 @@
 # 正式 Web API v1 设计
 
-`fileweft-dev` 中的 `/api/**` 是开发验收界面专用入口，不是嵌入方可以依赖的公共协议。它包含 Dev Session、开发用 JDBC 投影和演示平台行为，不能通过改路径直接升级为生产 API。
+`fileweft-dev` 中的 `/api/**` 是开发验收界面专用入口，不是嵌入方可以依赖的公共协议。它包含 Dev Session、开发用 JDBC 投影和演示平台行为，不能通过改路径直接升级为生产 API。开发验收应用现在同时真实装配正式 Boot 3 Web Starter，并由控制台 Nginx 代理 `/fileweft/`，但这不会改变 `/api/**` 的 Dev-only 边界。
 
 本设计定义正式 API 的增量交付边界。它不会把 MVC、Servlet、认证 SDK 或数据库查询引入 Core、Domain、SPI 或默认 Starter。
 
@@ -14,6 +14,8 @@
 - `fileweft-web-spring-boot3-starter`：JDK 17 / Spring Boot 3 的可选 MVC 适配器；通过 `AutoConfiguration.imports` 注册，并与 Boot 2 保持同一路径、状态码和响应外层及条件装配语义。
 
 Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；未装配某项安全应用服务时，对应 Controller 会保持不可用。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
+
+开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的创建、改名、新增版本和当前/历史版本授权下载已经走 `/fileweft/v1`；需要展示工作流、审批、Doctor、同步与审计综合投影的页面仍使用 `/api`。这种并行仅用于明确区分已稳定的公共协议与丰富的 Dev 验收能力，不能把后者视为兼容承诺。
 
 ## 信任边界
 
@@ -83,6 +85,8 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 ## 测试与迁移门槛
 
-每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。开发编排会在后续把 v1 调用加入双租户端到端验收。
+每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
-由于正式 API 是新工件和新路径，旧 Dev UI 无需迁移。首次采用时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。
+本里程碑已完成相关常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 和 9 条 Playwright 浏览器用例；其中包含独立的 formal-v1 用例，验证 Dev 应用确实通过正式 Starter 暴露 v1，而不只是前端改写 URL。该结果闭环了当前已交付读写与下载路由的 Dev v1 验收，但不覆盖尚未实现的持久化请求幂等、正式生命周期/多人审批、Doctor、同步状态和日志等 HTTP 映射。
+
+首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 当前的分阶段接入只作为可运行示例，不代表所有 `/api` 能力已经形成正式协议。

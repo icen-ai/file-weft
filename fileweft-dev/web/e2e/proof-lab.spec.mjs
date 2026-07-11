@@ -158,6 +158,21 @@ test("creates, renames, versions, downloads, and moves a document through the ed
   await login(page, "editor@alpha");
   const created = await createDocument(page, "UI-EDIT");
 
+  await page.getByTestId("locale-zh").click();
+  await page.locator("#open-create").click();
+  await page.locator("#create-form [name='documentNumber']").fill(created.documentNumber);
+  await page.locator("#create-form [name='title']").fill("重复编号应展示中文正式接口错误");
+  await page.locator("#create-form [name='file']").setInputFiles({
+    name: "frontend-duplicate.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("duplicate document number must fail", "utf8"),
+  });
+  await page.locator("#create-form button[type='submit']").click();
+  await expect(page.locator("#notice")).toContainText("请求与资源当前状态冲突");
+  await expect(page.locator("#create-drawer")).toBeVisible();
+  await page.locator("#close-create").click();
+  await page.getByTestId("locale-en").click();
+
   const rename = page.locator("#document-actions [data-action='rename']");
   await expect(rename).toHaveCount(1);
   await rename.click();

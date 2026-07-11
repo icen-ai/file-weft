@@ -37,13 +37,15 @@ Dev API E2E 由环境变量选择性启用；该环境变量不是 Gradle 任务
 
 根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。日常 `check` 会继续执行所有 Java 8 基线模块的独立 `java8Test`；发版门禁 `compatibilityCheck` 通过 Gradle 工具链在 Java 8、11、21、25 上执行所有 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。该矩阵已在实际工具链运行通过，而不是只依赖字节码目标声明。
 
-Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。开发 API 还提供 `GET /api/documents/{id}/sync-status` 与 `GET /api/documents/{id}/logs?limit=`，用于分别查看脱敏的当前交付/同步/Outbox 状态和带来源标识的审计/操作时间线；两者都执行当前租户和 `document:read` 校验，且不会返回下游外部 ID、原始错误或 Outbox 负载。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
+Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev` 已真实装配正式 Boot 3 Web Starter，控制台 Nginx 已代理 `/fileweft/`；UI 的创建、改名、新增版本和授权下载走正式 v1，包含审批、Doctor、同步与审计投影的丰富 Dev 详情继续走 `/api`，两者的协议边界保持明确。开发 API 还提供 `GET /api/documents/{id}/sync-status` 与 `GET /api/documents/{id}/logs?limit=`，用于分别查看脱敏的当前交付/同步/Outbox 状态和带来源标识的审计/操作时间线；两者都执行当前租户和 `document:read` 校验，且不会返回下游外部 ID、原始错误或 Outbox 负载。
+
+本里程碑已通过常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E，以及 9 条 Playwright 浏览器用例；浏览器用例包含独立的 formal-v1 验收，并继续覆盖中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离。设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后可由 `:fileweft-dev:check` 调用。
 
 ## 本轮核对后仍未闭环的手册项
 
 以下是明确的边界，而不是已交付能力：
 
-- **正式公共 HTTP API**：`fileweft-web-api` 与 `fileweft-web-runtime` 已交付 JDK 8 的 v1 纯契约、安全响应分类、cursor 分页、不泄漏领域聚合的读取端口，创建草稿/新增版本/改名的最小命令门面，以及只暴露安全响应 metadata 的 caller-owned 下载句柄。可选 Boot 2/Boot 3 Web Starter 已对齐文档列表、详情、multipart 创建、multipart 新版本、JSON 改名、当前/历史版本授权内容流，安全映射 400/401/403/404/405/409/416/503/500、可选 Trace、脱敏响应、安全 `Location`、RFC 5987 attachment、MIME 白名单、`nosniff`、no-store 和 verified-only `Content-Length`，且 MVC/Spring 仅存在于外层模块。目录模式创建由应用层原子绑定；新增版本、改名和目录移动共用两阶段 mutation guard，上传后重验 ACL，并以 document → asset 的 PostgreSQL 行锁顺序复核源绑定；下载另以事务外可信目录 scope + 短事务内 tenant/folder 复核隐藏不可见文档，失败时不访问 Storage 或写下载审计。**完整 HTTP 面仍未闭环**：仍需持久化请求幂等、生命周期/多人审批、Doctor、同步状态与日志的正式映射，以及双租户 Dev v1 E2E；不能把 Dev Controller 当作正式协议。
+- **正式公共 HTTP API**：`fileweft-web-api` 与 `fileweft-web-runtime` 已交付 JDK 8 的 v1 纯契约、安全响应分类、cursor 分页、不泄漏领域聚合的读取端口，创建草稿/新增版本/改名的最小命令门面，以及只暴露安全响应 metadata 的 caller-owned 下载句柄。可选 Boot 2/Boot 3 Web Starter 已对齐文档列表、详情、multipart 创建、multipart 新版本、JSON 改名、当前/历史版本授权内容流，安全映射 400/401/403/404/405/409/416/503/500、可选 Trace、脱敏响应、安全 `Location`、RFC 5987 attachment、MIME 白名单、`nosniff`、no-store 和 verified-only `Content-Length`，且 MVC/Spring 仅存在于外层模块。目录模式创建由应用层原子绑定；新增版本、改名和目录移动共用两阶段 mutation guard，上传后重验 ACL，并以 document → asset 的 PostgreSQL 行锁顺序复核源绑定；下载另以事务外可信目录 scope + 短事务内 tenant/folder 复核隐藏不可见文档，失败时不访问 Storage 或写下载审计。双租户 Dev v1 E2E 已完成，**但完整 HTTP 面仍未闭环**：仍需持久化请求幂等、生命周期/多人审批、Doctor、同步状态与日志等正式映射；不能把 Dev Controller 当作正式协议，也不能据此宣称生产 HTTP 面已经完成。
 - **数据库方言与运营策略**：当前唯一经过真实数据库迁移和并发测试的持久化目标是 PostgreSQL。MySQL 8 尚未实现：它需要独立迁移集、JSON/upsert/任务领取 SQL 方言、工作流部分唯一约束的等价实现和 MySQL 实库测试，不能只添加驱动。迁移目前遵循只前进的 Flyway 版本化策略；新增迁移必须附带 preflight 和回滚方案（或明确不可回滚）。审计与操作日志是 append-only，`fw_operation_log` 因而没有 `updated_time`；历史保留、分区和归档年限仍需产品与运维定义后才能实现。
 - **配置与标识策略**：`fw_tenant_config`、Snowflake/ULID 是手册中的可选方向；当前分别由宿主 SPI 和可替换的 UUID `IdentifierGenerator` 承担。是否收回为 FileWeft 持久化责任，需先确定配置所有权、迁移路径和兼容性承诺。
 

@@ -9,6 +9,7 @@ application {
 
 dependencies {
     implementation(project(":fileweft-spring-boot3-starter"))
+    implementation(project(":fileweft-web-spring-boot3-starter"))
     implementation(project(":fileweft-adapter-s3"))
     implementation(project(":fileweft-persistence"))
     implementation(libs.spring.boot3.starter.web)
