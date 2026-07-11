@@ -11,9 +11,17 @@
 >
 > Before modifying code, read:
 >
-> `.ai/FileWeft_Ultimate_Implementation_Manual_FINAL_PACKAGE/`
+> - `.ai/README_FINAL.md`
+> - `.ai/FileWeft_Ultimate_Implementation_Manual_COMPLETE/`
 >
-> This directory contains the complete FileWeft design documentation.
+> Then load directly relevant companion material from
+> `.ai/FileWeft_Ultimate_Implementation_Manual_DATABASE_EXTENSION/`,
+> `.ai/FileWeft_Ultimate_Implementation_Manual_Source_Extension_30/`, or
+> `.ai/FileWeft_Ultimate_Implementation_Manual_Extension_40/` when the task
+> touches databases, source blueprints, deployment, observability, security,
+> or plugins. These checked-in directories are the complete FileWeft design
+> documentation; the older `..._FINAL_PACKAGE` path is not present in this
+> repository.
 
 ---
 
