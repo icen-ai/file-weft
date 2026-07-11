@@ -18,6 +18,11 @@ class SbomVerificationPlugin : Plugin<Project> {
             verifySbom.configure {
                 dependsOn("cyclonedxBom")
             }
+            project.gradle.projectsEvaluated {
+                project.allprojects.forEach { candidate ->
+                    candidate.tasks.named("cyclonedxDirectBom").get()
+                }
+            }
         }
     }
 }
