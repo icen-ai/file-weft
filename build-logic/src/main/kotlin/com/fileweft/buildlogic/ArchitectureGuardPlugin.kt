@@ -32,6 +32,28 @@ class ArchitectureGuardPlugin : Plugin<Project> {
                 "com.fileweft.web.runtime.", "com.fileweft.web.api.", "com.fileweft.application.",
                 "com.fileweft.core.", "com.fileweft.domain.", "java.", "kotlin.",
             ),
+            "fileweft-web-spring-boot2-starter" to listOf(
+                "com.fileweft.web.spring.boot2.", "com.fileweft.web.api.", "com.fileweft.web.runtime.",
+                "com.fileweft.application.", "com.fileweft.core.", "com.fileweft.spi.",
+                "java.", "kotlin.", "org.springframework.",
+            ),
+            "fileweft-web-spring-boot3-starter" to listOf(
+                "com.fileweft.web.spring.boot3.", "com.fileweft.web.api.", "com.fileweft.web.runtime.",
+                "com.fileweft.application.", "com.fileweft.core.", "com.fileweft.spi.",
+                "java.", "kotlin.", "org.springframework.",
+            ),
+        )
+
+        // Spring is an outer adapter concern.  Keep the global infrastructure deny-list intact and
+        // grant this one exception only to the MVC starter modules that deliberately own that boundary.
+        val allowedInfrastructurePrefixesByModule = mapOf(
+            "fileweft-web-spring-boot2-starter" to listOf("org.springframework."),
+            "fileweft-web-spring-boot3-starter" to listOf("org.springframework."),
+        )
+
+        val allowedAutoConfigurationAfterNameReferencesByModule = mapOf(
+            "fileweft-web-spring-boot2-starter" to listOf("com.fileweft.starter.boot2.FileWeftAutoConfiguration"),
+            "fileweft-web-spring-boot3-starter" to listOf("com.fileweft.starter.boot3.FileWeftAutoConfiguration"),
         )
 
         val verifyTask = project.tasks.register(
@@ -41,6 +63,10 @@ class ArchitectureGuardPlugin : Plugin<Project> {
             group = "verification"
             description = "Verifies FileWeft module boundaries and forbidden infrastructure imports."
             this.approvedImportPrefixesByModule.putAll(approvedImportPrefixesByModule)
+            this.allowedInfrastructurePrefixesByModule.putAll(allowedInfrastructurePrefixesByModule)
+            this.allowedAutoConfigurationAfterNameReferencesByModule.putAll(
+                allowedAutoConfigurationAfterNameReferencesByModule,
+            )
             forbiddenInfrastructurePrefixes.set(
                 listOf(
                     "java.sql.", "javax.sql.", "javax.persistence.", "jakarta.persistence.",

@@ -52,6 +52,7 @@ class ApiContractTest {
         assertEquals("UNAUTHENTICATED", ApiErrorCodes.UNAUTHENTICATED)
         assertEquals("FORBIDDEN", ApiErrorCodes.FORBIDDEN)
         assertEquals("CONFLICT", ApiErrorCodes.CONFLICT)
+        assertEquals("FEATURE_UNAVAILABLE", ApiErrorCodes.FEATURE_UNAVAILABLE)
         assertEquals("INTERNAL_ERROR", ApiErrorCodes.INTERNAL_ERROR)
     }
 

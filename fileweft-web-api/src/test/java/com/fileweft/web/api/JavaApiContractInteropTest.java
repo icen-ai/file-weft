@@ -51,6 +51,7 @@ class JavaApiContractInteropTest {
         assertEquals("FORBIDDEN", ApiErrorCodes.FORBIDDEN);
         assertEquals("NOT_FOUND", ApiErrorCodes.NOT_FOUND);
         assertEquals("CONFLICT", ApiErrorCodes.CONFLICT);
+        assertEquals("FEATURE_UNAVAILABLE", ApiErrorCodes.FEATURE_UNAVAILABLE);
         assertEquals("INTERNAL_ERROR", ApiErrorCodes.INTERNAL_ERROR);
         assertTrue(success.isSuccess());
         assertFalse(success.isFailure());

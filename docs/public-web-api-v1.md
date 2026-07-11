@@ -10,8 +10,10 @@
 
 - `fileweft-web-api`：JDK 8 基线的纯契约、响应模型、错误码与 DTO；不依赖 Spring、JDBC、领域实体或任意 FileWeft 运行时模块。
 - `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读取门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，只将应用层已授权、已脱敏的文档查询视图映射为公共 DTO。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
+- `fileweft-web-spring-boot2-starter`：JDK 8 / Spring Boot 2.7 的可选 MVC 适配器；通过 `spring.factories` 注册，只在安全的 `DocumentQueryService` 已存在时暴露 v1 读取路由。
+- `fileweft-web-spring-boot3-starter`：JDK 17 / Spring Boot 3 的可选 MVC 适配器；通过 `AutoConfiguration.imports` 注册，并与 Boot 2 保持同一路径、状态码和响应外层。
 
-下一阶段才会新增 `fileweft-web-spring-boot2-starter` 与 `fileweft-web-spring-boot3-starter`：它们将显式依赖上述契约和 runtime 并暴露 MVC 路由。两者目前不是可用工件，不能据此文档直接接入 HTTP。原有 `fileweft-spring-boot2-starter`、`fileweft-spring-boot3-starter` 和 Dev 路由不改变；正式 Web 仍保持加法兼容。
+Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；若安全查询服务未装配，Controller 会保持不可用。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
 
 ## 信任边界
 
@@ -28,7 +30,7 @@
 
 ## 协议稳定性
 
-所有正式业务路由将以 `/fileweft/v1` 开头。成功与错误均使用统一外层：
+所有正式业务路由将以 `/fileweft/v1` 开头，并只生产 `application/json`。已匹配的 FileWeft 业务路由，其成功与业务执行错误均使用统一外层；未匹配路由、请求体解码和内容协商错误仍由宿主 Spring Web 的全局异常策略处理：
 
 ```json
 {
@@ -40,15 +42,18 @@
 }
 ```
 
-失败响应的 `data` 为 `null`，`error` 只包含与外层一致的固定 `code`/`message`；它不接受任意 attributes。错误不返回 SQL、对象存储路径、下游外部 ID、Outbox payload、凭据或未脱敏异常栈。稳定错误码至少区分 `INVALID_REQUEST`、`UNAUTHENTICATED`、`FORBIDDEN`、`NOT_FOUND`、`CONFLICT` 和 `INTERNAL_ERROR`。时间使用 epoch milliseconds；标识均为不透明字符串。
+失败响应的 `data` 为 `null`，`error` 只包含与外层一致的固定 `code`/`message`；它不接受任意 attributes。错误不返回 SQL、对象存储路径、下游外部 ID、Outbox payload、凭据或未脱敏异常栈。稳定错误码至少区分 `INVALID_REQUEST`、`UNAUTHENTICATED`、`FORBIDDEN`、`NOT_FOUND`、`CONFLICT`、`FEATURE_UNAVAILABLE` 和 `INTERNAL_ERROR`。时间使用 epoch milliseconds；标识均为不透明字符串。
 
 `fileweft-web-api` 已定义 `DocumentDetailDto(document, versions)`，保证 `GET` 文档不会临时返回领域聚合或无版本归属的 Map。公开版本元数据不含存储路径、文件对象 ID、租户 ID、资产 ID 或内容哈希；内容哈希如确有业务必要，必须由后续单独的完整性读取权限与 DTO 提供。审批任务不公开宿主用户 ID 或评论，只能在经过当前调用者计算后返回 `assignedToCurrentUser`。Doctor DTO 不接受原始 evidence；Web 映射层还必须将 checker 的自由文本归一为安全文案，不能直接透传下游信息。
 
-首批读写接口使用以下形态：
+当前已交付并通过两代 MVC 契约测试的正式路由是：
+
+- `GET /fileweft/v1/documents/{documentId}`：当前租户、当前用户已授权且位于可读目录范围内的文档和版本视图。
+- `GET /fileweft/v1/documents`：使用不透明 cursor 的文档摘要分页，可选生命周期和目录筛选。
+
+后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
 
 - `POST /fileweft/v1/documents`：multipart 创建草稿。`folderId` 先经可信当前用户的宿主目录 ACL 验证，再由应用层写入保留目录绑定；客户端不能直接提交任意资产/存储 metadata。
-- `GET /fileweft/v1/documents/{documentId}`：当前租户内、已授权的文档和版本视图。
-- `GET /fileweft/v1/documents`：游标分页文档摘要（读取端口完成后加入）。
 - `PATCH /fileweft/v1/documents/{documentId}`、`POST /versions`、`submit`、`revise`、`publish`、`offline`、`restore`、`archive`：受控生命周期与版本操作。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 - `GET /fileweft/v1/documents/{documentId}/content`：经应用层下载授权后的流式响应。

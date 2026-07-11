@@ -26,6 +26,8 @@ include(
     ":fileweft-application",
     ":fileweft-web-api",
     ":fileweft-web-runtime",
+    ":fileweft-web-spring-boot2-starter",
+    ":fileweft-web-spring-boot3-starter",
     ":fileweft-persistence",
     ":fileweft-runtime",
     ":fileweft-spring-boot2-starter",

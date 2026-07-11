@@ -1,5 +1,7 @@
 package com.fileweft.web.api
 
+import java.beans.Transient
+
 /**
  * Unified public API envelope. HTTP adapters own status-code selection while
  * this contract keeps the JSON shape stable across Spring Boot generations.
@@ -24,8 +26,10 @@ class ApiResponse<T> private constructor(
         }
     }
 
+    @Transient
     fun isSuccess(): Boolean = error == null
 
+    @Transient
     fun isFailure(): Boolean = error != null
 
     companion object {

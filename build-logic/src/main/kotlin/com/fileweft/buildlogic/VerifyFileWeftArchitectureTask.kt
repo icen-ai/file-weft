@@ -25,6 +25,20 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
     @get:Input
     abstract val forbiddenInfrastructurePrefixes: org.gradle.api.provider.ListProperty<String>
 
+    /**
+     * Explicit infrastructure exceptions owned by an outer module.  A value is only effective when it
+     * narrows [forbiddenInfrastructurePrefixes]; it never relaxes another module's boundary.
+     */
+    @get:Input
+    abstract val allowedInfrastructurePrefixesByModule: MapProperty<String, List<String>>
+
+    /**
+     * Compatibility ordering strings accepted only in an exact [AutoConfiguration] [afterName] declaration.
+     * This deliberately does not permit imports, type references, or arbitrary string references to starter code.
+     */
+    @get:Input
+    abstract val allowedAutoConfigurationAfterNameReferencesByModule: MapProperty<String, List<String>>
+
     @get:Input
     abstract val forbiddenKotlinSyntaxByModule: MapProperty<String, List<String>>
 
@@ -36,6 +50,8 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
     fun verify() {
         val approvedPrefixesByModule = approvedImportPrefixesByModule.get()
         val forbiddenPrefixes = forbiddenInfrastructurePrefixes.get()
+        val allowedInfrastructureByModule = allowedInfrastructurePrefixesByModule.get()
+        val allowedAutoConfigurationAfterNameReferences = allowedAutoConfigurationAfterNameReferencesByModule.get()
         val forbiddenSyntaxByModule = forbiddenKotlinSyntaxByModule.get()
         val violations = mutableListOf<String>()
 
@@ -45,6 +61,9 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
             .forEach { sourceRoot ->
                 val module = sourceRoot.parentFile?.parentFile?.parentFile?.name ?: return@forEach
                 val approvedPrefixes = approvedPrefixesByModule[module] ?: return@forEach
+                val allowedInfrastructurePrefixes = allowedInfrastructureByModule[module].orEmpty()
+                val allowedAutoConfigurationAfterNameReferences =
+                    allowedAutoConfigurationAfterNameReferences[module].orEmpty()
                 val forbiddenSyntax = forbiddenSyntaxByModule[module].orEmpty()
 
                 sourceRoot.walkTopDown()
@@ -60,7 +79,9 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
                                 ?.removePrefix("static ")
                                 ?.substringBefore(" as ")
                             if (importedType != null) {
-                                val forbiddenPrefix = forbiddenPrefixes.firstOrNull(importedType::startsWith)
+                                val forbiddenPrefix = forbiddenPrefixes.firstOrNull { prefix ->
+                                    importedType.startsWith(prefix) && !allowedInfrastructurePrefixes.allows(prefix, importedType)
+                                }
                                 val approved = approvedPrefixes.any(importedType::startsWith)
                                 if (forbiddenPrefix != null || !approved) {
                                     val relativePath = source.relativeTo(sourceRoot).invariantSeparatorsPath
@@ -70,15 +91,20 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
                                 }
                             } else {
                                 val relativePath = source.relativeTo(sourceRoot).invariantSeparatorsPath
-                                forbiddenPrefixes.firstOrNull { prefix -> line.contains(prefix) }?.let { prefix ->
+                                forbiddenPrefixes.firstOrNull { prefix ->
+                                    line.contains(prefix) && !allowedInfrastructurePrefixes.allows(prefix, line)
+                                }?.let { prefix ->
                                     violations += "$module/$relativePath:${index + 1} references $prefix (forbidden prefix: $prefix)"
                                 }
                                 FILEWEFT_TYPE_REFERENCE.findAll(line)
                                     .map { match -> match.value }
                                     .distinct()
-                                    .filterNot { reference -> approvedPrefixes.any { prefix ->
-                                        reference == prefix.removeSuffix(".") || reference.startsWith(prefix)
-                                    } }
+                                    .filterNot { reference ->
+                                        approvedPrefixes.any { prefix ->
+                                            reference == prefix.removeSuffix(".") || reference.startsWith(prefix)
+                                        } || allowedAutoConfigurationAfterNameReferences
+                                            .allowsAutoConfigurationAfterName(line, reference)
+                                    }
                                     .forEach { reference ->
                                         violations += "$module/$relativePath:${index + 1} references $reference (not approved for $module)"
                                     }
@@ -103,5 +129,20 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
     private companion object {
         val SOURCE_EXTENSIONS = setOf("kt", "java")
         val FILEWEFT_TYPE_REFERENCE = Regex("\\bcom\\.fileweft\\.[A-Za-z0-9_.]+")
+        val AUTO_CONFIGURATION_AFTER_NAME = Regex(
+            """^@AutoConfiguration\s*\(\s*afterName\s*=\s*\[\s*"([^"]+)"\s*]\s*\)\s*$""",
+        )
+    }
+
+    private fun List<String>.allows(forbiddenPrefix: String, reference: String): Boolean = any { allowedPrefix ->
+        allowedPrefix.startsWith(forbiddenPrefix) && reference.contains(allowedPrefix)
+    }
+
+    private fun List<String>.allowsAutoConfigurationAfterName(line: String, reference: String): Boolean {
+        val declaredReference = AUTO_CONFIGURATION_AFTER_NAME.matchEntire(line.trim())
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: return false
+        return declaredReference == reference && any { allowedReference -> allowedReference == reference }
     }
 }

@@ -15,6 +15,7 @@ class ApiErrorCodes private constructor() {
         const val FORBIDDEN: String = "FORBIDDEN"
         const val NOT_FOUND: String = "NOT_FOUND"
         const val CONFLICT: String = "CONFLICT"
+        const val FEATURE_UNAVAILABLE: String = "FEATURE_UNAVAILABLE"
         const val INTERNAL_ERROR: String = "INTERNAL_ERROR"
     }
 }

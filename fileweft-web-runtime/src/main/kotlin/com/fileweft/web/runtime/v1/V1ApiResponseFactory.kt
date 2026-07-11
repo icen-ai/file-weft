@@ -1,0 +1,90 @@
+package com.fileweft.web.runtime.v1
+
+import com.fileweft.application.document.DocumentFolderReadAccessUnavailableException
+import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.security.ApplicationForbiddenException
+import com.fileweft.application.security.ApplicationUnauthenticatedException
+import com.fileweft.web.api.ApiError
+import com.fileweft.web.api.ApiErrorCodes
+import com.fileweft.web.api.ApiResponse
+
+/**
+ * Transport-neutral v1 response and failure classifier shared by the Boot 2
+ * and Boot 3 MVC adapters. It intentionally returns only fixed public
+ * messages: exception messages may contain host policy, storage, or database
+ * details and must never become the HTTP contract.
+ */
+class V1ApiResponseFactory {
+    @JvmOverloads
+    fun <T> success(data: T? = null, traceId: String? = null): ApiResponse<T> =
+        ApiResponse.success(data = data, traceId = safeTraceId(traceId))
+
+    @JvmOverloads
+    fun failure(failure: Throwable, traceId: String? = null): ApiHttpFailure {
+        val mapped = when (failure) {
+            is ApplicationUnauthenticatedException -> MappedFailure(
+                ApiHttpStatus.UNAUTHORIZED,
+                ApiErrorCodes.UNAUTHENTICATED,
+                "Authentication is required.",
+            )
+            is ApplicationForbiddenException,
+            is SecurityException,
+            -> MappedFailure(ApiHttpStatus.FORBIDDEN, ApiErrorCodes.FORBIDDEN, "Access denied.")
+            is DocumentNotFoundException,
+            is NoSuchElementException,
+            -> MappedFailure(ApiHttpStatus.NOT_FOUND, ApiErrorCodes.NOT_FOUND, "Resource was not found.")
+            is DocumentFolderReadAccessUnavailableException -> MappedFailure(
+                ApiHttpStatus.SERVICE_UNAVAILABLE,
+                ApiErrorCodes.FEATURE_UNAVAILABLE,
+                "The requested feature is unavailable.",
+            )
+            is IllegalArgumentException -> MappedFailure(
+                ApiHttpStatus.BAD_REQUEST,
+                ApiErrorCodes.INVALID_REQUEST,
+                "Request is invalid.",
+            )
+            else -> MappedFailure(
+                ApiHttpStatus.INTERNAL_SERVER_ERROR,
+                ApiErrorCodes.INTERNAL_ERROR,
+                "An unexpected error occurred.",
+            )
+        }
+        return ApiHttpFailure(
+            mapped.status,
+            ApiResponse.failure(ApiError(mapped.code, mapped.message), safeTraceId(traceId)),
+        )
+    }
+
+    private fun safeTraceId(traceId: String?): String? = traceId?.takeIf { value ->
+        value.isNotBlank() &&
+            value.length <= MAX_TRACE_ID_LENGTH &&
+            value.none { character -> Character.isISOControl(character) }
+    }
+
+    private data class MappedFailure(
+        val status: ApiHttpStatus,
+        val code: String,
+        val message: String,
+    )
+
+    private companion object {
+        const val MAX_TRACE_ID_LENGTH: Int = 128
+    }
+}
+
+/** Fixed HTTP status classification without importing a Web framework. */
+enum class ApiHttpStatus(val statusCode: Int) {
+    BAD_REQUEST(400),
+    UNAUTHORIZED(401),
+    FORBIDDEN(403),
+    NOT_FOUND(404),
+    CONFLICT(409),
+    SERVICE_UNAVAILABLE(503),
+    INTERNAL_SERVER_ERROR(500),
+}
+
+/** A public-safe response plus the status selected by an outer HTTP adapter. */
+class ApiHttpFailure(
+    val status: ApiHttpStatus,
+    val response: ApiResponse<Any?>,
+)

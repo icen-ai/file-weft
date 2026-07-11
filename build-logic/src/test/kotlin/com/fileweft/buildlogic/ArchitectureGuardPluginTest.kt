@@ -94,6 +94,27 @@ class ArchitectureGuardPluginTest {
     }
 
     @Test
+    fun `guard keeps Spring forbidden in the pure web API contract`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-web-api/src/main/kotlin/com/fileweft/web/api/ForbiddenSpring.kt",
+            """
+            package com.fileweft.web.api
+
+            import org.springframework.http.HttpStatus
+
+            internal class ForbiddenSpring(val status: HttpStatus)
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("fileweft-web-api/com/fileweft/web/api/ForbiddenSpring.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+    }
+
+    @Test
     fun `guard rejects a runtime project dependency from the pure web API contract`() = withTestProject { projectDir ->
         writeProject(projectDir)
         writeFile(
@@ -161,6 +182,112 @@ class ArchitectureGuardPluginTest {
         assertTrue(result.output.contains("forbidden prefix: org.springframework."))
     }
 
+    @Test
+    fun `guard permits Spring imports only in outer MVC starter modules`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot2-starter/src/main/kotlin/com/fileweft/web/spring/boot2/Boot2Controller.kt",
+            """
+            package com.fileweft.web.spring.boot2
+
+            import org.springframework.boot.autoconfigure.AutoConfiguration
+            import org.springframework.web.bind.annotation.GetMapping
+            import org.springframework.web.bind.annotation.RestController
+
+            @RestController
+            @AutoConfiguration(afterName = ["com.fileweft.starter.boot2.FileWeftAutoConfiguration"])
+            internal class Boot2Controller {
+                @GetMapping("/fileweft/v1/boot2")
+                fun endpoint(): String = "ok"
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot3-starter/src/main/kotlin/com/fileweft/web/spring/boot3/Boot3Controller.kt",
+            """
+            package com.fileweft.web.spring.boot3
+
+            import org.springframework.boot.autoconfigure.AutoConfiguration
+            import org.springframework.web.bind.annotation.GetMapping
+            import org.springframework.web.bind.annotation.RestController
+
+            @RestController
+            @AutoConfiguration(afterName = ["com.fileweft.starter.boot3.FileWeftAutoConfiguration"])
+            internal class Boot3Controller {
+                @GetMapping("/fileweft/v1/boot3")
+                fun endpoint(): String = "ok"
+            }
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":verifyFileWeftArchitecture")?.outcome)
+    }
+
+    @Test
+    fun `guard rejects JDBC and servlet imports from outer MVC starter modules`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot2-starter/src/main/kotlin/com/fileweft/web/spring/boot2/ForbiddenJdbc.kt",
+            """
+            package com.fileweft.web.spring.boot2
+
+            import java.sql.Connection
+
+            internal class ForbiddenJdbc(val connection: Connection)
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot3-starter/src/main/java/com/fileweft/web/spring/boot3/ForbiddenServlet.java",
+            """
+            package com.fileweft.web.spring.boot3;
+
+            import jakarta.servlet.http.HttpServletRequest;
+
+            final class ForbiddenServlet {
+                private HttpServletRequest request;
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot2-starter/src/main/kotlin/com/fileweft/web/spring/boot2/WrongBootGeneration.kt",
+            """
+            package com.fileweft.web.spring.boot2
+
+            import org.springframework.boot.autoconfigure.AutoConfiguration
+
+            @AutoConfiguration(afterName = ["com.fileweft.starter.boot3.FileWeftAutoConfiguration"])
+            internal class WrongBootGeneration
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot2-starter/src/main/kotlin/com/fileweft/web/spring/boot2/UnscopedStarterReference.kt",
+            """
+            package com.fileweft.web.spring.boot2
+
+            internal val unscopedStarterReference = "com.fileweft.starter.boot2.FileWeftAutoConfiguration"
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("fileweft-web-spring-boot2-starter/com/fileweft/web/spring/boot2/ForbiddenJdbc.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("fileweft-web-spring-boot3-starter/com/fileweft/web/spring/boot3/ForbiddenServlet.java:3"))
+        assertTrue(result.output.contains("forbidden prefix: jakarta.servlet."))
+        assertTrue(result.output.contains("fileweft-web-spring-boot2-starter/com/fileweft/web/spring/boot2/WrongBootGeneration.kt:5"))
+        assertTrue(result.output.contains("com.fileweft.starter.boot3.FileWeftAutoConfiguration (not approved for fileweft-web-spring-boot2-starter)"))
+        assertTrue(result.output.contains("fileweft-web-spring-boot2-starter/com/fileweft/web/spring/boot2/UnscopedStarterReference.kt:3"))
+        assertTrue(result.output.contains("com.fileweft.starter.boot2.FileWeftAutoConfiguration (not approved for fileweft-web-spring-boot2-starter)"))
+    }
+
     private fun writeProject(projectDir: File) {
         writeFile(
             projectDir,
@@ -170,6 +297,8 @@ class ArchitectureGuardPluginTest {
             include(":fileweft-core")
             include(":fileweft-web-api")
             include(":fileweft-web-runtime")
+            include(":fileweft-web-spring-boot2-starter")
+            include(":fileweft-web-spring-boot3-starter")
             """.trimIndent(),
         )
         writeFile(
@@ -202,6 +331,24 @@ class ArchitectureGuardPluginTest {
         writeFile(
             projectDir,
             "fileweft-web-runtime/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot2-starter/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-web-spring-boot3-starter/build.gradle.kts",
             """
             plugins {
                 base
