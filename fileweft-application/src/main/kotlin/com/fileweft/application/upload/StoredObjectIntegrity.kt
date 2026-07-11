@@ -11,11 +11,13 @@ import com.fileweft.spi.storage.StoredObject
 object StoredObjectIntegrity {
     @JvmStatic
     fun requireMatches(request: StorageUploadRequest, stored: StoredObject) {
-        require(stored.contentLength == request.contentLength) {
-            "Storage acknowledged ${stored.contentLength} bytes but ${request.contentLength} bytes were declared."
+        if (stored.contentLength != request.contentLength) {
+            throw StoredObjectIntegrityException(
+                "Storage acknowledged ${stored.contentLength} bytes but ${request.contentLength} bytes were declared.",
+            )
         }
-        require(request.contentHash == null || request.contentHash == stored.contentHash) {
-            "Storage content hash does not match the declared content hash."
+        if (request.contentHash != null && request.contentHash != stored.contentHash) {
+            throw StoredObjectIntegrityException("Storage content hash does not match the declared content hash.")
         }
     }
 }

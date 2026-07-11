@@ -47,7 +47,12 @@ class DocumentDownloadService(
             recordDownloadIntent(tenant.tenantId, document, version, fileObject, operator)
             DownloadTarget(document.id, version, fileObject)
         }
-        val storageDownload = storageAdapter.download(StorageObjectLocation(target.fileObject.storageType, target.fileObject.storagePath))
+        val location = StorageObjectLocation(target.fileObject.storageType, target.fileObject.storagePath)
+        val storageDownload = try {
+            storageAdapter.download(location)
+        } catch (failure: Exception) {
+            throw DocumentContentUnavailableException(cause = failure)
+        }
         return DocumentDownload(target.documentId, target.version.id, target.version.versionNumber, target.fileObject, storageDownload)
     }
 
@@ -99,8 +104,36 @@ class DocumentDownload(
 ) : Closeable {
     val fileName: String = fileObject.fileName
     val contentType: String? = storageDownload.contentType ?: fileObject.contentType
-    val contentLength: Long = storageDownload.contentLength ?: fileObject.contentLength
+    /** Length persisted with the tenant-scoped file object during upload. */
+    val expectedContentLength: Long = fileObject.contentLength
+
+    /**
+     * Storage-reported length after it has been checked against [expectedContentLength].
+     *
+     * A null value means the storage adapter provides a stream without response
+     * metadata. HTTP or other transports must not treat the persisted fallback
+     * as a storage-verified response length.
+     */
+    val verifiedContentLength: Long? = storageDownload.contentLength
+
+    /**
+     * Compatibility view retained for existing callers. New transports should
+     * use [verifiedContentLength] when deciding whether to advertise a length.
+     */
+    val contentLength: Long = verifiedContentLength ?: expectedContentLength
     val content: InputStream = storageDownload.content
+
+    init {
+        if (verifiedContentLength != null && verifiedContentLength != expectedContentLength) {
+            val failure = DocumentContentUnavailableException()
+            try {
+                content.close()
+            } catch (closeFailure: Exception) {
+                failure.addSuppressed(closeFailure)
+            }
+            throw failure
+        }
+    }
 
     override fun close() {
         content.close()
@@ -108,3 +141,22 @@ class DocumentDownload(
 }
 
 class DocumentDownloadNotFoundException(message: String) : NoSuchElementException(message)
+
+/**
+ * The requested document and version exist, but their physical content cannot
+ * currently be opened or does not match its persisted metadata.
+ *
+ * The default message is intentionally free of storage locations and vendor
+ * details. Transport adapters must classify this type rather than exposing its
+ * [cause] or using exception-message inspection.
+ */
+class DocumentContentUnavailableException @JvmOverloads constructor(
+    message: String = DEFAULT_MESSAGE,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause) {
+    constructor(cause: Throwable) : this(DEFAULT_MESSAGE, cause)
+
+    companion object {
+        const val DEFAULT_MESSAGE: String = "Document content is unavailable."
+    }
+}

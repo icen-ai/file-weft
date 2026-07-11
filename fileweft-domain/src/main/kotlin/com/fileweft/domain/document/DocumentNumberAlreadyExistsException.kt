@@ -9,4 +9,4 @@ package com.fileweft.domain.document
  */
 class DocumentNumberAlreadyExistsException(
     val documentNumber: String,
-) : IllegalStateException("A document with number '$documentNumber' already exists in the current tenant.")
+) : DocumentConflictException("A document with number '$documentNumber' already exists in the current tenant.")

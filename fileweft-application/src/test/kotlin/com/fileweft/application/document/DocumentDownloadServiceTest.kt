@@ -35,6 +35,9 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class DocumentDownloadServiceTest {
     @Test
@@ -51,6 +54,57 @@ class DocumentDownloadServiceTest {
         assertEquals("document:download", audits.records.single().action)
         assertEquals("version-1", audits.records.single().details["versionId"])
         assertEquals("file-1", audits.records.single().details["fileObjectId"])
+        assertEquals(16L, download.expectedContentLength)
+        assertEquals(16L, download.verifiedContentLength)
+        assertEquals(16L, download.contentLength)
+    }
+
+    @Test
+    fun `wraps a storage open failure after recording the download intent`() {
+        val storageFailure = IllegalStateException("s3://internal-bucket/tenant-object is unavailable")
+        val storage = RecordingStorage(openFailure = storageFailure)
+        val audits = RecordingAudits()
+        val service = service(storage = storage, audits = audits)
+
+        val failure = assertThrows<DocumentContentUnavailableException> {
+            service.download(Identifier("document-1"))
+        }
+
+        assertEquals(DocumentContentUnavailableException.DEFAULT_MESSAGE, failure.message)
+        assertSame(storageFailure, failure.cause)
+        assertEquals(StorageObjectLocation("local", "tenant-1/document-1.txt"), storage.requested.single())
+        assertEquals("document:download", audits.records.single().action)
+        assertEquals("version-1", audits.records.single().details["versionId"])
+    }
+
+    @Test
+    fun `closes a storage stream whose reported length conflicts with persisted metadata`() {
+        val content = CloseTrackingInputStream("document content".encodeToByteArray())
+        val storage = RecordingStorage(downloadContent = content, reportedContentLength = 15L)
+        val audits = RecordingAudits()
+        val service = service(storage = storage, audits = audits)
+
+        val failure = assertThrows<DocumentContentUnavailableException> {
+            service.download(Identifier("document-1"))
+        }
+
+        assertEquals(DocumentContentUnavailableException.DEFAULT_MESSAGE, failure.message)
+        assertNull(failure.cause)
+        assertTrue(content.closed)
+        assertEquals("document:download", audits.records.single().action)
+    }
+
+    @Test
+    fun `preserves the expected length without claiming verification when storage reports no length`() {
+        val storage = RecordingStorage(reportedContentLength = null)
+        val service = service(storage = storage)
+
+        val download = service.download(Identifier("document-1"))
+
+        assertEquals(16L, download.expectedContentLength)
+        assertNull(download.verifiedContentLength)
+        assertEquals(16L, download.contentLength)
+        assertEquals("document content", download.use { it.content.readBytes() }.decodeToString())
     }
 
     @Test
@@ -71,6 +125,31 @@ class DocumentDownloadServiceTest {
         assertThrows<DocumentNotFoundException> { service.download(Identifier("document-1")) }
 
         assertEquals(emptyList(), storage.requested)
+    }
+
+    @Test
+    fun `keeps missing versions and file records as not found failures without opening storage`() {
+        val versionStorage = RecordingStorage()
+        val versionService = service(storage = versionStorage)
+
+        assertThrows<DocumentDownloadNotFoundException> {
+            versionService.download(Identifier("document-1"), Identifier("version-other"))
+        }
+        assertEquals(emptyList(), versionStorage.requested)
+
+        val fileStorage = RecordingStorage()
+        val fileService = service(
+            storage = fileStorage,
+            files = object : FileObjectRepository {
+                override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? = null
+                override fun save(fileObject: FileObject) = Unit
+            },
+        )
+
+        assertThrows<DocumentDownloadNotFoundException> {
+            fileService.download(Identifier("document-1"))
+        }
+        assertEquals(emptyList(), fileStorage.requested)
     }
 
     @Test
@@ -97,10 +176,21 @@ class DocumentDownloadServiceTest {
         assertEquals("Alice", audits.records.single().operatorName)
     }
 
+    @Test
+    fun `exposes conventional Java constructors for content unavailable failures`() {
+        val type = DocumentContentUnavailableException::class.java
+
+        type.getConstructor()
+        type.getConstructor(String::class.java)
+        type.getConstructor(String::class.java, Throwable::class.java)
+        type.getConstructor(Throwable::class.java)
+    }
+
     private fun service(
         storage: RecordingStorage,
         authorized: Boolean = true,
         documents: RecordingDocuments = RecordingDocuments(mapOf(Identifier("document-1") to document())),
+        files: FileObjectRepository = RecordingFiles(),
         audits: RecordingAudits? = null,
         transaction: ApplicationTransaction = DirectTransaction,
         userRealmProvider: UserRealmProvider = object : UserRealmProvider {
@@ -116,7 +206,7 @@ class DocumentDownloadServiceTest {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(authorized)
         },
         documentRepository = documents,
-        fileObjectRepository = RecordingFiles(),
+        fileObjectRepository = files,
         storageAdapter = storage,
         transaction = transaction,
         auditTrail = audits?.let { repository ->
@@ -143,11 +233,16 @@ class DocumentDownloadServiceTest {
         override fun save(fileObject: FileObject) = Unit
     }
 
-    private class RecordingStorage : StorageAdapter {
+    private class RecordingStorage(
+        private val downloadContent: InputStream = ByteArrayInputStream("document content".encodeToByteArray()),
+        private val reportedContentLength: Long? = 16,
+        private val openFailure: Exception? = null,
+    ) : StorageAdapter {
         val requested = mutableListOf<StorageObjectLocation>()
         override fun download(location: StorageObjectLocation): StorageDownload {
             requested += location
-            return StorageDownload(ByteArrayInputStream("document content".encodeToByteArray()), 16, "text/plain")
+            openFailure?.let { throw it }
+            return StorageDownload(downloadContent, reportedContentLength, "text/plain")
         }
         override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = throw UnsupportedOperationException()
         override fun delete(location: StorageObjectLocation) = Unit
@@ -157,6 +252,16 @@ class DocumentDownloadServiceTest {
         override fun uploadPart(upload: MultipartUpload, partNumber: Int, content: InputStream, contentLength: Long): MultipartPart = throw UnsupportedOperationException()
         override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject = throw UnsupportedOperationException()
         override fun abortMultipartUpload(upload: MultipartUpload) = Unit
+    }
+
+    private class CloseTrackingInputStream(content: ByteArray) : ByteArrayInputStream(content) {
+        var closed: Boolean = false
+            private set
+
+        override fun close() {
+            closed = true
+            super.close()
+        }
     }
 
     private class RecordingAudits : AuditRecordRepository {

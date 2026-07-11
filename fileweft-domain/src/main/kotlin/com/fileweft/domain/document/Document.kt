@@ -48,17 +48,21 @@ class Document(
     }
 
     fun rename(newTitle: String) {
-        require(canEdit()) { "Only draft or rejected documents can be renamed." }
+        if (!canEdit()) {
+            throw DocumentNotEditableException(lifecycleState)
+        }
         require(newTitle.isNotBlank()) { "Document title must not be blank." }
         title = newTitle
     }
 
     fun addVersion(version: DocumentVersion) {
-        require(canEdit()) { "Only draft or rejected documents can accept a new version." }
+        if (!canEdit()) {
+            throw DocumentNotEditableException(lifecycleState)
+        }
         validateVersion(version)
-        require(mutableVersions.none { it.id == version.id }) { "Version id already exists." }
-        require(mutableVersions.none { it.versionNumber == version.versionNumber }) {
-            "Version number already exists."
+        check(mutableVersions.none { it.id == version.id }) { "Version id already exists." }
+        if (mutableVersions.any { it.versionNumber == version.versionNumber }) {
+            throw DocumentVersionAlreadyExistsException(version.versionNumber)
         }
         mutableVersions.add(version)
         currentVersionId = version.id
@@ -67,7 +71,9 @@ class Document(
     fun transition(command: LifecycleCommand) {
         lifecycleState = when (command) {
             LifecycleCommand.SUBMIT -> {
-                require(currentVersionId != null) { "A document version is required before submission." }
+                if (currentVersionId == null) {
+                    throw DocumentVersionRequiredException()
+                }
                 requireState(LifecycleState.DRAFT)
                 LifecycleState.PENDING_REVIEW
             }

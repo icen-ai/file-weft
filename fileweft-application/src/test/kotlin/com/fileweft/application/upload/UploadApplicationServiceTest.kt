@@ -76,7 +76,7 @@ class UploadApplicationServiceTest {
         val outbox = RecordingOutbox()
         val service = service(storage, fileObjects, assets, outbox, DirectTransaction)
 
-        assertThrows<IllegalArgumentException> {
+        assertThrows<StoredObjectIntegrityException> {
             service.upload(command(), ByteArrayInputStream("content".toByteArray()))
         }
 
@@ -91,7 +91,7 @@ class UploadApplicationServiceTest {
         val storage = FakeStorage().apply { storedContentHash = "sha256:actual" }
         val service = service(storage, RecordingFileObjects(), RecordingAssets(), RecordingOutbox(), DirectTransaction)
 
-        assertThrows<IllegalArgumentException> {
+        assertThrows<StoredObjectIntegrityException> {
             service.upload(command(contentHash = "sha256:expected"), ByteArrayInputStream("content".toByteArray()))
         }
 

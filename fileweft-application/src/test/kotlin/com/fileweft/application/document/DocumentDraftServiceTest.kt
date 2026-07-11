@@ -2,15 +2,19 @@ package com.fileweft.application.document
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.application.upload.StoredObjectIntegrityException
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecord
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.Document
+import com.fileweft.domain.document.DocumentNotEditableException
 import com.fileweft.domain.document.DocumentNumberAlreadyExistsException
 import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.domain.document.DocumentVersion
+import com.fileweft.domain.document.DocumentVersionAlreadyExistsException
+import com.fileweft.domain.document.LifecycleCommand
 import com.fileweft.domain.file.FileAsset
 import com.fileweft.domain.file.FileAssetRepository
 import com.fileweft.domain.file.FileObject
@@ -127,7 +131,7 @@ class DocumentDraftServiceTest {
             identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
         )
 
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(StoredObjectIntegrityException::class.java) {
             service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
         }
 
@@ -209,7 +213,7 @@ class DocumentDraftServiceTest {
             identifiers = listOf("file-2", "version-2"),
         )
 
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(StoredObjectIntegrityException::class.java) {
             service.addVersion(
                 existing.id,
                 AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
@@ -217,6 +221,34 @@ class DocumentDraftServiceTest {
             )
         }
 
+        assertEquals(listOf(storage.location), storage.deleted)
+        assertTrue(fileObjects.saved.isEmpty())
+        assertTrue(documents.saved.isEmpty())
+        assertEquals(listOf("1.0"), existing.versions.map { it.versionNumber })
+    }
+
+    @Test
+    fun `compensates an uploaded version when its business version number conflicts`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage()
+        val documents = RecordingDocuments(existing)
+        val fileObjects = RecordingFileObjects()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            identifiers = listOf("file-2", "version-2"),
+        )
+
+        val failure = assertThrows(DocumentVersionAlreadyExistsException::class.java) {
+            service.addVersion(
+                existing.id,
+                AddDocumentVersionCommand("1.0", "duplicate.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals("1.0", failure.versionNumber)
         assertEquals(listOf(storage.location), storage.deleted)
         assertTrue(fileObjects.saved.isEmpty())
         assertTrue(documents.saved.isEmpty())
@@ -264,6 +296,21 @@ class DocumentDraftServiceTest {
 
         assertEquals("Renamed contract", renamed.title)
         assertEquals("Renamed contract", documents.saved.single().title)
+    }
+
+    @Test
+    fun `returns an explicit conflict when renaming a non-editable document`() {
+        val existing = draftDocument().also { it.transition(LifecycleCommand.SUBMIT) }
+        val documents = RecordingDocuments(existing)
+        val service = service(documents = documents, identifiers = emptyList())
+
+        val failure = assertThrows(DocumentNotEditableException::class.java) {
+            service.rename(existing.id, "Renamed contract")
+        }
+
+        assertEquals(existing.lifecycleState, failure.currentState)
+        assertEquals("Contract", existing.title)
+        assertTrue(documents.saved.isEmpty())
     }
 
     private fun service(
