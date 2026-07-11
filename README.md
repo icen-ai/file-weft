@@ -69,6 +69,12 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 该测试会创建唯一编号文档，验证编辑者上传和提交、单人审批与双人会签、管理员处理 Outbox、下游平台下载 RustFS 对象，并覆盖可选下游失败与必达下游人工恢复。
 
+## 宿主文件树与目录权限
+
+FileWeft 不拥有业务系统的目录，也不会把目录名称写入对象存储路径。宿主实现 `DocumentCatalogProvider`，以租户内不透明字符串 ID 返回文件夹；选中的 ID 仅以 `catalog.folder-id` 元数据绑定到文件资产。这样同一个 `inbox` ID 可以在不同租户中独立存在，目录改名或移动也无需迁移 FileWeft 数据。
+
+新版 SPI 可接收 `DocumentCatalogAccessRequest`，其中的租户、当前用户和操作意图由 FileWeft 的可信上下文生成。目录 ACL 应由宿主在该方法中实施，不能信任前端传入的租户或用户。为兼容现有实现，旧的 `listFolders(tenantId)` 仍有效；需要按用户过滤时覆写请求版本。Starter 在存在唯一 `DocumentCatalogProvider` Bean 时自动装配 `DocumentCatalogAccessService`：先校验 `document:read` 或 `document:create`，再调用宿主目录。创建草稿前调用 `requireFolderForDocumentCreation(folderId)`，然后将返回 ID 写入 `DocumentCatalogBinding.METADATA_KEY`；`DocumentDraftService` 会继续独立执行文档创建授权。
+
 ## 多下游交付
 
 发布不再把“所有下游”折叠成一个同步结果。接入方通过 `DocumentDeliveryProfileProvider` 为租户提供可选交付档案；每个档案由多个 `DocumentDeliveryTargetDefinition` 组成，目标使用不透明字符串 `id`、`connectorId` 和可选 `ownerRef`，并声明为 `REQUIRED` 或 `OPTIONAL`。`DeliveryConnectorResolver` 将 `connectorId` 解析为实际的 `FileConnector`，不把 Spring 或厂商 SDK 泄漏到 SPI。

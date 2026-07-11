@@ -12,8 +12,31 @@ import com.fileweft.core.id.Identifier
 interface DocumentCatalogProvider {
     fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder>
 
+    /**
+     * User-aware variant for hosts whose folder visibility is narrower than a
+     * tenant. Existing providers remain compatible through the tenant-only
+     * fallback; new providers should use this request to enforce their own
+     * folder ACLs without trusting an HTTP request parameter.
+     */
+    fun listFolders(request: DocumentCatalogAccessRequest): List<DocumentCatalogFolder> = listFolders(request.tenantId)
+
     fun findFolder(tenantId: Identifier, folderId: String): DocumentCatalogFolder? =
         listFolders(tenantId).firstOrNull { it.id == folderId }
+
+    fun findFolder(request: DocumentCatalogAccessRequest, folderId: String): DocumentCatalogFolder? =
+        listFolders(request).firstOrNull { it.id == folderId }
+}
+
+/** Trusted context assembled from FileWeft's tenant and identity providers. */
+class DocumentCatalogAccessRequest(
+    val tenantId: Identifier,
+    val userId: Identifier,
+    val operation: DocumentCatalogOperation,
+)
+
+enum class DocumentCatalogOperation {
+    BROWSE,
+    BIND_DOCUMENT,
 }
 
 /** A tenant-scoped folder supplied by the host system. Folder IDs are opaque strings. */

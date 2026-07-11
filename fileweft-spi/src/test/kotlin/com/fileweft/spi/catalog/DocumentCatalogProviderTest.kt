@@ -23,6 +23,35 @@ class DocumentCatalogProviderTest {
     }
 
     @Test
+    fun `passes the authenticated access request to user aware providers while retaining legacy compatibility`() {
+        val provider = object : DocumentCatalogProvider {
+            var request: DocumentCatalogAccessRequest? = null
+
+            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = emptyList()
+
+            override fun listFolders(request: DocumentCatalogAccessRequest): List<DocumentCatalogFolder> {
+                this.request = request
+                return listOf(DocumentCatalogFolder("allowed", null, "Allowed"))
+            }
+        }
+        val request = DocumentCatalogAccessRequest(
+            tenantId = Identifier("alpha"),
+            userId = Identifier("editor-a"),
+            operation = DocumentCatalogOperation.BIND_DOCUMENT,
+        )
+
+        assertEquals("allowed", provider.findFolder(request, "allowed")?.id)
+        assertEquals(Identifier("editor-a"), provider.request?.userId)
+        assertEquals(DocumentCatalogOperation.BIND_DOCUMENT, provider.request?.operation)
+
+        val legacyProvider = object : DocumentCatalogProvider {
+            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
+                listOf(DocumentCatalogFolder("legacy", null, "Legacy"))
+        }
+        assertEquals("legacy", legacyProvider.findFolder(request, "legacy")?.id)
+    }
+
+    @Test
     fun `rejects invalid catalog folder shapes`() {
         assertFailsWith<IllegalArgumentException> { DocumentCatalogFolder("", null, "Folder") }
         assertFailsWith<IllegalArgumentException> { DocumentCatalogFolder("folder", "folder", "Folder") }

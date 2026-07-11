@@ -16,6 +16,7 @@ import com.fileweft.adapter.observability.NoOpFileWeftMetrics
 import com.fileweft.adapter.micrometer.MicrometerFileWeftMetrics
 import com.fileweft.adapter.observability.NoOpTraceContextProvider
 import com.fileweft.application.archive.ArchiveDocumentService
+import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentDownloadService
@@ -29,6 +30,8 @@ import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.plugin.FileWeftPlugin
+import com.fileweft.spi.catalog.DocumentCatalogFolder
+import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.spi.observability.FileWeftMetrics
 import com.fileweft.spi.observability.TraceContextProvider
@@ -184,6 +187,14 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `auto configures catalog access only when the host provides one catalog provider`() {
+        contextRunner().withUserConfiguration(DatabaseConfiguration::class.java, CustomerConfiguration::class.java, CatalogConfiguration::class.java)
+            .run { context ->
+                assertTrue(context.getBean(DocumentCatalogAccessService::class.java) != null)
+            }
+    }
+
+    @Test
     fun `enables a scheduler only for the explicit worker deployment role`() {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java)
             .withPropertyValues("fileweft.worker.enabled=true")
@@ -254,6 +265,15 @@ class FileWeftAutoConfigurationTest {
             override fun id(): String = "host-route"
             override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute =
                 DocumentReviewRoute("HOST_REVIEW", listOf(DocumentReviewRouteTask()))
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CatalogConfiguration {
+        @Bean
+        fun hostCatalogProvider(): DocumentCatalogProvider = object : DocumentCatalogProvider {
+            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
+                listOf(DocumentCatalogFolder("inbox", null, "Inbox"))
         }
     }
 

@@ -14,6 +14,7 @@ import com.fileweft.application.agent.AgentResultRepository
 import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.application.archive.ArchiveDocumentService
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.document.DocumentDraftService
@@ -80,6 +81,7 @@ import com.fileweft.persistence.jdbc.JdbcTaskRepository
 import com.fileweft.persistence.jdbc.JdbcWorkflowInstanceRepository
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.authorization.AuthorizationProvider
+import com.fileweft.spi.catalog.DocumentCatalogProvider
 import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.delivery.DeliveryConnectorResolver
 import com.fileweft.spi.delivery.DeliveryRequirement
@@ -173,6 +175,17 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(ResumableUploadSessionRepository::class)
     fun fileWeftResumableUploadSessionRepository(objectMapper: ObjectMapper): ResumableUploadSessionRepository =
         JdbcResumableUploadSessionRepository(objectMapper)
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogProvider::class)
+    @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
+    @ConditionalOnMissingBean(DocumentCatalogAccessService::class)
+    fun fileWeftDocumentCatalogAccessService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        catalog: DocumentCatalogProvider,
+    ): DocumentCatalogAccessService = DocumentCatalogAccessService(tenants, users, authorization, catalog)
 
     @Bean
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)

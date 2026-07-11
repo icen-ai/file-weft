@@ -7,7 +7,7 @@
 | 阶段 | 已交付能力 | 验证方式 |
 | --- | --- | --- |
 | Core | 标识、上下文、结果、错误与 Outbox 模型，不依赖 Spring 或厂商 SDK | Core 单元测试、架构依赖检查 |
-| SPI | 身份、授权、租户、存储、连接器、交付、任务、诊断、Agent、审批路由契约 | SPI 模型与合约测试 |
+| SPI | 身份、授权、租户、存储、连接器、交付、任务、诊断、Agent、审批路由与宿主目录契约 | SPI 模型与合约测试 |
 | Domain | 文件、文档版本、生命周期、工作流、审计与操作日志领域规则；受控恢复草稿与发布代次 | Domain 单元测试 |
 | Application | 上传、下载、审批、并行会签、发布、下线/归档撤回、受控新版本再发布、同步、Doctor、任务与 Agent 用例 | Application 单元测试 |
 | Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |

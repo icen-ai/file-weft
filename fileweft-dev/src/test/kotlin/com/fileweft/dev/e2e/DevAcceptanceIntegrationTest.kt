@@ -201,6 +201,13 @@ class DevAcceptanceIntegrationTest {
         assertTrue(betaFolders.any { it.path("id").asText() == "projects" })
         assertTrue(betaFolders.none { it.path("id").asText() == "contracts" })
 
+        val betaCannotBindAlphaFolder = uploadFileResponse(
+            "$apiUrl/api/documents",
+            mapOf("documentNumber" to "E2E-BETA-FORBIDDEN-${UUID.randomUUID().toString().take(8)}", "title" to "Forbidden folder", "folderId" to "contracts"),
+            betaEditor,
+        )
+        assertEquals(422, betaCannotBindAlphaFolder.statusCode())
+
         val alphaDocuments = getJson("$apiUrl/api/documents?limit=100", alphaEditor)
         val betaDocuments = getJson("$apiUrl/api/documents?limit=100", betaEditor)
         assertEquals("contracts", alphaDocuments.first { it.path("id").asText() == alphaDocument }.path("folderId").asText())
