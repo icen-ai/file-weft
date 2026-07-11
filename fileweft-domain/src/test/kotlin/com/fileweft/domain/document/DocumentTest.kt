@@ -27,6 +27,22 @@ class DocumentTest {
         document.transition(LifecycleCommand.OFFLINE)
 
         assertEquals(LifecycleState.OFFLINE, document.lifecycleState)
+        assertEquals(1, document.deliveryGeneration)
+    }
+
+    @Test
+    fun `offline document returns to a draft without reusing its publication generation`() {
+        val document = draft()
+        document.addVersion(version(document))
+        document.transition(LifecycleCommand.SUBMIT)
+        document.transition(LifecycleCommand.APPROVE)
+        document.transition(LifecycleCommand.PUBLISH_SUCCEEDED)
+        document.transition(LifecycleCommand.OFFLINE)
+
+        document.transition(LifecycleCommand.RESTORE_DRAFT)
+
+        assertEquals(LifecycleState.DRAFT, document.lifecycleState)
+        assertEquals(1, document.deliveryGeneration)
     }
 
     @Test

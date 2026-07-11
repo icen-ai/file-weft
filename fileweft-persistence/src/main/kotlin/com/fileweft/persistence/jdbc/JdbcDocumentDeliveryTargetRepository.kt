@@ -41,9 +41,9 @@ class JdbcDocumentDeliveryTargetRepository(
             INSERT INTO fw_document_delivery_target(
                 id, tenant_id, document_id, profile_id, target_id, target_name, connector_id,
                 delivery_requirement, owner_ref, delivery_status, external_id, error_message,
-                retry_count, removal_status, removal_error_message, removal_retry_count, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, document_id, target_id) DO UPDATE
+                retry_count, removal_status, removal_error_message, removal_retry_count, delivery_generation, created_time, updated_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, document_id, target_id, delivery_generation) DO UPDATE
             SET profile_id = EXCLUDED.profile_id,
                 target_name = EXCLUDED.target_name,
                 connector_id = EXCLUDED.connector_id,
@@ -75,8 +75,9 @@ class JdbcDocumentDeliveryTargetRepository(
             statement.setString(14, target.removalStatus.name)
             statement.setString(15, target.removalErrorMessage)
             statement.setInt(16, target.removalRetryCount)
-            statement.setLong(17, now)
+            statement.setInt(17, target.deliveryGeneration)
             statement.setLong(18, now)
+            statement.setLong(19, now)
             statement.executeUpdate()
         }
     }
@@ -98,9 +99,10 @@ class JdbcDocumentDeliveryTargetRepository(
         removalStatus = DocumentDeliveryRemovalStatus.valueOf(result.getString("removal_status")),
         removalErrorMessage = result.getString("removal_error_message"),
         removalRetryCount = result.getInt("removal_retry_count"),
+        deliveryGeneration = result.getInt("delivery_generation"),
     )
 
     private companion object {
-        const val SELECT_COLUMNS = "SELECT id, tenant_id, document_id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref, delivery_status, external_id, error_message, retry_count, removal_status, removal_error_message, removal_retry_count"
+        const val SELECT_COLUMNS = "SELECT id, tenant_id, document_id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref, delivery_status, external_id, error_message, retry_count, removal_status, removal_error_message, removal_retry_count, delivery_generation"
     }
 }

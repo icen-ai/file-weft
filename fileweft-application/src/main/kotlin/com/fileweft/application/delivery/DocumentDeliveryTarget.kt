@@ -41,6 +41,7 @@ class DocumentDeliveryTarget(
     removalStatus: DocumentDeliveryRemovalStatus = DocumentDeliveryRemovalStatus.NOT_REQUESTED,
     removalErrorMessage: String? = null,
     removalRetryCount: Int = 0,
+    val deliveryGeneration: Int = 0,
 ) {
     var status: DocumentDeliveryStatus = status
         private set
@@ -65,6 +66,7 @@ class DocumentDeliveryTarget(
         require(ownerRef == null || ownerRef.isNotBlank()) { "Delivery owner reference must not be blank when provided." }
         require(retryCount >= 0) { "Delivery retry count must not be negative." }
         require(removalRetryCount >= 0) { "Delivery removal retry count must not be negative." }
+        require(deliveryGeneration >= 0) { "Delivery generation must not be negative." }
         require(errorMessage == null || errorMessage.isNotBlank()) { "Delivery error message must not be blank when provided." }
         require(removalErrorMessage == null || removalErrorMessage.isNotBlank()) {
             "Delivery removal error message must not be blank when provided."

@@ -267,7 +267,7 @@ function renderInspector() {
     const canRetry = (delivery.status === "FAILED" || delivery.removalStatus === "FAILED") && can("document:delivery:retry");
     const manualRetry = canRetry
       ? `<button class="delivery-retry" type="button" data-delivery-retry="${escapeHtml(delivery.id)}">${escapeHtml(t(delivery.removalStatus === "FAILED" ? "action.retryRemoval" : "action.retryDelivery"))}</button>` : "";
-    return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${removal}${manualRetry}</div></article>`;
+    return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(t("delivery.generation"))} ${escapeHtml(delivery.deliveryGeneration)} · ${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${removal}${manualRetry}</div></article>`;
   }).join("") || emptyEvidence("empty.delivery");
   $("#delivery-list").querySelectorAll("[data-delivery-retry]").forEach((button) => button.addEventListener("click", () => retryDelivery(button.dataset.deliveryRetry)));
   $("#task-list").innerHTML = detail.tasks.map((task) => evidenceItem(
@@ -349,6 +349,7 @@ function renderActions() {
   }
   if (document.lifecycleState === "REJECTED" && can("document:revise")) actions.push(actionButton("action.revise", "revise"));
   if (document.lifecycleState === "PUBLISHED" && can("document:offline")) actions.push(actionButton("action.offline", "offline"));
+  if (document.lifecycleState === "OFFLINE" && can("document:restore")) actions.push(actionButton("action.restore", "restore"));
   if (document.lifecycleState === "PUBLISHED" && can("document:archive")) actions.push(actionButton("action.archive", "archive"));
   $("#document-actions").innerHTML = actions.join("");
   $("#document-actions").querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => runAction(button.dataset.action)));
@@ -388,7 +389,7 @@ async function runAction(action) {
       }));
       notice(t(action === "approve" ? "notice.approved" : "notice.rejected"));
     }
-    if (["revise", "offline", "archive"].includes(action)) await api(`/api/documents/${id}/${action}`, { method: "POST" });
+    if (["revise", "restore", "offline", "archive"].includes(action)) await api(`/api/documents/${id}/${action}`, { method: "POST" });
     await refreshDocuments();
   } catch (error) {
     notice(error.message, "error");

@@ -15,7 +15,7 @@ class JdbcDocumentRepository(
     override fun findById(tenantId: Identifier, documentId: Identifier): Document? {
         val connection = JdbcConnectionContext.requireCurrent()
         connection.prepareStatement(
-            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id FROM fw_document WHERE tenant_id = ? AND id = ?",
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND id = ?",
         ).use { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentId.value)
@@ -29,7 +29,7 @@ class JdbcDocumentRepository(
     override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? {
         val connection = JdbcConnectionContext.requireCurrent()
         connection.prepareStatement(
-            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id FROM fw_document WHERE tenant_id = ? AND doc_no = ?",
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND doc_no = ?",
         ).use { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentNumber)
@@ -45,7 +45,7 @@ class JdbcDocumentRepository(
         val connection = JdbcConnectionContext.requireCurrent()
         val now = clock.millis()
         val updated = connection.prepareStatement(
-            "UPDATE fw_document SET asset_id = ?, doc_no = ?, title = ?, lifecycle_state = ?, current_version_id = ?, updated_time = ? WHERE tenant_id = ? AND id = ?",
+            "UPDATE fw_document SET asset_id = ?, doc_no = ?, title = ?, lifecycle_state = ?, current_version_id = ?, delivery_generation = ?, updated_time = ? WHERE tenant_id = ? AND id = ?",
         ).use { statement ->
             bindDocument(statement, document, now, false)
             statement.executeUpdate()
@@ -53,7 +53,7 @@ class JdbcDocumentRepository(
         if (updated == 0) {
             try {
                 connection.prepareStatement(
-                    "INSERT INTO fw_document(id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO fw_document(id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 ).use { statement ->
                     bindDocument(statement, document, now, true)
                     statement.executeUpdate()
@@ -111,17 +111,19 @@ class JdbcDocumentRepository(
             statement.setString(5, document.title)
             statement.setString(6, document.lifecycleState.name)
             statement.setString(7, document.currentVersionId?.value)
-            statement.setLong(8, now)
+            statement.setInt(8, document.deliveryGeneration)
             statement.setLong(9, now)
+            statement.setLong(10, now)
         } else {
             statement.setString(1, document.assetId.value)
             statement.setString(2, document.documentNumber)
             statement.setString(3, document.title)
             statement.setString(4, document.lifecycleState.name)
             statement.setString(5, document.currentVersionId?.value)
-            statement.setLong(6, now)
-            statement.setString(7, document.tenantId.value)
-            statement.setString(8, document.id.value)
+            statement.setInt(6, document.deliveryGeneration)
+            statement.setLong(7, now)
+            statement.setString(8, document.tenantId.value)
+            statement.setString(9, document.id.value)
         }
     }
 
@@ -134,6 +136,7 @@ class JdbcDocumentRepository(
         lifecycleState = LifecycleState.valueOf(result.getString("lifecycle_state")),
         versions = versions,
         currentVersionId = result.getString("current_version_id")?.let(::Identifier),
+        deliveryGeneration = result.getInt("delivery_generation"),
     )
 
     private fun mapVersion(result: ResultSet): DocumentVersion = DocumentVersion(

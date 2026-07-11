@@ -11,6 +11,7 @@ import com.fileweft.application.agent.ConfirmAgentSuggestionService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.offline.OfflineDocumentService
+import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.Identifier
@@ -62,6 +63,7 @@ class DevDocumentController(
     private val reviewWorkflow: DocumentReviewWorkflowService,
     private val publish: PublishDocumentService,
     private val offline: OfflineDocumentService,
+    private val restoreOffline: RestoreOfflineDocumentService,
     private val archive: ArchiveDocumentService,
     private val queries: DevDocumentQueryService,
     private val operations: DevOperationsService,
@@ -146,6 +148,12 @@ class DevDocumentController(
     @PostMapping("/{documentId}/offline")
     fun offline(@PathVariable documentId: String): DevDocumentDetail {
         val document = offline.offline(Identifier(documentId))
+        return queries.detail(document.id)
+    }
+
+    @PostMapping("/{documentId}/restore")
+    fun restore(@PathVariable documentId: String): DevDocumentDetail {
+        val document = restoreOffline.restore(Identifier(documentId))
         return queries.detail(document.id)
     }
 

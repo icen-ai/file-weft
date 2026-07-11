@@ -12,6 +12,7 @@ class Document(
     lifecycleState: LifecycleState = LifecycleState.DRAFT,
     versions: List<DocumentVersion> = emptyList(),
     currentVersionId: Identifier? = null,
+    deliveryGeneration: Int = 0,
 ) {
     private val mutableVersions = ArrayList<DocumentVersion>()
 
@@ -22,6 +23,9 @@ class Document(
         private set
 
     var currentVersionId: Identifier? = currentVersionId
+        private set
+
+    var deliveryGeneration: Int = deliveryGeneration
         private set
 
     val versions: List<DocumentVersion>
@@ -40,6 +44,7 @@ class Document(
                 "Current version must belong to the document."
             }
         }
+        require(deliveryGeneration >= 0) { "Document delivery generation must not be negative." }
     }
 
     fun rename(newTitle: String) {
@@ -67,7 +72,9 @@ class Document(
                 LifecycleState.PENDING_REVIEW
             }
 
-            LifecycleCommand.APPROVE -> nextState(command, LifecycleState.PENDING_REVIEW, LifecycleState.PUBLISHING)
+            LifecycleCommand.APPROVE -> nextState(command, LifecycleState.PENDING_REVIEW, LifecycleState.PUBLISHING).also {
+                deliveryGeneration++
+            }
             LifecycleCommand.REJECT -> nextState(command, LifecycleState.PENDING_REVIEW, LifecycleState.REJECTED)
             LifecycleCommand.REVISE -> nextState(command, LifecycleState.REJECTED, LifecycleState.DRAFT)
             LifecycleCommand.PUBLISH_SUCCEEDED -> nextState(command, LifecycleState.PUBLISHING, LifecycleState.PUBLISHED)
@@ -75,6 +82,7 @@ class Document(
             LifecycleCommand.RETRY_SYNC -> nextState(command, LifecycleState.SYNC_ERROR, LifecycleState.PUBLISHING)
             LifecycleCommand.ARCHIVE -> nextState(command, LifecycleState.PUBLISHED, LifecycleState.HISTORY)
             LifecycleCommand.OFFLINE -> nextState(command, LifecycleState.PUBLISHED, LifecycleState.OFFLINE)
+            LifecycleCommand.RESTORE_DRAFT -> nextState(command, LifecycleState.OFFLINE, LifecycleState.DRAFT)
         }
     }
 

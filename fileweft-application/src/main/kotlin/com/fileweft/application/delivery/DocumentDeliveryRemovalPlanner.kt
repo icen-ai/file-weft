@@ -26,7 +26,11 @@ class DocumentDeliveryRemovalPlanner(
             "Document must be offline or archived before downstream removal is planned."
         }
         val requested = deliveries.findByDocument(document.tenantId, document.id)
-            .filter { it.status == DocumentDeliveryStatus.SUCCEEDED && it.removalStatus == DocumentDeliveryRemovalStatus.NOT_REQUESTED }
+            .filter {
+                it.deliveryGeneration == document.deliveryGeneration &&
+                    it.status == DocumentDeliveryStatus.SUCCEEDED &&
+                    it.removalStatus == DocumentDeliveryRemovalStatus.NOT_REQUESTED
+            }
             .onEach { delivery ->
                 delivery.requestRemoval()
                 deliveries.save(delivery)

@@ -38,6 +38,7 @@ class DocumentDeliverySyncService(
     private val transaction: ApplicationTransaction,
     private val connectorTimeout: Duration = Duration.ofSeconds(30),
     private val auditTrail: AuditTrail? = null,
+    private val removalPlanner: DocumentDeliveryRemovalPlanner? = null,
 ) {
     init {
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
@@ -50,6 +51,7 @@ class DocumentDeliverySyncService(
         val preparation = transaction.execute { prepare(sourceEvent.tenantId, deliveryId) }
         val handling = when (preparation) {
             is Preparation.AlreadySucceeded -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already synchronized.")
+            is Preparation.Superseded -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target belongs to a superseded publication generation.")
             is Preparation.Failure -> complete(
                 sourceEvent,
                 deliveryId,
@@ -94,6 +96,7 @@ class DocumentDeliverySyncService(
         }
         val document = documentRepository.findById(tenantId, delivery.documentId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was not found in the event tenant.")
+        if (delivery.deliveryGeneration != document.deliveryGeneration) return Preparation.Superseded
         if (document.lifecycleState !in setOf(LifecycleState.PUBLISHING, LifecycleState.SYNC_ERROR, LifecycleState.PUBLISHED)) {
             return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
@@ -151,6 +154,15 @@ class DocumentDeliverySyncService(
             ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markFailed(result.message)
         }
         deliveries.save(delivery)
+        val document = documentRepository.findById(sourceEvent.tenantId, delivery.documentId)
+        if (
+            result.status == ConnectorSyncStatus.SUCCESS &&
+            document != null &&
+            delivery.deliveryGeneration == document.deliveryGeneration &&
+            document.lifecycleState in setOf(LifecycleState.OFFLINE, LifecycleState.HISTORY)
+        ) {
+            removalPlanner?.plan(document)
+        }
         reconcileDocument(sourceEvent.tenantId, delivery.documentId)
         auditTrail?.record(
             tenantId = sourceEvent.tenantId,
@@ -171,7 +183,8 @@ class DocumentDeliverySyncService(
 
     private fun reconcileDocument(tenantId: Identifier, documentId: Identifier) {
         val document = documentRepository.findById(tenantId, documentId) ?: return
-        val required = deliveries.findByDocument(tenantId, documentId).filter { it.requirement == DeliveryRequirement.REQUIRED }
+        val required = deliveries.findByDocumentGeneration(tenantId, documentId, document.deliveryGeneration)
+            .filter { it.requirement == DeliveryRequirement.REQUIRED }
         if (required.isEmpty()) return
         val allRequiredSucceeded = required.all { it.status == DocumentDeliveryStatus.SUCCEEDED }
         val requiredHasFailure = required.any { it.status == DocumentDeliveryStatus.RETRYING || it.status == DocumentDeliveryStatus.FAILED }
@@ -207,6 +220,7 @@ class DocumentDeliverySyncService(
 
     private sealed class Preparation {
         data object AlreadySucceeded : Preparation()
+        data object Superseded : Preparation()
         data class Ready(
             val delivery: DocumentDeliveryTarget,
             val documentId: Identifier,

@@ -8,6 +8,7 @@ import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.offline.OfflineDocumentService
+import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
@@ -87,6 +88,34 @@ class DocumentRetentionServiceTest {
         assertThrows<DocumentNotFoundException> { service.archive(Identifier("missing")) }
     }
 
+    @Test
+    fun `restores an offline document only after its current delivery generation is withdrawn`() {
+        val document = publishedDocument().also { it.transition(LifecycleCommand.OFFLINE) }
+        val repository = InMemoryDocumentRepository(document)
+        val audits = RecordingAudits()
+        val service = RestoreOfflineDocumentService(
+            tenantProvider(), userProvider(), authorizationProvider { AuthorizationDecision(true) }, repository,
+            RecordingDeliveries(deliveredTarget(DocumentDeliveryRemovalStatus.SUCCEEDED)), DirectTransaction, auditTrail(audits),
+        )
+
+        val restored = service.restore(document.id)
+
+        assertEquals(LifecycleState.DRAFT, restored.lifecycleState)
+        assertEquals(1, restored.deliveryGeneration)
+        assertEquals("document:restore", audits.records.single().action)
+    }
+
+    @Test
+    fun `does not restore while a delivered target is still awaiting withdrawal`() {
+        val document = publishedDocument().also { it.transition(LifecycleCommand.OFFLINE) }
+        val service = RestoreOfflineDocumentService(
+            tenantProvider(), userProvider(), authorizationProvider { AuthorizationDecision(true) }, InMemoryDocumentRepository(document),
+            RecordingDeliveries(deliveredTarget(DocumentDeliveryRemovalStatus.PENDING)), DirectTransaction,
+        )
+
+        assertThrows<IllegalArgumentException> { service.restore(document.id) }
+    }
+
     private fun publishedDocument(): Document = Document(
         id = Identifier("document-1"),
         tenantId = Identifier("tenant-1"),
@@ -101,7 +130,7 @@ class DocumentRetentionServiceTest {
         it.transition(LifecycleCommand.PUBLISH_SUCCEEDED)
     }
 
-    private fun deliveredTarget() = DocumentDeliveryTarget(
+    private fun deliveredTarget(removalStatus: DocumentDeliveryRemovalStatus = DocumentDeliveryRemovalStatus.NOT_REQUESTED) = DocumentDeliveryTarget(
         id = Identifier("delivery-1"),
         tenantId = Identifier("tenant-1"),
         documentId = Identifier("document-1"),
@@ -112,6 +141,8 @@ class DocumentRetentionServiceTest {
         requirement = DeliveryRequirement.REQUIRED,
         status = DocumentDeliveryStatus.SUCCEEDED,
         externalId = "archive:tenant-1:document-1",
+        deliveryGeneration = 1,
+        removalStatus = removalStatus,
     )
 
     private fun tenantProvider(): TenantProvider = object : TenantProvider {

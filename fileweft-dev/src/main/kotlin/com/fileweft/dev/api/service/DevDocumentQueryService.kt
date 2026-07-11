@@ -94,6 +94,7 @@ data class DevDeliveryView(
     val removalStatus: String,
     val removalErrorMessage: String?,
     val removalRetryCount: Int,
+    val deliveryGeneration: Int,
     val updatedTime: Long,
 )
 
@@ -265,7 +266,8 @@ class DevDocumentQueryService(
                 result.getString("target_name"), result.getString("connector_id"), result.getString("delivery_requirement"),
                 result.getString("owner_ref"), result.getString("delivery_status"), result.getString("external_id"),
                 result.getString("error_message"), result.getInt("retry_count"), result.getString("removal_status"),
-                result.getString("removal_error_message"), result.getInt("removal_retry_count"), result.getLong("updated_time"),
+                result.getString("removal_error_message"), result.getInt("removal_retry_count"), result.getInt("delivery_generation"),
+                result.getLong("updated_time"),
             )
         }
         val BACKGROUND_TASK_MAPPER = org.springframework.jdbc.core.RowMapper<DevBackgroundTaskView> { result, _ ->
@@ -349,8 +351,8 @@ class DevDocumentQueryService(
         const val DELIVERIES_SQL = """
             SELECT id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref,
                    delivery_status, external_id, error_message, retry_count,
-                   removal_status, removal_error_message, removal_retry_count, updated_time
-            FROM fw_document_delivery_target WHERE tenant_id = ? AND document_id = ? ORDER BY created_time, id
+                   removal_status, removal_error_message, removal_retry_count, delivery_generation, updated_time
+            FROM fw_document_delivery_target WHERE tenant_id = ? AND document_id = ? ORDER BY delivery_generation DESC, created_time, id
         """
         const val TASKS_SQL = """
             SELECT id, task_type, task_status, retry_count, next_attempt_time, last_error, created_time, updated_time

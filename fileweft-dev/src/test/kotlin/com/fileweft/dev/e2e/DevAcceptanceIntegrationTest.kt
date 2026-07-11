@@ -331,6 +331,25 @@ class DevAcceptanceIntegrationTest {
         assertEquals(404, platformDocumentStatus("collaboration", documentId))
         assertAuditActor(withdrawn, "document:offline", "alpha-admin", "Alpha 管理员")
         assertTrue(withdrawn.path("audits").any { it.path("action").asText() == "document:delivery:remove:succeeded" })
+
+        val restored = post("$apiUrl/api/documents/$documentId/restore", null, editor, "application/json")
+        assertEquals("DRAFT", restored.path("document").path("lifecycleState").asText())
+        assertEquals(2, addVersion(editor, documentId, "1.1").path("versions").size())
+        val replacementWorkflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+        postJson(
+            "$apiUrl/api/documents/workflows/${replacementWorkflow.path("workflowId").asText()}/tasks/${replacementWorkflow.path("taskId").asText()}/approve",
+            """{"comment":"更新版本审批","deliveryProfileId":"internal"}""",
+            reviewer,
+        )
+        post("$apiUrl/api/outbox/process?limit=20", null, administrator, "application/json")
+        val republished = awaitPublished(documentId, administrator)
+        assertEquals(listOf(1, 2), republished.path("deliveries").map { it.path("deliveryGeneration").asInt() }.sorted())
+        assertEquals(200, platformDocumentStatus("collaboration", documentId))
+        assertAuditActor(republished, "document:restore", "alpha-editor", "Alpha 编辑者")
     }
 
     @Test

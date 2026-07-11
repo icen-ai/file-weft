@@ -10,4 +10,5 @@ enum class LifecycleCommand {
     RETRY_SYNC,
     ARCHIVE,
     OFFLINE,
+    RESTORE_DRAFT,
 }

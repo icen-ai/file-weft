@@ -7,5 +7,12 @@ interface DocumentDeliveryTargetRepository {
 
     fun findByDocument(tenantId: Identifier, documentId: Identifier): List<DocumentDeliveryTarget>
 
+    fun findByDocumentGeneration(
+        tenantId: Identifier,
+        documentId: Identifier,
+        deliveryGeneration: Int,
+    ): List<DocumentDeliveryTarget> = findByDocument(tenantId, documentId)
+        .filter { it.deliveryGeneration == deliveryGeneration }
+
     fun save(target: DocumentDeliveryTarget)
 }

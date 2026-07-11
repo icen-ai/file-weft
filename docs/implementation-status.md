@@ -8,9 +8,9 @@
 | --- | --- | --- |
 | Core | 标识、上下文、结果、错误与 Outbox 模型，不依赖 Spring 或厂商 SDK | Core 单元测试、架构依赖检查 |
 | SPI | 身份、授权、租户、存储、连接器、交付、任务、诊断、Agent、审批路由契约 | SPI 模型与合约测试 |
-| Domain | 文件、文档版本、生命周期、工作流、审计与操作日志领域规则 | Domain 单元测试 |
-| Application | 上传、下载、审批、并行会签、发布、下线/归档撤回、同步、Doctor、任务与 Agent 用例 | Application 单元测试 |
-| Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付及撤回状态 | PostgreSQL 集成测试 |
+| Domain | 文件、文档版本、生命周期、工作流、审计与操作日志领域规则；受控恢复草稿与发布代次 | Domain 单元测试 |
+| Application | 上传、下载、审批、并行会签、发布、下线/归档撤回、受控新版本再发布、同步、Doctor、任务与 Agent 用例 | Application 单元测试 |
+| Persistence | PostgreSQL/Flyway、租户条件、Outbox 租约、任务、审计、交付/撤回状态及发布代次 | PostgreSQL 集成测试 |
 | Starter | Boot 2 / Boot 3 自动装配、安全默认实现与客户替换点 | Starter 上下文测试 |
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 指标 | Adapter 与 TestKit 合约测试 |
 | Doctor | 权限、生命周期、存储、连接器与 Agent 的诊断及持久化历史 | 单元与 Dev 验收测试 |
@@ -29,7 +29,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 .\gradlew.bat :fileweft-dev:test --tests 'com.fileweft.dev.e2e.DevAcceptanceIntegrationTest' --no-daemon
 ```
 
-Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、Doctor、Agent 与审计。
+Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。
 
 ## 当前明确不包含的厂商实现
 

@@ -39,6 +39,7 @@ class DocumentDeliveryPlanner(
                 id = identifiers.nextId(),
                 tenantId = document.tenantId,
                 documentId = document.id,
+                deliveryGeneration = document.deliveryGeneration,
                 profileId = profile.id,
                 targetId = definition.id,
                 displayName = definition.displayName,

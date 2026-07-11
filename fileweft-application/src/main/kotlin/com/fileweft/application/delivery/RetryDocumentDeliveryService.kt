@@ -7,6 +7,7 @@ import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
+import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
@@ -17,6 +18,7 @@ class RetryDocumentDeliveryService(
     private val tenantProvider: TenantProvider,
     private val userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
+    private val documentRepository: DocumentRepository,
     private val deliveries: DocumentDeliveryTargetRepository,
     private val outbox: OutboxEventRepository,
     private val identifiers: IdentifierGenerator,
@@ -37,6 +39,11 @@ class RetryDocumentDeliveryService(
         return transaction.execute {
             val current = deliveries.findById(tenant.tenantId, deliveryId)
                 ?: throw NoSuchElementException("Delivery target ${deliveryId.value} was removed.")
+            val document = documentRepository.findById(tenant.tenantId, current.documentId)
+                ?: throw NoSuchElementException("Document ${current.documentId.value} was removed.")
+            require(current.deliveryGeneration == document.deliveryGeneration) {
+                "Historical delivery targets cannot be retried after a newer publication generation has started."
+            }
             val eventType = when {
                 current.status == DocumentDeliveryStatus.FAILED -> {
                     current.retryManually()

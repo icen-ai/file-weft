@@ -37,6 +37,7 @@ import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.doctor.TransactionalDoctorChecker
 import com.fileweft.application.doctor.UnavailableDoctorChecker
 import com.fileweft.application.offline.OfflineDocumentService
+import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
 import com.fileweft.application.outbox.OutboxProcessingRepository
 import com.fileweft.application.outbox.TraceAwareOutboxEventRepository
@@ -320,10 +321,12 @@ class FileWeftRuntimeConfiguration {
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
         connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
         transaction: ApplicationTransaction, auditTrail: AuditTrail, properties: FileWeftProperties,
+        removalPlanner: DocumentDeliveryRemovalPlanner,
     ): DocumentDeliverySyncService = DocumentDeliverySyncService(
         documents, fileObjects, storage, connectors, deliveries, transaction,
         connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,
+        removalPlanner = removalPlanner,
     )
 
     @Bean
@@ -348,10 +351,10 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(RetryDocumentDeliveryService::class)
     fun fileWeftRetryDocumentDeliveryService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
-        deliveries: DocumentDeliveryTargetRepository, outbox: OutboxEventRepository,
+        documents: DocumentRepository, deliveries: DocumentDeliveryTargetRepository, outbox: OutboxEventRepository,
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
     ): RetryDocumentDeliveryService = RetryDocumentDeliveryService(
-        tenants, users, authorization, deliveries, outbox, identifiers, transaction, clock, auditTrail,
+        tenants, users, authorization, documents, deliveries, outbox, identifiers, transaction, clock, auditTrail,
     )
 
     @Bean
@@ -420,6 +423,16 @@ class FileWeftRuntimeConfiguration {
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
         removalPlanner: DocumentDeliveryRemovalPlanner,
     ): OfflineDocumentService = OfflineDocumentService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
+
+    @Bean
+    @ConditionalOnMissingBean(RestoreOfflineDocumentService::class)
+    fun fileWeftRestoreOfflineDocumentService(
+        tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
+        documents: DocumentRepository, deliveries: DocumentDeliveryTargetRepository,
+        transaction: ApplicationTransaction, auditTrail: AuditTrail,
+    ): RestoreOfflineDocumentService = RestoreOfflineDocumentService(
+        tenants, users, authorization, documents, deliveries, transaction, auditTrail,
+    )
 
     @Bean
     @ConditionalOnMissingBean(ArchiveDocumentService::class)
