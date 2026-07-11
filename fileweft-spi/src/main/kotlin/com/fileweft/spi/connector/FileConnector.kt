@@ -39,6 +39,10 @@ enum class ConnectorSyncStatus {
     PERMANENT_FAILURE,
 }
 
+/**
+ * A connector diagnostic must be brief, credential-free, and safe for a
+ * platform operator to inspect. FileWeft bounds persisted delivery messages.
+ */
 data class ConnectorSyncResult(
     val status: ConnectorSyncStatus,
     val externalId: String? = null,

@@ -417,6 +417,43 @@ class DocumentDeliveryServiceTest {
     }
 
     @Test
+    fun `bounds downstream diagnostics before persisting delivery and removal state`() {
+        val oversizedMessage = "x".repeat(DeliveryDiagnosticMessage.MAX_LENGTH + 100)
+        val syncFixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.PERMANENT_FAILURE),
+            syncMessages = mapOf("archive" to oversizedMessage),
+        )
+
+        val syncResult = syncFixture.sync.synchronize(syncFixture.events.events.single())
+        syncFixture.sync.exhaust(syncFixture.events.events.single(), oversizedMessage)
+        val syncError = syncFixture.deliveries.findByDocument(TENANT, syncFixture.document.id).single().errorMessage
+
+        assertEquals(DeliveryDiagnosticMessage.MAX_LENGTH, syncError?.length)
+        assertTrue(syncError!!.endsWith("…[truncated]"))
+        assertEquals(syncError, syncResult.message)
+
+        val removalFixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            removalOutcomes = mapOf("archive" to ConnectorSyncStatus.PERMANENT_FAILURE),
+            removalMessages = mapOf("archive" to oversizedMessage),
+        )
+        removalFixture.sync.synchronize(removalFixture.events.events.single())
+        removalFixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(removalFixture.deliveries, removalFixture.events, SequenceIds("removal-event"), CLOCK)
+            .plan(removalFixture.document)
+
+        val removalResult = removalFixture.removal.remove(removalFixture.events.events.last())
+        removalFixture.removal.exhaust(removalFixture.events.events.last(), oversizedMessage)
+        val removalError = removalFixture.deliveries.findByDocument(TENANT, removalFixture.document.id).single().removalErrorMessage
+
+        assertEquals(DeliveryDiagnosticMessage.MAX_LENGTH, removalError?.length)
+        assertTrue(removalError!!.endsWith("…[truncated]"))
+        assertEquals(removalError, removalResult.message)
+    }
+
+    @Test
     fun `retains the pre metrics Java constructor overloads for custom host wiring`() {
         assertTrue(
             DocumentDeliverySyncService::class.java.constructors.any { constructor ->
@@ -436,6 +473,8 @@ class DocumentDeliveryServiceTest {
         definitions: List<DocumentDeliveryTargetDefinition>,
         outcomes: Map<String, ConnectorSyncStatus>,
         removalOutcomes: Map<String, ConnectorSyncStatus> = emptyMap(),
+        syncMessages: Map<String, String> = emptyMap(),
+        removalMessages: Map<String, String> = emptyMap(),
         plan: Boolean = true,
         beforeConnectorResult: ((String, Document) -> Unit)? = null,
         transaction: ApplicationTransaction = DirectTransaction,
@@ -450,6 +489,8 @@ class DocumentDeliveryServiceTest {
                 id,
                 outcome,
                 removalOutcomes[id] ?: ConnectorSyncStatus.SUCCESS,
+                syncMessage = syncMessages[id] ?: "simulated-$id",
+                removalMessage = removalMessages[id] ?: "simulated-remove-$id",
                 beforeResult = { beforeConnectorResult?.invoke(id, document) },
             )
         }
@@ -523,6 +564,8 @@ class DocumentDeliveryServiceTest {
         private val targetId: String,
         private val outcome: ConnectorSyncStatus,
         private val removalOutcome: ConnectorSyncStatus,
+        private val syncMessage: String,
+        private val removalMessage: String,
         private val beforeResult: () -> Unit = {},
     ) : FileConnector {
         val requests = mutableListOf<ConnectorSyncRequest>()
@@ -530,11 +573,11 @@ class DocumentDeliveryServiceTest {
         override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
             requests += request
             beforeResult()
-            return ConnectorSyncResult(outcome, if (outcome == ConnectorSyncStatus.SUCCESS) "$targetId-external" else null, "simulated-$targetId")
+            return ConnectorSyncResult(outcome, if (outcome == ConnectorSyncStatus.SUCCESS) "$targetId-external" else null, syncMessage)
         }
         override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
             removalRequests += request
-            return ConnectorSyncResult(removalOutcome, message = "simulated-remove-$targetId")
+            return ConnectorSyncResult(removalOutcome, message = removalMessage)
         }
         override fun health() = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
     }

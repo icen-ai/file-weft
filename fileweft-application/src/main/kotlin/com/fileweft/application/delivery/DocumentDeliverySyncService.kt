@@ -74,10 +74,11 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     fun exhaust(sourceEvent: OutboxEvent, message: String) {
         val deliveryId = sourceEvent.payload[DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY]
             ?.takeIf { it.isNotBlank() }?.let(::Identifier) ?: return
+        val diagnostic = DeliveryDiagnosticMessage.normalize(message) ?: "Delivery retry limit was reached."
         transaction.execute {
             val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId) ?: return@execute
             if (delivery.status != DocumentDeliveryStatus.SUCCEEDED) {
-                delivery.markFailed(message)
+                delivery.markFailed(diagnostic)
                 deliveries.save(delivery)
                 reconcileDocument(sourceEvent.tenantId, delivery.documentId)
                 auditTrail?.record(
@@ -85,7 +86,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                     resourceType = DOCUMENT_RESOURCE_TYPE,
                     resourceId = delivery.documentId,
                     action = DELIVERY_FAILED_AUDIT_ACTION,
-                    details = mapOf("deliveryId" to delivery.id.value, "targetId" to delivery.targetId, "message" to message),
+                    details = mapOf("deliveryId" to delivery.id.value, "targetId" to delivery.targetId, "message" to diagnostic),
                 )
             }
         }
@@ -168,17 +169,18 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         deliveryId: Identifier,
         result: ConnectorSyncResult,
     ): OutboxHandlingResult = transaction.execute {
+        val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
         val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
             ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before synchronization completed.")
-        when (result.status) {
-            ConnectorSyncStatus.SUCCESS -> delivery.markSucceeded(result.externalId)
-            ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRetrying(result.message)
-            ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markFailed(result.message)
+        when (normalizedResult.status) {
+            ConnectorSyncStatus.SUCCESS -> delivery.markSucceeded(normalizedResult.externalId)
+            ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRetrying(normalizedResult.message)
+            ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markFailed(normalizedResult.message)
         }
         deliveries.save(delivery)
         val document = documentRepository.findById(sourceEvent.tenantId, delivery.documentId)
         if (
-            result.status == ConnectorSyncStatus.SUCCESS &&
+            normalizedResult.status == ConnectorSyncStatus.SUCCESS &&
             document != null &&
             delivery.deliveryGeneration == document.deliveryGeneration &&
             document.lifecycleState in setOf(LifecycleState.OFFLINE, LifecycleState.HISTORY)
@@ -190,17 +192,17 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
             tenantId = sourceEvent.tenantId,
             resourceType = DOCUMENT_RESOURCE_TYPE,
             resourceId = delivery.documentId,
-            action = if (result.status == ConnectorSyncStatus.SUCCESS) DELIVERY_SUCCEEDED_AUDIT_ACTION else DELIVERY_FAILED_AUDIT_ACTION,
+            action = if (normalizedResult.status == ConnectorSyncStatus.SUCCESS) DELIVERY_SUCCEEDED_AUDIT_ACTION else DELIVERY_FAILED_AUDIT_ACTION,
             details = linkedMapOf<String, String>().apply {
                 put("deliveryId", delivery.id.value)
                 put("targetId", delivery.targetId)
                 put("connector", delivery.connectorId)
-                put("status", result.status.name)
-                result.externalId?.let { put("externalId", it) }
-                result.message?.let { put("message", it) }
+                put("status", normalizedResult.status.name)
+                normalizedResult.externalId?.let { put("externalId", it) }
+                normalizedResult.message?.let { put("message", it) }
             },
         )
-        result.toOutboxHandlingResult()
+        normalizedResult.toOutboxHandlingResult()
     }
 
     private fun reconcileDocument(tenantId: Identifier, documentId: Identifier) {

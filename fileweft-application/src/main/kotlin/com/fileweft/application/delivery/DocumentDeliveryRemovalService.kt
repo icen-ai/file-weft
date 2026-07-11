@@ -43,12 +43,13 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
 
     fun exhaust(sourceEvent: OutboxEvent, message: String) {
         val deliveryId = sourceEvent.deliveryIdOrNull() ?: return
+        val diagnostic = DeliveryDiagnosticMessage.normalize(message) ?: "Delivery removal retry limit was reached."
         transaction.execute {
             val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId) ?: return@execute
             if (delivery.removalStatus != DocumentDeliveryRemovalStatus.SUCCEEDED) {
-                delivery.markRemovalFailed(message)
+                delivery.markRemovalFailed(diagnostic)
                 deliveries.save(delivery)
-                audit(sourceEvent, delivery, DELIVERY_REMOVAL_FAILED_AUDIT_ACTION, mapOf("message" to message))
+                audit(sourceEvent, delivery, DELIVERY_REMOVAL_FAILED_AUDIT_ACTION, mapOf("message" to diagnostic))
             }
         }
     }
@@ -93,24 +94,25 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
     }
 
     private fun complete(sourceEvent: OutboxEvent, deliveryId: Identifier, result: ConnectorSyncResult): OutboxHandlingResult = transaction.execute {
+        val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
         val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
             ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before downstream withdrawal.")
-        when (result.status) {
+        when (normalizedResult.status) {
             ConnectorSyncStatus.SUCCESS -> delivery.markRemovalSucceeded()
-            ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRemovalRetrying(result.message)
-            ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markRemovalFailed(result.message)
+            ConnectorSyncStatus.RETRYABLE_FAILURE -> delivery.markRemovalRetrying(normalizedResult.message)
+            ConnectorSyncStatus.PERMANENT_FAILURE -> delivery.markRemovalFailed(normalizedResult.message)
         }
         deliveries.save(delivery)
         audit(
             sourceEvent,
             delivery,
-            if (result.status == ConnectorSyncStatus.SUCCESS) DELIVERY_REMOVAL_SUCCEEDED_AUDIT_ACTION else DELIVERY_REMOVAL_FAILED_AUDIT_ACTION,
+            if (normalizedResult.status == ConnectorSyncStatus.SUCCESS) DELIVERY_REMOVAL_SUCCEEDED_AUDIT_ACTION else DELIVERY_REMOVAL_FAILED_AUDIT_ACTION,
             linkedMapOf<String, String>().apply {
-                put("status", result.status.name)
-                result.message?.let { put("message", it) }
+                put("status", normalizedResult.status.name)
+                normalizedResult.message?.let { put("message", it) }
             },
         )
-        result.toOutboxHandlingResult()
+        normalizedResult.toOutboxHandlingResult()
     }
 
     private fun audit(sourceEvent: OutboxEvent, delivery: DocumentDeliveryTarget, action: String, details: Map<String, String>) {

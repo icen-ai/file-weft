@@ -1,6 +1,7 @@
 package com.fileweft.application.sync
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.delivery.DeliveryDiagnosticMessage
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
@@ -111,6 +112,23 @@ class DocumentSyncServiceTest {
         assertEquals(1, records.record?.retryCount)
         assertEquals(listOf("event-1", "event-1"), keys)
         assertEquals(listOf(FileWeftMetric.SYNC_FAILURE, FileWeftMetric.SYNC_SUCCESS), metrics.metrics)
+    }
+
+    @Test
+    fun `bounds legacy connector diagnostics before persisting sync records`() {
+        val oversizedMessage = "x".repeat(DeliveryDiagnosticMessage.MAX_LENGTH + 100)
+        val records = InMemorySyncRecords()
+        val service = service(
+            InMemoryDocuments(publishingDocument()), records, TrackingTransaction(),
+            object : StorageStub() { override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration) = URI.create("https://storage.example/document-1") },
+            connector { ConnectorSyncResult(ConnectorSyncStatus.PERMANENT_FAILURE, message = oversizedMessage) },
+        )
+
+        val result = service.synchronize(event())
+
+        assertEquals(DeliveryDiagnosticMessage.MAX_LENGTH, records.record?.errorMessage?.length)
+        assertTrue(records.record!!.errorMessage!!.endsWith("…[truncated]"))
+        assertEquals(records.record?.errorMessage, result.message)
     }
 
     @Test

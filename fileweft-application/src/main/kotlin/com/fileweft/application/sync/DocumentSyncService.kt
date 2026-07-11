@@ -1,6 +1,7 @@
 package com.fileweft.application.sync
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.delivery.DeliveryDiagnosticMessage
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
@@ -116,6 +117,7 @@ class DocumentSyncService(
         externalId: String?,
         message: String?,
     ): OutboxHandlingResult = transaction.execute {
+        val normalizedMessage = DeliveryDiagnosticMessage.normalize(message)
         val document = documentRepository.findById(sourceEvent.tenantId, documentId)
         if (document == null) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Document was removed before synchronization completed.")
@@ -136,7 +138,7 @@ class DocumentSyncService(
                 connectorName = connectorName,
                 status = status,
                 externalId = externalId ?: previous?.externalId,
-                errorMessage = message,
+                errorMessage = normalizedMessage,
                 retryCount = (previous?.retryCount ?: 0) + if (status == ConnectorSyncStatus.SUCCESS) 0 else 1,
             ),
         )
@@ -151,10 +153,10 @@ class DocumentSyncService(
                 put("connector", connectorName)
                 put("status", status.name)
                 externalId?.let { put("externalId", it) }
-                message?.let { put("message", it) }
+                normalizedMessage?.let { put("message", it) }
             },
         )
-        status.toOutboxHandlingResult(message)
+        status.toOutboxHandlingResult(normalizedMessage)
     }
 
     private fun currentVersion(document: Document): DocumentVersion? =
