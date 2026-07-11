@@ -35,7 +35,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。日常 `check` 会继续执行所有 Java 8 基线模块的独立 `java8Test`；发版门禁 `compatibilityCheck` 通过 Gradle 工具链在 Java 8、11、21、25 上执行所有 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。该矩阵已在实际工具链运行通过，而不是只依赖字节码目标声明。
 
-Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
+Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。开发 API 还提供 `GET /api/documents/{id}/sync-status` 与 `GET /api/documents/{id}/logs?limit=`，用于分别查看脱敏的当前交付/同步/Outbox 状态和带来源标识的审计/操作时间线；两者都执行当前租户和 `document:read` 校验，且不会返回下游外部 ID、原始错误或 Outbox 负载。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
 
 ## 本轮核对后仍未闭环的手册项
 

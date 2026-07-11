@@ -147,6 +147,86 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `exposes redacted document sync status and bounded operation history only within the current tenant`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val traceId = "e2e-status-${UUID.randomUUID().toString().take(12)}"
+        val documentId = createDraft(
+            editor,
+            "E2E-STATUS-${UUID.randomUUID().toString().take(12)}",
+            traceId = traceId,
+        ).path("document").path("id").asText()
+        val workflow = postJson(
+            "$apiUrl/api/documents/$documentId/submit",
+            """{"reviewerId":"alpha-reviewer"}""",
+            editor,
+        )
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
+        postJson(
+            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+            """{"comment":"状态接口验收","deliveryProfileId":"internal"}""",
+            reviewer,
+        )
+
+        val syncStatus = getJson("$apiUrl/api/documents/$documentId/sync-status", editor)
+        assertTrue(syncStatus.path("deliveryTargets").isArray)
+        assertTrue(syncStatus.path("deliveryTargets").size() > 0)
+        assertTrue(syncStatus.path("outboxEvents").size() > 0)
+        assertTrue(syncStatus.path("deliveryTargets").all { target ->
+            !target.has("externalId") && !target.has("ownerRef") && !target.has("connectorId") &&
+                !target.has("errorMessage") && !target.has("removalErrorMessage") && !target.has("deliveryGeneration")
+        })
+        assertTrue(syncStatus.path("syncRecords").all { record ->
+            !record.has("sourceEventId") && !record.has("externalId") && !record.has("errorMessage")
+        })
+        assertTrue(syncStatus.path("outboxEvents").all { event ->
+            !event.has("id") && !event.has("lastError") && !event.has("payload") && !event.has("payloadJson")
+        })
+        assertTrue(!syncStatus.has("platformSharedSecret"))
+
+        val boundedLogs = getJson("$apiUrl/api/documents/$documentId/logs?limit=1", editor)
+        assertEquals(1, boundedLogs.size())
+        assertTrue(boundedLogs.first().path("source").asText() in setOf("AUDIT", "OPERATION"))
+        assertTrue(!boundedLogs.first().has("details"))
+        val logs = getJson("$apiUrl/api/documents/$documentId/logs?limit=20", editor)
+        assertTrue(logs.any { entry ->
+            entry.path("source").asText() == "AUDIT" && entry.path("action").asText() == "document:create"
+        })
+        assertTrue(logs.any { entry ->
+            entry.path("source").asText() == "OPERATION" && entry.path("action").asText() == "document:create" &&
+                entry.path("traceId").asText() == traceId
+        })
+        assertTrue(logs.all { entry -> !entry.has("details") && !entry.has("detailJson") })
+
+        val invalidLimit = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/logs?limit=101"))
+                .header("Authorization", "Bearer $editor")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(422, invalidLimit.statusCode())
+        assertEquals("INVALID_REQUEST", mapper.readTree(invalidLimit.body()).path("code").asText())
+
+        val betaEditor = login("editor@beta", "dev-editor")
+        val crossTenant = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/sync-status"))
+                .header("Authorization", "Bearer $betaEditor")
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(404, crossTenant.statusCode())
+
+        val unauthenticated = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/logs"))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(401, unauthenticated.statusCode())
+    }
+
+    @Test
     fun `authorizes a version stream without exposing storage urls or cross tenant content`() {
         val editor = login("editor@alpha", "dev-editor")
         val documentId = createDraft(editor, "E2E-DOWNLOAD-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()

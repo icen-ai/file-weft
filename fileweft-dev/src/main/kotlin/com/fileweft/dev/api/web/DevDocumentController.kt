@@ -19,7 +19,9 @@ import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.connector.DevPlatformMirrorService
 import com.fileweft.dev.api.service.DevDocumentDetail
+import com.fileweft.dev.api.service.DevDocumentLogEntry
 import com.fileweft.dev.api.service.DevDocumentQueryService
+import com.fileweft.dev.api.service.DevDocumentSyncStatus
 import com.fileweft.dev.api.service.DevOperationsService
 import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.domain.workflow.WorkflowInstance
@@ -100,6 +102,15 @@ class DevDocumentController(
 
     @GetMapping("/{documentId}")
     fun detail(@PathVariable documentId: String): DevDocumentDetail = queries.detail(Identifier(documentId))
+
+    @GetMapping("/{documentId}/sync-status")
+    fun syncStatus(@PathVariable documentId: String): DevDocumentSyncStatus = queries.syncStatus(Identifier(documentId))
+
+    @GetMapping("/{documentId}/logs")
+    fun logs(
+        @PathVariable documentId: String,
+        @RequestParam(defaultValue = "20") limit: Int,
+    ): List<DevDocumentLogEntry> = queries.logs(Identifier(documentId), limit)
 
     @GetMapping("/{documentId}/content")
     fun downloadCurrent(@PathVariable documentId: String): ResponseEntity<StreamingResponseBody> =

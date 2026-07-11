@@ -29,4 +29,12 @@ class DevApiExceptionHandlerTest {
         assertEquals(HttpStatus.CONFLICT, response.statusCode)
         assertEquals("INVALID_LIFECYCLE_TRANSITION", response.body?.code)
     }
+
+    @Test
+    fun `maps document read denial to a forbidden response`() {
+        val response = handler.forbidden(SecurityException("Document read denied."))
+
+        assertEquals(HttpStatus.FORBIDDEN, response.statusCode)
+        assertEquals("FORBIDDEN", response.body?.code)
+    }
 }

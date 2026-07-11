@@ -79,6 +79,57 @@ data class DevOutboxView(
     val updatedTime: Long,
 )
 
+/**
+ * Read-only downstream state for the development API. It intentionally omits
+ * downstream external IDs, owner references, connector credentials, raw error
+ * messages, and outbox payloads.
+ */
+data class DevDocumentSyncStatus(
+    val deliveryTargets: List<DevDeliveryStatusView>,
+    val syncRecords: List<DevSyncStatusRecordView>,
+    val outboxEvents: List<DevOutboxStatusView>,
+)
+
+data class DevDeliveryStatusView(
+    val targetId: String,
+    val displayName: String,
+    val requirement: String,
+    val status: String,
+    val retryCount: Int,
+    val removalStatus: String,
+    val removalRetryCount: Int,
+    val updatedTime: Long,
+)
+
+data class DevSyncStatusRecordView(
+    val connectorName: String,
+    val status: String,
+    val retryCount: Int,
+    val updatedTime: Long,
+)
+
+data class DevOutboxStatusView(
+    val type: String,
+    val status: String,
+    val retryCount: Int,
+    val createdTime: Long,
+    val updatedTime: Long,
+)
+
+/**
+ * A redacted, time-ordered document history entry. Operation entries retain
+ * their trace ID; audit entries are identified explicitly through [source].
+ */
+data class DevDocumentLogEntry(
+    val id: String,
+    val source: String,
+    val action: String,
+    val operatorId: String?,
+    val operatorName: String?,
+    val traceId: String?,
+    val createdTime: Long,
+)
+
 data class DevDeliveryView(
     val id: String,
     val profileId: String,
@@ -170,10 +221,9 @@ class DevDocumentQueryService(
     }
 
     fun detail(documentId: Identifier): DevDocumentDetail {
-        access.requireDocumentAction(documentId, "document:read")
-        val tenantId = tenantProvider.currentTenant().tenantId.value
-        val document = jdbcTemplate.query(DETAIL_SQL, SUMMARY_MAPPER, tenantId, documentId.value).firstOrNull()
-            ?: throw NoSuchElementException("Document ${documentId.value} was not found in the current tenant.")
+        val accessibleDocument = requireReadableDocument(documentId)
+        val tenantId = accessibleDocument.tenantId
+        val document = accessibleDocument.document
         return DevDocumentDetail(
             document = document,
             versions = jdbcTemplate.query(VERSIONS_SQL, VERSION_MAPPER, tenantId, documentId.value),
@@ -191,6 +241,58 @@ class DevDocumentQueryService(
             syncRecords = jdbcTemplate.query(SYNC_SQL, SYNC_MAPPER, tenantId, documentId.value),
             outboxEvents = jdbcTemplate.query(OUTBOX_SQL, OUTBOX_MAPPER, tenantId, documentId.value),
         )
+    }
+
+    fun syncStatus(documentId: Identifier): DevDocumentSyncStatus {
+        val accessibleDocument = requireReadableDocument(documentId)
+        val tenantId = accessibleDocument.tenantId
+        return DevDocumentSyncStatus(
+            deliveryTargets = jdbcTemplate.query(
+                SYNC_STATUS_DELIVERIES_SQL,
+                DELIVERY_STATUS_MAPPER,
+                tenantId,
+                documentId.value,
+                MAX_SYNC_STATUS_ENTRIES,
+            ),
+            syncRecords = jdbcTemplate.query(
+                SYNC_STATUS_RECORDS_SQL,
+                SYNC_STATUS_RECORD_MAPPER,
+                tenantId,
+                documentId.value,
+                MAX_SYNC_STATUS_ENTRIES,
+            ),
+            outboxEvents = jdbcTemplate.query(
+                SYNC_STATUS_OUTBOX_SQL,
+                OUTBOX_STATUS_MAPPER,
+                tenantId,
+                documentId.value,
+                MAX_SYNC_STATUS_ENTRIES,
+            ),
+        )
+    }
+
+    fun logs(documentId: Identifier, limit: Int): List<DevDocumentLogEntry> {
+        require(limit in 1..MAX_DOCUMENT_LOG_ENTRIES) {
+            "Document log limit must be between 1 and $MAX_DOCUMENT_LOG_ENTRIES."
+        }
+        val accessibleDocument = requireReadableDocument(documentId)
+        return jdbcTemplate.query(
+            DOCUMENT_LOGS_SQL,
+            DOCUMENT_LOG_ENTRY_MAPPER,
+            accessibleDocument.tenantId,
+            documentId.value,
+            accessibleDocument.tenantId,
+            documentId.value,
+            limit,
+        )
+    }
+
+    private fun requireReadableDocument(documentId: Identifier): AccessibleDocument {
+        access.requireDocumentAction(documentId, "document:read")
+        val tenantId = tenantProvider.currentTenant().tenantId.value
+        val document = jdbcTemplate.query(DETAIL_SQL, SUMMARY_MAPPER, tenantId, documentId.value).firstOrNull()
+            ?: throw NoSuchElementException("Document ${documentId.value} was not found in the current tenant.")
+        return AccessibleDocument(tenantId, document)
     }
 
     private fun loadWorkflows(tenantId: String, documentId: String): List<DevWorkflowView> = jdbcTemplate.query(
@@ -216,8 +318,12 @@ class DevDocumentQueryService(
         result.copy(confirmations = jdbcTemplate.query(AGENT_CONFIRMATIONS_SQL, AGENT_CONFIRMATION_MAPPER, tenantId, result.taskId))
     }
 
+    private data class AccessibleDocument(val tenantId: String, val document: DevDocumentSummary)
+
     private companion object {
         const val AGENT_SUGGESTION_READ_ACTION = "agent:suggestion:read"
+        const val MAX_DOCUMENT_LOG_ENTRIES = 100
+        const val MAX_SYNC_STATUS_ENTRIES = 100
         val SUMMARY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentSummary> { result, _ ->
             DevDocumentSummary(
                 result.getString("id"), result.getString("doc_no"), result.getString("title"),
@@ -258,6 +364,31 @@ class DevDocumentQueryService(
             DevOutboxView(
                 result.getString("id"), result.getString("event_type"), result.getString("event_status"), result.getInt("retry_count"),
                 result.getString("last_error"), result.getLong("created_time"), result.getLong("updated_time"),
+            )
+        }
+        val DELIVERY_STATUS_MAPPER = org.springframework.jdbc.core.RowMapper<DevDeliveryStatusView> { result, _ ->
+            DevDeliveryStatusView(
+                result.getString("target_id"), result.getString("target_name"), result.getString("delivery_requirement"),
+                result.getString("delivery_status"), result.getInt("retry_count"), result.getString("removal_status"),
+                result.getInt("removal_retry_count"), result.getLong("updated_time"),
+            )
+        }
+        val SYNC_STATUS_RECORD_MAPPER = org.springframework.jdbc.core.RowMapper<DevSyncStatusRecordView> { result, _ ->
+            DevSyncStatusRecordView(
+                result.getString("connector_name"), result.getString("sync_status"), result.getInt("retry_count"),
+                result.getLong("updated_time"),
+            )
+        }
+        val OUTBOX_STATUS_MAPPER = org.springframework.jdbc.core.RowMapper<DevOutboxStatusView> { result, _ ->
+            DevOutboxStatusView(
+                result.getString("event_type"), result.getString("event_status"), result.getInt("retry_count"),
+                result.getLong("created_time"), result.getLong("updated_time"),
+            )
+        }
+        val DOCUMENT_LOG_ENTRY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentLogEntry> { result, _ ->
+            DevDocumentLogEntry(
+                result.getString("id"), result.getString("source"), result.getString("action"), result.getString("operator_id"),
+                result.getString("operator_name"), result.getString("trace_id"), result.getLong("created_time"),
             )
         }
         val DELIVERY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDeliveryView> { result, _ ->
@@ -347,6 +478,45 @@ class DevDocumentQueryService(
         const val SYNC_SQL = """
             SELECT id, source_event_id, connector_name, sync_status, external_id, error_message, retry_count, updated_time
             FROM fw_sync_record WHERE tenant_id = ? AND document_id = ? ORDER BY updated_time DESC
+        """
+        const val SYNC_STATUS_DELIVERIES_SQL = """
+            SELECT target.target_id, target.target_name, target.delivery_requirement, target.delivery_status, target.retry_count,
+                   target.removal_status, target.removal_retry_count, target.updated_time
+            FROM fw_document_delivery_target target
+            JOIN fw_document document ON document.id = target.document_id AND document.tenant_id = target.tenant_id
+            WHERE target.tenant_id = ? AND target.document_id = ?
+              AND target.delivery_generation = document.delivery_generation
+            ORDER BY target.created_time, target.id
+            LIMIT ?
+        """
+        const val SYNC_STATUS_RECORDS_SQL = """
+            SELECT connector_name, sync_status, retry_count, updated_time
+            FROM fw_sync_record
+            WHERE tenant_id = ? AND document_id = ?
+            ORDER BY updated_time DESC, id DESC
+            LIMIT ?
+        """
+        const val SYNC_STATUS_OUTBOX_SQL = """
+            SELECT event_type, event_status, retry_count, created_time, updated_time
+            FROM fw_outbox_event
+            WHERE tenant_id = ? AND payload_json ->> 'documentId' = ?
+            ORDER BY created_time DESC, id DESC
+            LIMIT ?
+        """
+        const val DOCUMENT_LOGS_SQL = """
+            SELECT id, source, action, operator_id, operator_name, trace_id, created_time
+            FROM (
+                SELECT id, 'AUDIT' AS source, action, operator_id, operator_name,
+                       CAST(NULL AS varchar(128)) AS trace_id, created_time
+                FROM fw_audit_record
+                WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ?
+                UNION ALL
+                SELECT id, 'OPERATION' AS source, action, operator_id, operator_name, trace_id, created_time
+                FROM fw_operation_log
+                WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ?
+            ) AS document_log
+            ORDER BY created_time DESC, id DESC
+            LIMIT ?
         """
         const val DELIVERIES_SQL = """
             SELECT id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref,
