@@ -15,9 +15,11 @@ class FileWeftMetricsContractTest {
 
         metrics.increment(FileWeftMetric.UPLOAD_COUNT, mapOf("tenantId" to "tenant-1"))
         metrics.increment(FileWeftMetric.DOCTOR_FAILURE)
+        metrics.increment(FileWeftMetric.DELIVERY_REMOVAL_SUCCESS)
 
         assertEquals("upload_count", recorded[0].first.value)
         assertEquals("tenant-1", recorded[0].second["tenantId"])
         assertEquals(emptyMap(), recorded[1].second)
+        assertEquals("delivery_removal_success", recorded[2].first.value)
     }
 }

@@ -334,11 +334,100 @@ class DocumentDeliveryServiceTest {
     }
 
     @Test
-    fun `retains the pre metrics Java constructor overload for custom host wiring`() {
+    fun `records downstream removal outcomes outside transactions and skips idempotent replays`() {
+        val transaction = TrackingTransaction()
+        val metrics = RecordingMetrics(transaction)
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            transaction = transaction,
+            metrics = metrics,
+        )
+        fixture.sync.synchronize(fixture.events.events.single())
+        metrics.calls.clear()
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK).plan(fixture.document)
+        val removalEvent = fixture.events.events.last()
+
+        val result = fixture.removal.remove(removalEvent)
+        fixture.removal.remove(removalEvent)
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+        assertEquals(
+            listOf(
+                MetricCall(
+                    FileWeftMetric.DELIVERY_REMOVAL_SUCCESS,
+                    mapOf("tenantId" to TENANT.value, "connector" to "archive"),
+                ),
+            ),
+            metrics.calls,
+        )
+    }
+
+    @Test
+    fun `records failed downstream removals without hiding the target state`() {
+        val transaction = TrackingTransaction()
+        val metrics = RecordingMetrics(transaction)
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            removalOutcomes = mapOf("archive" to ConnectorSyncStatus.PERMANENT_FAILURE),
+            transaction = transaction,
+            metrics = metrics,
+        )
+        fixture.sync.synchronize(fixture.events.events.single())
+        metrics.calls.clear()
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK).plan(fixture.document)
+
+        val result = fixture.removal.remove(fixture.events.events.last())
+
+        assertEquals(OutboxHandlingStatus.PERMANENT_FAILURE, result.status)
+        assertEquals(DocumentDeliveryRemovalStatus.FAILED, fixture.deliveries.findByDocument(TENANT, fixture.document.id).single().removalStatus)
+        assertEquals(
+            listOf(
+                MetricCall(
+                    FileWeftMetric.DELIVERY_REMOVAL_FAILURE,
+                    mapOf("tenantId" to TENANT.value, "connector" to "archive"),
+                ),
+            ),
+            metrics.calls,
+        )
+    }
+
+    @Test
+    fun `removal metric failures do not alter downstream confirmation`() {
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            metrics = object : FileWeftMetrics {
+                override fun increment(metric: FileWeftMetric, tags: Map<String, String>) {
+                    throw IllegalStateException("metrics unavailable")
+                }
+            },
+        )
+        fixture.sync.synchronize(fixture.events.events.single())
+        fixture.document.transition(LifecycleCommand.OFFLINE)
+        DocumentDeliveryRemovalPlanner(fixture.deliveries, fixture.events, SequenceIds("removal-event"), CLOCK).plan(fixture.document)
+
+        val result = fixture.removal.remove(fixture.events.events.last())
+
+        assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+        assertEquals(DocumentDeliveryRemovalStatus.SUCCEEDED, fixture.deliveries.findByDocument(TENANT, fixture.document.id).single().removalStatus)
+    }
+
+    @Test
+    fun `retains the pre metrics Java constructor overloads for custom host wiring`() {
         assertTrue(
             DocumentDeliverySyncService::class.java.constructors.any { constructor ->
                 constructor.parameterTypes.size == 9 &&
                     constructor.parameterTypes.last() == DocumentDeliveryRemovalPlanner::class.java
+            },
+        )
+        assertTrue(
+            DocumentDeliveryRemovalService::class.java.constructors.any { constructor ->
+                constructor.parameterTypes.size == 5 &&
+                    constructor.parameterTypes.last() == com.fileweft.application.audit.AuditTrail::class.java
             },
         )
     }
@@ -397,7 +486,7 @@ class DocumentDeliveryServiceTest {
             ),
             metrics = metrics,
         )
-        val removal = DocumentDeliveryRemovalService(connectorResolver, deliveries, transaction)
+        val removal = DocumentDeliveryRemovalService(connectorResolver, deliveries, transaction, metrics = metrics)
         return Fixture(document, documents, deliveries, events, connectors, connectorResolver, sync, removal, planner)
     }
 

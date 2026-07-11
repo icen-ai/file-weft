@@ -371,10 +371,12 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftDocumentDeliveryRemovalService(
         connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
         transaction: ApplicationTransaction, auditTrail: AuditTrail, properties: FileWeftProperties,
+        metrics: FileWeftMetrics,
     ): DocumentDeliveryRemovalService = DocumentDeliveryRemovalService(
         connectors, deliveries, transaction,
         connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,
+        metrics = metrics,
     )
 
     @Bean

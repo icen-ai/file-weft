@@ -11,15 +11,18 @@ import com.fileweft.spi.connector.ConnectorSyncStatus
 import com.fileweft.spi.delivery.DeliveryConnectorResolver
 import com.fileweft.spi.event.OutboxHandlingResult
 import com.fileweft.spi.event.OutboxHandlingStatus
+import com.fileweft.spi.observability.FileWeftMetric
+import com.fileweft.spi.observability.FileWeftMetrics
 import java.time.Duration
 
 /** Removes one frozen downstream target outside the transaction that marked a document unavailable. */
-class DocumentDeliveryRemovalService(
+class DocumentDeliveryRemovalService @JvmOverloads constructor(
     private val connectors: DeliveryConnectorResolver,
     private val deliveries: DocumentDeliveryTargetRepository,
     private val transaction: ApplicationTransaction,
     private val connectorTimeout: Duration = Duration.ofSeconds(30),
     private val auditTrail: AuditTrail? = null,
+    private val metrics: FileWeftMetrics? = null,
 ) {
     init {
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
@@ -28,11 +31,14 @@ class DocumentDeliveryRemovalService(
     fun remove(sourceEvent: OutboxEvent): OutboxHandlingResult {
         val deliveryId = sourceEvent.deliveryIdOrNull()
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery removal event does not contain deliveryId.")
-        return when (val preparation = transaction.execute { prepare(sourceEvent.tenantId, deliveryId) }) {
+        val preparation = transaction.execute { prepare(sourceEvent.tenantId, deliveryId) }
+        val handling = when (preparation) {
             is Preparation.AlreadyRemoved -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already removed downstream.")
             is Preparation.Failure -> complete(sourceEvent, deliveryId, ConnectorSyncResult(preparation.status, message = preparation.message))
             is Preparation.Ready -> complete(sourceEvent, deliveryId, invokeConnector(preparation))
         }
+        recordMetric(preparation, handling, sourceEvent.tenantId.value)
+        return handling
     }
 
     fun exhaust(sourceEvent: OutboxEvent, message: String) {
@@ -51,20 +57,23 @@ class DocumentDeliveryRemovalService(
         val delivery = deliveries.findById(tenantId, deliveryId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
         when (delivery.removalStatus) {
-            DocumentDeliveryRemovalStatus.SUCCEEDED -> return Preparation.AlreadyRemoved
+            DocumentDeliveryRemovalStatus.SUCCEEDED -> return Preparation.AlreadyRemoved(delivery.connectorId)
             DocumentDeliveryRemovalStatus.FAILED -> return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Delivery target removal requires a manual retry.",
+                delivery.connectorId,
             )
             DocumentDeliveryRemovalStatus.NOT_REQUESTED -> return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
                 "Delivery target removal was not requested.",
+                delivery.connectorId,
             )
             DocumentDeliveryRemovalStatus.PENDING, DocumentDeliveryRemovalStatus.RETRYING -> Unit
         }
         val connector = connectors.findConnector(delivery.connectorId) ?: return Preparation.Failure(
             ConnectorSyncStatus.PERMANENT_FAILURE,
             "Delivery connector '${delivery.connectorId}' is no longer configured.",
+            delivery.connectorId,
         )
         return Preparation.Ready(delivery, connector)
     }
@@ -134,10 +143,43 @@ class DocumentDeliveryRemovalService(
         )
     }
 
+    /** Metrics are emitted after all database work, and must not affect acknowledgement semantics. */
+    private fun recordMetric(preparation: Preparation, handling: OutboxHandlingResult, tenantId: String) {
+        if (preparation is Preparation.AlreadyRemoved) return
+        val metric = if (handling.status == OutboxHandlingStatus.SUCCEEDED) {
+            FileWeftMetric.DELIVERY_REMOVAL_SUCCESS
+        } else {
+            FileWeftMetric.DELIVERY_REMOVAL_FAILURE
+        }
+        try {
+            metrics?.increment(
+                metric,
+                buildMap {
+                    put("tenantId", tenantId)
+                    preparation.connectorId?.let { connectorId -> put("connector", connectorId) }
+                },
+            )
+        } catch (_: Exception) {
+            // Observability failures must never alter outbox acknowledgement semantics.
+        }
+    }
+
     private sealed class Preparation {
-        data object AlreadyRemoved : Preparation()
-        data class Ready(val delivery: DocumentDeliveryTarget, val connector: com.fileweft.spi.connector.FileConnector) : Preparation()
-        data class Failure(val status: ConnectorSyncStatus, val message: String) : Preparation()
+        abstract val connectorId: String?
+
+        data class AlreadyRemoved(override val connectorId: String) : Preparation()
+        data class Ready(
+            val delivery: DocumentDeliveryTarget,
+            val connector: com.fileweft.spi.connector.FileConnector,
+        ) : Preparation() {
+            override val connectorId: String = delivery.connectorId
+        }
+
+        data class Failure(
+            val status: ConnectorSyncStatus,
+            val message: String,
+            override val connectorId: String? = null,
+        ) : Preparation()
     }
 
     private companion object {

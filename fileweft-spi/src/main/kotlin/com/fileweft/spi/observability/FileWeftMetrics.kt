@@ -7,6 +7,8 @@ enum class FileWeftMetric(
     UPLOAD_FAILURE("upload_failure"),
     SYNC_SUCCESS("sync_success"),
     SYNC_FAILURE("sync_failure"),
+    DELIVERY_REMOVAL_SUCCESS("delivery_removal_success"),
+    DELIVERY_REMOVAL_FAILURE("delivery_removal_failure"),
     DOCTOR_FAILURE("doctor_failure"),
     TASK_SUCCESS("task_success"),
     TASK_FAILURE("task_failure"),
