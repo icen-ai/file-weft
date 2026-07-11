@@ -17,6 +17,8 @@ class JavaV1ApiResponseFactoryInteropTest {
         ApiResponse<String> success = factory.success("payload", "trace-java");
         ApiHttpFailure failure = factory.failure(new ApplicationForbiddenException("host policy detail"), "trace-java");
         ApiHttpFailure conflict = factory.failure(new DocumentNumberAlreadyExistsException("private-number"), "trace-java");
+        ApiHttpFailure method = factory.failure(new V1MethodNotAllowedException(), "trace-java");
+        ApiHttpFailure range = factory.failure(new V1RangeNotSupportedException(), "trace-java");
 
         assertEquals("payload", success.getData());
         assertEquals("trace-java", success.getTraceId());
@@ -26,5 +28,11 @@ class JavaV1ApiResponseFactoryInteropTest {
         assertEquals("Access denied.", failure.getResponse().getMessage());
         assertEquals(409, conflict.getStatus().getStatusCode());
         assertEquals("CONFLICT", conflict.getResponse().getCode());
+        assertEquals(405, method.getStatus().getStatusCode());
+        assertEquals("METHOD_NOT_ALLOWED", method.getResponse().getCode());
+        assertEquals(416, range.getStatus().getStatusCode());
+        assertEquals("RANGE_NOT_SUPPORTED", range.getResponse().getCode());
+        assertEquals("Method is not allowed.", new V1MethodNotAllowedException().getMessage());
+        assertEquals("Range requests are not supported.", new V1RangeNotSupportedException().getMessage());
     }
 }

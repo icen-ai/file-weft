@@ -26,6 +26,16 @@ class V1ApiResponseFactory {
     @JvmOverloads
     fun failure(failure: Throwable, traceId: String? = null): ApiHttpFailure {
         val mapped = when (failure) {
+            is V1MethodNotAllowedException -> MappedFailure(
+                ApiHttpStatus.METHOD_NOT_ALLOWED,
+                ApiErrorCodes.METHOD_NOT_ALLOWED,
+                "Method is not allowed.",
+            )
+            is V1RangeNotSupportedException -> MappedFailure(
+                ApiHttpStatus.RANGE_NOT_SATISFIABLE,
+                ApiErrorCodes.RANGE_NOT_SUPPORTED,
+                "Range requests are not supported.",
+            )
             is ApplicationUnauthenticatedException -> MappedFailure(
                 ApiHttpStatus.UNAUTHORIZED,
                 ApiErrorCodes.UNAUTHENTICATED,
@@ -96,7 +106,9 @@ enum class ApiHttpStatus(val statusCode: Int) {
     UNAUTHORIZED(401),
     FORBIDDEN(403),
     NOT_FOUND(404),
+    METHOD_NOT_ALLOWED(405),
     CONFLICT(409),
+    RANGE_NOT_SATISFIABLE(416),
     SERVICE_UNAVAILABLE(503),
     INTERNAL_SERVER_ERROR(500),
 }

@@ -14,6 +14,8 @@ class ApiErrorCodes private constructor() {
         const val UNAUTHENTICATED: String = "UNAUTHENTICATED"
         const val FORBIDDEN: String = "FORBIDDEN"
         const val NOT_FOUND: String = "NOT_FOUND"
+        const val METHOD_NOT_ALLOWED: String = "METHOD_NOT_ALLOWED"
+        const val RANGE_NOT_SUPPORTED: String = "RANGE_NOT_SUPPORTED"
         const val CONFLICT: String = "CONFLICT"
         const val FEATURE_UNAVAILABLE: String = "FEATURE_UNAVAILABLE"
         const val CONTENT_UNAVAILABLE: String = "CONTENT_UNAVAILABLE"

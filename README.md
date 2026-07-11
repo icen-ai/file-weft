@@ -195,7 +195,9 @@ Outbox 将 Trace 作为独立的 `trace_id` 持久化字段，而不是混入业
 
 ## 受控文件下载
 
-`DocumentDownloadService` 是文档内容的唯一应用层入口：它在读取对象前按当前租户执行 `document:download` 授权，校验版本属于文档，再从对应的 tenant-scoped 文件对象流式读取。下载意图以 `document:download` 写入审计和操作日志；Storage URL 不会作为前端 API 返回值，因此前端权限不能绕过 FileWeft 的服务端授权。
+`DocumentDownloadService` 是文档内容的唯一应用层入口：它在读取对象前按当前租户执行 `document:download` 授权，校验版本属于文档，再从对应的 tenant-scoped 文件对象流式读取。接入宿主目录后，默认 Starter 还会在数据库事务外冻结当前用户的可信目录范围，并在解析文件的同一个短事务内按租户、文档和目录再次复核；隐藏目录和空范围统一表现为文档不存在，且不会打开对象存储或写入下载审计。下载意图以 `document:download` 写入审计和操作日志；Storage URL 不会作为前端 API 返回值，因此前端权限不能绕过 FileWeft 的服务端授权。
+
+正式 Web Starter 提供 `/fileweft/v1/documents/{documentId}/content` 与 `/fileweft/v1/documents/{documentId}/versions/{versionId}/content`。成功响应使用 `attachment`、RFC 5987 文件名、安全 ASCII fallback、内容类型白名单、`nosniff` 与 `private, no-store`；只有对象存储已报告并与持久化值核对的长度才会成为 `Content-Length`。首版协议不承诺断点续传：任何 `Range` 都在打开下载前固定返回 416，显式 `HEAD` 固定返回 405 和 `Allow: GET`，且不返回 ETag、`Accept-Ranges`、内容哈希或存储地址。开始流式输出前的失败使用固定 JSON 外层；开始输出后的 I/O 中断只关闭流并终止响应，不会把 JSON 拼到二进制尾部。
 
 开发验收 API 提供当前版本和指定历史版本的流式端点。Dev 控制台只为服务端下发了 `document:download` 的角色显示下载控件；按钮使用带 Bearer Token 的 API 请求而非裸 S3 地址，便于演示下载授权与跨租户拒绝。
 

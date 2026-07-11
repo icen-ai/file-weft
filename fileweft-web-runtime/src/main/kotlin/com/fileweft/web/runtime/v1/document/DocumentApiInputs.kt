@@ -6,6 +6,8 @@ import com.fileweft.core.id.Identifier
 internal object DocumentApiInputs {
     fun documentId(value: String): Identifier = identifier(value, "Document id")
 
+    fun versionId(value: String): Identifier = identifier(value, "Document version id")
+
     private fun identifier(value: String, field: String): Identifier {
         require(value.isNotBlank()) { "$field must not be blank." }
         require(value.length <= MAX_IDENTIFIER_LENGTH) {

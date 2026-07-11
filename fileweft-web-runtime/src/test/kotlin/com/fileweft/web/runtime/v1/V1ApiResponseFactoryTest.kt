@@ -22,6 +22,8 @@ class V1ApiResponseFactoryTest {
     @Test
     fun `maps trusted authorization and document failures to stable statuses without exposing causes`() {
         val cases = listOf(
+            V1MethodNotAllowedException() to Triple(405, ApiErrorCodes.METHOD_NOT_ALLOWED, "Method is not allowed."),
+            V1RangeNotSupportedException() to Triple(416, ApiErrorCodes.RANGE_NOT_SUPPORTED, "Range requests are not supported."),
             ApplicationUnauthenticatedException("host identity is unavailable") to Triple(401, ApiErrorCodes.UNAUTHENTICATED, "Authentication is required."),
             ApplicationForbiddenException("policy=restricted-folder") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             DocumentNotFoundException(Identifier("private-document")) to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
@@ -58,7 +60,11 @@ class V1ApiResponseFactoryTest {
             assertEquals(expected.second, result.response.error?.code)
             assertEquals(expected.third, result.response.error?.message)
             assertEquals("trace-1", result.response.traceId)
-            assertFalse(result.response.message.contains(failure.message.orEmpty()))
+            if (failure is V1MethodNotAllowedException || failure is V1RangeNotSupportedException) {
+                assertEquals(failure.message, result.response.message)
+            } else {
+                assertFalse(result.response.message.contains(failure.message.orEmpty()))
+            }
         }
     }
 

@@ -1,2 +1,3 @@
 com.fileweft.web.spring.boot3.FileWeftWebBoot3AutoConfiguration
 com.fileweft.web.spring.boot3.FileWeftWebBoot3WriteAutoConfiguration
+com.fileweft.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration

@@ -59,6 +59,8 @@ class JavaApiContractInteropTest {
         assertEquals("UNAUTHENTICATED", ApiErrorCodes.UNAUTHENTICATED);
         assertEquals("FORBIDDEN", ApiErrorCodes.FORBIDDEN);
         assertEquals("NOT_FOUND", ApiErrorCodes.NOT_FOUND);
+        assertEquals("METHOD_NOT_ALLOWED", ApiErrorCodes.METHOD_NOT_ALLOWED);
+        assertEquals("RANGE_NOT_SUPPORTED", ApiErrorCodes.RANGE_NOT_SUPPORTED);
         assertEquals("CONFLICT", ApiErrorCodes.CONFLICT);
         assertEquals("FEATURE_UNAVAILABLE", ApiErrorCodes.FEATURE_UNAVAILABLE);
         assertEquals("CONTENT_UNAVAILABLE", ApiErrorCodes.CONTENT_UNAVAILABLE);
