@@ -73,7 +73,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 ### 浏览器验收回归
 
-`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、审批者操作以及 Alpha/Beta 租户文件可见性隔离。
+`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、单人与双人审批、驳回修订、直接创建、重命名、版本、授权下载、目录移动、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 租户文件可见性隔离。
 
 首次执行先安装锁定的 Node 依赖和 Chromium：
 

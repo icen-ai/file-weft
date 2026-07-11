@@ -347,9 +347,8 @@ function renderActions() {
     actions.push(actionButton("action.submit", "submit"), actionButton("action.submitDualControl", "submitDualControl"));
   }
   const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
-  const task = workflow?.tasks.find((item) => item.state === "PENDING");
-  const isAssignedReviewer = task && (!task.assigneeId || task.assigneeId === state.user.userId);
-  if (document.lifecycleState === "PENDING_REVIEW" && isAssignedReviewer && can("document:audit")) {
+  const task = workflow?.tasks.find((item) => item.state === "PENDING" && (!item.assigneeId || item.assigneeId === state.user.userId));
+  if (document.lifecycleState === "PENDING_REVIEW" && task && can("document:audit")) {
     actions.push(actionButton("action.approve", "approve"), actionButton("action.reject", "reject"));
   }
   if (document.lifecycleState === "REJECTED" && can("document:revise")) actions.push(actionButton("action.revise", "revise"));
@@ -392,7 +391,7 @@ async function runAction(action) {
     }
     if (["approve", "reject"].includes(action)) {
       const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
-      const task = workflow?.tasks.find((item) => item.state === "PENDING");
+      const task = workflow?.tasks.find((item) => item.state === "PENDING" && (!item.assigneeId || item.assigneeId === state.user.userId));
       if (!workflow || !task) throw new Error("No pending review task is available.");
       await api(`/api/documents/workflows/${workflow.id}/tasks/${task.id}/${action}`, json({
         comment: action === "approve" ? "Development proof approved" : "Development proof requires revision",
@@ -506,6 +505,7 @@ async function createFixture(fixtureId) {
     const detail = await api("/api/documents", { method: "POST", body: form });
     state.selectedId = detail.document.id;
     await refreshDocuments();
+    if (state.detail?.document.id !== detail.document.id) await selectDocument(detail.document.id, false);
     activatePanel("documents");
     notice(t("notice.fixtureCreated"));
   } catch (error) {
@@ -814,27 +814,31 @@ $("#open-create").addEventListener("click", () => $("#create-drawer").classList.
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));
 $("#create-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    const detail = await api("/api/documents", { method: "POST", body: new FormData(event.currentTarget) });
+    const detail = await api("/api/documents", { method: "POST", body: new FormData(form) });
     $("#create-drawer").classList.add("hidden");
-    event.currentTarget.reset();
+    form.reset();
     state.selectedId = detail.document.id;
     await refreshDocuments();
+    if (state.detail?.document.id !== detail.document.id) await selectDocument(detail.document.id, false);
   } catch (error) { notice(error.message, "error"); }
 });
 $("#rename-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    await api(`/api/documents/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(event.currentTarget).get("title") }) });
-    event.currentTarget.reset();
+    await api(`/api/documents/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(form).get("title") }) });
+    form.reset();
     await refreshDocuments();
   } catch (error) { notice(error.message, "error"); }
 });
 $("#version-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   try {
-    await api(`/api/documents/${state.selectedId}/versions`, { method: "POST", body: new FormData(event.currentTarget) });
-    event.currentTarget.reset();
+    await api(`/api/documents/${state.selectedId}/versions`, { method: "POST", body: new FormData(form) });
+    form.reset();
     await refreshDocuments();
   } catch (error) { notice(error.message, "error"); }
 });

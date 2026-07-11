@@ -31,7 +31,7 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 
 根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。所有 Java 8 基线模块还会以独立 `java8Test` 在 Java 8 虚拟机执行测试；Boot 3 Starter 和开发验收应用保持 Java 17 基线。
 
-Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例上传/提交、审批操作以及 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
+Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev/web` 另有锁定依赖的 Playwright 浏览器验收：验证中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离；设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:check` 调用。
 
 ## 当前明确不包含的厂商实现
 
