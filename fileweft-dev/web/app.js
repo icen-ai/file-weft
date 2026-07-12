@@ -7,6 +7,25 @@ const FIXTURES = [
   { id: "incident", path: "./fixtures/incident-report.json", fileName: "incident-report.json", contentType: "application/json" },
 ];
 
+function newDoctorState(documentId = null) {
+  return {
+    documentId,
+    immediateReport: null,
+    immediateLoading: false,
+    task: null,
+    taskReport: null,
+    taskLoading: false,
+    taskRefreshFailure: false,
+    scheduleKey: null,
+    systemReport: null,
+    systemLoading: false,
+    contextGeneration: 0,
+    pollTimer: null,
+    pollGeneration: 0,
+    pollFailures: 0,
+  };
+}
+
 const state = {
   token: null,
   user: null,
@@ -20,6 +39,7 @@ const state = {
   selectedFolderId: null,
   selectedId: null,
   detail: null,
+  doctor: newDoctorState(),
   resumableBusy: false,
   stalledResumableCompletions: null,
   locale: localStorage.getItem("fileweft.locale") || DEFAULT_LOCALE,
@@ -29,6 +49,17 @@ const MINIMUM_RESUMABLE_CHUNK_BYTES = 5 * 1024 * 1024;
 const MAXIMUM_RESUMABLE_PARTS = 10_000;
 const V1_DOCUMENTS_PATH = "/fileweft/v1/documents";
 const V1_WORKFLOW_TASKS_PATH = "/fileweft/v1/workflows/tasks";
+const V1_SYSTEM_DOCTOR_PATH = "/fileweft/v1/doctor";
+const DOCTOR_REPORT_STATUSES = new Set(["HEALTHY", "WARNING", "ERROR", "SKIPPED"]);
+const DOCTOR_TASK_STATUSES = new Set(["PENDING", "RUNNING", "RETRY", "SUCCESS", "FAILED"]);
+const DOCTOR_TASK_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED"]);
+const DOCTOR_PUBLIC_CHECKERS = new Set([
+  "permission", "lifecycle", "workflow", "storage", "catalog", "delivery-profile", "connector", "agent",
+  "task", "extensions",
+]);
+let doctorPollSequence = 0;
+let doctorContextSequence = 0;
+let documentSelectionSequence = 0;
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => translate(state.locale, key);
 const can = (action) => state.permissions.has(action);
@@ -42,6 +73,7 @@ const localized = (prefix, value) => {
 const localizedState = (value) => localized("state", value);
 const localizedAudit = (value) => localized("audit", value);
 const localizedTaskStatus = (value) => localized("task.status", value);
+const localizedDoctorStatus = (value) => localized("doctor.status", value);
 const formatTime = (value) => value ? new Date(Number(value)).toLocaleString(state.locale === "zh" ? "zh-CN" : "en-GB", { hour12: false }) : "—";
 
 const localizedApiError = (payload, status) => {
@@ -96,6 +128,7 @@ function applyTranslations() {
     renderWorkflowInbox();
     renderResumableUpload();
     renderStalledResumableCompletions();
+    renderDoctorPanel();
     if (state.detail) renderInspector();
   }
 }
@@ -118,6 +151,7 @@ async function login(username, password) {
   state.token = result.token;
   state.user = result;
   state.permissions = new Set(result.permissions || []);
+  resetDoctorState();
   state.stalledResumableCompletions = null;
   $("#login-view").classList.add("hidden");
   $("#app-view").classList.remove("hidden");
@@ -280,11 +314,14 @@ async function decideWorkflowTask(item, action, deliveryProfileId) {
 }
 
 async function selectDocument(documentId, refreshPanels = true) {
+  const selectionSequence = ++documentSelectionSequence;
+  if (state.doctor.documentId !== documentId) resetDoctorState(documentId);
   const [detail, workflowPage, syncStatus] = await Promise.all([
     api(`/api/documents/${documentId}`),
     v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/workflows?limit=100`),
     v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/sync-status`),
   ]);
+  if (selectionSequence !== documentSelectionSequence || state.doctor.documentId !== documentId) return;
   state.selectedId = documentId;
   state.detail = detail;
   state.workflowHistory = workflowPage?.items || [];
@@ -297,6 +334,7 @@ async function selectDocument(documentId, refreshPanels = true) {
   renderDocuments();
   syncFolderOptions();
   renderInspector();
+  renderDoctorPanel();
   if (refreshPanels) loadPlatform();
 }
 
@@ -306,6 +344,314 @@ function evidenceItem(title, content) {
 
 function emptyEvidence(key) {
   return `<div class="evidence-item"><small>${escapeHtml(t(key))}</small></div>`;
+}
+
+function doctorRequestKey() {
+  if (globalThis.crypto?.randomUUID) return `dev-ui-doctor-${globalThis.crypto.randomUUID()}`;
+  return `dev-ui-doctor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function documentDoctorPath(documentId) {
+  return `${V1_DOCUMENTS_PATH}/${encodeURIComponent(documentId)}/doctor`;
+}
+
+function normalizedDoctorReportStatus(value) {
+  return DOCTOR_REPORT_STATUSES.has(value) ? value : "ERROR";
+}
+
+function normalizedDoctorTaskStatus(value) {
+  return DOCTOR_TASK_STATUSES.has(value) ? value : "FAILED";
+}
+
+function normalizedDoctorChecker(value) {
+  return DOCTOR_PUBLIC_CHECKERS.has(value) ? value : "extensions";
+}
+
+function isDoctorReport(report, documentId = null) {
+  if (!report || typeof report !== "object" || !DOCTOR_REPORT_STATUSES.has(report.status) || !Array.isArray(report.checks)) return false;
+  if (documentId === null) return !("documentId" in report);
+  return report.documentId === documentId;
+}
+
+function doctorCheckerLabel(value) {
+  const checker = normalizedDoctorChecker(value);
+  const key = `doctor.checker.${checker}`;
+  const translated = t(key);
+  return translated === key ? t("doctor.checker.extensions") : translated;
+}
+
+function setDoctorStatus(element, status, idle = false) {
+  const normalized = idle ? "SKIPPED" : normalizedDoctorReportStatus(status);
+  element.className = `doctor-status ${normalized}`;
+  element.textContent = idle ? t("doctor.status.idle") : localizedDoctorStatus(normalized);
+  element.dataset.doctorStatus = idle ? "IDLE" : normalized;
+}
+
+function setDoctorTaskStatus(element, status, idle = false) {
+  const normalized = idle ? "SKIPPED" : normalizedDoctorTaskStatus(status);
+  element.className = `doctor-status ${normalized}`;
+  element.textContent = idle ? t("doctor.status.idle") : localizedDoctorStatus(normalized);
+  element.dataset.doctorStatus = idle ? "IDLE" : normalized;
+}
+
+function doctorLoading(target, key) {
+  target.innerHTML = `<div class="doctor-empty loading">${escapeHtml(t(key))}</div>`;
+}
+
+function doctorEmpty(target, key) {
+  target.innerHTML = `<div class="doctor-empty">${escapeHtml(t(key))}</div>`;
+}
+
+function renderDoctorReport(target, report) {
+  const checks = [];
+  const checkerNames = new Set();
+  (Array.isArray(report?.checks) ? report.checks : []).slice(0, 64).forEach((candidate) => {
+    const checkerName = normalizedDoctorChecker(candidate?.checkerName);
+    if (checkerNames.has(checkerName)) return;
+    checkerNames.add(checkerName);
+    checks.push({ checkerName, status: normalizedDoctorReportStatus(candidate?.status) });
+  });
+  const inspected = Number.isFinite(Number(report?.inspectedTime))
+    ? `<div class="doctor-report-meta">${escapeHtml(interpolate("doctor.checkedAt", { time: formatTime(report.inspectedTime) }))}</div>`
+    : "";
+  const renderedChecks = checks.map((check) => {
+    const checker = doctorCheckerLabel(check.checkerName);
+    const reason = interpolate(`doctor.reason.${check.status}`, { checker });
+    const repair = ["WARNING", "ERROR"].includes(check.status)
+      ? `<p class="doctor-check-repair"><b>${escapeHtml(t("doctor.repair"))}</b><br />${escapeHtml(t("doctor.repair.default"))}</p>`
+      : "";
+    return `<article class="doctor-check" data-testid="doctor-check-${escapeHtml(check.checkerName)}" data-doctor-status="${escapeHtml(check.status)}">
+      <strong class="doctor-check-name">${escapeHtml(checker)}</strong><span class="doctor-check-state">${escapeHtml(localizedDoctorStatus(check.status))}</span>
+      <p class="doctor-check-reason">${escapeHtml(reason)}</p>${repair}</article>`;
+  }).join("");
+  target.innerHTML = inspected + (renderedChecks || `<div class="doctor-empty">${escapeHtml(t("doctor.async.noReport"))}</div>`);
+}
+
+function cancelDoctorPolling() {
+  if (state.doctor.pollTimer !== null) window.clearTimeout(state.doctor.pollTimer);
+  state.doctor.pollTimer = null;
+  state.doctor.pollGeneration = ++doctorPollSequence;
+}
+
+function resetDoctorState(documentId = null) {
+  if (state.doctor?.pollTimer !== null) window.clearTimeout(state.doctor.pollTimer);
+  const next = newDoctorState(documentId);
+  next.contextGeneration = ++doctorContextSequence;
+  next.pollGeneration = ++doctorPollSequence;
+  state.doctor = next;
+  if ($("#doctor-output")) renderDoctorPanel();
+}
+
+function renderDoctorPanel() {
+  const immediateOutput = $("#doctor-output");
+  if (!immediateOutput) return;
+  const selected = state.doctor.documentId === state.selectedId && state.detail?.document?.id === state.selectedId
+    ? state.detail.document
+    : null;
+  const canInspectDocument = Boolean(selected && can("document:doctor"));
+  const context = $("#doctor-document-context");
+  context.textContent = selected
+    ? interpolate("doctor.documentContext", { number: selected.documentNumber, title: selected.title })
+    : t("doctor.noSelection");
+
+  const run = $("#run-doctor");
+  const schedule = $("#schedule-doctor");
+  const runSystem = $("#run-system-doctor");
+  const activeTask = Boolean(state.doctor.task) &&
+    !DOCTOR_TASK_TERMINAL_STATUSES.has(normalizedDoctorTaskStatus(state.doctor.task.status));
+  const retryablePoll = activeTask && state.doctor.taskRefreshFailure;
+  run.disabled = !canInspectDocument || state.doctor.immediateLoading;
+  schedule.disabled = !canInspectDocument || state.doctor.taskLoading || (activeTask && !retryablePoll);
+  schedule.textContent = t(retryablePoll ? "action.retryDoctorPoll" : "action.scheduleDoctor");
+  runSystem.disabled = !can("system:doctor:read") || state.doctor.systemLoading;
+
+  if (state.doctor.immediateLoading) {
+    setDoctorStatus($("#doctor-immediate-status"), "SKIPPED", true);
+    doctorLoading(immediateOutput, "doctor.loading");
+  } else if (state.doctor.immediateReport) {
+    setDoctorStatus($("#doctor-immediate-status"), state.doctor.immediateReport.status);
+    renderDoctorReport(immediateOutput, state.doctor.immediateReport);
+  } else {
+    setDoctorStatus($("#doctor-immediate-status"), "SKIPPED", true);
+    doctorEmpty(immediateOutput, "doctor.empty");
+  }
+
+  const task = state.doctor.task;
+  const taskSummary = $("#doctor-task-summary");
+  if (task) {
+    const time = task.updatedTime || task.createdTime;
+    taskSummary.textContent = `${task.id} · ${localizedDoctorStatus(normalizedDoctorTaskStatus(task.status))}${time ? ` · ${formatTime(time)}` : ""}`;
+    setDoctorTaskStatus($("#doctor-task-status"), task.status);
+  } else {
+    taskSummary.textContent = t("doctor.async.empty");
+    setDoctorTaskStatus($("#doctor-task-status"), "SKIPPED", true);
+  }
+  const taskOutput = $("#doctor-task-output");
+  if (state.doctor.taskReport) {
+    renderDoctorReport(taskOutput, state.doctor.taskReport);
+  } else if (state.doctor.taskRefreshFailure) {
+    doctorEmpty(taskOutput, "doctor.pollFailed");
+  } else if (state.doctor.taskLoading || (task && !DOCTOR_TASK_TERMINAL_STATUSES.has(normalizedDoctorTaskStatus(task.status)))) {
+    doctorLoading(taskOutput, "doctor.polling");
+  } else if (task) {
+    doctorEmpty(taskOutput, "doctor.async.noReport");
+  } else {
+    doctorEmpty(taskOutput, "doctor.async.hint");
+  }
+
+  const systemOutput = $("#doctor-system-output");
+  if (state.doctor.systemLoading) {
+    setDoctorStatus($("#doctor-system-status"), "SKIPPED", true);
+    doctorLoading(systemOutput, "doctor.loading");
+  } else if (state.doctor.systemReport) {
+    setDoctorStatus($("#doctor-system-status"), state.doctor.systemReport.status);
+    renderDoctorReport(systemOutput, state.doctor.systemReport);
+  } else {
+    setDoctorStatus($("#doctor-system-status"), "SKIPPED", true);
+    doctorEmpty(systemOutput, "doctor.system.empty");
+  }
+}
+
+async function runImmediateDoctor() {
+  const documentId = state.selectedId;
+  if (!documentId || !can("document:doctor")) return;
+  const generation = state.doctor.contextGeneration;
+  state.doctor.immediateReport = null;
+  state.doctor.immediateLoading = true;
+  renderDoctorPanel();
+  try {
+    const report = await v1Api(documentDoctorPath(documentId));
+    if (state.selectedId !== documentId || state.doctor.documentId !== documentId || state.doctor.contextGeneration !== generation) return;
+    if (!isDoctorReport(report, documentId)) throw new Error(t("error.v1.invalidResponse"));
+    state.doctor.immediateReport = report;
+  } finally {
+    if (state.selectedId === documentId && state.doctor.documentId === documentId && state.doctor.contextGeneration === generation) {
+      state.doctor.immediateLoading = false;
+      renderDoctorPanel();
+    }
+  }
+}
+
+function queueDoctorTaskRefresh(generation, delay) {
+  if (state.doctor.pollGeneration !== generation) return;
+  state.doctor.pollTimer = window.setTimeout(() => refreshDoctorTask(generation), delay);
+}
+
+async function refreshDoctorTask(generation) {
+  const documentId = state.doctor.documentId;
+  const taskId = state.doctor.task?.id;
+  if (!documentId || !taskId || state.doctor.pollGeneration !== generation) return;
+  try {
+    const result = await v1Api(`${documentDoctorPath(documentId)}/tasks/${encodeURIComponent(taskId)}`);
+    if (state.doctor.pollGeneration !== generation || state.selectedId !== documentId || state.doctor.task?.id !== taskId) return;
+    if (
+      result?.task?.documentId !== documentId || result?.task?.id !== taskId ||
+      !DOCTOR_TASK_STATUSES.has(result?.task?.status) ||
+      (result.report !== null && !isDoctorReport(result.report, documentId)) ||
+      (!DOCTOR_TASK_TERMINAL_STATUSES.has(result.task.status) && result.report !== null)
+    ) throw new Error(t("error.v1.invalidResponse"));
+    state.doctor.task = result.task;
+    state.doctor.taskReport = result.report || null;
+    state.doctor.taskLoading = false;
+    state.doctor.taskRefreshFailure = false;
+    state.doctor.pollFailures = 0;
+    renderDoctorPanel();
+    if (!DOCTOR_TASK_TERMINAL_STATUSES.has(normalizedDoctorTaskStatus(result.task.status))) {
+      queueDoctorTaskRefresh(generation, 650);
+    }
+  } catch (error) {
+    if (state.doctor.pollGeneration !== generation) return;
+    state.doctor.pollFailures += 1;
+    if (state.doctor.pollFailures <= 3) {
+      queueDoctorTaskRefresh(generation, 750 * state.doctor.pollFailures);
+      return;
+    }
+    state.doctor.taskLoading = false;
+    state.doctor.taskRefreshFailure = true;
+    renderDoctorPanel();
+    notice(error.message, "error");
+  }
+}
+
+function startDoctorTaskPolling() {
+  cancelDoctorPolling();
+  const generation = ++doctorPollSequence;
+  state.doctor.pollGeneration = generation;
+  state.doctor.pollFailures = 0;
+  queueDoctorTaskRefresh(generation, 200);
+}
+
+async function scheduleDoctorTask() {
+  const documentId = state.selectedId;
+  if (!documentId || !can("document:doctor")) return;
+  if (
+    state.doctor.taskRefreshFailure && state.doctor.documentId === documentId &&
+    state.doctor.task?.documentId === documentId &&
+    !DOCTOR_TASK_TERMINAL_STATUSES.has(normalizedDoctorTaskStatus(state.doctor.task.status))
+  ) {
+    state.doctor.taskLoading = true;
+    state.doctor.taskRefreshFailure = false;
+    renderDoctorPanel();
+    startDoctorTaskPolling();
+    return;
+  }
+  cancelDoctorPolling();
+  const generation = state.doctor.contextGeneration;
+  const idempotencyKey = state.doctor.scheduleKey || doctorRequestKey();
+  state.doctor.scheduleKey = idempotencyKey;
+  state.doctor.task = null;
+  state.doctor.taskReport = null;
+  state.doctor.taskLoading = true;
+  state.doctor.taskRefreshFailure = false;
+  renderDoctorPanel();
+  try {
+    const scheduled = await v1Api(`${documentDoctorPath(documentId)}/tasks`, {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
+    if (state.selectedId !== documentId || state.doctor.documentId !== documentId || state.doctor.contextGeneration !== generation) return;
+    if (!scheduled?.taskId || scheduled.documentId !== documentId || scheduled.status !== "PENDING") {
+      throw new Error(t("error.v1.invalidResponse"));
+    }
+    state.doctor.task = {
+      id: scheduled.taskId,
+      documentId: scheduled.documentId,
+      status: normalizedDoctorTaskStatus(scheduled.status),
+      createdTime: 0,
+      updatedTime: 0,
+    };
+    state.doctor.scheduleKey = null;
+    notice(interpolate("notice.doctorScheduled", { taskId: scheduled.taskId }));
+    startDoctorTaskPolling();
+  } catch (error) {
+    if (state.selectedId === documentId && state.doctor.documentId === documentId && state.doctor.contextGeneration === generation) {
+      state.doctor.taskLoading = false;
+      state.doctor.taskRefreshFailure = false;
+      renderDoctorPanel();
+    }
+    throw error;
+  }
+}
+
+async function runSystemDoctor() {
+  if (!can("system:doctor:read")) return;
+  const sessionToken = state.token;
+  const tenantId = state.user?.tenantId;
+  const generation = state.doctor.contextGeneration;
+  state.doctor.systemReport = null;
+  state.doctor.systemLoading = true;
+  renderDoctorPanel();
+  try {
+    const report = await v1Api(V1_SYSTEM_DOCTOR_PATH);
+    if (!state.user || state.token !== sessionToken || state.user.tenantId !== tenantId || state.doctor.contextGeneration !== generation) return;
+    if (!isDoctorReport(report)) throw new Error(t("error.v1.invalidResponse"));
+    state.doctor.systemReport = report;
+  } finally {
+    if (state.user && state.token === sessionToken && state.user.tenantId === tenantId && state.doctor.contextGeneration === generation) {
+      state.doctor.systemLoading = false;
+      renderDoctorPanel();
+    }
+  }
 }
 
 function renderInspector() {
@@ -362,16 +708,6 @@ function renderInspector() {
     await api(`/api/documents/agent-results/${button.dataset.agentConfirm}/suggestions/${button.dataset.agentSuggestion}/confirm`, { method: "POST" });
     notice(t("notice.agentConfirmed"));
     await selectDocument(state.selectedId, false);
-  }));
-  $("#doctor-record-list").innerHTML = detail.doctorRecords.map((record) => `
-    <div class="evidence-item doctor-record"><b>${escapeHtml(record.status)} / ${escapeHtml(formatTime(record.createdTime))}</b>
-      <small>${escapeHtml(record.taskId)}</small><button type="button" data-doctor-record="${escapeHtml(record.id)}">${escapeHtml(t("action.openDoctorRecord"))}</button></div>`
-  ).join("") || emptyEvidence("empty.doctorHistory");
-  $("#doctor-record-list").querySelectorAll("[data-doctor-record]").forEach((button) => button.addEventListener("click", () => {
-    const record = detail.doctorRecords.find((item) => item.id === button.dataset.doctorRecord);
-    if (!record) return;
-    $("#doctor-output").textContent = JSON.stringify(safeJson(record.report), null, 2);
-    activatePanel("doctor");
   }));
   $("#sync-list").innerHTML = detail.syncRecords.map((sync) => evidenceItem(
     `${localizedState(sync.status)} / ${sync.connectorName}`,
@@ -435,15 +771,13 @@ async function runAction(action) {
     if (action === "rename") return $("#rename-form").classList.toggle("hidden");
     if (action === "version") return $("#version-form").classList.toggle("hidden");
     if (action === "doctor") {
-      const report = await api(`/api/documents/${id}/doctor`);
-      $("#doctor-output").textContent = JSON.stringify(report, null, 2);
       activatePanel("doctor");
+      await runImmediateDoctor();
       return;
     }
     if (action === "scheduleDoctor") {
-      await api(`/api/documents/${id}/doctor/tasks`, { method: "POST" });
-      notice(t("notice.doctorScheduled"));
-      await refreshDocuments();
+      activatePanel("doctor");
+      await scheduleDoctorTask();
       return;
     }
     if (action === "moveFolder") {
@@ -838,6 +1172,7 @@ function activatePanel(panel) {
   if (target === "workflow") renderWorkflowInbox();
   if (target === "fixtures") renderFixtures();
   if (target === "uploads") renderResumableUpload();
+  if (target === "doctor") renderDoctorPanel();
 }
 
 async function processOutbox() {
@@ -879,6 +1214,9 @@ document.querySelectorAll("[data-locale]").forEach((button) => button.addEventLi
 $("#refresh").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
 $("#process-outbox").addEventListener("click", processOutbox);
 $("#process-tasks").addEventListener("click", processTasks);
+$("#run-doctor").addEventListener("click", () => runImmediateDoctor().catch((error) => notice(error.message, "error")));
+$("#schedule-doctor").addEventListener("click", () => scheduleDoctorTask().catch((error) => notice(error.message, "error")));
+$("#run-system-doctor").addEventListener("click", () => runSystemDoctor().catch((error) => notice(error.message, "error")));
 $("#refresh-workflow-inbox").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
 $("#open-create").addEventListener("click", () => $("#create-drawer").classList.remove("hidden"));
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));
@@ -917,7 +1255,9 @@ $("#resumable-abort").addEventListener("click", abortResumableUpload);
 $("#resumable-maintenance").addEventListener("click", loadStalledResumableCompletions);
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.workflowTasks = []; state.workflowHistory = []; state.syncStatus = null; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false; state.stalledResumableCompletions = null;
+    cancelDoctorPolling();
+    documentSelectionSequence += 1;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.workflowTasks = []; state.workflowHistory = []; state.syncStatus = null; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.doctor = newDoctorState(); state.doctor.contextGeneration = ++doctorContextSequence; state.resumableBusy = false; state.stalledResumableCompletions = null;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

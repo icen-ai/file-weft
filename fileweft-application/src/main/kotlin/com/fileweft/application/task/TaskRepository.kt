@@ -4,7 +4,12 @@ import com.fileweft.core.id.Identifier
 
 /** Application port for enqueuing and inspecting durable background work. */
 interface TaskRepository {
-    /** Duplicate tenant/idempotency pairs are intentionally a no-op. */
+    /**
+     * Duplicate tenant/idempotency pairs are intentionally a no-op. On
+     * return, an inserted task must be readable through [findById] in the
+     * caller's current application transaction so a command can verify the
+     * durable identity it is about to expose in an idempotent receipt.
+     */
     fun enqueue(task: BackgroundTask)
 
     fun findById(tenantId: Identifier, taskId: Identifier): BackgroundTask?

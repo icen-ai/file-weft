@@ -183,7 +183,13 @@ class TaskWorker private constructor(
         }
         val handler = matchingHandlers.single()
         val result = try {
-            handler.handle(lease.task.execution())
+            if (handler is LeasedTaskHandler) {
+                handler.handle(lease)
+            } else {
+                handler.handle(lease.task.execution())
+            }
+        } catch (_: TaskLeaseLostException) {
+            return ProcessingOutcome.LOST
         } catch (failure: Exception) {
             return retryOrFail(lease, "Task handler failed: ${failure.javaClass.name}", handler)
         }
@@ -245,7 +251,11 @@ class TaskWorker private constructor(
             return false
         }
         try {
-            handler?.onExhausted(lease.task.execution(), truncated)
+            if (handler is LeasedTaskHandler) {
+                handler.onExhausted(lease, truncated)
+            } else {
+                handler?.onExhausted(lease.task.execution(), truncated)
+            }
         } catch (_: Exception) {
             // Local terminal-state projection must not change task acknowledgement semantics.
         }

@@ -13,15 +13,19 @@ import com.fileweft.dev.api.security.DevUserDirectory
 import com.fileweft.dev.api.service.DevAuthService
 import com.fileweft.starter.boot3.FileWeftAutoConfiguration
 import com.fileweft.web.runtime.v1.V1ApiResponseFactory
+import com.fileweft.web.runtime.v1.doctor.DoctorApiFacade
 import com.fileweft.web.runtime.v1.document.DocumentApiDownloadFacade
 import com.fileweft.web.runtime.v1.document.DocumentApiReadFacade
 import com.fileweft.web.runtime.v1.document.DocumentApiWriteFacade
 import com.fileweft.web.spring.boot3.FileWeftWebBoot3AutoConfiguration
 import com.fileweft.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration
+import com.fileweft.web.spring.boot3.FileWeftWebBoot3DoctorAutoConfiguration
 import com.fileweft.web.spring.boot3.FileWeftWebBoot3WriteAutoConfiguration
 import com.fileweft.web.spring.boot3.v1.document.V1DocumentContentController
 import com.fileweft.web.spring.boot3.v1.document.V1DocumentReadController
 import com.fileweft.web.spring.boot3.v1.document.V1DocumentWriteController
+import com.fileweft.web.spring.boot3.v1.doctor.V1DocumentDoctorController
+import com.fileweft.web.spring.boot3.v1.doctor.V1SystemDoctorController
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.autoconfigure.AutoConfigurations
@@ -64,6 +68,9 @@ class DevFormalV1AutoConfigurationTest {
             assertEquals(1, context.getBeansOfType(V1DocumentWriteController::class.java).size)
             assertEquals(1, context.getBeansOfType(V1DocumentContentController::class.java).size)
             assertEquals(1, context.getBeansOfType(V1ApiResponseFactory::class.java).size)
+            assertEquals(1, context.getBeansOfType(DoctorApiFacade::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1DocumentDoctorController::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1SystemDoctorController::class.java).size)
 
             assertEquals(1, context.getBeansOfType(DevAuthController::class.java).size)
             assertEquals(1, context.getBeansOfType(DevAuthenticationFilter::class.java).size)
@@ -75,10 +82,12 @@ class DevFormalV1AutoConfigurationTest {
     fun `protects the formal v1 routes with the existing Dev authentication filter`() {
         contextRunner().run { context ->
             val controller: V1DocumentReadController = context.getBean(V1DocumentReadController::class.java)
+            val doctorController: V1DocumentDoctorController = context.getBean(V1DocumentDoctorController::class.java)
+            val systemDoctorController: V1SystemDoctorController = context.getBean(V1SystemDoctorController::class.java)
             val traceFilter: jakarta.servlet.Filter = context.getBean(DevTraceFilter::class.java)
             val authenticationFilter: jakarta.servlet.Filter = context.getBean(DevAuthenticationFilter::class.java)
             val mvc = MockMvcBuilders
-                .standaloneSetup(controller)
+                .standaloneSetup(controller, doctorController, systemDoctorController)
                 .addFilters<StandaloneMockMvcBuilder>(traceFilter, authenticationFilter)
                 .build()
 
@@ -103,6 +112,16 @@ class DevFormalV1AutoConfigurationTest {
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                 .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
 
+            mvc.perform(get("/fileweft/v1/documents/document-1/doctor"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+
+            mvc.perform(get("/fileweft/v1/doctor"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+
             mvc.perform(get("/api/documents"))
                 .andExpect(status().isUnauthorized)
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
@@ -120,6 +139,7 @@ class DevFormalV1AutoConfigurationTest {
                 FileWeftWebBoot3AutoConfiguration::class.java,
                 FileWeftWebBoot3WriteAutoConfiguration::class.java,
                 FileWeftWebBoot3ContentAutoConfiguration::class.java,
+                FileWeftWebBoot3DoctorAutoConfiguration::class.java,
             ),
         )
         .withUserConfiguration(DevProbeConfiguration::class.java)

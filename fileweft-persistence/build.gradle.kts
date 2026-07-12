@@ -10,6 +10,7 @@ dependencies {
     implementation(libs.jackson.databind)
     runtimeOnly(libs.postgresql)
     testImplementation(platform(libs.junit.bom))
+    testImplementation(project(":fileweft-agent"))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.postgresql)

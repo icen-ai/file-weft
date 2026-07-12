@@ -100,7 +100,9 @@ fileweft:
 
 后台任务语义是至少一次（at-least-once），不是恰好一次：`FileWeftTaskHandler` 必须把 `TaskExecution.id` 作为幂等依据；任务创建端的租户级 `idempotencyKey` 只负责折叠重复入队，不能替代处理器或外部系统的去重。租约 token 只保证陈旧 Worker 不能覆盖较新的持有者，不能阻止已发出的外部副作用重复执行。
 
-JDBC 默认仓储已经实现 token 围栏。自定义 `TaskProcessingRepository` 为兼容旧插件仍可继续运行，但只获得原有的 `lease_owner` 语义；要在多 Worker、重启或租约到期场景获得 token 围栏，必须同时实现可选的 `LeasedTaskProcessingRepository`，在领取和全部确认路径持久化并校验 `TaskLeaseClaim.leaseToken`。升级自定义仓储前应按至少一次语义验证任务 ID 幂等；不能把仅实现旧端口的仓储误认为已经具备 fencing。
+任务状态确认的 token 围栏并不自动保护处理器写入的其他业务表。默认 Doctor 与 Agent 处理器因此还实现 `LeasedTaskHandler`：外部检查/Agent 调用仍在数据库事务外，写入 `fw_doctor_record` 或 `fw_agent_result` 前才开启短事务，通过 `TaskMutationRepository.findForMutation` 锁定任务，并精确复核 tenant、task ID、type、business ID、`RUNNING`、owner 与 token。失租结果不会覆盖新领取者；无 token 的 legacy lease 在调用检查器或 Agent 前即安全失败。报告/结果提交与随后任务确认之间仍是两个短事务，所以读取端必须以 `fw_task` 为权威：只有 `SUCCESS` Doctor 才展示报告，`FAILED` 也不复用可能来自旧失租尝试的暂存报告；Agent suggestion 同样只有在精确任务已为 `SUCCESS` 后才能读取确认。
+
+JDBC 默认仓储已经同时实现 token 围栏与任务 mutation 行锁。自定义 `TaskProcessingRepository` 为兼容旧插件仍可继续运行，但只获得原有的 `lease_owner` 语义；要在多 Worker、重启或租约到期场景获得 token 围栏，必须同时实现可选的 `LeasedTaskProcessingRepository`，在领取和全部确认路径持久化并校验 `TaskLeaseClaim.leaseToken`。若使用 Starter 默认的 Doctor/Agent 业务投影，自定义任务仓储还必须实现唯一的 `TaskMutationRepository`，否则启动失败；不能把仅实现旧端口的仓储误认为已经具备 fencing。升级自定义仓储前应按至少一次语义验证任务 ID 和外部副作用幂等。
 
 ```yaml
 fileweft:

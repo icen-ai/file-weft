@@ -7,9 +7,11 @@ import com.fileweft.core.result.DoctorReport
 import java.time.Clock
 
 class JdbcDoctorReportRepository(
-    private val objectMapper: ObjectMapper,
+    objectMapper: ObjectMapper,
     private val clock: Clock,
 ) : DoctorReportRepository {
+    private val codec = DoctorReportJsonCodec(objectMapper)
+
     override fun save(tenantId: Identifier, documentId: Identifier, taskId: Identifier, report: DoctorReport) {
         require(report.tenantId == tenantId) { "Doctor report tenant must match record tenant." }
         require(report.documentId == documentId) { "Doctor report document must match record document." }
@@ -29,7 +31,7 @@ class JdbcDoctorReportRepository(
             statement.setString(3, documentId.value)
             statement.setString(4, taskId.value)
             statement.setString(5, report.status.name)
-            statement.setString(6, objectMapper.writeValueAsString(report))
+            statement.setString(6, codec.serialize(report))
             statement.setLong(7, now)
             statement.setLong(8, now)
             statement.executeUpdate()

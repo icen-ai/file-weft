@@ -125,6 +125,94 @@ class DoctorApplicationServiceTest {
         assertEquals(DoctorStatus.ERROR, unaffected.status)
     }
 
+    @Test
+    fun `bounds checker registration before any diagnosis runs`() {
+        val checkers = (1..65).map { index ->
+            object : DoctorChecker {
+                override fun name(): String = "checker-$index"
+                override fun check(context: com.fileweft.core.context.DoctorCheckContext): DoctorCheckResult =
+                    DoctorCheckResult(name(), DoctorStatus.HEALTHY, "Healthy.")
+            }
+        }
+
+        assertFailsWith<IllegalArgumentException> {
+            DoctorApplicationService(
+                FixedTenantProvider(),
+                permissionChecker(AuthorizationDecision(true)),
+                checkers,
+                fixedClock(),
+            )
+        }
+
+        assertFailsWith<IllegalArgumentException> {
+            DoctorApplicationService(
+                FixedTenantProvider(),
+                permissionChecker(AuthorizationDecision(true)),
+                listOf(object : DoctorChecker {
+                    override fun name(): String = "unsafe\u0000checker"
+                    override fun check(context: com.fileweft.core.context.DoctorCheckContext): DoctorCheckResult =
+                        DoctorCheckResult("unused", DoctorStatus.HEALTHY, "Healthy.")
+                }),
+                fixedClock(),
+            )
+        }
+    }
+
+    @Test
+    fun `normalizes bounded diagnostics and removes sensitive evidence keys`() {
+        val evidence = linkedMapOf("accessToken" to "must-not-survive")
+        (1..40).forEach { index -> evidence["safe-$index"] = "v".repeat(2_000) }
+        val report = DoctorApplicationService(
+            FixedTenantProvider(),
+            permissionChecker(AuthorizationDecision(true)),
+            listOf(object : DoctorChecker {
+                override fun name(): String = "bounded"
+                override fun check(context: com.fileweft.core.context.DoctorCheckContext): DoctorCheckResult =
+                    DoctorCheckResult(
+                        name(),
+                        DoctorStatus.WARNING,
+                        "reason\u0000" + "x".repeat(3_000),
+                        evidence,
+                        "repair" + "y".repeat(5_000),
+                    )
+            }),
+            fixedClock(),
+        ).inspectDocument(Identifier("document-1"))
+
+        val bounded = report.checks.single { it.checkerName == "bounded" }
+        assertEquals(2_048, bounded.reason.length)
+        assertFalse(bounded.reason.contains('\u0000'))
+        assertEquals(32, bounded.evidence.size)
+        assertFalse(bounded.evidence.containsKey("accessToken"))
+        assertTrue(bounded.evidence.values.all { it.length == 1_024 })
+        assertEquals(4_096, bounded.repairSuggestion?.length)
+    }
+
+    @Test
+    fun `freezes checker contract names at registration`() {
+        var nameCalls = 0
+        val checker = object : DoctorChecker {
+            override fun name(): String {
+                nameCalls++
+                return if (nameCalls == 1) "stable" else "changed"
+            }
+
+            override fun check(context: com.fileweft.core.context.DoctorCheckContext): DoctorCheckResult =
+                DoctorCheckResult("stable", DoctorStatus.HEALTHY, "Stable result.")
+        }
+        val service = DoctorApplicationService(
+            FixedTenantProvider(),
+            permissionChecker(AuthorizationDecision(true)),
+            listOf(checker),
+            fixedClock(),
+        )
+
+        val report = service.inspectDocument(Identifier("document-1"))
+
+        assertEquals(1, nameCalls)
+        assertEquals(DoctorStatus.HEALTHY, report.checks.single { it.checkerName == "stable" }.status)
+    }
+
     private fun permissionChecker(decision: AuthorizationDecision) = PermissionDoctorChecker(
         FixedUserRealmProvider(),
         FixedAuthorizationProvider(decision),

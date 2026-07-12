@@ -1,15 +1,14 @@
 package com.fileweft.dev.api.web
 
+import com.fileweft.application.agent.ConfirmAgentSuggestionService
+import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
+import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.document.AddDocumentVersionCommand
 import com.fileweft.application.document.CreateDocumentDraftCommand
 import com.fileweft.application.document.DocumentDownload
 import com.fileweft.application.document.DocumentDownloadService
-import com.fileweft.application.agent.ConfirmAgentSuggestionService
-import com.fileweft.application.catalog.DocumentCatalogBindingService
-import com.fileweft.application.delivery.RetryDocumentDeliveryService
-import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.connector.DevPlatformMirrorService
@@ -17,7 +16,6 @@ import com.fileweft.dev.api.service.DevDocumentDetail
 import com.fileweft.dev.api.service.DevDocumentLogEntry
 import com.fileweft.dev.api.service.DevDocumentQueryService
 import com.fileweft.dev.api.service.DevDocumentSyncStatus
-import com.fileweft.dev.api.service.DevOperationsService
 import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.domain.workflow.WorkflowInstance
 import org.springframework.http.HttpStatus
@@ -49,7 +47,6 @@ data class DevWorkflowResponse(
     val taskId: String,
     val taskIds: List<String>,
 )
-data class DevDoctorTaskResponse(val taskId: String, val status: String)
 data class DevAgentSuggestionConfirmationResponse(val taskId: String, val suggestionId: String, val confirmedBy: String, val confirmedTime: Long)
 
 @RestController
@@ -62,9 +59,7 @@ class DevDocumentController(
     private val reviews: DevReviewService,
     private val lifecycle: DocumentCatalogLifecycleService,
     private val queries: DevDocumentQueryService,
-    private val operations: DevOperationsService,
     private val retryDeliveries: RetryDocumentDeliveryService,
-    private val doctorScheduler: ScheduleDocumentDoctorService,
     private val agentSuggestions: ConfirmAgentSuggestionService,
     private val platformMirror: DevPlatformMirrorService,
 ) {
@@ -178,19 +173,10 @@ class DevDocumentController(
         return queries.detail(document.id)
     }
 
-    @GetMapping("/{documentId}/doctor")
-    fun doctor(@PathVariable documentId: String) = operations.inspectDocument(Identifier(documentId))
-
     @GetMapping("/{documentId}/platform-mirror")
     fun platformMirror(@PathVariable documentId: String) = Identifier(documentId).let { identifier ->
         val detail = queries.detail(identifier)
         platformMirror.readDocument(identifier, detail.deliveries)
-    }
-
-    @PostMapping("/{documentId}/doctor/tasks")
-    fun scheduleDoctor(@PathVariable documentId: String): DevDoctorTaskResponse {
-        val task = doctorScheduler.schedule(Identifier(documentId))
-        return DevDoctorTaskResponse(task.id.value, task.status.name)
     }
 
     @PostMapping("/workflows/{workflowId}/tasks/{taskId}/approve")

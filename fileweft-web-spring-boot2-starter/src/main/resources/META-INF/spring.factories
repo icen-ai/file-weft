@@ -3,4 +3,5 @@ com.fileweft.web.spring.boot2.FileWeftWebBoot2AutoConfiguration,\
 com.fileweft.web.spring.boot2.FileWeftWebBoot2WriteAutoConfiguration,\
 com.fileweft.web.spring.boot2.FileWeftWebBoot2ContentAutoConfiguration,\
 com.fileweft.web.spring.boot2.FileWeftWebBoot2LifecycleAutoConfiguration,\
-com.fileweft.web.spring.boot2.FileWeftWebBoot2WorkflowAutoConfiguration
+com.fileweft.web.spring.boot2.FileWeftWebBoot2WorkflowAutoConfiguration,\
+com.fileweft.web.spring.boot2.FileWeftWebBoot2DoctorAutoConfiguration

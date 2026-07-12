@@ -18,6 +18,7 @@ object DevRolePolicy {
         "document:read", "document:download", "document:create", "document:edit", "file:upload", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:restore", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
+        "system:doctor:read",
         "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm", "system:upload:cleanup", "file:upload:maintenance",
     )
 

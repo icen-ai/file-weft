@@ -2,6 +2,31 @@ import { expect, test } from "@playwright/test";
 
 const presetId = (username) => `login-preset-${username.replace("@", "-")}`;
 const uniqueDocumentNumber = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+const DOCTOR_INTERNAL_FIELDS = new Set([
+  "tenantId", "evidence", "exceptionType", "errorMessage", "lastError", "folderId", "profileId", "targetId",
+  "deliveryId", "externalId", "eventId", "outboxId", "leaseOwner", "leaseToken", "payload", "requestedBy",
+  "operatorId", "operatorName", "assetId", "fileAssetId", "fileObjectId", "storagePath", "storageUrl", "bucket",
+  "objectKey", "ownerRef", "connectorId",
+]);
+
+async function apiLogin(request, username, password) {
+  const response = await request.post("/api/auth/login", { data: { username, password } });
+  expect(response.status(), await response.text()).toBe(200);
+  return response.json();
+}
+
+function internalDoctorFieldPaths(value, path = "$") {
+  if (Array.isArray(value)) return value.flatMap((item, index) => internalDoctorFieldPaths(item, `${path}[${index}]`));
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, child]) => {
+    const childPath = `${path}.${key}`;
+    return [...(DOCTOR_INTERNAL_FIELDS.has(key) ? [childPath] : []), ...internalDoctorFieldPaths(child, childPath)];
+  });
+}
+
+function bearer(identity) {
+  return { Authorization: `Bearer ${identity.token}` };
+}
 
 async function login(page, username) {
   await page.goto("/");
@@ -155,6 +180,130 @@ test("exposes administrator processing controls and reviewer approval only to th
   }
 });
 
+test("runs immediate and asynchronous Doctor through formal v1 without rendering internal evidence", async ({ page }) => {
+  const doctorPaths = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.toLowerCase().includes("doctor")) doctorPaths.push(`${request.method()} ${path}`);
+  });
+
+  const appSourceResponse = await page.request.get("/app.js");
+  expect(appSourceResponse.status()).toBe(200);
+  const appSource = await appSourceResponse.text();
+  expect(appSource).toContain("`${V1_DOCUMENTS_PATH}/${encodeURIComponent(documentId)}/doctor`");
+  expect(appSource).toContain("v1Api(documentDoctorPath(documentId))");
+  expect(appSource).toContain("v1Api(`${documentDoctorPath(documentId)}/tasks/${encodeURIComponent(taskId)}`)");
+  expect(appSource).toContain("v1Api(`${documentDoctorPath(documentId)}/tasks`, {");
+
+  await login(page, "editor@alpha");
+  const created = await createFixture(page, "incident");
+  await expect(page.getByTestId("doctor-system-scope")).toBeHidden();
+
+  const editorIdentity = await apiLogin(page.request, "editor@alpha", "dev-editor");
+  const legacyGet = await page.request.get(`/api/documents/${created.documentId}/doctor`, { headers: bearer(editorIdentity) });
+  const legacyPost = await page.request.post(`/api/documents/${created.documentId}/doctor/tasks`, { headers: bearer(editorIdentity) });
+  for (const legacyResponse of [legacyGet, legacyPost]) {
+    expect(legacyResponse.status()).toBe(404);
+    const legacyBody = await legacyResponse.text();
+    for (const field of ["tenantId", "documentId", "taskId", "checks", "checkerName", "reason", "evidence", "repairSuggestion"]) {
+      expect(legacyBody).not.toContain(`"${field}"`);
+    }
+  }
+
+  const immediateResponse = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === `/fileweft/v1/documents/${created.documentId}/doctor`,
+  );
+  await page.locator("#document-actions [data-action='doctor']").click();
+  expect((await immediateResponse).status()).toBe(200);
+  await expect(page.getByTestId("doctor-panel")).toBeVisible();
+  await expect(page.getByTestId("doctor-system-scope")).toBeHidden();
+  await expect(page.locator("#doctor-immediate-status")).not.toHaveAttribute("data-doctor-status", "IDLE");
+  await expect(page.locator("#doctor-output .doctor-check")).not.toHaveCount(0);
+  await expect(page.getByTestId("doctor-check-permission")).toHaveCount(1);
+  await expect(page.getByTestId("doctor-check-storage")).toHaveCount(1);
+
+  const scheduledResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === `/fileweft/v1/documents/${created.documentId}/doctor/tasks`,
+  );
+  await page.locator("#schedule-doctor").click();
+  const scheduled = await scheduledResponse;
+  expect(scheduled.status()).toBe(202);
+  const idempotencyHeaders = (await scheduled.request().headersArray())
+    .filter((header) => header.name.toLowerCase() === "idempotency-key");
+  expect(idempotencyHeaders).toHaveLength(1);
+  expect(idempotencyHeaders[0].value).toMatch(/^dev-ui-doctor-[A-Za-z0-9._~:-]+$/);
+  await expect(page.locator("#doctor-task-status")).toHaveAttribute("data-doctor-status", "SUCCESS", { timeout: 15_000 });
+  await expect(page.locator("#doctor-task-output .doctor-check")).not.toHaveCount(0);
+
+  expect(doctorPaths.length).toBeGreaterThanOrEqual(3);
+  expect(doctorPaths.some((path) => path.toLowerCase().includes("/api/") && path.toLowerCase().includes("doctor"))).toBe(false);
+  expect(doctorPaths.every((path) => path.includes("/fileweft/v1/"))).toBe(true);
+  const panelText = await page.getByTestId("doctor-panel").innerText();
+  const panelMarkup = await page.getByTestId("doctor-panel").evaluate((element) => element.outerHTML);
+  for (const field of DOCTOR_INTERNAL_FIELDS) {
+    expect(panelText).not.toContain(field);
+    expect(panelMarkup).not.toContain(field);
+  }
+
+  await page.getByTestId("locale-zh").click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await expect(page.getByTestId("doctor-panel")).toContainText("即时文档诊断");
+  await expect(page.getByTestId("doctor-panel")).toContainText("对象存储");
+
+  const viewer = await apiLogin(page.request, "viewer@alpha", "dev-viewer");
+  const viewerResponse = await page.request.get(`/fileweft/v1/documents/${created.documentId}/doctor`, { headers: bearer(viewer) });
+  expect(viewerResponse.status()).toBe(403);
+  expect(internalDoctorFieldPaths(await viewerResponse.json())).toEqual([]);
+
+  const betaReviewer = await apiLogin(page.request, "reviewer@beta", "dev-reviewer");
+  const crossTenant = await page.request.get(`/fileweft/v1/documents/${created.documentId}/doctor`, { headers: bearer(betaReviewer) });
+  expect(crossTenant.status()).toBe(404);
+  expect(internalDoctorFieldPaths(await crossTenant.json())).toEqual([]);
+});
+
+test("shows tenant system Doctor only to administrators and keeps both tenant responses redacted", async ({ page }) => {
+  const doctorPaths = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.toLowerCase().includes("doctor")) doctorPaths.push(`${request.method()} ${path}`);
+  });
+
+  await login(page, "admin@alpha");
+  await page.locator("[data-panel='doctor']").click();
+  await expect(page.getByTestId("doctor-system-scope")).toBeVisible();
+  const systemResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === "/fileweft/v1/doctor",
+  );
+  await page.locator("#run-system-doctor").click();
+  const systemResponse = await systemResponsePromise;
+  expect(systemResponse.status()).toBe(200);
+  await expect(page.locator("#doctor-system-status")).not.toHaveAttribute("data-doctor-status", "IDLE");
+  await expect(page.locator("#doctor-system-output .doctor-check")).not.toHaveCount(0);
+  expect(internalDoctorFieldPaths(await systemResponse.json())).toEqual([]);
+
+  const panelText = await page.getByTestId("doctor-panel").innerText();
+  const panelMarkup = await page.getByTestId("doctor-panel").evaluate((element) => element.outerHTML);
+  expect(panelText.toLowerCase()).not.toContain("alpha");
+  expect(panelText.toLowerCase()).not.toContain("beta");
+  for (const field of DOCTOR_INTERNAL_FIELDS) {
+    expect(panelText).not.toContain(field);
+    expect(panelMarkup).not.toContain(field);
+  }
+  expect(doctorPaths.some((path) => path.toLowerCase().includes("/api/") && path.toLowerCase().includes("doctor"))).toBe(false);
+
+  const betaAdmin = await apiLogin(page.request, "admin@beta", "dev-admin");
+  const betaSystem = await page.request.get("/fileweft/v1/doctor", { headers: bearer(betaAdmin) });
+  expect(betaSystem.status()).toBe(200);
+  const betaPayload = await betaSystem.json();
+  expect(internalDoctorFieldPaths(betaPayload)).toEqual([]);
+  expect(JSON.stringify(betaPayload).toLowerCase()).not.toContain("beta");
+
+  const editor = await apiLogin(page.request, "editor@alpha", "dev-editor");
+  const forbidden = await page.request.get("/fileweft/v1/doctor", { headers: bearer(editor) });
+  expect(forbidden.status()).toBe(403);
+  expect(internalDoctorFieldPaths(await forbidden.json())).toEqual([]);
+});
+
 test("creates, renames, versions, downloads, and moves a document through the editor UI", async ({ page }) => {
   await login(page, "editor@alpha");
   const created = await createDocument(page, "UI-EDIT");
@@ -285,22 +434,8 @@ test("returns a rejected document to an editor-controlled draft", async ({ brows
   }
 });
 
-test("runs Doctor, durable task inspection, resumable upload, and maintenance through the administrator UI", async ({ page }) => {
+test("runs resumable upload and maintenance through the administrator UI", async ({ page }) => {
   await login(page, "admin@alpha");
-  await createFixture(page, "incident");
-  const runDoctor = page.locator("#document-actions [data-action='doctor']");
-  await expect(runDoctor).toHaveCount(1);
-  await runDoctor.click();
-  await expect(page.locator("#doctor-panel")).toBeVisible();
-  await expect(page.locator("#doctor-output")).not.toContainText("Select a document");
-
-  const scheduleDoctor = page.locator("#document-actions [data-action='scheduleDoctor']");
-  await expect(scheduleDoctor).toHaveCount(1);
-  await scheduleDoctor.click();
-  await expect(page.locator("#notice")).toContainText("Doctor task queued");
-  await page.locator("#process-tasks").click();
-  await expect(page.locator("#notice")).toContainText("Tasks:");
-
   await page.locator("[data-panel='uploads']").click();
   await expect(page.locator("#uploads-panel")).toBeVisible();
   await page.locator("#resumable-file").setInputFiles({

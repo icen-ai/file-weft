@@ -78,12 +78,17 @@ class DevSecurityTest {
     fun `exposes only proof lab actions granted to each role`() {
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:create"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:edit"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:doctor"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:audit"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:audit"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:doctor"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("agent:suggestion:read"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:create"))
         assertEquals(listOf("document:read", "document:download"), DevRolePolicy.proofLabPermissions(DevRole.VIEWER))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:outbox:process"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:doctor:read"))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("system:doctor:read"))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("system:doctor:read"))
     }
 
     private fun request(tenantId: String, action: String) = AuthorizationRequest(

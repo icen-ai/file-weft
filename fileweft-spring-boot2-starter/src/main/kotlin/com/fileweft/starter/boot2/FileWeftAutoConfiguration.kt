@@ -35,7 +35,11 @@ import io.micrometer.core.instrument.MeterRegistry
 
 @AutoConfiguration(after = [DataSourceAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
-@Import(FileWeftRuntimeConfiguration::class, FileWeftWorkerSchedulingConfiguration::class)
+@Import(
+    FileWeftRuntimeConfiguration::class,
+    FileWeftDoctorConfiguration::class,
+    FileWeftWorkerSchedulingConfiguration::class,
+)
 class FileWeftAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(TenantProvider::class)

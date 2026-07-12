@@ -73,6 +73,7 @@ import com.fileweft.application.sync.SyncRecordRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.task.TaskProcessingRepository
 import com.fileweft.application.task.TaskRepository
+import com.fileweft.application.task.TaskMutationRepository
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
@@ -530,9 +531,11 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftConfirmAgentSuggestionService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         results: AgentResultRepository, identifiers: IdentifierGenerator, transaction: ApplicationTransaction,
-        clock: Clock, auditTrail: AuditTrail,
+        clock: Clock, auditTrail: AuditTrail, tasks: TaskRepository,
     ): ConfirmAgentSuggestionService =
-        ConfirmAgentSuggestionService(tenants, users, authorization, results, identifiers, transaction, clock, auditTrail)
+        ConfirmAgentSuggestionService(
+            tenants, users, authorization, results, identifiers, transaction, clock, auditTrail, tasks,
+        )
 
     @Bean
     @ConditionalOnMissingBean(AgentTaskOrchestrator::class)
@@ -556,7 +559,13 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftAgentTaskHandler(
         orchestrator: AgentTaskOrchestrator, results: AgentResultRepository,
         transaction: ApplicationTransaction, clock: Clock,
-    ): AgentTaskHandler = AgentTaskHandler(orchestrator, results, transaction, clock)
+        taskMutations: ObjectProvider<TaskMutationRepository>,
+    ): AgentTaskHandler {
+        val mutations = taskMutations.getIfUnique() ?: throw IllegalStateException(
+            "Exactly one TaskMutationRepository is required for fenced task projections.",
+        )
+        return AgentTaskHandler(orchestrator, results, transaction, clock, mutations)
+    }
 
     @Bean
     @ConditionalOnMissingBean(AgentTaskOutboxEventHandler::class)
@@ -569,9 +578,9 @@ class FileWeftRuntimeConfiguration {
     @ConditionalOnMissingBean(PersistedAgentSuggestionConfirmationService::class)
     fun fileWeftAgentSuggestionConfirmations(
         results: AgentResultRepository, transaction: ApplicationTransaction,
-        identifiers: IdentifierGenerator, clock: Clock,
+        identifiers: IdentifierGenerator, clock: Clock, tasks: TaskRepository,
     ): PersistedAgentSuggestionConfirmationService =
-        PersistedAgentSuggestionConfirmationService(results, transaction, identifiers, clock)
+        PersistedAgentSuggestionConfirmationService(results, transaction, identifiers, clock, tasks)
 
     @Bean
     @ConditionalOnMissingBean(AuditTrail::class)
@@ -1031,7 +1040,13 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftDocumentDoctorTaskHandler(
         doctor: DoctorApplicationService, reports: DoctorReportRepository,
         transaction: ApplicationTransaction, clock: Clock,
-    ): DocumentDoctorTaskHandler = DocumentDoctorTaskHandler(doctor, reports, transaction, clock)
+        taskMutations: ObjectProvider<TaskMutationRepository>,
+    ): DocumentDoctorTaskHandler {
+        val mutations = taskMutations.getIfUnique() ?: throw IllegalStateException(
+            "Exactly one TaskMutationRepository is required for fenced task projections.",
+        )
+        return DocumentDoctorTaskHandler(doctor, reports, transaction, clock, mutations)
+    }
 
     @Bean
     @ConditionalOnMissingBean(ScheduleDocumentDoctorService::class)

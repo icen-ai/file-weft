@@ -7,7 +7,9 @@ import com.fileweft.application.task.BackgroundTaskStatus
 import com.fileweft.application.task.LeasedTaskProcessingRepository
 import com.fileweft.application.task.TaskLeaseClaim
 import com.fileweft.application.task.TaskLeaseLostException
+import com.fileweft.application.task.TaskMutationRepository
 import com.fileweft.application.task.TaskRepository
+import com.fileweft.application.task.TaskState
 import com.fileweft.core.id.Identifier
 import com.fileweft.persistence.migration.FlywayMigrationRunner
 import org.junit.jupiter.api.AfterEach
@@ -22,9 +24,11 @@ import java.time.ZoneOffset
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class JdbcTaskRepositoryIntegrationTest {
@@ -103,6 +107,94 @@ class JdbcTaskRepositoryIntegrationTest {
         transaction.execute { processing.markFailed(lease, "unsupported task type", 101) }
 
         assertEquals(State("FAILED", 0, 0, "unsupported task type", null, null, 0), state("task-1"))
+    }
+
+    @Test
+    fun `locks and verifies exact running and failed task projection states in one tenant`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = repository()
+        val tasks: TaskRepository = repository
+        val processing: LeasedTaskProcessingRepository = repository
+        val mutations: TaskMutationRepository = repository
+        transaction.execute { tasks.enqueue(task("task-1", "doctor:document-1")) }
+        val lease = transaction.execute {
+            processing.claimAvailable(1, 100, claim("worker-a", "token-a", 200))
+        }.single()
+
+        val running = transaction.execute {
+            mutations.findForMutation(Identifier("tenant-1"), Identifier("task-1"))
+        }
+
+        assertEquals(BackgroundTaskStatus.RUNNING, running?.status)
+        assertEquals("document.doctor", running?.type)
+        assertEquals(Identifier("document-1"), running?.businessId)
+        assertEquals("worker-a", running?.leaseOwner)
+        assertEquals("token-a", running?.leaseToken)
+        assertEquals(running, running?.requireCurrentLease(lease))
+        assertNull(
+            transaction.execute {
+                mutations.findForMutation(Identifier("tenant-2"), Identifier("task-1"))
+            },
+        )
+        val forged = BackgroundTaskLease(lease.task, "worker-a", "token-forged")
+        assertFailsWith<TaskLeaseLostException> { requireNotNull(running).requireCurrentLease(forged) }
+
+        transaction.execute { processing.markFailed(lease, "terminal failure", 101) }
+        val failed = transaction.execute {
+            mutations.findForMutation(Identifier("tenant-1"), Identifier("task-1"))
+        }
+        assertEquals(BackgroundTaskStatus.FAILED, failed?.status)
+        assertTrue(requireNotNull(failed).matchesFailedTask(lease))
+        assertFailsWith<TaskLeaseLostException> { failed.requireCurrentLease(lease) }
+    }
+
+    @Test
+    fun `holds the task mutation row lock until the caller transaction completes`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = repository()
+        transaction.execute { repository.enqueue(task("task-1", "doctor:document-1")) }
+        transaction.execute { repository.claimAvailable(1, 100, claim("worker-a", "token-a", 200)) }
+
+        dataSource.connection.use { firstConnection ->
+            firstConnection.autoCommit = false
+            val first = JdbcConnectionContext.withConnection(firstConnection) {
+                repository.findForMutation(Identifier("tenant-1"), Identifier("task-1"))
+            }
+            assertEquals(BackgroundTaskStatus.RUNNING, first?.status)
+
+            val started = CountDownLatch(1)
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val second = executor.submit<TaskState?> {
+                    dataSource.connection.use { secondConnection ->
+                        secondConnection.autoCommit = false
+                        secondConnection.createStatement().use { statement ->
+                            statement.execute("SET LOCAL statement_timeout = '5s'")
+                        }
+                        try {
+                            started.countDown()
+                            val state = JdbcConnectionContext.withConnection(secondConnection) {
+                                repository.findForMutation(Identifier("tenant-1"), Identifier("task-1"))
+                            }
+                            secondConnection.commit()
+                            state
+                        } catch (failure: Throwable) {
+                            secondConnection.rollback()
+                            throw failure
+                        }
+                    }
+                }
+                assertTrue(started.await(5, TimeUnit.SECONDS))
+                assertFailsWith<TimeoutException> { second.get(250, TimeUnit.MILLISECONDS) }
+
+                firstConnection.commit()
+                assertEquals(BackgroundTaskStatus.RUNNING, second.get(5, TimeUnit.SECONDS)?.status)
+            } finally {
+                executor.shutdownNow()
+                executor.awaitTermination(5, TimeUnit.SECONDS)
+                firstConnection.rollback()
+            }
+        }
     }
 
     @Test

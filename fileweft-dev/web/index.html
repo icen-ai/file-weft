@@ -135,9 +135,42 @@
             <pre id="platform-output" data-i18n="platform.empty">Select a document.</pre>
           </section>
 
-          <section id="doctor-panel" class="aux-panel hidden">
-            <div class="aux-title"><span data-i18n="doctor.title">Doctor report</span><small data-i18n="doctor.subtitle">Permission, storage, lifecycle and connector evidence.</small></div>
-            <pre id="doctor-output" data-i18n="doctor.empty">Select a document, then run Doctor.</pre>
+          <section id="doctor-panel" class="aux-panel doctor-console hidden" data-testid="doctor-panel">
+            <div class="aux-title doctor-console-title">
+              <div><span data-i18n="doctor.title">Doctor diagnostics</span><small data-i18n="doctor.subtitle">Safe formal checks for one document, durable work and the current tenant runtime.</small></div>
+              <span class="doctor-protocol">V1 / REDACTED</span>
+            </div>
+            <div class="doctor-scope-grid">
+              <article class="doctor-scope" data-testid="doctor-immediate-scope">
+                <header class="doctor-scope-head">
+                  <span class="doctor-scope-index">01</span>
+                  <div><h3 data-i18n="doctor.immediate.title">Immediate document check</h3><p data-i18n="doctor.immediate.subtitle">Runs bounded checks now without returning raw diagnostic details.</p></div>
+                  <span id="doctor-immediate-status" class="doctor-status SKIPPED" data-i18n="doctor.status.idle">IDLE</span>
+                </header>
+                <div class="doctor-scope-actions"><small id="doctor-document-context" data-i18n="doctor.noSelection">Select a visible document first.</small><button id="run-doctor" class="doctor-run" type="button" data-i18n="action.doctor">Run Doctor</button></div>
+                <div id="doctor-output" class="doctor-check-list" aria-live="polite"><div class="doctor-empty" data-i18n="doctor.empty">Select a document, then run Doctor.</div></div>
+              </article>
+
+              <article class="doctor-scope" data-testid="doctor-async-scope">
+                <header class="doctor-scope-head">
+                  <span class="doctor-scope-index">02</span>
+                  <div><h3 data-i18n="doctor.async.title">Durable asynchronous check</h3><p data-i18n="doctor.async.subtitle">Queues one idempotent task and follows its fenced worker result.</p></div>
+                  <span id="doctor-task-status" class="doctor-status SKIPPED" data-i18n="doctor.status.idle">IDLE</span>
+                </header>
+                <div class="doctor-scope-actions"><small id="doctor-task-summary" data-i18n="doctor.async.empty">No Doctor task is being followed.</small><button id="schedule-doctor" class="doctor-run" type="button" data-i18n="action.scheduleDoctor">Queue Doctor</button></div>
+                <div id="doctor-task-output" class="doctor-check-list" aria-live="polite"><div class="doctor-empty" data-i18n="doctor.async.hint">The report appears here after the worker completes.</div></div>
+              </article>
+
+              <article class="doctor-scope doctor-system-scope" data-permission="system:doctor:read" data-testid="doctor-system-scope">
+                <header class="doctor-scope-head">
+                  <span class="doctor-scope-index">03</span>
+                  <div><h3 data-i18n="doctor.system.title">Tenant runtime check</h3><p data-i18n="doctor.system.subtitle">Administrator-only diagnostics for this tenant's runtime dependencies.</p></div>
+                  <span id="doctor-system-status" class="doctor-status SKIPPED" data-i18n="doctor.status.idle">IDLE</span>
+                </header>
+                <div class="doctor-scope-actions"><small data-i18n="doctor.system.safe">Tenant identifiers and infrastructure details are never returned.</small><button id="run-system-doctor" class="doctor-run" type="button" data-i18n="action.systemDoctor">Run system Doctor</button></div>
+                <div id="doctor-system-output" class="doctor-check-list" aria-live="polite"><div class="doctor-empty" data-i18n="doctor.system.empty">Run the system check to inspect the current tenant runtime.</div></div>
+              </article>
+            </div>
           </section>
 
           <section id="uploads-panel" class="upload-lab hidden">
@@ -168,7 +201,6 @@
             <section class="evidence-section"><h4 data-i18n="evidence.delivery">Downstream delivery</h4><div id="delivery-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.tasks">Background tasks</h4><div id="task-list"></div></section>
             <section id="agent-results-section" class="evidence-section"><h4 data-i18n="evidence.agent">Agent suggestions</h4><div id="agent-result-list"></div></section>
-            <section class="evidence-section"><h4 data-i18n="evidence.doctorHistory">Doctor history</h4><div id="doctor-record-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.sync">Sync records</h4><div id="sync-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.audit">Audit trail</h4><div id="audit-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.operation">Operation trace</h4><div id="operation-log-list"></div></section>

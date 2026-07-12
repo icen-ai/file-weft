@@ -8,7 +8,9 @@ import com.fileweft.application.task.BackgroundTaskStatus
 import com.fileweft.application.task.LeasedTaskProcessingRepository
 import com.fileweft.application.task.TaskLeaseClaim
 import com.fileweft.application.task.TaskLeaseLostException
+import com.fileweft.application.task.TaskMutationRepository
 import com.fileweft.application.task.TaskRepository
+import com.fileweft.application.task.TaskState
 import com.fileweft.core.id.Identifier
 import java.sql.PreparedStatement
 import java.sql.ResultSet
@@ -19,7 +21,7 @@ import java.util.UUID
 class JdbcTaskRepository(
     private val objectMapper: ObjectMapper,
     private val clock: Clock,
-) : TaskRepository, LeasedTaskProcessingRepository {
+) : TaskRepository, LeasedTaskProcessingRepository, TaskMutationRepository {
     override fun enqueue(task: BackgroundTask) {
         val now = clock.millis()
         JdbcConnectionContext.requireCurrent().prepareStatement(
@@ -69,6 +71,20 @@ class JdbcTaskRepository(
             }
         }
     }
+
+    override fun findForMutation(tenantId: Identifier, taskId: Identifier): TaskState? =
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            """
+            SELECT id, tenant_id, task_type, business_id, task_status, lease_owner, lease_token
+            FROM fw_task
+            WHERE tenant_id = ? AND id = ?
+            FOR UPDATE
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, taskId.value)
+            statement.executeQuery().use { result -> if (result.next()) mapTaskState(result) else null }
+        }
 
     override fun claimAvailable(
         limit: Int,
@@ -183,6 +199,16 @@ class JdbcTaskRepository(
         task = mapTask(result),
         leaseOwner = result.getString("lease_owner") ?: error("Claimed task is missing its lease owner."),
         leaseToken = result.getString("lease_token") ?: error("Claimed task is missing its lease token."),
+    )
+
+    private fun mapTaskState(result: ResultSet): TaskState = TaskState(
+        id = Identifier(result.getString("id")),
+        tenantId = Identifier(result.getString("tenant_id")),
+        type = result.getString("task_type"),
+        status = BackgroundTaskStatus.valueOf(result.getString("task_status")),
+        businessId = result.getString("business_id")?.let(::Identifier),
+        leaseOwner = result.getString("lease_owner"),
+        leaseToken = result.getString("lease_token"),
     )
 
     private fun safeSubtract(value: Long, decrement: Long): Long =

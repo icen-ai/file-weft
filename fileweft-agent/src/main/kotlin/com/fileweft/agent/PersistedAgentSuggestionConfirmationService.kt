@@ -2,6 +2,8 @@ package com.fileweft.agent
 
 import com.fileweft.application.agent.AgentResultRepository
 import com.fileweft.application.agent.PersistedAgentSuggestionConfirmation
+import com.fileweft.application.task.BackgroundTaskStatus
+import com.fileweft.application.task.TaskRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
@@ -12,18 +14,44 @@ import java.time.Clock
  * Persists the explicit user acceptance that is required before another
  * application use case may apply an agent suggestion to a domain aggregate.
  */
-class PersistedAgentSuggestionConfirmationService(
+class PersistedAgentSuggestionConfirmationService private constructor(
     private val results: AgentResultRepository,
     private val transaction: ApplicationTransaction,
     private val identifierGenerator: IdentifierGenerator,
     private val clock: Clock,
+    private val tasks: TaskRepository?,
+    private val fenced: Boolean,
 ) {
+    /** Retains the original direct confirmation ABI. */
+    constructor(
+        results: AgentResultRepository,
+        transaction: ApplicationTransaction,
+        identifierGenerator: IdentifierGenerator,
+        clock: Clock,
+    ) : this(results, transaction, identifierGenerator, clock, null, false)
+
+    /** Strong path that confirms only evidence from an acknowledged task. */
+    constructor(
+        results: AgentResultRepository,
+        transaction: ApplicationTransaction,
+        identifierGenerator: IdentifierGenerator,
+        clock: Clock,
+        tasks: TaskRepository,
+    ) : this(results, transaction, identifierGenerator, clock, tasks, true)
+
+    init {
+        require(fenced == (tasks != null)) {
+            "Agent suggestion confirmation fencing requires a task repository."
+        }
+    }
+
     fun confirm(
         tenantId: Identifier,
         taskId: Identifier,
         suggestionId: Identifier,
         confirmedBy: Identifier,
     ): AgentSuggestionConfirmation = transaction.execute {
+        requireSuccessfulTask(tenantId, taskId)
         val persisted = requireNotNull(results.findByTask(tenantId, taskId)) {
             "Agent result does not exist in the current tenant."
         }
@@ -39,5 +67,14 @@ class PersistedAgentSuggestionConfirmationService(
             ),
         )
         AgentSuggestionConfirmation(saved.taskId, saved.suggestionId, saved.confirmedBy, saved.confirmedAt)
+    }
+
+    private fun requireSuccessfulTask(tenantId: Identifier, taskId: Identifier) {
+        if (!fenced) return
+        val task = requireNotNull(tasks).findById(tenantId, taskId)
+            ?: throw NoSuchElementException("Agent task does not exist in the current tenant.")
+        check(task.status == BackgroundTaskStatus.SUCCESS) {
+            "Agent suggestions can be confirmed only after their durable task succeeds."
+        }
     }
 }

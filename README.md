@@ -69,7 +69,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 
 审计将用户 ID 视为不透明字符串，并同时保存操作发生时的显示名快照。接入方可在 `UserRealmProvider` 中将 Long、Int、UUID 或其他身份系统 ID 转为字符串；FileWeft 不维护用户表，也不会在查询历史审计时反查并改写原有操作者名称。
 
-验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。控制台的创建、改名、新增版本、授权下载、审批待办与文档审批历史、当前代次同步状态、明确的交付/撤回重排，以及提交/审批/驳回/修订/下线/恢复/归档均走 `/fileweft/v1` 正式协议；Doctor 和审计综合投影仍走 `/api`，不能被嵌入方当作公共协议。
+验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。控制台的创建、改名、新增版本、授权下载、审批待办与文档审批历史、当前代次同步状态、明确的交付/撤回重排、即时/异步/系统 Doctor，以及提交/审批/驳回/修订/下线/恢复/归档均走 `/fileweft/v1` 正式协议。旧 `/api/documents/{documentId}/doctor` 与 `/api/documents/{documentId}/doctor/tasks` 已撤销并保持 `404`，防止绕过正式目录授权和脱敏门面；审计综合投影仍走 `/api`，只用于 Dev 验收，不能被嵌入方当作公共协议。
 
 运行完整 Compose 验收回归：
 
@@ -80,11 +80,11 @@ $env:FILEWEFT_RUN_DEV_E2E='true'
 .\gradlew.bat :fileweft-dev:test
 ```
 
-该测试会创建唯一编号文档，验证编辑者上传和提交、单人审批与双人会签、管理员处理 Outbox、下游平台下载 RustFS 对象，并覆盖可选下游失败与必达下游人工恢复。
+该测试会创建唯一编号文档，验证编辑者上传和提交、单人审批与双人会签、管理员处理 Outbox、下游平台下载 RustFS 对象，并覆盖可选下游失败、必达下游人工恢复、Agent 结果仅在匹配任务成功后可见，以及正式 Doctor 的即时检查、幂等任务重放、Worker 报告、角色拒绝、双租户隔离和系统诊断脱敏。Agent 终态竞态用例会直接向 Compose PostgreSQL 写入隔离的验收夹具；默认连接本机 `5432`，非默认映射可通过 `FILEWEFT_DEV_E2E_DB_URL`、`FILEWEFT_DEV_E2E_DB_USERNAME` 和 `FILEWEFT_DEV_E2E_DB_PASSWORD` 覆盖。
 
 ### 浏览器验收回归
 
-`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、单人与双人审批、驳回修订、直接创建、重命名、版本、授权下载、目录移动、Doctor、任务处理、下游镜像、断点续传与 Alpha/Beta 租户文件可见性隔离。本里程碑的常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 均已通过；浏览器侧共 9 条 Playwright 用例通过，其中包含一条独立的 formal-v1 协议验收。
+`fileweft-dev/web` 内置锁定版本的 Playwright 测试。它只针对本地 Compose 验收台，不会访问生产地址；覆盖完整中文切换、角色控件过滤、真实内置样例上传/提交、单人与双人审批、驳回修订、直接创建、重命名、版本、授权下载、目录移动、任务处理、下游镜像、断点续传与 Alpha/Beta 租户文件可见性隔离。Doctor 另有正式协议浏览器场景，验证即时卡片、异步任务轮询、管理员系统诊断、双租户/角色拒绝、响应与 DOM 脱敏，并断言浏览器不会回退调用 `/api/**` Doctor。设置下述开关后会执行完整浏览器回归。
 
 首次执行先安装锁定的 Node 依赖和 Chromium：
 
@@ -193,7 +193,7 @@ fileweft:
 
 `fw_task` 是独立于 Outbox 的通用后台任务表，适用于 Doctor、AI、索引、转码等可恢复工作。它采用 PostgreSQL `SKIP LOCKED` 领取任务，并使用带所有者的过期租约：Worker 宕机后，超过租约的 `RUNNING` 任务会重新变为可领取状态。处理器通过 `FileWeftTaskHandler` SPI 注册，必须以任务 ID 实现幂等；框架统一处理退避重试、重试耗尽和本地失败投影。
 
-Doctor 提供两条受控路径：即时检查用于交互式请求；异步检查在请求时先完成 `document:doctor` 授权，随后由无用户会话的后台 Worker 仅执行只读技术检查。结果写入 `fw_doctor_record`，因此运营者可保留诊断历史，而不会让后台线程绕过用户权限。开发验收台可排队 Doctor、查看任务状态与打开历史报告；仅管理员可手动处理任务队列。
+Doctor 提供三条受控路径：即时文档检查用于交互式请求；异步检查以持久化幂等键排队，在请求时完成 `document:doctor`、文档读取与目录可见性授权，随后由无用户会话的后台 Worker 仅执行只读技术检查；系统诊断则要求独立的 `system:doctor:read`。异步结果写入 `fw_doctor_record`，因此运营者可保留诊断历史，而不会让后台线程绕过用户权限。开发验收台通过正式 v1 DTO 以卡片展示即时结果、轮询任务及系统状态，不读取 `report_json`、原始 evidence、租户标识或基础设施细节；仅管理员可查看系统诊断和手动处理任务队列。
 
 ## 操作日志与请求追踪
 

@@ -5,7 +5,6 @@ import com.fileweft.application.catalog.DocumentCatalogBindingService
 import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
-import com.fileweft.application.doctor.ScheduleDocumentDoctorService
 import com.fileweft.application.document.AddDocumentVersionCommand
 import com.fileweft.application.document.DocumentDownloadService
 import com.fileweft.application.document.DocumentDraftService
@@ -14,12 +13,15 @@ import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.connector.DevPlatformMirrorService
 import com.fileweft.dev.api.service.DevDocumentDetail
 import com.fileweft.dev.api.service.DevDocumentQueryService
-import com.fileweft.dev.api.service.DevOperationsService
 import com.fileweft.dev.api.service.DevReviewService
 import com.fileweft.domain.document.Document
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.mock.web.MockMultipartFile
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
@@ -32,6 +34,23 @@ class DevDocumentControllerTest {
 
         assertTrue(DocumentCatalogMutationService::class.java in dependencyTypes)
         assertFalse(DocumentDraftService::class.java in dependencyTypes)
+        assertFalse(dependencyTypes.any { type -> type.simpleName.contains("Doctor") })
+        assertFalse(DevDocumentController::class.java.declaredMethods.any { method -> method.name.contains("doctor", ignoreCase = true) })
+    }
+
+    @Test
+    fun `keeps legacy Dev Doctor routes unmapped`() {
+        val mvc = MockMvcBuilders.standaloneSetup(
+            controller(
+                Mockito.mock(DocumentCatalogMutationService::class.java),
+                Mockito.mock(DevDocumentQueryService::class.java),
+            ),
+        ).build()
+
+        mvc.perform(get("/api/documents/document-1/doctor"))
+            .andExpect(status().isNotFound)
+        mvc.perform(post("/api/documents/document-1/doctor/tasks"))
+            .andExpect(status().isNotFound)
     }
 
     @Test
@@ -94,9 +113,7 @@ class DevDocumentControllerTest {
         reviews = Mockito.mock(DevReviewService::class.java),
         lifecycle = Mockito.mock(DocumentCatalogLifecycleService::class.java),
         queries = queries,
-        operations = Mockito.mock(DevOperationsService::class.java),
         retryDeliveries = Mockito.mock(RetryDocumentDeliveryService::class.java),
-        doctorScheduler = Mockito.mock(ScheduleDocumentDoctorService::class.java),
         agentSuggestions = Mockito.mock(ConfirmAgentSuggestionService::class.java),
         platformMirror = Mockito.mock(DevPlatformMirrorService::class.java),
     )

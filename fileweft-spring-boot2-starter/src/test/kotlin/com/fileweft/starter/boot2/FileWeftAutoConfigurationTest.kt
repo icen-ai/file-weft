@@ -25,6 +25,13 @@ import com.fileweft.application.catalog.DocumentCatalogMutationService
 import com.fileweft.application.doctor.CatalogDoctorChecker
 import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
+import com.fileweft.application.doctor.DocumentDoctorTaskHandler
+import com.fileweft.application.doctor.DocumentDoctorQueryService
+import com.fileweft.application.doctor.DocumentDoctorTaskQueryRepository
+import com.fileweft.application.doctor.DocumentDoctorTaskQueryService
+import com.fileweft.application.doctor.IdempotentScheduleDocumentCatalogDoctorService
+import com.fileweft.application.doctor.IdempotentScheduleDocumentDoctorService
+import com.fileweft.application.doctor.SystemDoctorService
 import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.delivery.DocumentDeliverySyncService
 import com.fileweft.application.delivery.DocumentDeliveryTarget
@@ -56,11 +63,17 @@ import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.sync.DocumentPublishOutboxEventHandler
 import com.fileweft.application.sync.DocumentSyncService
+import com.fileweft.application.task.BackgroundTask
+import com.fileweft.application.task.BackgroundTaskLease
+import com.fileweft.application.task.TaskMutationRepository
+import com.fileweft.application.task.TaskProcessingRepository
+import com.fileweft.application.task.TaskRepository
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
+import com.fileweft.persistence.jdbc.JdbcDocumentDoctorTaskQueryRepository
 import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
 import com.fileweft.persistence.jdbc.JdbcRequestIdempotencyRepository
 import com.fileweft.persistence.jdbc.JdbcWorkflowQueryRepository
@@ -199,6 +212,23 @@ class FileWeftAutoConfigurationTest {
                     .toList()
                 assertTrue(messages.any { message ->
                     message.contains("must also implement DocumentDeliveryTargetMutationRepository")
+                })
+            }
+    }
+
+    @Test
+    fun `fails startup clearly when a custom task repository lacks projection fencing`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                LegacyTaskRepositoryConfiguration::class.java,
+            )
+            .run { context ->
+                val messages = generateSequence(context.startupFailure) { failure -> failure.cause }
+                    .mapNotNull { failure -> failure.message }
+                    .toList()
+                assertTrue(messages.any { message ->
+                    message.contains("Exactly one TaskMutationRepository is required for fenced task projections")
                 })
             }
     }
@@ -441,15 +471,33 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(DocumentDownloadService::class.java) != null)
             assertTrue(context.getBean(ArchiveDocumentService::class.java) != null)
             assertTrue(context.getBean(DoctorApplicationService::class.java) != null)
+            assertTrue(
+                context.getBean(DocumentDoctorTaskQueryRepository::class.java) is
+                    JdbcDocumentDoctorTaskQueryRepository,
+            )
+            assertTrue(context.getBean(DocumentDoctorQueryService::class.java) != null)
+            assertTrue(context.getBean(DocumentDoctorTaskQueryService::class.java) != null)
+            assertTrue(context.getBean(SystemDoctorService::class.java) != null)
+            assertTrue(context.getBean(IdempotentScheduleDocumentDoctorService::class.java) != null)
+            assertTrue(context.getBeansOfType(IdempotentScheduleDocumentCatalogDoctorService::class.java).isEmpty())
+            assertNull(privateField(context.getBean(DocumentDoctorQueryService::class.java), "folderReadAccess"))
+            assertNull(privateField(context.getBean(DocumentDoctorTaskQueryService::class.java), "folderReadAccess"))
+            assertTrue(context.getBean(TaskMutationRepository::class.java) != null)
+            assertTrue(privateField(context.getBean(DocumentDoctorTaskHandler::class.java), "taskMutations") is TaskMutationRepository)
             assertTrue(context.getBean(OutboxWorker::class.java) != null)
             assertTrue(context.getBean(OutboxBacklogReader::class.java) != null)
             assertTrue(context.getBean(OutboxBacklogMetricsPublisher::class.java) != null)
             assertTrue(context.getBean(OperationLogRepository::class.java) != null)
             assertTrue(context.getBean(AgentResultRepository::class.java) != null)
             assertTrue(context.getBean(ConfirmAgentSuggestionService::class.java) != null)
+            assertTrue(privateField(context.getBean(ConfirmAgentSuggestionService::class.java), "tasks") is TaskRepository)
             assertTrue(context.getBean(AgentTaskHandler::class.java) != null)
+            assertTrue(privateField(context.getBean(AgentTaskHandler::class.java), "taskMutations") is TaskMutationRepository)
             assertTrue(context.getBean(AgentTaskOutboxEventHandler::class.java) != null)
             assertTrue(context.getBean(PersistedAgentSuggestionConfirmationService::class.java) != null)
+            assertTrue(
+                privateField(context.getBean(PersistedAgentSuggestionConfirmationService::class.java), "tasks") is TaskRepository,
+            )
             assertTrue(context.getBean(AgentDoctorChecker::class.java) != null)
             assertTrue(context.getBean(DeliveryProfileDoctorChecker::class.java) != null)
             assertTrue(context.getBean(WorkflowDoctorChecker::class.java) != null)
@@ -560,6 +608,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(FileAssetMutationRepository::class.java) != null)
                 assertTrue(context.getBean(JdbcFileAssetRepository::class.java) is FileAssetMutationRepository)
                 assertTrue(context.getBean(CatalogDoctorChecker::class.java) != null)
+                assertTrue(context.getBeansOfType(IdempotentScheduleDocumentDoctorService::class.java).isEmpty())
+                assertTrue(context.getBean(IdempotentScheduleDocumentCatalogDoctorService::class.java) != null)
                 assertSame(
                     context.getBean(DocumentCatalogAccessService::class.java),
                     context.getBean(DocumentFolderReadAccess::class.java),
@@ -571,6 +621,14 @@ class FileWeftAutoConfigurationTest {
                 assertSame(
                     context.getBean(DocumentCatalogAccessService::class.java),
                     privateField(context.getBean(WorkflowQueryService::class.java), "folderReadAccess"),
+                )
+                assertSame(
+                    context.getBean(DocumentCatalogAccessService::class.java),
+                    privateField(context.getBean(DocumentDoctorQueryService::class.java), "folderReadAccess"),
+                )
+                assertSame(
+                    context.getBean(DocumentCatalogAccessService::class.java),
+                    privateField(context.getBean(DocumentDoctorTaskQueryService::class.java), "folderReadAccess"),
                 )
             }
     }
@@ -595,6 +653,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBeansOfType(IdempotentDocumentReviewWorkflowService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(IdempotentDocumentCatalogReviewWorkflowService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(FileAssetMutationRepository::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(IdempotentScheduleDocumentDoctorService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(IdempotentScheduleDocumentCatalogDoctorService::class.java).isEmpty())
             }
     }
 
@@ -843,6 +903,28 @@ class FileWeftAutoConfigurationTest {
 
                 override fun save(target: DocumentDeliveryTarget) = Unit
             }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class LegacyTaskRepositoryConfiguration {
+        @Bean
+        fun legacyTaskRepository(): LegacyTaskRepository = LegacyTaskRepository()
+    }
+
+    class LegacyTaskRepository : TaskRepository, TaskProcessingRepository {
+        override fun enqueue(task: BackgroundTask) = Unit
+        override fun findById(tenantId: Identifier, taskId: Identifier): BackgroundTask? = null
+        override fun findByBusiness(tenantId: Identifier, businessId: Identifier, limit: Int): List<BackgroundTask> = emptyList()
+        override fun claimAvailable(
+            limit: Int,
+            now: Long,
+            leaseOwner: String,
+            leaseExpiresAt: Long,
+        ): List<BackgroundTaskLease> = emptyList()
+
+        override fun markSucceeded(lease: BackgroundTaskLease, completedAt: Long) = Unit
+        override fun markForRetry(lease: BackgroundTaskLease, nextAttemptAt: Long, message: String, updatedAt: Long) = Unit
+        override fun markFailed(lease: BackgroundTaskLease, message: String, updatedAt: Long) = Unit
     }
 
     @Configuration(proxyBeanMethods = false)

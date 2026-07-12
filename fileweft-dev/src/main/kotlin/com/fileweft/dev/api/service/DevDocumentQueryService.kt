@@ -4,6 +4,20 @@ import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.LifecycleState
 import org.springframework.jdbc.core.JdbcTemplate
 
+/**
+ * The task row is authoritative because a result can be written before the
+ * fenced Worker success acknowledgement.
+ */
+internal const val DEV_AGENT_RESULTS_SQL = """
+    SELECT result.id, result.task_id, result.capability, result.source_event_type, result.result_status,
+           result.result_json::text AS result_json, result.created_time
+    FROM fw_agent_result result
+    JOIN fw_task task ON task.id = result.task_id AND task.tenant_id = result.tenant_id
+    WHERE result.tenant_id = ? AND task.business_id = ?
+      AND task.task_type = 'agent.execute' AND task.task_status = 'SUCCESS'
+    ORDER BY result.created_time DESC, result.id DESC
+"""
+
 data class DevDocumentSummary(
     val id: String,
     val documentNumber: String,
@@ -160,15 +174,6 @@ data class DevBackgroundTaskView(
     val updatedTime: Long,
 )
 
-data class DevDoctorRecordView(
-    val id: String,
-    val taskId: String,
-    val status: String,
-    val report: String,
-    val createdTime: Long,
-    val updatedTime: Long,
-)
-
 data class DevAgentConfirmationView(
     val id: String,
     val suggestionId: String,
@@ -195,7 +200,6 @@ data class DevDocumentDetail(
     val operationLogs: List<DevOperationLogView>,
     val deliveries: List<DevDeliveryView>,
     val tasks: List<DevBackgroundTaskView>,
-    val doctorRecords: List<DevDoctorRecordView>,
     val agentResults: List<DevAgentResultView>,
     val syncRecords: List<DevSyncView>,
     val outboxEvents: List<DevOutboxView>,
@@ -232,7 +236,6 @@ class DevDocumentQueryService(
             operationLogs = jdbcTemplate.query(OPERATION_LOGS_SQL, OPERATION_LOG_MAPPER, tenantId, documentId.value),
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
-            doctorRecords = jdbcTemplate.query(DOCTOR_RECORDS_SQL, DOCTOR_RECORD_MAPPER, tenantId, documentId.value),
             agentResults = if (access.allowsDocumentAction(documentId, AGENT_SUGGESTION_READ_ACTION)) {
                 loadAgentResults(tenantId, documentId.value)
             } else {
@@ -310,7 +313,7 @@ class DevDocumentQueryService(
     }
 
     private fun loadAgentResults(tenantId: String, documentId: String): List<DevAgentResultView> = jdbcTemplate.query(
-        AGENT_RESULTS_SQL,
+        DEV_AGENT_RESULTS_SQL,
         AGENT_RESULT_MAPPER,
         tenantId,
         documentId,
@@ -406,12 +409,6 @@ class DevDocumentQueryService(
                 result.getString("id"), result.getString("task_type"), result.getString("task_status"),
                 result.getInt("retry_count"), result.getLong("next_attempt_time"), result.getString("last_error"),
                 result.getLong("created_time"), result.getLong("updated_time"),
-            )
-        }
-        val DOCTOR_RECORD_MAPPER = org.springframework.jdbc.core.RowMapper<DevDoctorRecordView> { result, _ ->
-            DevDoctorRecordView(
-                result.getString("id"), result.getString("task_id"), result.getString("doctor_status"),
-                result.getString("report_json"), result.getLong("created_time"), result.getLong("updated_time"),
             )
         }
         val AGENT_RESULT_MAPPER = org.springframework.jdbc.core.RowMapper<DevAgentResultView> { result, _ ->
@@ -527,18 +524,6 @@ class DevDocumentQueryService(
         const val TASKS_SQL = """
             SELECT id, task_type, task_status, retry_count, next_attempt_time, last_error, created_time, updated_time
             FROM fw_task WHERE tenant_id = ? AND business_id = ? ORDER BY created_time DESC, id DESC
-        """
-        const val DOCTOR_RECORDS_SQL = """
-            SELECT id, task_id, doctor_status, report_json::text AS report_json, created_time, updated_time
-            FROM fw_doctor_record WHERE tenant_id = ? AND document_id = ? ORDER BY created_time DESC, id DESC
-        """
-        const val AGENT_RESULTS_SQL = """
-            SELECT result.id, result.task_id, result.capability, result.source_event_type, result.result_status,
-                   result.result_json::text AS result_json, result.created_time
-            FROM fw_agent_result result
-            JOIN fw_task task ON task.id = result.task_id AND task.tenant_id = result.tenant_id
-            WHERE result.tenant_id = ? AND task.business_id = ?
-            ORDER BY result.created_time DESC, result.id DESC
         """
         const val AGENT_CONFIRMATIONS_SQL = """
             SELECT id, suggestion_id, confirmed_by, confirmed_time

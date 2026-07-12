@@ -10,7 +10,6 @@ import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
-import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
 import com.fileweft.dev.api.agent.DevClassificationAgent
@@ -254,8 +253,7 @@ class DevApiConfiguration {
         access: DevAccessService,
         worker: OutboxWorker,
         taskWorker: TaskWorker,
-        doctor: DoctorApplicationService,
-    ): DevOperationsService = DevOperationsService(access, worker, taskWorker, doctor)
+    ): DevOperationsService = DevOperationsService(access, worker, taskWorker)
 
     @Bean
     fun devReviewService(

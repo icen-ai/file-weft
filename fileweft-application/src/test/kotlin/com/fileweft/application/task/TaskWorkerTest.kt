@@ -64,6 +64,76 @@ class TaskWorkerTest {
     }
 
     @Test
+    fun `passes the exact persisted lease to strong handlers and their terminal callbacks`() {
+        val repository = LeasedRecordingRepository(listOf(lease()))
+        var handledLease: BackgroundTaskLease? = null
+        var exhaustedLease: BackgroundTaskLease? = null
+        var legacyHandleCalls = 0
+        var legacyExhaustedCalls = 0
+        val handler = object : LeasedTaskHandler {
+            override fun supports(task: TaskExecution): Boolean = true
+
+            override fun handle(task: TaskExecution): TaskHandlingResult {
+                legacyHandleCalls++
+                return TaskHandlingResult(TaskHandlingStatus.PERMANENT_FAILURE, "legacy path must not run")
+            }
+
+            override fun handle(lease: BackgroundTaskLease): TaskHandlingResult {
+                handledLease = lease
+                return TaskHandlingResult(TaskHandlingStatus.PERMANENT_FAILURE, "invalid task")
+            }
+
+            override fun onExhausted(task: TaskExecution, message: String) {
+                legacyExhaustedCalls++
+            }
+
+            override fun onExhausted(lease: BackgroundTaskLease, message: String) {
+                exhaustedLease = lease
+            }
+        }
+
+        val summary = worker(repository, TrackingTransaction(), listOf(handler)).processAvailable(1)
+
+        assertEquals(1, summary.failed)
+        assertEquals(0, legacyHandleCalls)
+        assertEquals(0, legacyExhaustedCalls)
+        assertEquals(repository.claims.single().leaseToken, handledLease?.leaseToken)
+        assertEquals(handledLease?.leaseToken, exhaustedLease?.leaseToken)
+        assertEquals("task-1", exhaustedLease?.task?.id?.value)
+    }
+
+    @Test
+    fun `classifies lease loss raised by a strong handler without acknowledgement or retry`() {
+        val repository = LeasedRecordingRepository(listOf(lease()))
+        val metrics = RecordingMetrics()
+        var exhausted = false
+        val handler = object : LeasedTaskHandler {
+            override fun supports(task: TaskExecution): Boolean = true
+            override fun handle(task: TaskExecution) = error("Legacy path must not run.")
+            override fun handle(lease: BackgroundTaskLease): TaskHandlingResult =
+                throw TaskLeaseLostException("projection lease was replaced")
+
+            override fun onExhausted(task: TaskExecution, message: String) {
+                exhausted = true
+            }
+
+            override fun onExhausted(lease: BackgroundTaskLease, message: String) {
+                exhausted = true
+            }
+        }
+
+        val summary = worker(repository, TrackingTransaction(), listOf(handler), metrics = metrics).processAvailable(1)
+
+        assertEquals(1, summary.lost)
+        assertEquals(0, summary.succeeded)
+        assertEquals(0, summary.retried)
+        assertEquals(0, summary.failed)
+        assertTrue(repository.succeeded.isEmpty())
+        assertTrue(!exhausted)
+        assertEquals(listOf(FileWeftMetric.TASK_LEASE_LOST), metrics.events.map { it.first })
+    }
+
+    @Test
     fun `abandons a lost task lease without terminal callbacks and continues later tasks`() {
         LostTransition.values().forEach { lostTransition ->
             val repository = LeaseLossRepository(listOf(lease("task-1"), lease("task-2")), lostTransition)
