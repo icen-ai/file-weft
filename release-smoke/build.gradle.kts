@@ -8,7 +8,8 @@ plugins {
     kotlin("jvm") version "2.1.21" apply false
 }
 
-version = providers.gradleProperty("fileweftVersion").orElse("0.0.1").get()
+version = providers.gradleProperty("fileweftVersion").orNull
+    ?: throw GradleException("-PfileweftVersion is required for release consumer smoke testing.")
 
 subprojects {
     apply(plugin = "java-library")

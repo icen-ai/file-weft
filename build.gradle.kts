@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "com.fileweft"
-version = "0.0.1"
+version = "0.0.2-SNAPSHOT"
 
 val publishableModuleNames = setOf(
     "fileweft-core",
@@ -34,6 +34,10 @@ val publishableModuleNames = setOf(
     "fileweft-testkit",
 )
 val releaseRepositoryDirectory = layout.buildDirectory.dir("repository")
+val releaseVersion = version.toString()
+val releaseNotesFile = layout.projectDirectory.file(
+    "docs/releases/${releaseVersion.removeSuffix("-SNAPSHOT")}.md",
+)
 val cnbArtifactsPassword = providers.environmentVariable("CNB_TOKEN")
     .orElse(providers.gradleProperty("cnbArtifactsGradlePassword"))
 val cnbPublishingRequested = gradle.startParameter.taskNames.any { requestedTask ->
@@ -49,6 +53,9 @@ if (
     configurationCacheRequested
 ) {
     throw GradleException("CNB publishing credentials require --no-configuration-cache.")
+}
+if (cnbPublishingRequested && releaseVersion.endsWith("-SNAPSHOT")) {
+    throw GradleException("CNB release publishing requires a non-SNAPSHOT project version.")
 }
 
 allprojects {
@@ -69,12 +76,12 @@ val compatibilityCheck = tasks.register("compatibilityCheck") {
 
 val publishReleaseRepository = tasks.register("publishReleaseRepository") {
     group = "publishing"
-    description = "Publishes every public FileWeft 0.0.1 module to build/repository."
+    description = "Publishes every public FileWeft $releaseVersion module to build/repository."
 }
 
 val installReleaseToMavenLocal = tasks.register("installReleaseToMavenLocal") {
     group = "publishing"
-    description = "Installs every public FileWeft 0.0.1 module into Maven local."
+    description = "Installs every public FileWeft $releaseVersion module into Maven local."
 }
 
 val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
@@ -93,6 +100,7 @@ val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
         rootProject.file("release-smoke").absolutePath,
         "clean",
         "build",
+        "-PfileweftVersion=$releaseVersion",
         "--no-daemon",
         "--no-configuration-cache",
     )
@@ -100,7 +108,7 @@ val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
 
 val publishCnbArtifacts = tasks.register("publishCnbArtifacts") {
     group = "publishing"
-    description = "Publishes every public FileWeft 0.0.1 module to the configured CNB Maven registry."
+    description = "Publishes every public FileWeft $releaseVersion module to the configured CNB Maven registry."
     doFirst {
         require(cnbArtifactsPassword.isPresent) {
             "Set CNB_TOKEN or cnbArtifactsGradlePassword before publishing CNB artifacts."
@@ -165,7 +173,7 @@ subprojects {
 
 val releaseBundle = tasks.register<Zip>("releaseBundle") {
     group = "distribution"
-    description = "Builds the shareable FileWeft 0.0.1 Maven repository, SBOM, and release notes bundle."
+    description = "Builds the shareable FileWeft $releaseVersion Maven repository and SBOM bundle."
     dependsOn(publishReleaseRepository, "verifySbom")
     archiveBaseName.set("fileweft")
     archiveVersion.set(version.toString())
@@ -178,15 +186,17 @@ val releaseBundle = tasks.register<Zip>("releaseBundle") {
         include("bom.json", "bom.xml")
         into("sbom")
     }
-    from("docs/releases/0.0.1.md") {
-        rename { "RELEASE_NOTES.md" }
+    if (releaseNotesFile.asFile.isFile) {
+        from(releaseNotesFile) {
+            rename { "RELEASE_NOTES.md" }
+        }
     }
     from("README.md")
 }
 
 val releaseCheck = tasks.register("releaseCheck") {
     group = "verification"
-    description = "Runs all 0.0.1 release gates and creates the shareable release bundle."
+    description = "Runs all FileWeft $releaseVersion release gates and creates the shareable release bundle."
     dependsOn(compatibilityCheck, "verifySbom", releaseBundle, releaseConsumerSmoke)
 }
 
