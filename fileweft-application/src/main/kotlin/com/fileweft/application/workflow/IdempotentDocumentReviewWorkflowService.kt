@@ -157,6 +157,7 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
     private val idempotency: RequestIdempotencyService,
     private val guard: DocumentLifecycleMutationGuard?,
 ) {
+    @JvmSynthetic
     fun submitForReview(
         documentId: Identifier,
         reviewerId: Identifier?,
@@ -200,6 +201,7 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
         ).value
     }
 
+    @JvmSynthetic
     fun approve(
         workflowId: Identifier,
         taskId: Identifier,
@@ -220,6 +222,7 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
         idempotencyKey = idempotencyKey,
     )
 
+    @JvmSynthetic
     fun reject(
         workflowId: Identifier,
         taskId: Identifier,

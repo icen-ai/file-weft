@@ -17,6 +17,7 @@ import com.fileweft.application.idempotency.RequestIdempotencyRecord
 import com.fileweft.application.idempotency.RequestIdempotencyRepository
 import com.fileweft.application.idempotency.RequestIdempotencyService
 import com.fileweft.application.idempotency.RequestIdempotencyStatus
+import com.fileweft.application.idempotency.RequestFingerprint
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
@@ -225,6 +226,24 @@ class IdempotentDocumentLifecycleServiceTest {
     }
 
     @Test
+    fun `default publish replays a completed record created with the legacy fingerprint`() {
+        val fixture = Fixture(pendingDocument())
+        fixture.seedLegacyDefaultPublish("legacy-publish-key")
+
+        val replay = fixture.service.publish(fixture.document.id, "legacy-publish-key")
+
+        assertEquals(fixture.document.id, replay.documentId)
+        assertEquals(1, fixture.idempotency.findCalls)
+        assertEquals(0, fixture.idempotency.claimCalls)
+        assertEquals(0, fixture.idempotency.completeCalls)
+        assertEquals(0, fixture.profileCalls)
+        assertEquals(0, fixture.documents.saveCalls)
+        assertEquals(0, fixture.deliveries.saved.size)
+        assertEquals(0, fixture.outbox.events.size)
+        assertEquals(0, fixture.audits.records.size)
+    }
+
+    @Test
     fun `publish accepts the bounded profile limit and rejects unsafe or oversized profiles before authorization`() {
         val maximumProfileId = "p".repeat(256)
         val bounded = Fixture(pendingDocument())
@@ -341,6 +360,24 @@ class IdempotentDocumentLifecycleServiceTest {
                 idempotencyService,
                 guard,
             )
+
+        fun seedLegacyDefaultPublish(idempotencyKey: String) {
+            val request = RequestIdempotency.create(
+                tenantId = TENANT_ID,
+                operatorId = Identifier("operator-1"),
+                idempotencyKey = idempotencyKey,
+                action = "document:publish",
+                resourceType = "DOCUMENT",
+                resourceId = document.id,
+                requestFingerprint = RequestFingerprint.sha256("fileweft:lifecycle:publish:v1"),
+            )
+            transaction.execute {
+                idempotency.seedCompleted(
+                    request,
+                    IdempotencyResult("DOCUMENT", document.id),
+                )
+            }
+        }
 
         private fun deliveryProfile(
             id: String,
@@ -587,6 +624,26 @@ class IdempotentDocumentLifecycleServiceTest {
                 completedTime = current.completedTime,
                 createdTime = current.createdTime,
                 updatedTime = current.updatedTime,
+            )
+        }
+
+        fun seedCompleted(request: RequestIdempotency, result: IdempotencyResult) {
+            check(transaction.active)
+            record = RequestIdempotencyRecord(
+                id = Identifier("idem-legacy"),
+                tenantId = request.tenantId,
+                keyDigest = request.keyDigest,
+                operatorId = request.operatorId,
+                action = request.action,
+                resourceType = request.resourceType,
+                resourceId = request.resourceId,
+                subresourceId = request.subresourceId,
+                requestFingerprint = request.requestFingerprint,
+                status = RequestIdempotencyStatus.COMPLETED,
+                result = result,
+                completedTime = 100,
+                createdTime = 100,
+                updatedTime = 100,
             )
         }
     }

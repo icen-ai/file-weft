@@ -7,8 +7,11 @@ import com.fileweft.core.id.Identifier;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class JavaIdempotentDocumentReviewWorkflowInteropTest {
@@ -73,6 +76,16 @@ class JavaIdempotentDocumentReviewWorkflowInteropTest {
                 String.class
             ));
         }
+    }
+
+    @Test
+    void doesNotExposeTheUnguardedDelegateCommandsToJavaHosts() throws Exception {
+        Class<?> delegate = Class.forName(
+            "com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowDelegate"
+        );
+        assertFalse(Arrays.stream(delegate.getDeclaredMethods()).anyMatch(method ->
+            Modifier.isPublic(method.getModifiers()) && !method.isSynthetic()
+        ));
     }
 
     private static void assertReceipt(Method method) {

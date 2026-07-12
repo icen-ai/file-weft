@@ -115,6 +115,7 @@ internal class IdempotentDocumentLifecycleDelegate(
     private val idempotency: RequestIdempotencyService,
     private val guard: DocumentLifecycleMutationGuard?,
 ) {
+    @JvmSynthetic
     fun revise(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt {
         val context = commands.prepareRevise(documentId, guard)
         return executeSimple(context, idempotencyKey, REVISE_FINGERPRINT) { validated ->
@@ -122,6 +123,7 @@ internal class IdempotentDocumentLifecycleDelegate(
         }
     }
 
+    @JvmSynthetic
     fun publish(
         documentId: Identifier,
         deliveryProfileId: String?,
@@ -145,6 +147,7 @@ internal class IdempotentDocumentLifecycleDelegate(
         ).value
     }
 
+    @JvmSynthetic
     fun offline(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt {
         val context = offline.prepareOffline(documentId, guard)
         return executeSimple(context, idempotencyKey, OFFLINE_FINGERPRINT) { validated ->
@@ -152,6 +155,7 @@ internal class IdempotentDocumentLifecycleDelegate(
         }
     }
 
+    @JvmSynthetic
     fun restore(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt {
         val context = restore.prepareRestore(documentId, guard)
         return executeSimple(context, idempotencyKey, RESTORE_FINGERPRINT) { validated ->
@@ -159,6 +163,7 @@ internal class IdempotentDocumentLifecycleDelegate(
         }
     }
 
+    @JvmSynthetic
     fun archive(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt {
         val context = archive.prepareArchive(documentId, guard)
         return executeSimple(context, idempotencyKey, ARCHIVE_FINGERPRINT) { validated ->
@@ -246,12 +251,17 @@ internal class IdempotentDocumentLifecycleDelegate(
     }
 
     private fun publishFingerprint(deliveryProfileId: String?): String =
-        RequestFingerprint.sha256("fileweft:lifecycle:publish:v2", deliveryProfileId)
+        if (deliveryProfileId == null) {
+            PUBLISH_FINGERPRINT
+        } else {
+            RequestFingerprint.sha256("fileweft:lifecycle:publish:v2", deliveryProfileId)
+        }
 
     private companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val MAX_DELIVERY_PROFILE_ID_LENGTH = 256
         val REVISE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:revise:v1")
+        val PUBLISH_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:publish:v1")
         val OFFLINE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:offline:v1")
         val RESTORE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:restore:v1")
         val ARCHIVE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:archive:v1")

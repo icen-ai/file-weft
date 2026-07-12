@@ -10,7 +10,11 @@ import com.fileweft.application.publish.PublishDocumentService;
 import com.fileweft.core.id.Identifier;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class JavaIdempotentDocumentLifecycleInteropTest {
@@ -58,5 +62,15 @@ class JavaIdempotentDocumentLifecycleInteropTest {
                 .getMethod("publish", Identifier.class, String.class, String.class)
                 .getReturnType()
         );
+    }
+
+    @Test
+    void doesNotExposeTheUnguardedDelegateCommandsToJavaHosts() throws Exception {
+        Class<?> delegate = Class.forName(
+            "com.fileweft.application.lifecycle.IdempotentDocumentLifecycleDelegate"
+        );
+        assertFalse(Arrays.stream(delegate.getDeclaredMethods()).anyMatch(method ->
+            Modifier.isPublic(method.getModifiers()) && !method.isSynthetic()
+        ));
     }
 }

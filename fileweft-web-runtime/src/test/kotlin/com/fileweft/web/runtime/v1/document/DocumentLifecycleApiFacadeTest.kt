@@ -25,7 +25,7 @@ class DocumentLifecycleApiFacadeTest {
     fun `forwards all lifecycle and review commands and maps stable receipt ids`() {
         val lifecycles = RecordingLifecycles()
         val reviews = RecordingReviews()
-        val facade = DocumentLifecycleApiFacade(lifecycles, reviews)
+        val facade = facade(lifecycles, reviews)
 
         val revise = facade.revise("document-revise", "revise-key")
         val publish = facade.publish(
@@ -91,8 +91,8 @@ class DocumentLifecycleApiFacadeTest {
     @Test
     fun `missing lifecycle and review capabilities fail independently as feature unavailable`() {
         val responseFactory = V1ApiResponseFactory()
-        val lifecycleMissing = DocumentLifecycleApiFacade(null, RecordingReviews())
-        val reviewMissing = DocumentLifecycleApiFacade(RecordingLifecycles(), null)
+        val lifecycleMissing = facade(null, RecordingReviews())
+        val reviewMissing = facade(RecordingLifecycles(), null)
 
         val lifecycleFailure = assertFailsWith<V1FeatureUnavailableException> {
             lifecycleMissing.revise("document-1", "valid-key")
@@ -118,7 +118,7 @@ class DocumentLifecycleApiFacadeTest {
     fun `invalid identifiers and keys map to bad request when capability exists`() {
         val lifecycles = RecordingLifecycles()
         val reviews = RecordingReviews()
-        val facade = DocumentLifecycleApiFacade(lifecycles, reviews)
+        val facade = facade(lifecycles, reviews)
         val responseFactory = V1ApiResponseFactory()
         val failures = listOf(
             assertFailsWith<IllegalArgumentException> { facade.revise(" ", "valid-key") },
@@ -251,39 +251,53 @@ class DocumentLifecycleApiFacadeTest {
         return unsafeType.getMethod("allocateInstance", Class::class.java).invoke(unsafe, type) as T
     }
 
-    private class RecordingLifecycles : DocumentLifecycleApiFacade.LifecycleCommands {
+    private fun facade(
+        lifecycles: RecordingLifecycles?,
+        reviews: RecordingReviews?,
+    ): DocumentLifecycleApiFacade = DocumentLifecycleApiFacade.forTesting(
+        revise = lifecycles?.let { it::revise },
+        publish = lifecycles?.let { it::publish },
+        offline = lifecycles?.let { it::offline },
+        restore = lifecycles?.let { it::restore },
+        archive = lifecycles?.let { it::archive },
+        submitForReview = reviews?.let { it::submitForReview },
+        approve = reviews?.let { it::approve },
+        reject = reviews?.let { it::reject },
+    )
+
+    private class RecordingLifecycles {
         val calls = mutableListOf<String>()
 
-        override fun revise(documentId: Identifier, key: String): DocumentLifecycleReceipt {
+        fun revise(documentId: Identifier, key: String): DocumentLifecycleReceipt {
             calls += "revise:${documentId.value}:$key"
             return DocumentLifecycleReceipt(Identifier("result-revise"))
         }
 
-        override fun publish(documentId: Identifier, profileId: String?, key: String): DocumentLifecycleReceipt {
+        fun publish(documentId: Identifier, profileId: String?, key: String): DocumentLifecycleReceipt {
             calls += "publish:${documentId.value}:$profileId:$key"
             return DocumentLifecycleReceipt(Identifier("result-publish"))
         }
 
-        override fun offline(documentId: Identifier, key: String): DocumentLifecycleReceipt {
+        fun offline(documentId: Identifier, key: String): DocumentLifecycleReceipt {
             calls += "offline:${documentId.value}:$key"
             return DocumentLifecycleReceipt(Identifier("result-offline"))
         }
 
-        override fun restore(documentId: Identifier, key: String): DocumentLifecycleReceipt {
+        fun restore(documentId: Identifier, key: String): DocumentLifecycleReceipt {
             calls += "restore:${documentId.value}:$key"
             return DocumentLifecycleReceipt(Identifier("result-restore"))
         }
 
-        override fun archive(documentId: Identifier, key: String): DocumentLifecycleReceipt {
+        fun archive(documentId: Identifier, key: String): DocumentLifecycleReceipt {
             calls += "archive:${documentId.value}:$key"
             return DocumentLifecycleReceipt(Identifier("result-archive"))
         }
     }
 
-    private class RecordingReviews : DocumentLifecycleApiFacade.ReviewCommands {
+    private class RecordingReviews {
         val calls = mutableListOf<String>()
 
-        override fun submitForReview(
+        fun submitForReview(
             documentId: Identifier,
             routeId: String?,
             key: String,
@@ -295,7 +309,7 @@ class DocumentLifecycleApiFacadeTest {
             )
         }
 
-        override fun approve(
+        fun approve(
             workflowId: Identifier,
             taskId: Identifier,
             comment: String?,
@@ -310,7 +324,7 @@ class DocumentLifecycleApiFacadeTest {
             )
         }
 
-        override fun reject(
+        fun reject(
             workflowId: Identifier,
             taskId: Identifier,
             comment: String?,

@@ -1,6 +1,7 @@
 package com.fileweft.web.spring.boot2
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fileweft.application.lifecycle.DocumentLifecycleReceipt
 import com.fileweft.core.context.TraceContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.spi.observability.TraceContextProvider
@@ -18,8 +19,59 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class DocumentV1LifecycleControllerMockMvcTest {
+    @Test
+    fun `maps all eight routes to 200 stable envelopes and populated immutable commands`() {
+        val recorder = RecordingLifecycleCommands()
+        val mockMvc = mvc(recorder.facade())
+        val expectedResults = listOf(
+            StableResult("result-revise"),
+            StableResult("result-publish"),
+            StableResult("result-offline"),
+            StableResult("result-restore"),
+            StableResult("result-archive"),
+            StableResult("result-submit-document", "result-submit-workflow"),
+            StableResult("result-approve-document", "result-approve-workflow", "result-approve-task"),
+            StableResult("result-reject-document", "result-reject-workflow", "result-reject-task"),
+        )
+
+        lifecycleRequests().zip(expectedResults).forEachIndexed { index, (request, expected) ->
+            val response = mockMvc.perform(request.header(IDEMPOTENCY_KEY_HEADER, "lifecycle-key-$index"))
+                .andExpect(status().isOk)
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("OK"))
+                .andExpect(jsonPath("$.traceId").value(TRACE_ID))
+                .andExpect(jsonPath("$.data.documentId").value(expected.documentId))
+                .andExpect(jsonPath("$.data.tenantId").doesNotExist())
+            if (expected.workflowId == null) {
+                response.andExpect(jsonPath("$.data.workflowId").isEmpty())
+            } else {
+                response.andExpect(jsonPath("$.data.workflowId").value(expected.workflowId))
+            }
+            if (expected.taskId == null) {
+                response.andExpect(jsonPath("$.data.taskId").isEmpty())
+            } else {
+                response.andExpect(jsonPath("$.data.taskId").value(expected.taskId))
+            }
+        }
+
+        assertEquals(
+            listOf("revise", "publish", "offline", "restore", "archive", "submit", "approve", "reject"),
+            recorder.calls.map { call -> call.method },
+        )
+        assertEquals("primary", recorder.calls[1].arguments[1])
+        assertEquals("four-eyes", recorder.calls[5].arguments[1])
+        assertEquals(listOf("approved", "primary"), recorder.calls[6].arguments.slice(2..3))
+        assertEquals("rejected", recorder.calls[7].arguments[2])
+        assertEquals(
+            (0..7).map { index -> "lifecycle-key-$index" },
+            recorder.calls.map { call -> call.arguments.last() },
+        )
+    }
+
     @Test
     fun `maps all eight lifecycle routes and fails closed when their capabilities are absent`() {
         val mockMvc = mvc()
@@ -37,7 +89,8 @@ class DocumentV1LifecycleControllerMockMvcTest {
 
     @Test
     fun `allows every JSON lifecycle command body to be omitted and applies its default command`() {
-        val mockMvc = mvc()
+        val recorder = RecordingLifecycleCommands()
+        val mockMvc = mvc(recorder.facade())
         val optionalBodyRoutes = listOf(
             "/fileweft/v1/documents/document-1/publish",
             "/fileweft/v1/documents/document-1/submit",
@@ -47,9 +100,20 @@ class DocumentV1LifecycleControllerMockMvcTest {
 
         optionalBodyRoutes.forEachIndexed { index, path ->
             mockMvc.perform(post(path).header(IDEMPOTENCY_KEY_HEADER, "default-key-$index"))
-                .andExpect(status().isServiceUnavailable)
-                .andExpect(jsonPath("$.code").value("FEATURE_UNAVAILABLE"))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.code").value("OK"))
         }
+
+        assertEquals(listOf("publish", "submit", "approve", "reject"), recorder.calls.map { it.method })
+        assertNull(recorder.calls[0].arguments[1])
+        assertNull(recorder.calls[1].arguments[1])
+        assertNull(recorder.calls[2].arguments[2])
+        assertNull(recorder.calls[2].arguments[3])
+        assertNull(recorder.calls[3].arguments[2])
+        assertEquals(
+            (0..3).map { index -> "default-key-$index" },
+            recorder.calls.map { call -> call.arguments.last() },
+        )
     }
 
     @Test
@@ -99,13 +163,15 @@ class DocumentV1LifecycleControllerMockMvcTest {
             .content("{\"comment\":\"rejected\"}"),
     )
 
-    private fun mvc(): MockMvc = MockMvcBuilders.standaloneSetup(
+    private fun mvc(
+        facade: DocumentLifecycleApiFacade = unavailableFacade(),
+    ): MockMvc = MockMvcBuilders.standaloneSetup(
         DocumentV1LifecycleController(
-            documents = unavailableFacade(),
+            documents = facade,
             responses = V1ApiResponseFactory(),
             traceContextProvider = object : TraceContextProvider {
                 override fun currentTraceContext(): TraceContext =
-                    TraceContext(Identifier("trace-lifecycle-2"))
+                    TraceContext(Identifier(TRACE_ID))
             },
         ),
     )
@@ -120,8 +186,74 @@ class DocumentV1LifecycleControllerMockMvcTest {
         catalogReviews = emptyList(),
     )
 
+    private class RecordingLifecycleCommands {
+        val calls = mutableListOf<FacadeCall>()
+
+        @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
+        fun facade(): DocumentLifecycleApiFacade = DocumentLifecycleApiFacade.forTesting(
+            revise = { documentId, key ->
+                record("revise", documentId.value, key)
+                receipt("result-revise")
+            },
+            publish = { documentId, profileId, key ->
+                record("publish", documentId.value, profileId, key)
+                receipt("result-publish")
+            },
+            offline = { documentId, key ->
+                record("offline", documentId.value, key)
+                receipt("result-offline")
+            },
+            restore = { documentId, key ->
+                record("restore", documentId.value, key)
+                receipt("result-restore")
+            },
+            archive = { documentId, key ->
+                record("archive", documentId.value, key)
+                receipt("result-archive")
+            },
+            submitForReview = { documentId, routeId, key ->
+                record("submit", documentId.value, routeId, key)
+                receipt("result-submit-document", "result-submit-workflow")
+            },
+            approve = { workflowId, taskId, comment, profileId, key ->
+                record("approve", workflowId.value, taskId.value, comment, profileId, key)
+                receipt("result-approve-document", "result-approve-workflow", "result-approve-task")
+            },
+            reject = { workflowId, taskId, comment, key ->
+                record("reject", workflowId.value, taskId.value, comment, key)
+                receipt("result-reject-document", "result-reject-workflow", "result-reject-task")
+            },
+        )
+
+        private fun record(method: String, vararg arguments: Any?) {
+            calls += FacadeCall(method, arguments.toList())
+        }
+
+        private fun receipt(
+            documentId: String,
+            workflowId: String? = null,
+            taskId: String? = null,
+        ): DocumentLifecycleReceipt = DocumentLifecycleReceipt(
+            documentId = Identifier(documentId),
+            workflowId = workflowId?.let(::Identifier),
+            taskId = taskId?.let(::Identifier),
+        )
+    }
+
+    private data class FacadeCall(
+        val method: String,
+        val arguments: List<Any?>,
+    )
+
+    private data class StableResult(
+        val documentId: String,
+        val workflowId: String? = null,
+        val taskId: String? = null,
+    )
+
     private companion object {
         const val IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
         const val REVISE_PATH = "/fileweft/v1/documents/document-1/revise"
+        const val TRACE_ID = "trace-lifecycle-2"
     }
 }
