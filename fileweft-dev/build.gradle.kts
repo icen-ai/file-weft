@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     id("fileweft.jvm17-library")
     application
@@ -29,6 +31,17 @@ dependencies {
 val runDevUiE2e = providers.environmentVariable("FILEWEFT_RUN_DEV_UI_E2E")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
+
+val runDevApiE2e = providers.environmentVariable("FILEWEFT_RUN_DEV_E2E")
+    .map { it == "true" }
+    .orElse(false)
+
+tasks.withType<Test>().configureEach {
+    inputs.property("fileWeftRunDevApiE2e", runDevApiE2e)
+    if (runDevApiE2e.get()) {
+        doNotTrackState("The enabled Dev API acceptance suite must execute against the current Compose stack.")
+    }
+}
 
 val devUiE2e = tasks.register<Exec>("devUiE2e") {
     group = "verification"

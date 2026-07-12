@@ -23,6 +23,7 @@ import ai.icen.fw.spi.storage.StorageAdapter
 import ai.icen.fw.spi.tenant.TenantProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -41,9 +42,10 @@ import java.time.Clock
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.core.instrument.MeterRegistry
 
-@AutoConfiguration(after = [DataSourceAutoConfiguration::class, JacksonAutoConfiguration::class])
+@AutoConfiguration(after = [DataSourceAutoConfiguration::class, FlywayAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
 @Import(
+    FileWeftMigrationConfiguration::class,
     FileWeftRuntimeConfiguration::class,
     FileWeftDoctorConfiguration::class,
     FileWeftWorkerSchedulingConfiguration::class,

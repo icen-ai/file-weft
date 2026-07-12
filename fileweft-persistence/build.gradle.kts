@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     id("fileweft.jvm8-library")
 }
@@ -25,6 +27,17 @@ dependencies {
 // Keep the runtime order aligned with the root build's globally sorted matrix
 // (java11, java21, java25, java8) to avoid contradictory ordering constraints.
 val postgresRuntimeTestTasks = listOf("test", "java11Test", "java21Test", "java25Test", "java8Test")
+val runPostgresIntegration = providers.environmentVariable("FILEWEFT_RUN_POSTGRES_TESTS")
+    .map { value -> value == "true" }
+    .orElse(false)
+
+tasks.withType<Test>().configureEach {
+    inputs.property("fileWeftRunPostgresTests", runPostgresIntegration)
+    if (runPostgresIntegration.get()) {
+        doNotTrackState("The enabled PostgreSQL integration suite must execute against the current database state.")
+    }
+}
+
 postgresRuntimeTestTasks.drop(1).forEachIndexed { index, taskName ->
     tasks.named(taskName) {
         postgresRuntimeTestTasks.take(index + 1).forEach { previousTaskName ->

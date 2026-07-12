@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+
 plugins {
     id("fileweft.jvm8-library")
 }
@@ -14,4 +16,15 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
     testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+val runRustFsIntegration = providers.environmentVariable("FILEWEFT_RUN_RUSTFS_TESTS")
+    .map { value -> value == "true" }
+    .orElse(false)
+
+tasks.withType<Test>().configureEach {
+    inputs.property("fileWeftRunRustFsTests", runRustFsIntegration)
+    if (runRustFsIntegration.get()) {
+        doNotTrackState("The enabled RustFS integration suite must execute against the current object-store state.")
+    }
 }

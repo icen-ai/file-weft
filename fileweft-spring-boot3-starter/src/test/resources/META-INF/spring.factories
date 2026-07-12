@@ -1,0 +1,2 @@
+org.springframework.boot.sql.init.dependency.DatabaseInitializerDetector=\
+ai.icen.fw.starter.boot3.TestDatabaseInitializerDetector

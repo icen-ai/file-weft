@@ -1,5 +1,6 @@
 package ai.icen.fw.starter.boot2
 
+import ai.icen.fw.persistence.migration.FileWeftMigrationMode
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 @ConfigurationProperties(prefix = "fileweft")
@@ -23,6 +24,8 @@ class FileWeftProperties {
 
     var worker: WorkerProperties = WorkerProperties()
 
+    var persistence: PersistenceProperties = PersistenceProperties()
+
     class StorageProperties {
         /** Explicitly permits process-local filesystem storage when no customer or plugin adapter is available. */
         var localEnabled: Boolean = false
@@ -34,6 +37,22 @@ class FileWeftProperties {
         /** TTL for an unfinished resumable multipart session before worker cleanup. */
         var resumableSessionTtlMillis: Long = 86_400_000
         var resumableCleanupBatchSize: Int = 100
+    }
+
+    class PersistenceProperties {
+        /**
+         * Explicit startup behavior for FileWeft-owned Flyway migrations.
+         * DISABLED is the safe default and performs no migration database access.
+         * Enabled modes require exactly one DataSource unless the host supplies
+         * an explicit FlywayMigrationRunner bean.
+         */
+        var migrationMode: FileWeftMigrationMode = FileWeftMigrationMode.DISABLED
+
+        /** Explicit target schema required by VALIDATE and MIGRATE modes. */
+        var schema: String = ""
+
+        /** Allows MIGRATE to create the explicit schema; true is rejected in every other mode. */
+        var createSchema: Boolean = false
     }
 
     class SyncProperties {

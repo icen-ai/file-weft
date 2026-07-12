@@ -96,12 +96,16 @@ class DeliveryDispatchFenceMigrationIntegrationTest {
     }
 
     private fun migrateThroughV022() {
-        Flyway.configure()
+        val flyway = Flyway.configure()
             .dataSource(dataSource)
-            .locations("classpath:db/migration")
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(FlywayMigrationRunner.HISTORY_TABLE)
+            .baselineVersion("0")
+            .baselineDescription("FileWeft namespace initialization")
             .target(MigrationVersion.fromVersion("22"))
             .load()
-            .migrate()
+        flyway.baseline()
+        flyway.migrate()
     }
 
     private fun insertTarget(

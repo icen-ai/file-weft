@@ -15,6 +15,12 @@ server:
   port: ${FILEWEFT_PLATFORM_PORT:8081}
 
 fileweft:
+  persistence:
+    # The platform profile owns its schema through DevPlatformMigrationRunner;
+    # fully neutralize the main application's FileWeft migration settings.
+    migration-mode: disabled
+    schema: ""
+    create-schema: false
   dev:
     platform:
       # The production-like development receiver only downloads from this explicit internal service.

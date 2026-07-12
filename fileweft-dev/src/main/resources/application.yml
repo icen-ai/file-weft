@@ -9,13 +9,16 @@ spring:
     username: ${FILEWEFT_DEV_DB_USERNAME:fileweft}
     password: ${FILEWEFT_DEV_DB_PASSWORD:fileweft-dev}
   flyway:
-    enabled: true
-    clean-disabled: true
-    schemas: fileweft_dev
-    default-schema: fileweft_dev
-    create-schemas: true
+    # FileWeft owns a dedicated migration location and history table. Keeping
+    # Boot's default scanner disabled proves the development application does
+    # not accidentally rely on classpath:db/migration.
+    enabled: false
 
 fileweft:
+  persistence:
+    migration-mode: migrate
+    schema: fileweft_dev
+    create-schema: true
   sync:
     connector-name: dev-platform
     # Keeps the old /api development-only retry route available; the UI and formal tests use /fileweft/v1.

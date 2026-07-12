@@ -1,5 +1,45 @@
 # 生产部署与恢复
 
+## FileWeft 迁移命名空间与旧库升级
+
+FileWeft 迁移资源只发布在 `classpath:ai/icen/fw/db/migration`，并使用专属 `fileweft_schema_history`。它不会向宿主常用的 `classpath:db/migration` 放置资源，也不能与宿主 `flyway_schema_history` 合并；这样宿主和 FileWeft 都可以拥有自己的 `V001`，而不会共享版本、checksum 或 repair 操作。
+
+迁移模式默认是 `disabled`。生产部署必须明确迁移所有权：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://db.example.internal:5432/app?currentSchema=fileweft
+
+fileweft:
+  persistence:
+    migration-mode: validate # migrate | validate | disabled
+    schema: fileweft
+    create-schema: false
+```
+
+- `migrate` 会使用专属 location/history 校验并应用 pending migrations。`create-schema=true` 只对该模式有效，适合受控初始化；生产环境通常应由 DBA 预建 schema 并保持为 `false`。
+- `validate` 是只读运行模式：目标 schema 和专属 history 必须已经存在，所有已执行迁移必须通过校验，且不能有 pending migration。缺失、旧 FileWeft 共享 history 记录或不一致都会让节点启动失败，不会自动创建、baseline、repair 或迁移。
+- `disabled` 表示 FileWeft 完全不管理或校验数据库。只有外部发布系统已经以相同专属 location/history 完成迁移，或宿主有等价且经过评审的数据库发布流程时才应使用。
+
+`fileweft.persistence.schema` 是对 DataSource 的安全断言：它必须与同一连接执行 `SELECT current_schema()` 的结果完全一致，不能依赖 Flyway 在运行中替宿主切换 schema。Migration Job、Web 和所有 Worker 的 JDBC search path 与该配置必须相同。独立 schema 推荐使用 PostgreSQL JDBC `currentSchema=fileweft`；共享 `public` 时应使用 `currentSchema=public`（或其他能确定返回 `public` 的等价 search path）并配置 `schema: public`。仅当模式为 `migrate` 且 `create-schema=true` 时允许目标尚未创建；即便如此，JDBC search path 也必须预先指向该名称，使创建前 `current_schema()` 返回 `null`，而不能返回另一个可用 schema。宿主有多个 DataSource 时，Starter 即使发现 `@Primary` 也不会猜测，必须显式注册绑定正确 DataSource 的 `FlywayMigrationRunner`。
+
+当目标 schema 已包含宿主对象但尚无 FileWeft 对象时，Flyway 默认会把“非空 schema”视为需要人工 baseline。FileWeft runner 不会启用 `baselineOnMigrate`：它先确认专属 history 不存在、默认 history 中没有任一已知 FileWeft 脚本、目标 schema 中没有任一已知 FileWeft 业务表，才通过 Flyway 公共 API 写入版本 `0` 的命名空间初始化标记，并继续执行全部 `V001` 及后续脚本。该标记只隔离两套 history，不代表收养既有 FileWeft 数据；任何旧、失败或无 history 的 FileWeft 痕迹都会在写入标记前失败关闭。
+
+推荐由宿主提供的一次性 Migration Job 或受控迁移进程使用 `migrate`，成功后由宿主明确退出该进程，再让全部 Web/Worker 节点以 `validate` 启动；FileWeft Starter 只负责启动时迁移，不提供迁移后自动退出的通用 Job 入口。所有角色必须指向相同 FileWeft schema；不要让每个滚动节点自行改变 migration mode，也不要把 FileWeft 资源路径追加到宿主 `spring.flyway.locations`。Spring Boot 自己的 Flyway 可以继续管理宿主 schema 和默认 history，它与 `fileweft.persistence.*` 是两套独立边界。
+
+权限应按角色拆分：`validate` 账号至少需要目标 schema 的 `USAGE`、FileWeft 业务读取权限，以及 `fileweft_schema_history` 的只读权限；若目标 schema 也存在宿主 `flyway_schema_history`，旧记录检测还需要读取其中的 `script` 等迁移记录。Migration Job 的账号除上述读取权限外，还需要创建/修改 FileWeft 表、索引和约束的 DDL 权限；`create-schema=true` 时才额外授予建 schema 权限。不要把 Migration Job 的 DDL 凭据长期下发给 Web/Worker。
+
+已运行历史 `0.0.1` 的数据库属于特殊升级，不支持自动 adoption。该版本可能把 FileWeft 迁移写入默认 `flyway_schema_history`，而同一张表也可能含宿主迁移；框架无法仅凭版本号安全判断每一行的所有权。升级必须：
+
+1. 关闭写入口，排空并停止全部旧 API、Outbox Worker 和任务 Worker，禁止新旧版本混跑。
+2. 对数据库、默认 history、FileWeft 业务 schema 和关联对象存储完成可恢复备份，并实际验证恢复路径。
+3. 保存默认 history 全量快照，逐条核对实际成功版本、脚本名、checksum、安装顺序和目标 schema；同时检查宿主是否使用相同版本号或修改过脚本。
+4. 由 DBA 基于核验结果制定人工转换或新 schema 数据迁移方案，并在隔离副本演练。仓库不会虚构一条通用 SQL 去复制、重命名或删除旧 history 行。
+5. 只有专属 `fileweft_schema_history` 与业务 schema 能被确定性校验后，才可先以 `validate` 验证，再开放新版本流量。
+
+任何缺失、失败、checksum 不符、同版本多来源或 schema 所有权不清的情况都必须失败关闭。禁止用 `baselineOnMigrate`、Flyway `repair`、手工伪造成功行或删除默认 history 来跳过调查；这些操作可能让未执行的安全迁移被误认为已经完成。
+
 FileWeft 的 Web 节点默认不消费 Outbox 或后台任务。部署时推荐使用相同的应用工件启动两个角色：
 
 ```yaml

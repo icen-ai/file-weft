@@ -79,6 +79,9 @@ services:
       FILEWEFT_DEV_S3_BUCKET: fileweft-dev
       FILEWEFT_DEV_PLATFORM_URL: http://fileweft-dev-platform:8081/
       FILEWEFT_DEV_PLATFORM_SHARED_SECRET: ${FILEWEFT_DEV_PLATFORM_SHARED_SECRET:?Set FILEWEFT_DEV_PLATFORM_SHARED_SECRET to a random value of at least 32 characters.}
+      FILEWEFT_PERSISTENCE_MIGRATION_MODE: MIGRATE
+      FILEWEFT_PERSISTENCE_SCHEMA: fileweft_dev
+      FILEWEFT_PERSISTENCE_CREATE_SCHEMA: "true"
       FILEWEFT_DEV_WORKER_ENABLED: "false"
       FILEWEFT_SYNC_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS: ${FILEWEFT_DEV_CIRCUIT_BREAKER_OPEN_DURATION_MILLIS:-5000}
     depends_on:
@@ -112,6 +115,9 @@ services:
       FILEWEFT_DEV_S3_BUCKET: fileweft-dev
       FILEWEFT_DEV_PLATFORM_URL: http://fileweft-dev-platform:8081/
       FILEWEFT_DEV_PLATFORM_SHARED_SECRET: ${FILEWEFT_DEV_PLATFORM_SHARED_SECRET:?Set FILEWEFT_DEV_PLATFORM_SHARED_SECRET to a random value of at least 32 characters.}
+      FILEWEFT_PERSISTENCE_MIGRATION_MODE: VALIDATE
+      FILEWEFT_PERSISTENCE_SCHEMA: fileweft_dev
+      FILEWEFT_PERSISTENCE_CREATE_SCHEMA: "false"
       FILEWEFT_DEV_WORKER_ENABLED: "false"
       FILEWEFT_WORKER_ENABLED: "true"
       FILEWEFT_TASK_WORKER_ID: fw-dev-worker
@@ -122,6 +128,8 @@ services:
       rustfs:
         condition: service_healthy
       fileweft-dev-platform:
+        condition: service_healthy
+      fileweft-dev-api:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8082/api/health >/dev/null"]

@@ -13,14 +13,25 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.postgresql.ds.PGSimpleDataSource
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
+import java.lang.reflect.Proxy
 import java.sql.Connection
+import java.sql.DatabaseMetaData
+import java.sql.SQLException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FlywayMigrationRunnerIntegrationTest {
@@ -149,13 +160,500 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `makes historical running outbox rows reclaimable after the legacy cutoff with a new token lease`() {
-        Flyway.configure()
+    fun `packaged versioned migration inventory remains complete and isolated`() {
+        val packagedScripts = Flyway.configure()
+            .dataSource(dataSource)
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(FlywayMigrationRunner.HISTORY_TABLE)
+            .load()
+            .info()
+            .all()
+            .map { it.script }
+            .filter { it.startsWith("V") }
+            .toSet()
+
+        assertEquals(25, packagedScripts.size)
+        assertTrue("V001__create_file_document_outbox.sql" in packagedScripts)
+        assertTrue("V025__index_document_audit_log_queries.sql" in packagedScripts)
+        dataSource.connection.use { connection ->
+            assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+        }
+    }
+
+    @Test
+    fun `keeps host and FileWeft V001 migrations in independent history tables`() {
+        val hostMigrations = Flyway.configure()
             .dataSource(dataSource)
             .locations("classpath:db/migration")
-            .target("17")
+            .table("flyway_schema_history")
+            .baselineOnMigrate(false)
             .load()
             .migrate()
+            .migrationsExecuted
+
+        val fileWeftMigrations = FlywayMigrationRunner(dataSource).migrate()
+
+        assertEquals(1, hostMigrations)
+        assertEquals(25, fileWeftMigrations)
+        dataSource.connection.use { connection ->
+            assertTrue(tableExists(connection, "host_v001_probe"))
+            assertTrue(tableExists(connection, "fw_document"))
+            assertEquals(1, historyCount(connection, "flyway_schema_history"))
+            assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertEquals(
+                "V001__create_host_probe.sql",
+                historyScript(connection, "flyway_schema_history", "001"),
+            )
+            assertEquals(
+                "V001__create_file_document_outbox.sql",
+                historyScript(connection, FlywayMigrationRunner.HISTORY_TABLE, "001"),
+            )
+            assertEquals(
+                "FileWeft namespace initialization",
+                historyDescription(connection, FlywayMigrationRunner.HISTORY_TABLE, "0"),
+            )
+        }
+    }
+
+    @Test
+    fun `reuses dedicated history without replay and validates the migrated schema`() {
+        val runner = FlywayMigrationRunner(dataSource)
+
+        assertEquals(25, runner.migrate())
+        assertEquals(0, runner.migrate())
+        runner.validate()
+
+        dataSource.connection.use { connection ->
+            assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertFalse(tableExists(connection, "flyway_schema_history"))
+        }
+    }
+
+    @Test
+    fun `metadata wildcard decoys cannot impersonate FileWeft history or sentinel tables`() {
+        val targetSchema = "fw_metadata_target"
+        val similarSchema = "fw0metadata1target"
+        createSchema(targetSchema)
+        createSchema(similarSchema)
+        try {
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute("CREATE TABLE $targetSchema.fileweft0schema1history(id integer)")
+                    statement.execute("CREATE TABLE $targetSchema.flyway0schema1history(id integer)")
+                    statement.execute("CREATE TABLE $targetSchema.fw0document(id integer)")
+                    statement.execute("CREATE TABLE $similarSchema.fileweft_schema_history(id integer)")
+                    statement.execute("CREATE TABLE $similarSchema.flyway_schema_history(id integer)")
+                    statement.execute("CREATE TABLE $similarSchema.fw_document(id integer)")
+                }
+            }
+
+            val targetDataSource = postgresDataSource(targetSchema)
+            assertEquals(25, FlywayMigrationRunner(targetDataSource, targetSchema).migrate())
+            targetDataSource.connection.use { connection ->
+                assertEquals(
+                    25,
+                    versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, targetSchema),
+                )
+            }
+        } finally {
+            dropSchema(targetSchema)
+            dropSchema(similarSchema)
+        }
+    }
+
+    @Test
+    fun `migrates an explicit non-default current schema`() {
+        val schema = "fw_explicit_schema"
+        createSchema(schema)
+        try {
+            val schemaDataSource = postgresDataSource(schema)
+
+            assertEquals(25, FlywayMigrationRunner(schemaDataSource, schema, false).migrate())
+            FlywayMigrationRunner(schemaDataSource, schema, false).validate()
+
+            schemaDataSource.connection.use { connection ->
+                assertEquals(schema, currentSchema(connection))
+                assertTrue(tableExists(connection, "fw_document", schema))
+                assertTrue(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+            }
+        } finally {
+            dropSchema(schema)
+        }
+    }
+
+    @Test
+    fun `creates an explicitly selected missing schema and verifies the DataSource resolves it`() {
+        val schema = "fw_created_schema"
+        dropSchema(schema)
+        try {
+            val schemaDataSource = postgresDataSource(schema)
+            schemaDataSource.connection.use { connection ->
+                assertNull(currentSchema(connection))
+            }
+
+            assertEquals(25, FlywayMigrationRunner(schemaDataSource, schema, true).migrate())
+
+            schemaDataSource.connection.use { connection ->
+                assertEquals(schema, currentSchema(connection))
+                assertTrue(tableExists(connection, "fw_document", schema))
+                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+            }
+        } finally {
+            dropSchema(schema)
+        }
+    }
+
+    @Test
+    fun `fails closed when configured and current schemas differ`() {
+        val schema = "fw_mismatched_schema"
+        createSchema(schema)
+        try {
+            val failure = assertFailsWith<IllegalStateException> {
+                FlywayMigrationRunner(dataSource, schema, false).migrate()
+            }
+
+            assertTrue(failure.message.orEmpty().contains("schema mismatch"))
+            assertTrue(failure.message.orEmpty().contains("'$schema'"))
+            assertTrue(failure.message.orEmpty().contains("'public'"))
+            dataSource.connection.use { connection ->
+                assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+                assertFalse(tableExists(connection, "fw_document", schema))
+            }
+        } finally {
+            dropSchema(schema)
+        }
+    }
+
+    @Test
+    fun `validate fails without mutating a schema that has no FileWeft history`() {
+        val failure = assertFailsWith<IllegalStateException> {
+            FlywayMigrationRunner(dataSource).validate()
+        }
+
+        assertTrue(failure.message.orEmpty().contains(FlywayMigrationRunner.HISTORY_TABLE))
+        dataSource.connection.use { connection ->
+            assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertFalse(tableExists(connection, "fw_document"))
+        }
+    }
+
+    @Test
+    fun `validate detects checksum drift in dedicated history`() {
+        val runner = FlywayMigrationRunner(dataSource)
+        runner.migrate()
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                assertEquals(
+                    1,
+                    statement.executeUpdate(
+                        "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} " +
+                            "SET checksum = checksum + 1 " +
+                            "WHERE script = 'V001__create_file_document_outbox.sql'",
+                    ),
+                )
+            }
+        }
+
+        assertFailsWith<FlywayException> { runner.validate() }
+    }
+
+    @Test
+    fun `future applied migration fails both validation and migration`() {
+        val runner = FlywayMigrationRunner(dataSource)
+        assertEquals(25, runner.migrate())
+        insertFutureFileWeftHistoryRow()
+
+        assertFailsWith<FlywayException> { runner.validate() }
+        assertFailsWith<FlywayException> { runner.migrate() }
+
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT COUNT(*) FROM ${FlywayMigrationRunner.HISTORY_TABLE} " +
+                        "WHERE version = '026' AND script = 'V026__future_fileweft_probe.sql' AND success",
+                ).use { result ->
+                    assertTrue(result.next())
+                    assertEquals(1, result.getInt(1))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `rejects every missing tampered or duplicate namespace marker field`() {
+        val mutations = linkedMapOf(
+            "missing marker" to
+                "DELETE FROM ${FlywayMigrationRunner.HISTORY_TABLE} WHERE version = '0' OR type = 'BASELINE'",
+            "installed rank" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET installed_rank = 99 WHERE type = 'BASELINE'",
+            "non-zero version" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET version = '25' WHERE type = 'BASELINE'",
+            "type" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET type = 'SQL' WHERE version = '0'",
+            "description" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET description = 'tampered' WHERE type = 'BASELINE'",
+            "script" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET script = 'tampered' WHERE type = 'BASELINE'",
+            "checksum" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET checksum = 1 WHERE type = 'BASELINE'",
+            "success" to
+                "UPDATE ${FlywayMigrationRunner.HISTORY_TABLE} SET success = FALSE WHERE type = 'BASELINE'",
+            "duplicate marker" to
+                """
+                INSERT INTO ${FlywayMigrationRunner.HISTORY_TABLE}(
+                    installed_rank, version, description, type, script, checksum,
+                    installed_by, execution_time, success
+                ) VALUES (
+                    99, '0', 'FileWeft namespace initialization', 'BASELINE',
+                    'FileWeft namespace initialization', NULL, current_user, 0, TRUE
+                )
+                """.trimIndent(),
+        )
+
+        mutations.forEach { (caseName, mutation) ->
+            resetPublicSchema()
+            baselineFileWeftNamespace()
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(mutation) }
+            }
+
+            val runner = FlywayMigrationRunner(dataSource)
+            listOf<() -> Unit>(
+                { runner.validate() },
+                { runner.migrate(); Unit },
+            ).forEach { operation ->
+                val failure = assertFailsWith<IllegalStateException>(caseName) { operation() }
+                assertTrue(
+                    failure.message.orEmpty().contains("namespace marker"),
+                    "$caseName should be rejected as an invalid namespace marker: ${failure.message}",
+                )
+            }
+            dataSource.connection.use { connection ->
+                assertFalse(tableExists(connection, "fw_document"), caseName)
+            }
+        }
+    }
+
+    @Test
+    fun `refuses a version 25 baseline without FileWeft business tables`() {
+        baselineFileWeftNamespace(version = "25", description = "unsafe adoption")
+
+        val runner = FlywayMigrationRunner(dataSource)
+        listOf<() -> Unit>(
+            { runner.validate() },
+            { runner.migrate(); Unit },
+        ).forEach { operation ->
+            val failure = assertFailsWith<IllegalStateException> { operation() }
+            assertTrue(failure.message.orEmpty().contains("namespace marker"))
+        }
+        dataSource.connection.use { connection ->
+            assertFalse(tableExists(connection, "fw_document"))
+            assertEquals(1, historyCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+        }
+    }
+
+    @Test
+    fun `high concurrency migration calls serialize through dedicated Flyway history`() {
+        val concurrency = 8
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(concurrency)
+        try {
+            val results = (1..concurrency).map {
+                executor.submit<Int> {
+                    assertTrue(start.await(30, TimeUnit.SECONDS))
+                    FlywayMigrationRunner(dataSource).migrate()
+                }
+            }
+            start.countDown()
+
+            assertEquals(
+                List(concurrency - 1) { 0 } + 25,
+                results.map { it.get(2, TimeUnit.MINUTES) }.sorted(),
+            )
+            dataSource.connection.use { connection ->
+                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+                assertTrue(tableExists(connection, "fw_document"))
+            }
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `concurrent migration calls create one missing schema and one namespace history`() {
+        val schema = "fw_concurrent_created_schema"
+        val concurrency = 8
+        dropSchema(schema)
+        val schemaDataSource = postgresDataSource(schema)
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(concurrency)
+        try {
+            val results = (1..concurrency).map {
+                executor.submit<Int> {
+                    assertTrue(start.await(30, TimeUnit.SECONDS))
+                    FlywayMigrationRunner(schemaDataSource, schema, true).migrate()
+                }
+            }
+            start.countDown()
+
+            assertEquals(
+                List(concurrency - 1) { 0 } + 25,
+                results.map { it.get(2, TimeUnit.MINUTES) }.sorted(),
+            )
+            FlywayMigrationRunner(schemaDataSource, schema, false).validate()
+            schemaDataSource.connection.use { connection ->
+                assertEquals(schema, currentSchema(connection))
+                assertTrue(tableExists(connection, "fw_document", schema))
+                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+            }
+        } finally {
+            executor.shutdownNow()
+            dropSchema(schema)
+        }
+    }
+
+    @Test
+    fun `rechecks a newly appeared valid history before rejecting concurrent sentinel tables`() {
+        val firstHistoryProbeCompleted = CountDownLatch(1)
+        val resumeFirstRunner = CountDownLatch(1)
+        val delayedDataSource = PausingHistoryProbeDataSource(
+            dataSource,
+            firstHistoryProbeCompleted,
+            resumeFirstRunner,
+        )
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val delayedResult = executor.submit<Int> {
+                FlywayMigrationRunner(delayedDataSource).migrate()
+            }
+            assertTrue(firstHistoryProbeCompleted.await(30, TimeUnit.SECONDS))
+
+            assertEquals(25, FlywayMigrationRunner(dataSource).migrate())
+            resumeFirstRunner.countDown()
+
+            assertEquals(0, delayedResult.get(2, TimeUnit.MINUTES))
+            dataSource.connection.use { connection ->
+                assertTrue(tableExists(connection, "fw_document"))
+                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            }
+        } finally {
+            resumeFirstRunner.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `does not swallow a non-concurrent baseline failure when a valid marker appears`() {
+        val failingDataSource = NonConcurrentBaselineFailureDataSource(dataSource) {
+            baselineFileWeftNamespace()
+        }
+
+        val failure = assertFailsWith<FlywayException> {
+            FlywayMigrationRunner(failingDataSource).migrate()
+        }
+
+        val messages = generateSequence<Throwable>(failure) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+        assertTrue(messages.contains("forced non-concurrent bootstrap failure"))
+        assertTrue(failingDataSource.failureInjected.get())
+        dataSource.connection.use { connection ->
+            assertTrue(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertFalse(tableExists(connection, "fw_document"))
+        }
+    }
+
+    @Test
+    fun `refuses legacy FileWeft history without replay repair or baseline`() {
+        assertEquals(
+            1,
+            Flyway.configure()
+                .dataSource(dataSource)
+                .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+                .table("flyway_schema_history")
+                .target("1")
+                .baselineOnMigrate(false)
+                .load()
+                .migrate()
+                .migrationsExecuted,
+        )
+
+        val failure = assertFailsWith<LegacyFileWeftMigrationHistoryException> {
+            FlywayMigrationRunner(dataSource).migrate()
+        }
+
+        assertEquals("public", failure.schema)
+        assertTrue(failure.message.orEmpty().contains("Refusing to replay, repair, or baseline"))
+        dataSource.connection.use { connection ->
+            assertEquals(1, historyCount(connection, "flyway_schema_history"))
+            assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertTrue(tableExists(connection, "fw_document"))
+        }
+    }
+
+    @Test
+    fun `refuses a failed legacy FileWeft V001 row even when no FileWeft table exists`() {
+        migrateHostProbe()
+        insertLegacyHistoryRow(
+            version = "001",
+            script = "V001__create_file_document_outbox.sql",
+            success = false,
+        )
+
+        assertFailsWith<LegacyFileWeftMigrationHistoryException> {
+            FlywayMigrationRunner(dataSource).migrate()
+        }
+
+        dataSource.connection.use { connection ->
+            assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertFalse(tableExists(connection, "fw_document"))
+            assertTrue(tableExists(connection, "host_v001_probe"))
+        }
+    }
+
+    @Test
+    fun `refuses an isolated legacy FileWeft V024 row without relying on V001 or sentinel tables`() {
+        migrateHostProbe()
+        insertLegacyHistoryRow(
+            version = "024",
+            script = "V024__bind_resumable_upload_session_owner.sql",
+            success = true,
+        )
+
+        assertFailsWith<LegacyFileWeftMigrationHistoryException> {
+            FlywayMigrationRunner(dataSource).migrate()
+        }
+
+        dataSource.connection.use { connection ->
+            assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertFalse(tableExists(connection, "fw_upload_session"))
+            assertTrue(tableExists(connection, "host_v001_probe"))
+        }
+    }
+
+    @Test
+    fun `refuses to namespace-baseline untracked FileWeft sentinel tables`() {
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("CREATE TABLE fw_document(id varchar(64) PRIMARY KEY)")
+            }
+        }
+
+        val failure = assertFailsWith<IllegalStateException> {
+            FlywayMigrationRunner(dataSource).migrate()
+        }
+
+        assertTrue(failure.message.orEmpty().contains("fw_document"))
+        assertTrue(failure.message.orEmpty().contains("without ${FlywayMigrationRunner.HISTORY_TABLE}"))
+        dataSource.connection.use { connection ->
+            assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+        }
+    }
+
+    @Test
+    fun `makes historical running outbox rows reclaimable after the legacy cutoff with a new token lease`() {
+        migrateFileWeftThrough("17")
 
         dataSource.connection.use { connection ->
             connection.prepareStatement(
@@ -204,12 +702,7 @@ class FlywayMigrationRunnerIntegrationTest {
 
     @Test
     fun `makes historical running task rows reclaimable after the legacy cutoff with a new token lease`() {
-        Flyway.configure()
-            .dataSource(dataSource)
-            .locations("classpath:db/migration")
-            .target("18")
-            .load()
-            .migrate()
+        migrateFileWeftThrough("18")
 
         dataSource.connection.use { connection ->
             connection.prepareStatement(
@@ -262,12 +755,7 @@ class FlywayMigrationRunnerIntegrationTest {
 
     @Test
     fun `refuses to migrate when historical pending workflows are duplicated for one document`() {
-        Flyway.configure()
-            .dataSource(dataSource)
-            .locations("classpath:db/migration")
-            .target("16")
-            .load()
-            .migrate()
+        migrateFileWeftThrough("16")
 
         dataSource.connection.use { connection ->
             connection.prepareStatement(
@@ -302,12 +790,7 @@ class FlywayMigrationRunnerIntegrationTest {
 
     @Test
     fun `refuses V025 when the expected audit index name has an incompatible definition`() {
-        Flyway.configure()
-            .dataSource(dataSource)
-            .locations("classpath:db/migration")
-            .target("24")
-            .load()
-            .migrate()
+        migrateFileWeftThrough("24")
 
         dataSource.connection.use { connection ->
             connection.createStatement().use { statement ->
@@ -328,7 +811,7 @@ class FlywayMigrationRunnerIntegrationTest {
         dataSource.connection.use { connection ->
             assertFalse(auditLogKeysetIndexIsExact(connection))
             connection.prepareStatement(
-                "SELECT COUNT(*) FROM flyway_schema_history WHERE version = '25' AND success",
+                "SELECT COUNT(*) FROM ${FlywayMigrationRunner.HISTORY_TABLE} WHERE version = '25' AND success",
             ).use { statement ->
                 statement.executeQuery().use { result ->
                     assertTrue(result.next())
@@ -338,8 +821,181 @@ class FlywayMigrationRunnerIntegrationTest {
         }
     }
 
-    private fun tableExists(connection: Connection, tableName: String): Boolean =
-        connection.metaData.getTables(null, "public", tableName, arrayOf("TABLE")).use { it.next() }
+    private fun baselineFileWeftNamespace(
+        version: String = "0",
+        description: String = "FileWeft namespace initialization",
+    ) {
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(FlywayMigrationRunner.HISTORY_TABLE)
+            .baselineOnMigrate(false)
+            .baselineVersion(version)
+            .baselineDescription(description)
+            .load()
+            .baseline()
+    }
+
+    private fun migrateFileWeftThrough(target: String) {
+        baselineFileWeftNamespace()
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(FlywayMigrationRunner.HISTORY_TABLE)
+            .target(target)
+            .baselineOnMigrate(false)
+            .load()
+            .migrate()
+    }
+
+    private fun insertFutureFileWeftHistoryRow() {
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                assertEquals(
+                    1,
+                    statement.executeUpdate(
+                        """
+                        INSERT INTO ${FlywayMigrationRunner.HISTORY_TABLE}(
+                            installed_rank, version, description, type, script, checksum,
+                            installed_by, execution_time, success
+                        )
+                        SELECT MAX(installed_rank) + 1, '026', 'future FileWeft probe', 'SQL',
+                               'V026__future_fileweft_probe.sql', 260026, current_user, 0, TRUE
+                          FROM ${FlywayMigrationRunner.HISTORY_TABLE}
+                        """.trimIndent(),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun postgresDataSource(currentSchema: String? = null): PGSimpleDataSource = PGSimpleDataSource().apply {
+        setURL(System.getenv("FILEWEFT_POSTGRES_URL") ?: "jdbc:postgresql://localhost:5432/fileweft")
+        user = System.getenv("FILEWEFT_POSTGRES_USER") ?: "fileweft"
+        password = System.getenv("FILEWEFT_POSTGRES_PASSWORD") ?: "fileweft-dev"
+        if (currentSchema != null) {
+            setCurrentSchema(currentSchema)
+        }
+    }
+
+    private fun migrateHostProbe() {
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations("classpath:db/migration")
+            .table("flyway_schema_history")
+            .baselineOnMigrate(false)
+            .load()
+            .migrate()
+    }
+
+    private fun insertLegacyHistoryRow(version: String, script: String, success: Boolean) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                """
+                INSERT INTO flyway_schema_history(
+                    installed_rank, version, description, type, script, checksum,
+                    installed_by, execution_time, success
+                ) VALUES (2, ?, 'legacy FileWeft probe', 'SQL', ?, NULL, current_user, 0, ?)
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, version)
+                statement.setString(2, script)
+                statement.setBoolean(3, success)
+                assertEquals(1, statement.executeUpdate())
+            }
+        }
+    }
+
+    private fun resetPublicSchema() {
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("DROP SCHEMA public CASCADE")
+                statement.execute("CREATE SCHEMA public")
+            }
+        }
+    }
+
+    private fun createSchema(schema: String) {
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+                statement.execute("CREATE SCHEMA $schema")
+            }
+        }
+    }
+
+    private fun dropSchema(schema: String) {
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+            }
+        }
+    }
+
+    private fun currentSchema(connection: Connection): String? = connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT current_schema()").use { result ->
+            assertTrue(result.next())
+            result.getString(1)
+        }
+    }
+
+    private fun tableExists(
+        connection: Connection,
+        tableName: String,
+        schema: String = "public",
+    ): Boolean = connection.metaData.getTables(null, schema, tableName, arrayOf("TABLE")).use { it.next() }
+
+    private fun historyCount(
+        connection: Connection,
+        historyTable: String,
+        schema: String = "public",
+    ): Int = connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT COUNT(*) FROM $schema.$historyTable WHERE success").use { result ->
+            assertTrue(result.next())
+            result.getInt(1)
+        }
+    }
+
+    private fun versionedHistoryCount(
+        connection: Connection,
+        historyTable: String,
+        schema: String = "public",
+    ): Int = connection.createStatement().use { statement ->
+        statement.executeQuery(
+            "SELECT COUNT(*) FROM $schema.$historyTable WHERE success AND version IS NOT NULL AND version <> '0'",
+        ).use { result ->
+            assertTrue(result.next())
+            result.getInt(1)
+        }
+    }
+
+    private fun historyScript(
+        connection: Connection,
+        historyTable: String,
+        version: String,
+    ): String = connection.prepareStatement(
+        "SELECT script FROM public.$historyTable WHERE version = ? AND success",
+    ).use { statement ->
+        statement.setString(1, version)
+        statement.executeQuery().use { result ->
+            assertTrue(result.next())
+            result.getString(1)
+        }
+    }
+
+    private fun historyDescription(
+        connection: Connection,
+        historyTable: String,
+        version: String,
+    ): String = connection.prepareStatement(
+        "SELECT description FROM public.$historyTable WHERE version = ? AND success",
+    ).use { statement ->
+        statement.setString(1, version)
+        statement.executeQuery().use { result ->
+            assertTrue(result.next())
+            result.getString(1)
+        }
+    }
 
     private fun columnExists(connection: Connection, tableName: String, columnName: String): Boolean =
         connection.metaData.getColumns(null, "public", tableName, columnName).use { it.next() }
@@ -378,4 +1034,109 @@ class FlywayMigrationRunnerIntegrationTest {
             statement.setString(2, constraintName)
             statement.executeQuery().use { result -> result.next() }
         }
+}
+
+private class PausingHistoryProbeDataSource(
+    private val delegate: DataSource,
+    private val firstHistoryProbeCompleted: CountDownLatch,
+    private val resumeFirstRunner: CountDownLatch,
+) : DataSource by delegate {
+    private val historyProbeCount = AtomicInteger()
+
+    override fun getConnection(): Connection = wrapConnection(delegate.connection)
+
+    override fun getConnection(username: String?, password: String?): Connection =
+        wrapConnection(delegate.getConnection(username, password))
+
+    private fun wrapConnection(connection: Connection): Connection = Proxy.newProxyInstance(
+        connection.javaClass.classLoader,
+        arrayOf(Connection::class.java),
+    ) { _, method, args ->
+        if (method.name == "getMetaData" && method.parameterCount == 0) {
+            wrapMetadata(connection.metaData)
+        } else {
+            invokeDelegate(method, connection, args)
+        }
+    } as Connection
+
+    private fun wrapMetadata(metadata: DatabaseMetaData): DatabaseMetaData = Proxy.newProxyInstance(
+        metadata.javaClass.classLoader,
+        arrayOf(DatabaseMetaData::class.java),
+    ) { _, method, args ->
+        val result = invokeDelegate(method, metadata, args)
+        if (
+            method.name == "getTables" &&
+            args?.getOrNull(2) == metadataPattern(metadata, FlywayMigrationRunner.HISTORY_TABLE) &&
+            historyProbeCount.incrementAndGet() == 1
+        ) {
+            firstHistoryProbeCompleted.countDown()
+            check(resumeFirstRunner.await(30, TimeUnit.SECONDS)) {
+                "Timed out while forcing the namespace-history bootstrap interleaving"
+            }
+        }
+        result
+    } as DatabaseMetaData
+}
+
+private class NonConcurrentBaselineFailureDataSource(
+    private val delegate: DataSource,
+    private val publishValidNamespaceMarker: () -> Unit,
+) : DataSource by delegate {
+    private val sentinelScanObserved = AtomicBoolean()
+    val failureInjected = AtomicBoolean()
+
+    override fun getConnection(): Connection {
+        if (sentinelScanObserved.get() && failureInjected.compareAndSet(false, true)) {
+            publishValidNamespaceMarker()
+            throw SQLException("forced non-concurrent bootstrap failure", "42501")
+        }
+        return wrapConnection(delegate.connection)
+    }
+
+    override fun getConnection(username: String?, password: String?): Connection {
+        if (sentinelScanObserved.get() && failureInjected.compareAndSet(false, true)) {
+            publishValidNamespaceMarker()
+            throw SQLException("forced non-concurrent bootstrap failure", "42501")
+        }
+        return wrapConnection(delegate.getConnection(username, password))
+    }
+
+    private fun wrapConnection(connection: Connection): Connection = Proxy.newProxyInstance(
+        connection.javaClass.classLoader,
+        arrayOf(Connection::class.java),
+    ) { _, method, args ->
+        if (method.name == "getMetaData" && method.parameterCount == 0) {
+            wrapMetadata(connection.metaData)
+        } else {
+            invokeDelegate(method, connection, args)
+        }
+    } as Connection
+
+    private fun wrapMetadata(metadata: DatabaseMetaData): DatabaseMetaData = Proxy.newProxyInstance(
+        metadata.javaClass.classLoader,
+        arrayOf(DatabaseMetaData::class.java),
+    ) { _, method, args ->
+        val result = invokeDelegate(method, metadata, args)
+        if (
+            method.name == "getTables" &&
+            (args?.getOrNull(2) as? String)?.startsWith(metadataPattern(metadata, "fw_")) == true
+        ) {
+            sentinelScanObserved.set(true)
+        }
+        result
+    } as DatabaseMetaData
+}
+
+private fun metadataPattern(metadata: DatabaseMetaData, value: String): String {
+    val escape = metadata.searchStringEscape
+    return if (escape.isNullOrEmpty()) value else value
+        .replace(escape, escape + escape)
+        .replace("_", escape + "_")
+        .replace("%", escape + "%")
+}
+
+private fun invokeDelegate(method: Method, target: Any, args: Array<out Any?>?): Any? = try {
+    method.invoke(target, *(args ?: emptyArray()))
+} catch (failure: InvocationTargetException) {
+    throw failure.targetException
 }

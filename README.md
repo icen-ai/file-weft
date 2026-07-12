@@ -27,9 +27,37 @@ dependencies {
 }
 ```
 
-Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前开发版本为 `0.0.2-SNAPSHOT`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle`，完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。
+Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前开发版本为 `0.0.2-SNAPSHOT`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle`；该任务会先执行完整发布门禁，并要求 `FILEWEFT_RUN_POSTGRES_TESTS`、`FILEWEFT_RUN_RUSTFS_TESTS`、`FILEWEFT_RUN_DEV_E2E`、`FILEWEFT_RUN_DEV_UI_E2E` 全部为 `true`，且 `fw-dev` 已使用同一 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 启动。启用这些外部套件时对应 Test 任务固定重新执行，不会复用一次未启用验收时的缓存结果。成功后完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。
 
-历史 `0.0.1` 使用过试发布坐标 `com.fileweft`，不再作为正式项目接入入口；对应 Git 记录与[历史发布说明](docs/releases/0.0.1.md)仅保留用于追溯。从 `0.0.2` 起源码与二进制统一使用新命名空间，这是一次明确的不兼容迁移。
+历史 `0.0.1` 使用过试发布坐标 `com.fileweft`，项目已将其标记为撤回，不得用于新接入或新的生产部署；这一状态不表示外部制品库中的缓存或版本已经物理删除。对应 Git 记录与[历史发布说明](docs/releases/0.0.1.md)仅保留用于追溯。从 `0.0.2` 起源码与二进制统一使用新命名空间，这是一次明确的不兼容迁移。
+
+### 数据库迁移隔离
+
+FileWeft 的 Flyway 脚本只存在于专属 `classpath:ai/icen/fw/db/migration`，迁移历史只写入 `fileweft_schema_history`；不会再把脚本放入宿主通常使用的 `classpath:db/migration`，也不会与宿主的 `flyway_schema_history` 共用版本号。Spring Boot 宿主自己的 `spring.flyway.*` 配置与 FileWeft 迁移相互独立，不要把 FileWeft 专属路径追加到宿主 Flyway locations。
+
+迁移模式默认是 `disabled`；宿主应同时显式选择 DataSource 当前 schema、迁移模式和 FileWeft schema：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/app?currentSchema=fileweft
+
+fileweft:
+  persistence:
+    migration-mode: migrate # migrate | validate | disabled
+    schema: fileweft
+    create-schema: false
+```
+
+- `migrate`：由 FileWeft 使用专属 history 校验并应用尚未执行的迁移；只有该模式可以按显式配置创建 schema。
+- `validate`：只读校验 schema、专属 history 与迁移状态；缺少 history、存在 pending migration、校验不一致或发现旧 FileWeft 共享 history 记录时启动失败，不会创建或修改数据库对象。
+- `disabled`：FileWeft 不执行迁移或校验，数据库变更完全由宿主 DBA/发布系统负责。
+
+`fileweft.persistence.schema` 是安全断言，不是隐式切换开关；它必须与该 DataSource 执行 `SELECT current_schema()` 的结果相同。所有 Migration Job、API 和 Worker 角色都必须保持一致。使用共享 `public` schema 时，应让 JDBC 当前 schema 为 `public` 并配置 `schema: public`；使用独立 schema 时，推荐像上例一样通过 PostgreSQL JDBC `currentSchema` 明确 search path。只有 `migrate + create-schema=true` 允许目标尚不存在，此时 JDBC search path 仍须先指向该名称，使创建前的 `current_schema()` 为 `null` 而不是其他 schema。宿主存在多个 DataSource 时，Starter 不会根据 `@Primary` 猜测迁移目标，必须显式提供绑定正确 DataSource 的 `FlywayMigrationRunner`。
+
+首次建立专属 history 时，runner 只会在确认不存在旧 FileWeft history、`fileweft_schema_history` 和任何已知 FileWeft 业务表后，写入版本 `0` 的命名空间初始化标记；随后仍会逐个执行全部 `V001` 及之后的脚本，不会跳过任何业务迁移。发现旧记录、失败记录或无 history 的 FileWeft 表时会直接失败，绝不会把它们当作版本 `0` 收养。
+
+生产环境建议预建 schema 并保持 `create-schema=false`。`validate` 运行账号至少需要目标 schema 的 `USAGE`、FileWeft 业务读取权限及 `fileweft_schema_history` 的只读权限；若 FileWeft 与宿主共享 schema 且存在默认 `flyway_schema_history`，还需要读取该表以执行旧记录拦截。`migrate` 应使用受控迁移账号，额外授予建表、索引、约束等 DDL 权限；只有显式创建 schema 时才授予建 schema 权限。推荐由宿主提供的一次性 Migration Job 或受控进程执行 `migrate` 并在成功后自行退出，再以 `validate` 启动 API/Worker；Starter 不提供迁移完成后自动退出的通用 Job 入口。`0.0.1` 可能曾把 FileWeft 记录写入宿主默认 history；`0.0.2` 不会猜测或自动收养这些记录。旧库升级必须先停止全部 API/Worker、完成可恢复备份，并由 DBA 严格核验实际成功版本、脚本名、checksum、schema 与宿主迁移是否冲突；在形成经评审的人工转换或数据迁移方案前不得滚动升级，也不得使用盲目 baseline、复制/删除 history 行来绕过校验。完整步骤见[生产部署与恢复](docs/production-operations.md#fileweft-迁移命名空间与旧库升级)。
 
 ## 构建要求
 
@@ -70,6 +98,8 @@ $env:FILEWEFT_DEV_PLATFORM_SHARED_SECRET = ([guid]::NewGuid().ToString('N') + [g
 docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 ```
 
+若本机保留的是迁移隔离前的旧 Dev volume，新版本会按设计拒绝自动收养旧 `flyway_schema_history`。确认本地 PostgreSQL 与 RustFS 测试数据均可删除后，可先执行 `docker compose -f .docker\docker-compose.dev.yaml down -v`；该命令会永久删除 `fw-dev` 的数据库和对象存储 volume。需要保留任何数据时不得执行，必须按生产旧库流程先停机、备份并制定人工迁移方案。
+
 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 是开发 API/Worker 与独立下游模拟器之间的系统凭据，至少 32 个字符且每次新建本地编排时应生成新的值。它不会下发给浏览器，也不能替代用户登录令牌。Compose 会拒绝未设置该变量的完整编排，避免意外以公开固定凭据启动模拟下游。
 
 | 服务 | 地址 | 用途 |
@@ -88,7 +118,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 | `reviewer@alpha` | `dev-reviewer` | 审批者 |
 | `viewer@alpha` | `dev-viewer` | 只读者 |
 
-开发应用使用独立的 `fileweft_dev` 和 `fileweft_dev_platform` schema；不会读取或覆写 `public` schema 的测试数据。预置账号和密码只适用于本地开发容器，禁止用于任何生产环境。
+开发主应用关闭 Spring Boot 默认 Flyway 扫描，显式使用 FileWeft `migrate` 模式和专属 history 管理 `fileweft_dev` schema；模拟下游平台 profile 显式覆盖为 `migration-mode=disabled`、空 FileWeft schema 和 `create-schema=false`，继续由自己的专属 runner 管理 `fileweft_dev_platform`。两者不会读取或覆写 `public` schema 的测试数据。预置账号和密码只适用于本地开发容器，禁止用于任何生产环境。
 
 模拟下游平台只绑定宿主机 `127.0.0.1`，并且不再经控制台 Nginx 代理暴露 `/platform/`。除健康检查外的所有平台接口都要求该系统凭据；控制台的“下游镜像”通过已登录的 FileWeft API 服务端转发读取，因此浏览器无法获得平台密钥。平台只允许从 `rustfs` 容器拉取 HTTP(S) 文件 URL，拒绝 URI 用户信息、跳转和超过 512 MiB 的响应。需要演练其他受控存储主机时，可显式设置 `FILEWEFT_DEV_PLATFORM_ALLOWED_DOWNLOAD_HOSTS`（逗号分隔）和 `FILEWEFT_DEV_PLATFORM_MAX_DOWNLOAD_BYTES`，不要把任意公网或内网地址加入允许列表。
 

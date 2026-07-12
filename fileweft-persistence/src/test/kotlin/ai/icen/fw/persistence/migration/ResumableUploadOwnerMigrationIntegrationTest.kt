@@ -34,12 +34,16 @@ class ResumableUploadOwnerMigrationIntegrationTest {
             password = System.getenv("FILEWEFT_POSTGRES_PASSWORD") ?: "fileweft-dev"
         }
         reset(dataSource.connection)
-        Flyway.configure()
+        val flyway = Flyway.configure()
             .dataSource(dataSource)
-            .locations("classpath:db/migration")
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(FlywayMigrationRunner.HISTORY_TABLE)
+            .baselineVersion("0")
+            .baselineDescription("FileWeft namespace initialization")
             .target(MigrationVersion.fromVersion("23"))
             .load()
-            .migrate()
+        flyway.baseline()
+        flyway.migrate()
     }
 
     @AfterEach
