@@ -74,8 +74,15 @@ fileweft:
 
 Outbox 语义仍然是至少一次（at-least-once）：进程崩溃、超时或租约到期后，同一事件可能再次调用处理器。每个 `OutboxEventHandler` 必须以事件 ID 实现幂等；下游连接器还必须使用 `ConnectorInvocation.idempotencyKey` 去重。租约 token 只防止陈旧确认覆盖较新的所有权，不能替代外部系统幂等。
 
+正式交付处理器只接受携带当前持久化 lease token 的 Worker 调用；对旧的无租约 `handle(event)` 入口安全失败。保留的两参数构造器仅用于显式兼容集成，并在新版 Worker 传入 lease 时继续走旧行为。生产 Starter 会要求自定义 `DocumentDeliveryTargetRepository` 同时实现 mutation 行锁能力，并要求唯一的 `OutboxEventMutationRepository`；缺失时启动失败而不是静默让事件进入无处理器失败。Outbox 标记 `FAILED` 与本地 target 终态投影之间仍可能遇到进程退出，但同步状态和显式幂等恢复会识别“当前事件精确失败 + target 仍 PENDING/RETRYING”的组合并原子推进新事件，无需手工改表。
+
+旧版本使用单目标 `document.publish.requested` 事件。该兼容处理器现在默认关闭，正式部署只消费带目标快照的 `document.delivery.target.requested` 与 `document.delivery.target.removal.requested`。升级前必须先暂停旧 Worker，并确认旧事件已经处理或由运营人员明确处置；不要让旧处理器与新的多目标交付链路同时工作。仅在处理升级遗留事件的受控维护窗口中，才可临时设置 `fileweft.sync.legacy-publish-handler-enabled=true`，处理完成后立即恢复为 `false` 并重启节点。自动猜测“交付或撤回”的旧 `RetryDocumentDeliveryService` 也默认不装配；`fileweft.sync.legacy-delivery-retry-enabled=true` 只供 Dev/迁移兼容入口使用。正式系统必须使用两条带持久化幂等键的明确重排命令。两个兼容开关都不能作为长期运行模式。
+
 ```yaml
 fileweft:
+  sync:
+    legacy-publish-handler-enabled: false
+    legacy-delivery-retry-enabled: false
   outbox:
     worker-id: ${HOSTNAME}
     lease-duration-millis: 300000
@@ -113,13 +120,17 @@ fileweft:
 
 ## 数据库迁移与查询索引
 
-所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021` 新增待办和审批历史的稳定 keyset 查询索引；`V022` 增加受理人前导的待办部分索引，避免大租户为一个用户取待办时扫描其他用户的任务。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
+所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021` 新增待办和审批历史的稳定 keyset 查询索引；`V022` 增加受理人前导的待办部分索引，避免大租户为一个用户取待办时扫描其他用户的任务；`V023` 为每个交付目标建立当前事件、操作类型和单调派发序号围栏。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
 
 对于已有大量同步、任务或工作流数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql)、[V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)、[V021 审批查询并发预建脚本](sql/postgresql-v021-concurrent-workflow-query-indexes.sql) 和 [V022 受理人待办并发预建脚本](sql/postgresql-v022-concurrent-workflow-assignee-inbox-index.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
 
 `V020` 只新增 `fw_idempotency_record`，不回填或重写现有业务表，因此升级前检查重点是新表、索引所需磁盘以及应用账号的建表权限。回滚到不认识 V020 的旧应用在尚未开放正式幂等写入口时可以保留该表；只有确认没有新版本写流量和待重放客户端后才可手工删除。幂等记录当前没有自动 TTL：不得以通用历史清理作业删除该表数据，否则迟到重试可能重复推进业务。正确事务不会提交 `IN_PROGRESS`；诊断索引一旦发现可见行，应按应用缺陷或自定义仓储不满足原子性处理，禁止自动改为完成、删除或接管。
 
 `V021` 与 `V022` 只创建索引，不回填或重写工作流数据。高数据量数据库应先使用并发脚本预建同名索引，再由 Flyway 记录迁移；回滚旧应用可以保留这些兼容索引。V021 保留全局 `created_time + id` 有序路径，V022 为当前受理人和未分配池提供可检索路径；只有在目标环境比较真实查询计划、确认没有新版本查询流量且磁盘预算允许时，才可由 DBA 并发删除任一索引。
+
+`V023` 是需要维护窗口的数据回填，不是可与旧 Worker 混跑的滚动迁移。执行前先停止发布、最终审批、离线和人工重排入口，停止旧版本交付 Worker，并运行 [V023 交付围栏预检脚本](sql/postgresql-v023-delivery-dispatch-fence-preflight.sql)；所有 `issue_count` 必须为零。预检与迁移使用相同的最新事件排序和交付/撤回状态匹配规则。迁移会拒绝相关 `RUNNING` 事件、同一目标的多个活动事件、缺少历史事件的目标、非法交付/撤回状态及最新事件终态不一致，绝不会生成虚构事件或静默选择冲突记录。修复历史数据必须保留原始审计证据，并在修复后重新执行预检。
+
+`current_event_id` 故意不外键关联 Outbox：生产环境可能按保留策略归档终态事件；但任何 Outbox 清理作业都必须排除仍被 `fw_document_delivery_target.current_event_id` 引用的记录。当前事件缺失表示一致性损坏，正式重排必须 fail closed 并交给 Doctor/运营处理。V023 落库后不能回滚到不了解事件围栏的旧 Worker；旧二进制会忽略事件身份，数据库也无法从旧的整行更新推断它正在处理哪个事件。
 
 ## 断点续传与对象完整性
 

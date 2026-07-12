@@ -33,6 +33,13 @@ class FileWeftProperties {
     class SyncProperties {
         var connectorName: String = "default"
         var defaultProfileId: String = "default"
+        /**
+         * Opts into the pre-delivery-target `document.publish.requested` handler.
+         * New deployments must use fenced per-target delivery events instead.
+         */
+        var legacyPublishHandlerEnabled: Boolean = false
+        /** Dev/upgrade-only auto-guessed retry service; formal callers use the two idempotent recovery commands. */
+        var legacyDeliveryRetryEnabled: Boolean = false
         /** Hard upper bound for one downstream connector invocation. */
         var connectorTimeoutMillis: Long = 30_000
         /**

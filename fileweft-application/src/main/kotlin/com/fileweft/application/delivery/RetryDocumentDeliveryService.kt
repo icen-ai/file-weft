@@ -44,13 +44,14 @@ class RetryDocumentDeliveryService(
             require(current.deliveryGeneration == document.deliveryGeneration) {
                 "Historical delivery targets cannot be retried after a newer publication generation has started."
             }
+            val eventId = identifiers.nextId()
             val eventType = when {
                 current.status == DocumentDeliveryStatus.FAILED -> {
-                    current.retryManually()
+                    current.retryManually(eventId)
                     DocumentDeliveryPlanner.DELIVERY_REQUESTED_EVENT_TYPE
                 }
                 current.removalStatus == DocumentDeliveryRemovalStatus.FAILED -> {
-                    current.retryRemovalManually()
+                    current.retryRemovalManually(eventId)
                     DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE
                 }
                 else -> throw IllegalArgumentException("Delivery target has no failed synchronization or downstream removal to retry.")
@@ -58,7 +59,7 @@ class RetryDocumentDeliveryService(
             deliveries.save(current)
             outbox.append(
                 OutboxEvent(
-                    id = identifiers.nextId(),
+                    id = eventId,
                     tenantId = tenant.tenantId,
                     type = eventType,
                     payload = mapOf(

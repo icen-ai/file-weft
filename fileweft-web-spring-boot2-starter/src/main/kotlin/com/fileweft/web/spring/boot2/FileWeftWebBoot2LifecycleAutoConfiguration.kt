@@ -1,6 +1,8 @@
 package com.fileweft.web.spring.boot2
 
 import com.fileweft.application.catalog.DocumentCatalogAccessService
+import com.fileweft.application.delivery.IdempotentDocumentCatalogDeliveryRecoveryService
+import com.fileweft.application.delivery.IdempotentDocumentDeliveryRecoveryService
 import com.fileweft.application.lifecycle.IdempotentDocumentCatalogLifecycleService
 import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleService
 import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
@@ -8,6 +10,7 @@ import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.web.runtime.v1.V1ApiResponseFactory
 import com.fileweft.web.runtime.v1.document.DocumentLifecycleApiFacade
+import com.fileweft.web.runtime.v1.document.DocumentDeliveryRecoveryApiFacade
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
@@ -50,6 +53,18 @@ class FileWeftWebBoot2LifecycleAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryRecoveryApiFacade::class)
+    fun fileWeftV1DocumentDeliveryRecoveryApiFacade(
+        catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
+        flatRecoveries: ObjectProvider<IdempotentDocumentDeliveryRecoveryService>,
+        catalogRecoveries: ObjectProvider<IdempotentDocumentCatalogDeliveryRecoveryService>,
+    ): DocumentDeliveryRecoveryApiFacade = DocumentDeliveryRecoveryApiFacade(
+        catalogAccessCount = catalogAccesses.allCandidates().size,
+        flatRecoveries = flatRecoveries.allCandidates(),
+        catalogRecoveries = catalogRecoveries.allCandidates(),
+    )
+
+    @Bean
     @ConditionalOnMissingBean(V1ApiResponseFactory::class)
     fun fileWeftV1LifecycleApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
 
@@ -63,6 +78,18 @@ class FileWeftWebBoot2LifecycleAutoConfiguration {
         documents = documents,
         responses = responses,
         traceContextProvider = traceContextProviders.uniqueOptional("trace context"),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentV1DeliveryRecoveryController::class)
+    fun fileWeftV1DocumentDeliveryRecoveryController(
+        recoveries: DocumentDeliveryRecoveryApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContextProviders: ObjectProvider<TraceContextProvider>,
+    ): DocumentV1DeliveryRecoveryController = DocumentV1DeliveryRecoveryController(
+        recoveries,
+        responses,
+        traceContextProviders.uniqueOptional("recovery trace context"),
     )
 }
 

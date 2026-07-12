@@ -727,9 +727,10 @@ class DocumentDeliveryServiceTest {
         override fun save(document: Document) { this.document = document }
     }
 
-    private class MemoryDeliveries : DocumentDeliveryTargetRepository {
+    private class MemoryDeliveries : DocumentDeliveryTargetMutationRepository {
         private val targets = linkedMapOf<String, DocumentDeliveryTarget>()
         override fun findById(tenantId: Identifier, deliveryId: Identifier) = targets[deliveryId.value]?.takeIf { it.tenantId == tenantId }
+        override fun findForMutation(tenantId: Identifier, deliveryId: Identifier) = findById(tenantId, deliveryId)
         override fun findByDocument(tenantId: Identifier, documentId: Identifier) = targets.values.filter { it.tenantId == tenantId && it.documentId == documentId }
         override fun save(target: DocumentDeliveryTarget) { targets[target.id.value] = target }
     }

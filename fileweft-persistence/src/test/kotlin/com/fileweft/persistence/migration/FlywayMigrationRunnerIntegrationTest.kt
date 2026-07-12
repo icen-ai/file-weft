@@ -58,7 +58,7 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `applies schema migrations for durable runtime recovery idempotency and workflow queries`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(22, migrations)
+        assertEquals(23, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -94,6 +94,9 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_retry_count"))
             assertTrue(columnExists(connection, "fw_document", "delivery_generation"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "delivery_generation"))
+            assertTrue(columnExists(connection, "fw_document_delivery_target", "current_event_id"))
+            assertTrue(columnExists(connection, "fw_document_delivery_target", "current_operation"))
+            assertTrue(columnExists(connection, "fw_document_delivery_target", "dispatch_sequence"))
             assertTrue(columnExists(connection, "fw_idempotency_record", "id"))
             assertTrue(columnExists(connection, "fw_idempotency_record", "tenant_id"))
             assertTrue(columnExists(connection, "fw_idempotency_record", "key_digest"))
@@ -133,6 +136,12 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_status"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_result"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_time"))
+            assertTrue(constraintExists(connection, "fw_document_delivery_target", "uq_fw_delivery_current_event"))
+            assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_event_id"))
+            assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_operation"))
+            assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_sequence"))
+            assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_removal_requires_success"))
+            assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_state"))
         }
     }
 

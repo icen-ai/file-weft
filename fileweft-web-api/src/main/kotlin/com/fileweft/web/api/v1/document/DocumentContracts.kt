@@ -97,6 +97,13 @@ class DocumentLifecycleCommandResultDto @JvmOverloads constructor(
     val taskId: String? = null,
 )
 
+/** Stable identifiers for an idempotently scheduled delivery recovery. */
+class DocumentDeliveryRecoveryResultDto(
+    val documentId: String,
+    val deliveryId: String,
+    val operation: String,
+)
+
 /** Optional delivery selection for direct document publication. */
 class PublishDocumentCommand @JvmOverloads constructor(deliveryProfileId: String? = null) {
     val deliveryProfileId: String? = optionalText(deliveryProfileId, "Document delivery profile id", 256)
@@ -182,5 +189,51 @@ class DocumentPageQuery @JvmOverloads constructor(
     companion object {
         const val DEFAULT_LIMIT: Int = 20
         const val MAX_LIMIT: Int = 100
+    }
+}
+
+/** Redacted status of one current-generation downstream delivery target. */
+class DocumentDeliverySyncStatusDto(
+    deliveryId: String,
+    targetId: String,
+    displayName: String,
+    requirement: String,
+    deliveryStatus: String,
+    val deliveryRetryCount: Int,
+    removalStatus: String,
+    val removalRetryCount: Int,
+    val deliveryRetryable: Boolean,
+    val removalRetryable: Boolean,
+    val updatedTime: Long,
+) {
+    val deliveryId: String = requiredText(deliveryId, "Delivery id", 128)
+    val targetId: String = requiredText(targetId, "Delivery target id", 128)
+    val displayName: String = requiredText(displayName, "Delivery target display name", 256)
+    val requirement: String = requiredText(requirement, "Delivery requirement", 32)
+    val deliveryStatus: String = requiredText(deliveryStatus, "Delivery status", 32)
+    val removalStatus: String = requiredText(removalStatus, "Delivery removal status", 32)
+
+    init {
+        require(deliveryRetryCount >= 0) { "Delivery retry count must not be negative." }
+        require(removalRetryCount >= 0) { "Delivery removal retry count must not be negative." }
+        require(updatedTime >= 0) { "Delivery status update time must not be negative." }
+        require(!(deliveryRetryable && removalRetryable)) {
+            "Delivery and removal cannot both be ready for retry."
+        }
+    }
+}
+
+/** Redacted current synchronization state for one readable document. */
+class DocumentSyncStatusDto(
+    documentId: String,
+    deliveryTargets: List<DocumentDeliverySyncStatusDto>,
+) {
+    val documentId: String = requiredText(documentId, "Document id", 128)
+    val deliveryTargets: List<DocumentDeliverySyncStatusDto> = immutableList(deliveryTargets)
+
+    init {
+        require(this.deliveryTargets.map { target -> target.deliveryId }.distinct().size == this.deliveryTargets.size) {
+            "Synchronization target identifiers must be unique."
+        }
     }
 }

@@ -27,6 +27,8 @@ import com.fileweft.application.doctor.DeliveryProfileDoctorChecker
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.delivery.DocumentDeliverySyncService
+import com.fileweft.application.delivery.DocumentDeliveryTarget
+import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.document.DocumentDraftService
 import com.fileweft.application.document.DocumentCommandService
 import com.fileweft.application.document.DocumentDownloadService
@@ -52,6 +54,8 @@ import com.fileweft.application.outbox.OutboxBacklogReader
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
+import com.fileweft.application.sync.DocumentPublishOutboxEventHandler
+import com.fileweft.application.sync.DocumentSyncService
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.upload.UploadApplicationService
@@ -94,6 +98,13 @@ import com.fileweft.spi.authorization.AuthorizationRequest
 import com.fileweft.spi.authorization.AuthorizationResource
 import com.fileweft.spi.authorization.AuthorizationSubject
 import com.fileweft.spi.authorization.AuthorizationDecision
+import com.fileweft.spi.connector.ConnectorHealth
+import com.fileweft.spi.connector.ConnectorHealthStatus
+import com.fileweft.spi.connector.ConnectorRemoveRequest
+import com.fileweft.spi.connector.ConnectorSyncRequest
+import com.fileweft.spi.connector.ConnectorSyncResult
+import com.fileweft.spi.connector.ConnectorSyncStatus
+import com.fileweft.spi.connector.FileConnector
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.storage.MultipartPart
@@ -160,6 +171,46 @@ class FileWeftAutoConfigurationTest {
                     .apply { isAccessible = true }
                     .get(delivery)
                 assertEquals(Duration.ofSeconds(9), sourceUrlTtl)
+            }
+    }
+
+    @Test
+    fun `keeps the unfenced legacy publish handler disabled by default`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java, ConnectorConfiguration::class.java)
+            .run { context ->
+                assertFalse(context.getBean(FileWeftProperties::class.java).sync.legacyPublishHandlerEnabled)
+                assertTrue(context.getBeansOfType(DocumentSyncService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(DocumentPublishOutboxEventHandler::class.java).isEmpty())
+            }
+    }
+
+    @Test
+    fun `fails startup clearly when a custom delivery repository lacks mutation fencing`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                LegacyDeliveryTargetRepositoryConfiguration::class.java,
+            )
+            .run { context ->
+                val messages = generateSequence(context.startupFailure) { failure -> failure.cause }
+                    .mapNotNull { failure -> failure.message }
+                    .toList()
+                assertTrue(messages.any { message ->
+                    message.contains("must also implement DocumentDeliveryTargetMutationRepository")
+                })
+            }
+    }
+
+    @Test
+    fun `enables the legacy publish handler only through the compatibility property`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java, ConnectorConfiguration::class.java)
+            .withPropertyValues("fileweft.sync.legacy-publish-handler-enabled=true")
+            .run { context ->
+                assertTrue(context.getBean(FileWeftProperties::class.java).sync.legacyPublishHandlerEnabled)
+                assertTrue(context.getBean(DocumentSyncService::class.java) != null)
+                assertTrue(context.getBean(DocumentPublishOutboxEventHandler::class.java) != null)
             }
     }
 
@@ -778,6 +829,36 @@ class FileWeftAutoConfigurationTest {
     class DatabaseConfiguration {
         @Bean
         fun dataSource(): DataSource = StubDataSource
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class LegacyDeliveryTargetRepositoryConfiguration {
+        @Bean
+        fun legacyDeliveryTargetRepository(): DocumentDeliveryTargetRepository =
+            object : DocumentDeliveryTargetRepository {
+                override fun findById(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? = null
+
+                override fun findByDocument(
+                    tenantId: Identifier,
+                    documentId: Identifier,
+                ): List<DocumentDeliveryTarget> = emptyList()
+
+                override fun save(target: DocumentDeliveryTarget) = Unit
+            }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class ConnectorConfiguration {
+        @Bean
+        fun fileConnector(): FileConnector = object : FileConnector {
+            override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult =
+                ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
+
+            override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult =
+                ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
+
+            override fun health(): ConnectorHealth = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+        }
     }
 
     @Configuration(proxyBeanMethods = false)

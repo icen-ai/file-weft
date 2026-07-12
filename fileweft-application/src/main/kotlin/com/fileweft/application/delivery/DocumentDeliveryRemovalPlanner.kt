@@ -32,11 +32,12 @@ class DocumentDeliveryRemovalPlanner(
                     it.removalStatus == DocumentDeliveryRemovalStatus.NOT_REQUESTED
             }
             .onEach { delivery ->
-                delivery.requestRemoval()
+                val eventId = identifiers.nextId()
+                delivery.requestRemoval(eventId)
                 deliveries.save(delivery)
                 outbox.append(
                     OutboxEvent(
-                        id = identifiers.nextId(),
+                        id = eventId,
                         tenantId = document.tenantId,
                         type = DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE,
                         payload = mapOf(

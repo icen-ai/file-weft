@@ -37,6 +37,69 @@ class OutboxWorkerTest {
     }
 
     @Test
+    fun `passes the complete persisted lease only to stronger handlers`() {
+        val repository = LeasedRecordingRepository(listOf(lease(retryCount = 2)))
+        var observed: OutboxEventLease? = null
+        var legacyCalls = 0
+        val leasedHandler = object : LeasedOutboxEventHandler {
+            override fun supports(event: OutboxEvent): Boolean = true
+
+            override fun handle(event: OutboxEvent): OutboxHandlingResult {
+                legacyCalls++
+                return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "legacy path")
+            }
+
+            override fun handle(lease: OutboxEventLease): OutboxHandlingResult {
+                observed = lease
+                return OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED)
+            }
+        }
+
+        val summary = worker(
+            repository,
+            TrackingTransaction(),
+            listOf(leasedHandler),
+            workerId = "leased-worker",
+        ).processAvailable(1)
+
+        assertEquals(1, summary.succeeded)
+        assertEquals(0, legacyCalls)
+        assertEquals("event-1", observed?.event?.id?.value)
+        assertEquals(2, observed?.retryCount)
+        assertEquals("leased-worker", observed?.leaseOwner)
+        assertEquals(repository.claims.single().leaseToken, observed?.leaseToken)
+    }
+
+    @Test
+    fun `does not fabricate ownership when a stronger handler receives a legacy tokenless lease`() {
+        val repository = RecordingRepository(listOf(lease()))
+        var legacyCalls = 0
+        var tokenlessCalls = 0
+        val leasedHandler = object : LeasedOutboxEventHandler {
+            override fun supports(event: OutboxEvent): Boolean = true
+
+            override fun handle(event: OutboxEvent): OutboxHandlingResult {
+                legacyCalls++
+                return OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED)
+            }
+
+            override fun handle(lease: OutboxEventLease): OutboxHandlingResult {
+                assertEquals(null, lease.leaseOwner)
+                assertEquals(null, lease.leaseToken)
+                tokenlessCalls++
+                return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "token lease required")
+            }
+        }
+
+        val summary = worker(repository, TrackingTransaction(), listOf(leasedHandler)).processAvailable(1)
+
+        assertEquals(1, summary.failed)
+        assertEquals(0, legacyCalls)
+        assertEquals(1, tokenlessCalls)
+        assertEquals("token lease required", repository.failed.single().message)
+    }
+
+    @Test
     fun `claims one event at a time with a stable worker id and a new token for each event`() {
         val repository = LeasedRecordingRepository(listOf(lease("event-1"), lease("event-2"), lease("event-3")))
 

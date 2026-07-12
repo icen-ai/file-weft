@@ -16,6 +16,7 @@ const state = {
   deliveryProfiles: [],
   workflowTasks: [],
   workflowHistory: [],
+  syncStatus: null,
   selectedFolderId: null,
   selectedId: null,
   detail: null,
@@ -279,13 +280,15 @@ async function decideWorkflowTask(item, action, deliveryProfileId) {
 }
 
 async function selectDocument(documentId, refreshPanels = true) {
-  state.selectedId = documentId;
-  const [detail, workflowPage] = await Promise.all([
+  const [detail, workflowPage, syncStatus] = await Promise.all([
     api(`/api/documents/${documentId}`),
     v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/workflows?limit=100`),
+    v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/sync-status`),
   ]);
+  state.selectedId = documentId;
   state.detail = detail;
   state.workflowHistory = workflowPage?.items || [];
+  state.syncStatus = syncStatus;
   state.selectedFolderId = state.detail.document.folderId || state.selectedFolderId;
   $("#empty-inspector").classList.add("hidden");
   $("#document-inspector").classList.remove("hidden");
@@ -327,17 +330,19 @@ function renderInspector() {
     return evidenceItem(`${localized("workflow.type", workflow.workflowType)} / ${localizedState(workflow.state)}`, tasks);
   }).join("") || emptyEvidence("empty.workflow");
   $("#delivery-list").innerHTML = detail.deliveries.map((delivery) => {
+    const safeStatus = state.syncStatus?.deliveryTargets?.find((target) => target.deliveryId === delivery.id);
     const responsibility = delivery.ownerRef ? ` · ${escapeHtml(delivery.ownerRef)}` : "";
     const error = delivery.errorMessage ? `<small class="delivery-error">${escapeHtml(delivery.errorMessage)}</small>` : "";
     const retry = delivery.retryCount ? ` · ${escapeHtml(interpolate("delivery.retries", { count: delivery.retryCount }))}` : "";
     const removal = delivery.removalStatus && delivery.removalStatus !== "NOT_REQUESTED"
       ? `<small>${escapeHtml(t("delivery.removal"))}: ${escapeHtml(localized("delivery.removal.status", delivery.removalStatus))}${delivery.removalRetryCount ? ` · ${escapeHtml(interpolate("delivery.retries", { count: delivery.removalRetryCount }))}` : ""}${delivery.removalErrorMessage ? ` · ${escapeHtml(delivery.removalErrorMessage)}` : ""}</small>` : "";
-    const canRetry = (delivery.status === "FAILED" || delivery.removalStatus === "FAILED") && can("document:delivery:retry");
+    const retryOperation = safeStatus?.removalRetryable ? "REMOVAL" : (safeStatus?.deliveryRetryable ? "DELIVERY" : null);
+    const canRetry = retryOperation && can("document:delivery:retry");
     const manualRetry = canRetry
-      ? `<button class="delivery-retry" type="button" data-delivery-retry="${escapeHtml(delivery.id)}">${escapeHtml(t(delivery.removalStatus === "FAILED" ? "action.retryRemoval" : "action.retryDelivery"))}</button>` : "";
+      ? `<button class="delivery-retry" type="button" data-delivery-retry="${escapeHtml(delivery.id)}" data-retry-operation="${retryOperation}">${escapeHtml(t(retryOperation === "REMOVAL" ? "action.retryRemoval" : "action.retryDelivery"))}</button>` : "";
     return `<article class="delivery-card ${escapeHtml(delivery.status)}"><div><span class="delivery-requirement">${escapeHtml(localized("delivery.requirement", delivery.requirement))}</span><b>${escapeHtml(delivery.displayName)}</b><small>${escapeHtml(t("delivery.generation"))} ${escapeHtml(delivery.deliveryGeneration)} · ${escapeHtml(delivery.connectorId)}${responsibility}</small></div><div class="delivery-status"><strong>${escapeHtml(localized("delivery.status", delivery.status))}</strong><small>${escapeHtml(delivery.externalId || "—")}${retry}</small>${error}${removal}${manualRetry}</div></article>`;
   }).join("") || emptyEvidence("empty.delivery");
-  $("#delivery-list").querySelectorAll("[data-delivery-retry]").forEach((button) => button.addEventListener("click", () => retryDelivery(button.dataset.deliveryRetry)));
+  $("#delivery-list").querySelectorAll("[data-delivery-retry]").forEach((button) => button.addEventListener("click", () => retryDelivery(button.dataset.deliveryRetry, button.dataset.retryOperation)));
   $("#task-list").innerHTML = detail.tasks.map((task) => evidenceItem(
     `${localizedTaskStatus(task.status)} / ${task.type}`,
     `${formatTime(task.createdTime)}${task.retryCount ? ` · ${escapeHtml(interpolate("task.retries", { count: task.retryCount }))}` : ""}${task.lastError ? ` · ${escapeHtml(task.lastError)}` : ""}`,
@@ -468,9 +473,10 @@ async function runAction(action) {
   }
 }
 
-async function retryDelivery(deliveryId) {
+async function retryDelivery(deliveryId, operation) {
   try {
-    await api(`/api/documents/delivery-targets/${deliveryId}/retry`, { method: "POST" });
+    const suffix = operation === "REMOVAL" ? "/removal/retry" : "/retry";
+    await v1Api(`${V1_DOCUMENTS_PATH}/${state.selectedId}/deliveries/${deliveryId}${suffix}`, lifecycleRequest(`delivery-${operation?.toLowerCase() || "retry"}`));
     notice(t("notice.deliveryRetried"));
     await refreshDocuments();
     loadPlatform();
@@ -911,7 +917,7 @@ $("#resumable-abort").addEventListener("click", abortResumableUpload);
 $("#resumable-maintenance").addEventListener("click", loadStalledResumableCompletions);
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.workflowTasks = []; state.workflowHistory = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false; state.stalledResumableCompletions = null;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.workflowTasks = []; state.workflowHistory = []; state.syncStatus = null; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false; state.stalledResumableCompletions = null;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

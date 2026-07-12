@@ -12,6 +12,8 @@ internal object DocumentApiInputs {
 
     fun taskId(value: String): Identifier = identifier(value, "Workflow task id")
 
+    fun deliveryId(value: String): Identifier = identifier(value, "Delivery id")
+
     private fun identifier(value: String, field: String): Identifier {
         require(value.isNotBlank()) { "$field must not be blank." }
         require(value.length <= MAX_IDENTIFIER_LENGTH) {

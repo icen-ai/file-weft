@@ -1,9 +1,14 @@
 package com.fileweft.application.delivery
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.outbox.OutboxEventLease
+import com.fileweft.application.outbox.OutboxEventMutationRepository
+import com.fileweft.application.outbox.OutboxEventStatus
+import com.fileweft.application.outbox.OutboxLeaseLostException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
+import com.fileweft.domain.document.DocumentRepository
 import com.fileweft.spi.connector.ConnectorInvocation
 import com.fileweft.spi.connector.ConnectorRemoveRequest
 import com.fileweft.spi.connector.ConnectorSyncResult
@@ -28,11 +33,26 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
     }
 
-    fun remove(sourceEvent: OutboxEvent): OutboxHandlingResult {
+    fun remove(sourceEvent: OutboxEvent): OutboxHandlingResult = remove(sourceEvent, null, null, null)
+
+    /** Strong worker path with document -> target -> Outbox lease locking. */
+    @JvmSynthetic
+    internal fun remove(
+        lease: OutboxEventLease,
+        outboxMutations: OutboxEventMutationRepository,
+        documents: DocumentRepository,
+    ): OutboxHandlingResult = remove(lease.event, lease, outboxMutations, documents)
+
+    private fun remove(
+        sourceEvent: OutboxEvent,
+        lease: OutboxEventLease?,
+        outboxMutations: OutboxEventMutationRepository?,
+        documents: DocumentRepository?,
+    ): OutboxHandlingResult {
         val deliveryId = sourceEvent.deliveryIdOrNull()
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery removal event does not contain deliveryId.")
         val preparation = resolveConnector(
-            transaction.execute { freeze(sourceEvent.tenantId, deliveryId) },
+            transaction.execute { freeze(sourceEvent, deliveryId) },
         )
         val handling = when (preparation) {
             is Preparation.AlreadyRemoved -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already removed downstream.")
@@ -42,19 +62,58 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
                 deliveryId,
                 preparation.expectation,
                 ConnectorSyncResult(preparation.status, message = preparation.message),
+                lease,
+                outboxMutations,
+                documents,
             )
-            is Preparation.Ready -> complete(sourceEvent, deliveryId, preparation.expectation, invokeConnector(preparation))
+            is Preparation.Ready -> complete(
+                sourceEvent,
+                deliveryId,
+                preparation.expectation,
+                invokeConnector(preparation),
+                lease,
+                outboxMutations,
+                documents,
+            )
         }
         recordMetric(preparation, handling, sourceEvent.tenantId.value)
         return handling
     }
 
-    fun exhaust(sourceEvent: OutboxEvent, message: String) {
+    fun exhaust(sourceEvent: OutboxEvent, message: String) = exhaust(sourceEvent, message, null, null)
+
+    @JvmSynthetic
+    internal fun exhaust(
+        sourceEvent: OutboxEvent,
+        message: String,
+        documents: DocumentRepository?,
+        outboxMutations: OutboxEventMutationRepository?,
+    ) {
         val deliveryId = sourceEvent.deliveryIdOrNull() ?: return
         val diagnostic = DeliveryDiagnosticMessage.normalize(message) ?: "Delivery removal retry limit was reached."
         transaction.execute {
-            val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId) ?: return@execute
-            if (delivery.removalStatus != DocumentDeliveryRemovalStatus.SUCCEEDED) {
+            val expectedDocumentId = sourceEvent.payload[DocumentDeliveryPlanner.DOCUMENT_ID_PAYLOAD_KEY]
+                ?.takeIf { it.isNotBlank() }?.let(::Identifier) ?: return@execute
+            documents?.findForMutation(sourceEvent.tenantId, expectedDocumentId)
+            val mutationDeliveries = deliveries as? DocumentDeliveryTargetMutationRepository
+                ?: throw IllegalStateException("Delivery removal requires a mutation-capable target repository.")
+            val delivery = mutationDeliveries.findForMutation(sourceEvent.tenantId, deliveryId) ?: return@execute
+            val fence = delivery.currentDispatchFence
+            val durableFailure = outboxMutations == null || outboxMutations
+                .findForMutation(sourceEvent.tenantId, sourceEvent.id)
+                ?.let { state ->
+                    state.id == sourceEvent.id &&
+                        state.tenantId == sourceEvent.tenantId &&
+                        state.eventType == DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE &&
+                        state.status == OutboxEventStatus.FAILED
+                } == true
+            if (
+                durableFailure &&
+                delivery.documentId == expectedDocumentId &&
+                fence != null &&
+                delivery.matchesDispatch(sourceEvent.id, DeliveryDispatchOperation.REMOVAL, fence.sequence) &&
+                delivery.removalStatus in ACTIVE_REMOVAL_STATUSES
+            ) {
                 delivery.markRemovalFailed(diagnostic)
                 deliveries.save(delivery)
                 audit(sourceEvent, delivery, DELIVERY_REMOVAL_FAILED_AUDIT_ACTION, mapOf("message" to diagnostic))
@@ -63,9 +122,15 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
     }
 
     /** Freezes FileWeft-owned target state before resolving an integration SPI. */
-    private fun freeze(tenantId: Identifier, deliveryId: Identifier): Preparation {
+    private fun freeze(sourceEvent: OutboxEvent, deliveryId: Identifier): Preparation {
+        val tenantId = sourceEvent.tenantId
         val delivery = deliveries.findById(tenantId, deliveryId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
+        val fence = delivery.currentDispatchFence
+            ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target is missing its dispatch fence.")
+        if (!delivery.matchesDispatch(sourceEvent.id, DeliveryDispatchOperation.REMOVAL, fence.sequence)) {
+            return Preparation.AlreadyRemoved(delivery.connectorId)
+        }
         val target = DeliverySnapshot(delivery)
         when (delivery.removalStatus) {
             DocumentDeliveryRemovalStatus.SUCCEEDED -> return Preparation.AlreadyRemoved(delivery.connectorId)
@@ -134,12 +199,18 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         deliveryId: Identifier,
         expectation: CompletionExpectation?,
         result: ConnectorSyncResult,
+        lease: OutboxEventLease?,
+        outboxMutations: OutboxEventMutationRepository?,
+        documents: DocumentRepository?,
     ): OutboxHandlingResult = transaction.execute {
         val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
         if (expectation == null) {
             return@execute normalizedResult.toOutboxHandlingResult()
         }
-        val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
+        documents?.findForMutation(sourceEvent.tenantId, expectation.target.documentId)
+        val mutationDeliveries = deliveries as? DocumentDeliveryTargetMutationRepository
+            ?: throw IllegalStateException("Delivery removal requires a mutation-capable target repository.")
+        val delivery = mutationDeliveries.findForMutation(sourceEvent.tenantId, deliveryId)
             ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before downstream withdrawal.")
         if (!expectation.target.matches(delivery)) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before downstream withdrawal completed.")
@@ -152,6 +223,13 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
             delivery.removalStatus !in expectation.allowedRemovalStatuses
         ) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before downstream withdrawal completed.")
+        }
+        if (lease != null) {
+            val mutationRepository = outboxMutations
+                ?: throw IllegalStateException("Fenced delivery removal requires an Outbox mutation repository.")
+            val state = mutationRepository.findForMutation(sourceEvent.tenantId, sourceEvent.id)
+                ?: throw OutboxLeaseLostException("Delivery removal Outbox event no longer exists in the current tenant.")
+            state.requireCurrentLease(lease)
         }
         when (normalizedResult.status) {
             ConnectorSyncStatus.SUCCESS -> delivery.markRemovalSucceeded()
@@ -232,6 +310,9 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         val connectorId: String = delivery.connectorId
         val externalId: String = delivery.externalId ?: delivery.documentId.value
         val deliveryGeneration: Int = delivery.deliveryGeneration
+        val dispatchFence: DeliveryDispatchFence = requireNotNull(delivery.currentDispatchFence) {
+            "Delivery target is missing its dispatch fence."
+        }
 
         fun matches(current: DocumentDeliveryTarget): Boolean =
             current.id == id &&
@@ -242,7 +323,8 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
                 current.displayName == displayName &&
                 current.connectorId == connectorId &&
                 (current.externalId ?: current.documentId.value) == externalId &&
-                current.deliveryGeneration == deliveryGeneration
+                current.deliveryGeneration == deliveryGeneration &&
+                current.matchesDispatch(dispatchFence.eventId, dispatchFence.operation, dispatchFence.sequence)
     }
 
     private class CompletionExpectation(

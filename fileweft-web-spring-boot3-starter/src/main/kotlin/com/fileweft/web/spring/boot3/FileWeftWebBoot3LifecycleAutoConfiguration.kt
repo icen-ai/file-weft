@@ -1,6 +1,8 @@
 package com.fileweft.web.spring.boot3
 
 import com.fileweft.application.catalog.DocumentCatalogAccessService
+import com.fileweft.application.delivery.IdempotentDocumentCatalogDeliveryRecoveryService
+import com.fileweft.application.delivery.IdempotentDocumentDeliveryRecoveryService
 import com.fileweft.application.lifecycle.IdempotentDocumentCatalogLifecycleService
 import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleService
 import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
@@ -8,6 +10,8 @@ import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.web.runtime.v1.V1ApiResponseFactory
 import com.fileweft.web.runtime.v1.document.DocumentLifecycleApiFacade
+import com.fileweft.web.runtime.v1.document.DocumentDeliveryRecoveryApiFacade
+import com.fileweft.web.spring.boot3.v1.document.V1DocumentDeliveryRecoveryController
 import com.fileweft.web.spring.boot3.v1.document.V1DocumentLifecycleController
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -48,6 +52,18 @@ class FileWeftWebBoot3LifecycleAutoConfiguration {
     )
 
     @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryRecoveryApiFacade::class)
+    fun fileWeftV1DocumentDeliveryRecoveryApiFacade(
+        catalogAccess: ObjectProvider<DocumentCatalogAccessService>,
+        flatRecoveries: ObjectProvider<IdempotentDocumentDeliveryRecoveryService>,
+        catalogRecoveries: ObjectProvider<IdempotentDocumentCatalogDeliveryRecoveryService>,
+    ): DocumentDeliveryRecoveryApiFacade = DocumentDeliveryRecoveryApiFacade(
+        catalogAccessCount = catalogAccess.allCandidates().size,
+        flatRecoveries = flatRecoveries.allCandidates(),
+        catalogRecoveries = catalogRecoveries.allCandidates(),
+    )
+
+    @Bean
     @ConditionalOnMissingBean(V1ApiResponseFactory::class)
     fun fileWeftV1LifecycleApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
 
@@ -66,6 +82,24 @@ class FileWeftWebBoot3LifecycleAutoConfiguration {
             documents = documents,
             responses = responses,
             traceContextProvider = traceCandidates.singleOrNull(),
+        )
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(V1DocumentDeliveryRecoveryController::class)
+    fun fileWeftV1DocumentDeliveryRecoveryController(
+        recoveries: DocumentDeliveryRecoveryApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContexts: ObjectProvider<TraceContextProvider>,
+    ): V1DocumentDeliveryRecoveryController {
+        val traceCandidates = traceContexts.allCandidates()
+        require(traceCandidates.size <= 1) {
+            "Formal recovery API requires at most one trace context provider."
+        }
+        return V1DocumentDeliveryRecoveryController(
+            recoveries,
+            responses,
+            traceCandidates.singleOrNull(),
         )
     }
 

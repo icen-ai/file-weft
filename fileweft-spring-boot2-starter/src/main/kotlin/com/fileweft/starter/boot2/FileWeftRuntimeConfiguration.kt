@@ -32,6 +32,11 @@ import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
 import com.fileweft.application.delivery.DocumentDeliveryRemovalService
 import com.fileweft.application.delivery.DocumentDeliverySyncService
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
+import com.fileweft.application.delivery.DocumentDeliveryTargetMutationRepository
+import com.fileweft.application.delivery.DocumentSyncStatusQueryRepository
+import com.fileweft.application.delivery.DocumentSyncStatusQueryService
+import com.fileweft.application.delivery.IdempotentDocumentCatalogDeliveryRecoveryService
+import com.fileweft.application.delivery.IdempotentDocumentDeliveryRecoveryService
 import com.fileweft.application.delivery.MapDeliveryConnectorResolver
 import com.fileweft.application.delivery.RetryDocumentDeliveryService
 import com.fileweft.application.delivery.StaticDocumentDeliveryProfileProvider
@@ -55,6 +60,7 @@ import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
+import com.fileweft.application.outbox.OutboxEventMutationRepository
 import com.fileweft.application.outbox.OutboxBacklogMetricsPublisher
 import com.fileweft.application.outbox.OutboxBacklogReader
 import com.fileweft.application.outbox.OutboxProcessingRepository
@@ -91,6 +97,7 @@ import com.fileweft.persistence.jdbc.JdbcAgentResultRepository
 import com.fileweft.persistence.jdbc.JdbcAuditRecordRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
+import com.fileweft.persistence.jdbc.JdbcDocumentSyncStatusQueryRepository
 import com.fileweft.persistence.jdbc.JdbcDoctorReportRepository
 import com.fileweft.persistence.jdbc.JdbcDocumentDeliveryTargetRepository
 import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
@@ -154,6 +161,11 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftDocumentQueryRepository(): DocumentQueryRepository = JdbcDocumentQueryRepository()
 
     @Bean
+    @ConditionalOnMissingBean(DocumentSyncStatusQueryRepository::class)
+    fun fileWeftDocumentSyncStatusQueryRepository(): DocumentSyncStatusQueryRepository =
+        JdbcDocumentSyncStatusQueryRepository()
+
+    @Bean
     @ConditionalOnMissingBean(WorkflowQueryRepository::class)
     fun fileWeftWorkflowQueryRepository(): WorkflowQueryRepository = JdbcWorkflowQueryRepository()
 
@@ -189,7 +201,7 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(DocumentDeliveryTargetRepository::class)
-    fun fileWeftDocumentDeliveryTargetRepository(clock: Clock): DocumentDeliveryTargetRepository =
+    fun fileWeftDocumentDeliveryTargetRepository(clock: Clock): JdbcDocumentDeliveryTargetRepository =
         JdbcDocumentDeliveryTargetRepository(clock)
 
     @Bean
@@ -199,7 +211,7 @@ class FileWeftRuntimeConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(OutboxProcessingRepository::class)
-    fun fileWeftOutboxProcessingRepository(objectMapper: ObjectMapper): OutboxProcessingRepository = JdbcOutboxProcessingRepository(objectMapper)
+    fun fileWeftOutboxProcessingRepository(objectMapper: ObjectMapper): JdbcOutboxProcessingRepository = JdbcOutboxProcessingRepository(objectMapper)
 
     /**
      * Global backlog inspection is deliberately separate from processing so customers can
@@ -416,6 +428,69 @@ class FileWeftRuntimeConfiguration {
     }
 
     @Bean
+    @ConditionalOnBean(value = [DocumentDeliveryTargetMutationRepository::class, OutboxEventMutationRepository::class])
+    @ConditionalOnMissingBean(
+        value = [
+            DocumentCatalogAccessService::class,
+            IdempotentDocumentDeliveryRecoveryService::class,
+            IdempotentDocumentCatalogDeliveryRecoveryService::class,
+        ],
+    )
+    fun fileWeftIdempotentDocumentDeliveryRecoveryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        documents: DocumentRepository,
+        deliveries: DocumentDeliveryTargetMutationRepository,
+        outboxMutations: OutboxEventMutationRepository,
+        outbox: OutboxEventRepository,
+        identifiers: IdentifierGenerator,
+        clock: Clock,
+        idempotency: RequestIdempotencyService,
+        auditTrail: AuditTrail,
+    ): IdempotentDocumentDeliveryRecoveryService = IdempotentDocumentDeliveryRecoveryService(
+        tenants, users, authorization, documents, deliveries, outboxMutations, outbox,
+        identifiers, clock, idempotency, auditTrail,
+    )
+
+    @Bean
+    @ConditionalOnBean(
+        value = [
+            DocumentCatalogAccessService::class,
+            DocumentDeliveryTargetMutationRepository::class,
+            OutboxEventMutationRepository::class,
+        ],
+    )
+    @ConditionalOnMissingBean(
+        value = [IdempotentDocumentDeliveryRecoveryService::class, IdempotentDocumentCatalogDeliveryRecoveryService::class],
+    )
+    fun fileWeftIdempotentDocumentCatalogDeliveryRecoveryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        documents: DocumentRepository,
+        assets: FileAssetRepository,
+        deliveries: DocumentDeliveryTargetMutationRepository,
+        outboxMutations: OutboxEventMutationRepository,
+        outbox: OutboxEventRepository,
+        identifiers: IdentifierGenerator,
+        transaction: ApplicationTransaction,
+        clock: Clock,
+        idempotency: RequestIdempotencyService,
+        auditTrail: AuditTrail,
+        catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
+    ): IdempotentDocumentCatalogDeliveryRecoveryService? =
+        if (assets is FileAssetMutationRepository) {
+            IdempotentDocumentCatalogDeliveryRecoveryService(
+                tenants, users, authorization, documents, assets, deliveries, outboxMutations, outbox,
+                identifiers, transaction, clock, idempotency, auditTrail,
+                requiredSecurityCandidate(catalogAccesses, DocumentCatalogAccessService::class.java),
+            )
+        } else {
+            null
+        }
+
+    @Bean
     @ConditionalOnMissingBean(
         value = [
             DocumentCatalogAccessService::class,
@@ -625,9 +700,27 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftDocumentDeliveryOutboxEventHandler(
         sync: DocumentDeliverySyncService,
         removal: DocumentDeliveryRemovalService,
-    ): DocumentDeliveryOutboxEventHandler = DocumentDeliveryOutboxEventHandler(sync, removal)
+        deliveries: DocumentDeliveryTargetRepository,
+        outboxMutations: ObjectProvider<OutboxEventMutationRepository>,
+        documents: DocumentRepository,
+    ): DocumentDeliveryOutboxEventHandler {
+        if (deliveries !is DocumentDeliveryTargetMutationRepository) {
+            throw IllegalStateException(
+                "DocumentDeliveryTargetRepository must also implement DocumentDeliveryTargetMutationRepository for fenced delivery processing.",
+            )
+        }
+        val mutations = outboxMutations.getIfUnique() ?: throw IllegalStateException(
+            "Exactly one OutboxEventMutationRepository is required for fenced delivery processing.",
+        )
+        return DocumentDeliveryOutboxEventHandler(sync, removal, mutations, documents)
+    }
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = "fileweft.sync",
+        name = ["legacy-delivery-retry-enabled"],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(RetryDocumentDeliveryService::class)
     fun fileWeftRetryDocumentDeliveryService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -669,6 +762,24 @@ class FileWeftRuntimeConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ): DocumentQueryService = DocumentQueryService(
         tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentSyncStatusQueryService::class)
+    fun fileWeftDocumentSyncStatusQueryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        queries: DocumentSyncStatusQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ): DocumentSyncStatusQueryService = DocumentSyncStatusQueryService(
+        tenants,
+        users,
+        authorization,
+        queries,
+        transaction,
+        singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java),
     )
 
     @Bean
@@ -933,6 +1044,11 @@ class FileWeftRuntimeConfiguration {
     )
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = "fileweft.sync",
+        name = ["legacy-publish-handler-enabled"],
+        havingValue = "true",
+    )
     @ConditionalOnSingleCandidate(FileConnector::class)
     @ConditionalOnMissingBean(DocumentSyncService::class)
     fun fileWeftDocumentSyncService(
@@ -949,6 +1065,11 @@ class FileWeftRuntimeConfiguration {
     )
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = "fileweft.sync",
+        name = ["legacy-publish-handler-enabled"],
+        havingValue = "true",
+    )
     @ConditionalOnSingleCandidate(FileConnector::class)
     @ConditionalOnMissingBean(DocumentPublishOutboxEventHandler::class)
     fun fileWeftDocumentPublishOutboxEventHandler(sync: DocumentSyncService): DocumentPublishOutboxEventHandler =

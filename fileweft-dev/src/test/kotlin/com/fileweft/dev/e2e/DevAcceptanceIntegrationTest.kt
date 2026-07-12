@@ -183,6 +183,15 @@ class DevAcceptanceIntegrationTest {
         })
         assertTrue(!syncStatus.has("platformSharedSecret"))
 
+        val formalSyncStatus = getJson("$apiUrl/fileweft/v1/documents/$documentId/sync-status", editor)
+        assertV1SuccessEnvelope(formalSyncStatus)
+        assertEquals(documentId, formalSyncStatus.path("data").path("documentId").asText())
+        assertTrue(formalSyncStatus.path("data").path("deliveryTargets").size() > 0)
+        assertNoInternalV1Fields(formalSyncStatus)
+        assertTrue(formalSyncStatus.findValue("currentEventId") == null)
+        assertTrue(formalSyncStatus.findValue("dispatchSequence") == null)
+        assertTrue(formalSyncStatus.findValue("errorMessage") == null)
+
         val boundedLogs = getJson("$apiUrl/api/documents/$documentId/logs?limit=1", editor)
         assertEquals(1, boundedLogs.size())
         assertTrue(boundedLogs.first().path("source").asText() in setOf("AUDIT", "OPERATION"))
@@ -216,6 +225,10 @@ class DevAcceptanceIntegrationTest {
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
         )
         assertEquals(404, crossTenant.statusCode())
+
+        val formalCrossTenant = getResponse("$apiUrl/fileweft/v1/documents/$documentId/sync-status", betaEditor)
+        assertEquals(404, formalCrossTenant.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(formalCrossTenant.body()), "NOT_FOUND", "Resource was not found.")
 
         val unauthenticated = client.send(
             HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/logs"))
@@ -909,8 +922,21 @@ class DevAcceptanceIntegrationTest {
         val compliance = delivery(failed, "compliance")
         assertEquals("FAILED", compliance.path("status").asText())
 
+        val formalStatus = getJson("$apiUrl/fileweft/v1/documents/$documentId/sync-status", admin)
+        assertV1SuccessEnvelope(formalStatus)
+        val formalCompliance = formalStatus.path("data").path("deliveryTargets")
+            .first { it.path("targetId").asText() == "compliance" }
+        assertEquals(compliance.path("id").asText(), formalCompliance.path("deliveryId").asText())
+        assertTrue(formalCompliance.path("deliveryRetryable").asBoolean())
+        assertTrue(!formalCompliance.path("removalRetryable").asBoolean())
+
         postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"compliance"}""")
-        post("$apiUrl/api/documents/delivery-targets/${compliance.path("id").asText()}/retry", null, admin, "application/json")
+        val retryKey = "e2e-delivery-${UUID.randomUUID()}"
+        val retryUrl = "$apiUrl/fileweft/v1/documents/$documentId/deliveries/${compliance.path("id").asText()}/retry"
+        val retry = postV1(retryUrl, admin, retryKey)
+        assertV1SuccessEnvelope(retry)
+        assertEquals("DELIVERY", retry.path("data").path("operation").asText())
+        assertEquals(retry.path("data"), postV1(retryUrl, admin, retryKey).path("data"))
         post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
         val recovered = awaitPublished(documentId, admin)
         assertEquals("SUCCEEDED", delivery(recovered, "compliance").path("status").asText())
@@ -1207,6 +1233,13 @@ class DevAcceptanceIntegrationTest {
         platformRequest(url)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+            .build(),
+    )
+
+    private fun postV1(url: String, token: String, idempotencyKey: String): JsonNode = response(
+        authorizedRequest(url, token)
+            .header("Idempotency-Key", idempotencyKey)
+            .POST(HttpRequest.BodyPublishers.noBody())
             .build(),
     )
 

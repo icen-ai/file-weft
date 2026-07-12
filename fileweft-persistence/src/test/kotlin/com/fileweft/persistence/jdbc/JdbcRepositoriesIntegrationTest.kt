@@ -276,10 +276,12 @@ class JdbcRepositoriesIntegrationTest {
         val target = DocumentDeliveryTarget(
             id = Identifier("delivery-1"), tenantId = Identifier("tenant-1"), documentId = Identifier("document-1"),
             profileId = "regulated", targetId = "archive", displayName = "Archive", connectorId = "archive-connector",
-            requirement = DeliveryRequirement.REQUIRED, status = DocumentDeliveryStatus.SUCCEEDED, externalId = "archive:document-1",
+            requirement = DeliveryRequirement.REQUIRED,
             deliveryGeneration = 2,
         )
-        target.requestRemoval()
+        target.bindInitialDelivery(Identifier("delivery-event-1"))
+        target.markSucceeded("archive:document-1")
+        target.requestRemoval(Identifier("removal-event-1"))
         target.markRemovalRetrying("platform unavailable")
 
         transaction.execute { deliveries.save(target) }
@@ -291,6 +293,8 @@ class JdbcRepositoriesIntegrationTest {
         assertEquals("platform unavailable", restored.removalErrorMessage)
         assertEquals(1, restored.removalRetryCount)
         assertEquals(2, restored.deliveryGeneration)
+        assertEquals("removal-event-1", restored.currentDispatchFence?.eventId?.value)
+        assertEquals(2, restored.currentDispatchFence?.sequence)
         assertNull(transaction.execute { deliveries.findById(Identifier("tenant-2"), target.id) })
     }
 

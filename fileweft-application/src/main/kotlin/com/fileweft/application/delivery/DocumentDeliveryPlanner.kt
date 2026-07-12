@@ -109,8 +109,10 @@ class DocumentDeliveryPlanner(
             "Delivery preparation tenant must match the document tenant."
         }
         val planned = preparation.targets.map { definition ->
+            val deliveryId = identifiers.nextId()
+            val eventId = identifiers.nextId()
             DocumentDeliveryTarget(
-                id = identifiers.nextId(),
+                id = deliveryId,
                 tenantId = document.tenantId,
                 documentId = document.id,
                 deliveryGeneration = document.deliveryGeneration,
@@ -121,10 +123,11 @@ class DocumentDeliveryPlanner(
                 requirement = definition.requirement,
                 ownerRef = definition.ownerRef,
             ).also { target ->
+                target.bindInitialDelivery(eventId)
                 deliveries.save(target)
                 outbox.append(
                     OutboxEvent(
-                        id = identifiers.nextId(),
+                        id = eventId,
                         tenantId = document.tenantId,
                         type = DELIVERY_REQUESTED_EVENT_TYPE,
                         payload = mapOf(DOCUMENT_ID_PAYLOAD_KEY to document.id.value, DELIVERY_ID_PAYLOAD_KEY to target.id.value),

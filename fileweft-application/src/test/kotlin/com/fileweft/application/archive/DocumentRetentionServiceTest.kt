@@ -8,6 +8,8 @@ import com.fileweft.application.delivery.DocumentDeliveryRemovalStatus
 import com.fileweft.application.delivery.DocumentDeliveryStatus
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
+import com.fileweft.application.delivery.DeliveryDispatchFence
+import com.fileweft.application.delivery.DeliveryDispatchOperation
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.lifecycle.DocumentLifecycleMutationContext
 import com.fileweft.application.lifecycle.DocumentLifecycleMutationTransaction
@@ -636,6 +638,16 @@ class DocumentRetentionServiceTest {
         externalId = "archive:tenant-1:document-1",
         deliveryGeneration = 1,
         removalStatus = removalStatus,
+    ).restoreDispatch(
+        DeliveryDispatchFence(
+            Identifier(if (removalStatus == DocumentDeliveryRemovalStatus.NOT_REQUESTED) "delivery-event" else "removal-event"),
+            if (removalStatus == DocumentDeliveryRemovalStatus.NOT_REQUESTED) {
+                DeliveryDispatchOperation.DELIVERY
+            } else {
+                DeliveryDispatchOperation.REMOVAL
+            },
+            if (removalStatus == DocumentDeliveryRemovalStatus.NOT_REQUESTED) 1 else 2,
+        ),
     )
 
     private fun finalIdentityMismatches(factory: (Identifier, Identifier) -> Document): List<Pair<String, Document>> = listOf(

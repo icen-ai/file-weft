@@ -16,3 +16,17 @@ interface DocumentDeliveryTargetRepository {
 
     fun save(target: DocumentDeliveryTarget)
 }
+
+/**
+ * Stronger mutation boundary for delivery state machines. Implementations
+ * must serialize read-modify-save work for one target for the lifetime of the
+ * caller's transaction, for example with a row lock. A plain snapshot read is
+ * not a valid implementation because stale delivery events could overwrite a
+ * newer manual dispatch fence.
+ */
+interface DocumentDeliveryTargetMutationRepository : DocumentDeliveryTargetRepository {
+    fun findForMutation(
+        tenantId: Identifier,
+        deliveryId: Identifier,
+    ): DocumentDeliveryTarget?
+}

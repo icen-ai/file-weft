@@ -11,6 +11,8 @@ import com.fileweft.application.document.DocumentQueryRepository
 import com.fileweft.application.document.DocumentQueryService
 import com.fileweft.application.document.DocumentSummaryView
 import com.fileweft.application.document.DocumentVersionView
+import com.fileweft.application.delivery.DocumentSyncStatusQueryService
+import com.fileweft.application.delivery.DocumentSyncStatusQueryRepository
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.context.TraceContext
@@ -24,7 +26,9 @@ import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.observability.TraceContextProvider
 import com.fileweft.spi.tenant.TenantProvider
 import com.fileweft.web.spring.boot3.v1.document.V1DocumentReadController
+import com.fileweft.web.spring.boot3.v1.document.V1DocumentSyncStatusController
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner
@@ -70,12 +74,32 @@ class FileWeftWebBoot3AutoConfigurationTest {
     }
 
     @Test
-    fun `does not expose v1 MVC components until the host supplies DocumentQueryService`() {
+    fun `does not expose document read routes until the host supplies DocumentQueryService`() {
         contextRunner.run { context ->
             assertNull(context.getBeanProvider(V1DocumentReadController::class.java).getIfAvailable())
             assertNull(context.getBeanProvider(com.fileweft.web.runtime.v1.document.DocumentApiReadFacade::class.java).getIfAvailable())
             assertNull(context.getBeanProvider(com.fileweft.web.runtime.v1.V1ApiResponseFactory::class.java).getIfAvailable())
         }
+    }
+
+    @Test
+    fun `exposes sync status independently from the general document query service`() {
+        contextRunner
+            .withBean(
+                DocumentSyncStatusQueryService::class.java,
+                Supplier { syncStatusQueryService() },
+            )
+            .run { context ->
+                assertNull(context.getBeanProvider(V1DocumentReadController::class.java).getIfAvailable())
+                assertNotNull(
+                    context.getBeanProvider(V1DocumentSyncStatusController::class.java).getIfAvailable(),
+                )
+                assertNotNull(
+                    context.getBeanProvider(
+                        com.fileweft.web.runtime.v1.document.DocumentSyncStatusApiFacade::class.java,
+                    ).getIfAvailable(),
+                )
+            }
     }
 
     @Test
@@ -356,6 +380,14 @@ class FileWeftWebBoot3AutoConfigurationTest {
         queries = queries,
         transaction = DirectTransaction,
         folderReadAccess = folderReadAccess,
+    )
+
+    private fun syncStatusQueryService(): DocumentSyncStatusQueryService = DocumentSyncStatusQueryService(
+        Mockito.mock(TenantProvider::class.java),
+        Mockito.mock(UserRealmProvider::class.java),
+        Mockito.mock(AuthorizationProvider::class.java),
+        Mockito.mock(DocumentSyncStatusQueryRepository::class.java),
+        Mockito.mock(ApplicationTransaction::class.java),
     )
 
     private fun detail(documentId: String): DocumentDetailView = DocumentDetailView(

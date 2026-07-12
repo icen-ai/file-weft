@@ -1,6 +1,10 @@
 package com.fileweft.application.delivery
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.outbox.OutboxEventLease
+import com.fileweft.application.outbox.OutboxEventMutationRepository
+import com.fileweft.application.outbox.OutboxEventStatus
+import com.fileweft.application.outbox.OutboxLeaseLostException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.event.OutboxEvent
 import com.fileweft.core.id.Identifier
@@ -59,12 +63,25 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         }
     }
 
-    fun synchronize(sourceEvent: OutboxEvent): OutboxHandlingResult {
+    fun synchronize(sourceEvent: OutboxEvent): OutboxHandlingResult = synchronize(sourceEvent, null, null)
+
+    /** Strong worker path: the target projection is fenced by both logical event and exact lease attempt. */
+    @JvmSynthetic
+    internal fun synchronize(
+        lease: OutboxEventLease,
+        outboxMutations: OutboxEventMutationRepository,
+    ): OutboxHandlingResult = synchronize(lease.event, lease, outboxMutations)
+
+    private fun synchronize(
+        sourceEvent: OutboxEvent,
+        lease: OutboxEventLease?,
+        outboxMutations: OutboxEventMutationRepository?,
+    ): OutboxHandlingResult {
         val deliveryId = sourceEvent.payload[DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY]
             ?.takeIf { it.isNotBlank() }?.let(::Identifier)
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery event does not contain deliveryId.")
         val preparation = resolveConnector(
-            transaction.execute { freeze(sourceEvent.tenantId, deliveryId) },
+            transaction.execute { freeze(sourceEvent, deliveryId) },
         )
         val handling = when (preparation) {
             is Preparation.AlreadySucceeded -> OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already synchronized.")
@@ -75,12 +92,16 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 deliveryId,
                 preparation.expectation,
                 ConnectorSyncResult(preparation.status, message = preparation.message),
+                lease,
+                outboxMutations,
             )
             is Preparation.Ready -> complete(
                 sourceEvent,
                 deliveryId,
                 preparation.expectation,
                 invokeConnector(preparation),
+                lease,
+                outboxMutations,
             )
         }
         recordMetric(preparation, handling, sourceEvent.tenantId.value)
@@ -88,16 +109,42 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     }
 
     /** Records a terminal worker outcome without invoking a connector again. */
-    fun exhaust(sourceEvent: OutboxEvent, message: String) {
+    fun exhaust(sourceEvent: OutboxEvent, message: String) = exhaust(sourceEvent, message, null)
+
+    /** Strong terminal projection: only the exact durably FAILED event may finalize its target. */
+    @JvmSynthetic
+    internal fun exhaust(
+        sourceEvent: OutboxEvent,
+        message: String,
+        outboxMutations: OutboxEventMutationRepository?,
+    ) {
         val deliveryId = sourceEvent.payload[DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY]
             ?.takeIf { it.isNotBlank() }?.let(::Identifier) ?: return
         val diagnostic = DeliveryDiagnosticMessage.normalize(message) ?: "Delivery retry limit was reached."
         transaction.execute {
-            val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId) ?: return@execute
-            if (delivery.status != DocumentDeliveryStatus.SUCCEEDED) {
+            val expectedDocumentId = sourceEvent.payload[DocumentDeliveryPlanner.DOCUMENT_ID_PAYLOAD_KEY]
+                ?.takeIf { it.isNotBlank() }?.let(::Identifier) ?: return@execute
+            val document = documentRepository.findForMutation(sourceEvent.tenantId, expectedDocumentId)
+            val delivery = findDeliveryForMutation(sourceEvent.tenantId, deliveryId) ?: return@execute
+            val fence = delivery.currentDispatchFence
+            val durableFailure = outboxMutations == null || outboxMutations
+                .findForMutation(sourceEvent.tenantId, sourceEvent.id)
+                ?.let { state ->
+                    state.id == sourceEvent.id &&
+                        state.tenantId == sourceEvent.tenantId &&
+                        state.eventType == DocumentDeliveryPlanner.DELIVERY_REQUESTED_EVENT_TYPE &&
+                        state.status == OutboxEventStatus.FAILED
+                } == true
+            if (
+                durableFailure &&
+                delivery.documentId == expectedDocumentId &&
+                fence != null &&
+                delivery.matchesDispatch(sourceEvent.id, DeliveryDispatchOperation.DELIVERY, fence.sequence) &&
+                delivery.status in ACTIVE_DELIVERY_STATUSES
+            ) {
                 delivery.markFailed(diagnostic)
                 deliveries.save(delivery)
-                reconcileDocument(sourceEvent.tenantId, delivery.documentId)
+                document?.let { current -> reconcileDocument(current) }
                 auditTrail?.record(
                     tenantId = sourceEvent.tenantId,
                     resourceType = DOCUMENT_RESOURCE_TYPE,
@@ -114,9 +161,15 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
      * resulting snapshots deliberately contain no connector implementation:
      * a resolver may consult a remote registry and must never run here.
      */
-    private fun freeze(tenantId: Identifier, deliveryId: Identifier): Preparation {
+    private fun freeze(sourceEvent: OutboxEvent, deliveryId: Identifier): Preparation {
+        val tenantId = sourceEvent.tenantId
         val delivery = deliveries.findById(tenantId, deliveryId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target was not found in the event tenant.")
+        val fence = delivery.currentDispatchFence
+            ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Delivery target is missing its dispatch fence.")
+        if (!delivery.matchesDispatch(sourceEvent.id, DeliveryDispatchOperation.DELIVERY, fence.sequence)) {
+            return Preparation.Superseded(delivery.connectorId)
+        }
         val target = DeliverySnapshot(delivery)
         val targetExpectation = CompletionExpectation(target)
         if (delivery.status == DocumentDeliveryStatus.SUCCEEDED) return Preparation.AlreadySucceeded(delivery.connectorId)
@@ -223,29 +276,44 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         deliveryId: Identifier,
         expectation: CompletionExpectation?,
         result: ConnectorSyncResult,
+        lease: OutboxEventLease?,
+        outboxMutations: OutboxEventMutationRepository?,
     ): OutboxHandlingResult = transaction.execute {
-        val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
+        var normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
         if (expectation == null) {
             return@execute normalizedResult.toOutboxHandlingResult()
         }
-        val delivery = deliveries.findById(sourceEvent.tenantId, deliveryId)
+        val document = documentRepository.findForMutation(sourceEvent.tenantId, expectation.target.documentId)
+        if (document == null) {
+            normalizedResult = ConnectorSyncResult(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                message = "Document was removed before synchronization completed.",
+            )
+        }
+        val mutationDeliveries = deliveries as? DocumentDeliveryTargetMutationRepository
+            ?: throw IllegalStateException("Delivery processing requires a mutation-capable target repository.")
+        val delivery = mutationDeliveries.findForMutation(sourceEvent.tenantId, deliveryId)
             ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery target was removed before synchronization completed.")
         if (!expectation.target.matches(delivery)) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before synchronization completed.")
         }
-        val document = expectation.documentDeliveryGeneration?.let { expectedGeneration ->
-            val current = documentRepository.findForMutation(sourceEvent.tenantId, delivery.documentId)
-                ?: return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Document changed before synchronization completed.")
-            if (current.deliveryGeneration != expectedGeneration || !current.canAcceptDeliveryCompletion()) {
+        expectation.documentDeliveryGeneration?.let { expectedGeneration ->
+            if (document != null && (document.deliveryGeneration != expectedGeneration || !document.canAcceptDeliveryCompletion())) {
                 return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Document changed before synchronization completed.")
             }
-            current
         }
         if (delivery.status == DocumentDeliveryStatus.SUCCEEDED) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target is already synchronized.")
         }
         if (delivery.status !in ACTIVE_DELIVERY_STATUSES) {
             return@execute OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED, "Delivery target changed before synchronization completed.")
+        }
+        if (lease != null) {
+            val mutationRepository = outboxMutations
+                ?: throw IllegalStateException("Fenced delivery processing requires an Outbox mutation repository.")
+            val state = mutationRepository.findForMutation(sourceEvent.tenantId, sourceEvent.id)
+                ?: throw OutboxLeaseLostException("Delivery Outbox event no longer exists in the current tenant.")
+            state.requireCurrentLease(lease)
         }
         when (normalizedResult.status) {
             ConnectorSyncStatus.SUCCESS -> delivery.markSucceeded(normalizedResult.externalId)
@@ -261,11 +329,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         ) {
             removalPlanner?.plan(document)
         }
-        if (document != null) {
-            reconcileDocument(document)
-        } else {
-            reconcileDocument(sourceEvent.tenantId, delivery.documentId)
-        }
+        document?.let { current -> reconcileDocument(current) }
         auditTrail?.record(
             tenantId = sourceEvent.tenantId,
             resourceType = DOCUMENT_RESOURCE_TYPE,
@@ -283,10 +347,9 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         normalizedResult.toOutboxHandlingResult()
     }
 
-    private fun reconcileDocument(tenantId: Identifier, documentId: Identifier) {
-        val document = documentRepository.findForMutation(tenantId, documentId) ?: return
-        reconcileDocument(document)
-    }
+    private fun findDeliveryForMutation(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? =
+        (deliveries as? DocumentDeliveryTargetMutationRepository)?.findForMutation(tenantId, deliveryId)
+            ?: throw IllegalStateException("Delivery processing requires a mutation-capable target repository.")
 
     private fun reconcileDocument(document: Document) {
         val required = deliveries.findByDocumentGeneration(document.tenantId, document.id, document.deliveryGeneration)
@@ -356,6 +419,9 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         val requirement: DeliveryRequirement = delivery.requirement
         val ownerRef: String? = delivery.ownerRef
         val deliveryGeneration: Int = delivery.deliveryGeneration
+        val dispatchFence: DeliveryDispatchFence = requireNotNull(delivery.currentDispatchFence) {
+            "Delivery target is missing its dispatch fence."
+        }
 
         fun matches(current: DocumentDeliveryTarget): Boolean =
             current.id == id &&
@@ -367,7 +433,8 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 current.connectorId == connectorId &&
                 current.requirement == requirement &&
                 current.ownerRef == ownerRef &&
-                current.deliveryGeneration == deliveryGeneration
+                current.deliveryGeneration == deliveryGeneration &&
+                current.matchesDispatch(dispatchFence.eventId, dispatchFence.operation, dispatchFence.sequence)
     }
 
     /** A frozen target plus the document generation that was validated before SPI resolution. */

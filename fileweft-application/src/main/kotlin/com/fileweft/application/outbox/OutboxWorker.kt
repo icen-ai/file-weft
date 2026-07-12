@@ -173,7 +173,11 @@ class OutboxWorker private constructor(
         }
         matchingHandlers.forEach { handler ->
             val result = try {
-                handler.handle(lease.event)
+                if (handler is LeasedOutboxEventHandler) {
+                    handler.handle(lease)
+                } else {
+                    handler.handle(lease.event)
+                }
             } catch (failure: Exception) {
                 return retryOrFail(lease, "Outbox handler failed: ${failure.javaClass.name}", matchingHandlers)
             }

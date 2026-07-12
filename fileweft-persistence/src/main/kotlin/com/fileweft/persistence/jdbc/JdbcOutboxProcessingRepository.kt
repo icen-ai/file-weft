@@ -3,6 +3,9 @@ package com.fileweft.persistence.jdbc
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.outbox.OutboxEventLease
+import com.fileweft.application.outbox.OutboxEventMutationRepository
+import com.fileweft.application.outbox.OutboxEventState
+import com.fileweft.application.outbox.OutboxEventStatus
 import com.fileweft.application.outbox.LeasedOutboxProcessingRepository
 import com.fileweft.application.outbox.OutboxLeaseClaim
 import com.fileweft.application.outbox.OutboxLeaseLostException
@@ -15,7 +18,20 @@ import java.util.UUID
 /** PostgreSQL outbox persistence using SKIP LOCKED for multi-worker leasing. */
 class JdbcOutboxProcessingRepository(
     private val objectMapper: ObjectMapper,
-) : LeasedOutboxProcessingRepository {
+) : LeasedOutboxProcessingRepository, OutboxEventMutationRepository {
+    override fun findForMutation(tenantId: Identifier, eventId: Identifier): OutboxEventState? =
+        JdbcConnectionContext.requireCurrent().prepareStatement(FIND_FOR_MUTATION_SQL).use { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, eventId.value)
+            statement.executeQuery().use { result ->
+                if (!result.next()) {
+                    null
+                } else {
+                    mapState(result)
+                }
+            }
+        }
+
     /**
      * Retains the original port for callers compiled before persisted leases.
      * JDBC still creates a bounded token lease so its own acknowledgements are
@@ -120,6 +136,15 @@ class JdbcOutboxProcessingRepository(
         leaseToken = result.getString("lease_token") ?: error("Claimed outbox event is missing its lease token."),
     )
 
+    private fun mapState(result: ResultSet): OutboxEventState = OutboxEventState(
+        id = Identifier(result.getString("id")),
+        tenantId = Identifier(result.getString("tenant_id")),
+        status = OutboxEventStatus.valueOf(result.getString("event_status")),
+        leaseOwner = result.getString("lease_owner"),
+        leaseToken = result.getString("lease_token"),
+        eventType = result.getString("event_type"),
+    )
+
     private fun legacyClaim(now: Long): OutboxLeaseClaim {
         val expiresAt = safeAdd(now, LEGACY_LEASE_DURATION_MILLIS)
         require(expiresAt > now) { "Outbox lease expiry cannot be represented after the current claim time." }
@@ -163,6 +188,13 @@ class JdbcOutboxProcessingRepository(
             WHERE event.id = candidates.id
             RETURNING event.id, event.tenant_id, event.event_type, event.payload_json, event.trace_id, event.retry_count, event.created_time,
                       event.lease_owner, event.lease_token
+        """
+
+        const val FIND_FOR_MUTATION_SQL = """
+            SELECT id, tenant_id, event_type, event_status, lease_owner, lease_token
+            FROM fw_outbox_event
+            WHERE tenant_id = ? AND id = ?
+            FOR UPDATE
         """
     }
 }

@@ -19,6 +19,8 @@ fileweft:
   default-tenant-id: alpha
   sync:
     connector-name: dev-platform
+    # Keeps the old /api development-only retry route available; the UI and formal tests use /fileweft/v1.
+    legacy-delivery-retry-enabled: true
     connector-timeout-millis: 3000
     circuit-breaker-failure-threshold: 3
     circuit-breaker-open-duration-millis: 5000

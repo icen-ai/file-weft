@@ -2,6 +2,7 @@ package com.fileweft.persistence.jdbc
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fileweft.application.outbox.OutboxEventLease
+import com.fileweft.application.outbox.OutboxEventStatus
 import com.fileweft.application.outbox.OutboxLeaseClaim
 import com.fileweft.application.outbox.OutboxLeaseLostException
 import com.fileweft.core.event.OutboxEvent
@@ -16,9 +17,11 @@ import java.sql.Connection
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class JdbcOutboxProcessingRepositoryIntegrationTest {
@@ -106,6 +109,91 @@ class JdbcOutboxProcessingRepositoryIntegrationTest {
             transaction.execute { processing.markFailed(wrongTenantLease, "wrong tenant", 2) }
         }
         assertEquals(State("RUNNING", 0, 0, null, "worker-a", "token-a", 100), state("event-1"))
+    }
+
+    @Test
+    fun `locks and verifies only the exact current running lease in its tenant`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val events = JdbcOutboxEventRepository(ObjectMapper())
+        val processing = JdbcOutboxProcessingRepository(ObjectMapper())
+        transaction.execute { events.append(event()) }
+        val lease = transaction.execute {
+            processing.claimAvailable(1, 1, claim("worker-a", "token-a", 100))
+        }.single()
+
+        val locked = transaction.execute {
+            processing.findForMutation(Identifier("tenant-1"), Identifier("event-1"))
+        }
+
+        assertEquals(OutboxEventStatus.RUNNING, locked?.status)
+        assertEquals(lease.event.type, locked?.eventType)
+        assertEquals("worker-a", locked?.leaseOwner)
+        assertEquals("token-a", locked?.leaseToken)
+        assertEquals(locked, locked?.requireCurrentLease(lease))
+        assertNull(
+            transaction.execute {
+                processing.findForMutation(Identifier("tenant-2"), Identifier("event-1"))
+            },
+        )
+        val forged = OutboxEventLease(lease.event, lease.retryCount, "worker-a", "token-forged")
+        assertFailsWith<OutboxLeaseLostException> { requireNotNull(locked).requireCurrentLease(forged) }
+
+        transaction.execute { processing.markSucceeded(lease, 2) }
+        val completed = transaction.execute {
+            processing.findForMutation(Identifier("tenant-1"), Identifier("event-1"))
+        }
+        assertEquals(OutboxEventStatus.SUCCESS, completed?.status)
+        assertFailsWith<OutboxLeaseLostException> { requireNotNull(completed).requireCurrentLease(lease) }
+    }
+
+    @Test
+    fun `holds the event mutation row lock until the caller transaction completes`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val events = JdbcOutboxEventRepository(ObjectMapper())
+        val processing = JdbcOutboxProcessingRepository(ObjectMapper())
+        transaction.execute { events.append(event()) }
+        transaction.execute { processing.claimAvailable(1, 1, claim("worker-a", "token-a", 100)) }
+
+        dataSource.connection.use { firstConnection ->
+            firstConnection.autoCommit = false
+            val first = JdbcConnectionContext.withConnection(firstConnection) {
+                processing.findForMutation(Identifier("tenant-1"), Identifier("event-1"))
+            }
+            assertEquals(OutboxEventStatus.RUNNING, first?.status)
+
+            val started = CountDownLatch(1)
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val second = executor.submit<com.fileweft.application.outbox.OutboxEventState?> {
+                    dataSource.connection.use { secondConnection ->
+                        secondConnection.autoCommit = false
+                        secondConnection.createStatement().use { statement ->
+                            statement.execute("SET LOCAL statement_timeout = '5s'")
+                        }
+                        try {
+                            started.countDown()
+                            val state = JdbcConnectionContext.withConnection(secondConnection) {
+                                processing.findForMutation(Identifier("tenant-1"), Identifier("event-1"))
+                            }
+                            secondConnection.commit()
+                            state
+                        } catch (failure: Throwable) {
+                            secondConnection.rollback()
+                            throw failure
+                        }
+                    }
+                }
+                assertTrue(started.await(5, TimeUnit.SECONDS))
+                assertFailsWith<TimeoutException> { second.get(250, TimeUnit.MILLISECONDS) }
+
+                firstConnection.commit()
+                assertEquals(OutboxEventStatus.RUNNING, second.get(5, TimeUnit.SECONDS)?.status)
+            } finally {
+                executor.shutdownNow()
+                executor.awaitTermination(5, TimeUnit.SECONDS)
+                firstConnection.rollback()
+            }
+        }
     }
 
     @Test
