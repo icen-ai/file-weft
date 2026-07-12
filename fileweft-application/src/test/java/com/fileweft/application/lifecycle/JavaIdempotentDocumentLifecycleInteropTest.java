@@ -42,8 +42,21 @@ class JavaIdempotentDocumentLifecycleInteropTest {
                 DocumentLifecycleReceipt.class,
                 IdempotentDocumentCatalogLifecycleService.class
                     .getMethod(method, Identifier.class, String.class)
-                    .getReturnType()
+                .getReturnType()
             );
         }
+
+        assertEquals(
+            DocumentLifecycleReceipt.class,
+            IdempotentDocumentLifecycleService.class
+                .getMethod("publish", Identifier.class, String.class, String.class)
+                .getReturnType()
+        );
+        assertEquals(
+            DocumentLifecycleReceipt.class,
+            IdempotentDocumentCatalogLifecycleService.class
+                .getMethod("publish", Identifier.class, String.class, String.class)
+                .getReturnType()
+        );
     }
 }

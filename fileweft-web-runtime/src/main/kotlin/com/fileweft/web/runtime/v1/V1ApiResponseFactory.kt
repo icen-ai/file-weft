@@ -13,7 +13,6 @@ import com.fileweft.domain.workflow.WorkflowConflictException
 import com.fileweft.web.api.ApiError
 import com.fileweft.web.api.ApiErrorCodes
 import com.fileweft.web.api.ApiResponse
-import com.fileweft.web.runtime.v1.document.V1FeatureUnavailableException
 
 /**
  * Transport-neutral v1 response and failure classifier shared by the Boot 2

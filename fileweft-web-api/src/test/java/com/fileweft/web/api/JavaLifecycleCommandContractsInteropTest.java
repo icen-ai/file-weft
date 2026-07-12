@@ -1,0 +1,48 @@
+package com.fileweft.web.api;
+
+import com.fileweft.web.api.v1.document.DocumentLifecycleCommandResultDto;
+import com.fileweft.web.api.v1.document.PublishDocumentCommand;
+import com.fileweft.web.api.v1.document.PublishDocumentRequest;
+import com.fileweft.web.api.v1.workflow.ApproveWorkflowTaskCommand;
+import com.fileweft.web.api.v1.workflow.ApproveWorkflowTaskRequest;
+import com.fileweft.web.api.v1.workflow.RejectWorkflowTaskCommand;
+import com.fileweft.web.api.v1.workflow.RejectWorkflowTaskRequest;
+import com.fileweft.web.api.v1.workflow.SubmitDocumentReviewCommand;
+import com.fileweft.web.api.v1.workflow.SubmitDocumentReviewRequest;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+class JavaLifecycleCommandContractsInteropTest {
+    @Test
+    void exposesJava8FriendlyReceiptsCommandsAndMutableRequestBeans() {
+        DocumentLifecycleCommandResultDto minimal = new DocumentLifecycleCommandResultDto("document-1");
+        DocumentLifecycleCommandResultDto full = new DocumentLifecycleCommandResultDto(
+            "document-1", "workflow-1", "task-1"
+        );
+        assertNull(minimal.getWorkflowId());
+        assertNull(minimal.getTaskId());
+        assertEquals("workflow-1", full.getWorkflowId());
+        assertEquals("task-1", full.getTaskId());
+
+        PublishDocumentRequest publish = new PublishDocumentRequest();
+        publish.setDeliveryProfileId("regulated");
+        SubmitDocumentReviewRequest submit = new SubmitDocumentReviewRequest();
+        submit.setReviewRouteId("dual-control");
+        ApproveWorkflowTaskRequest approve = new ApproveWorkflowTaskRequest();
+        approve.setComment("Approved");
+        approve.setDeliveryProfileId("regulated");
+        RejectWorkflowTaskRequest reject = new RejectWorkflowTaskRequest();
+        reject.setComment("Rejected");
+
+        assertEquals("regulated", new PublishDocumentCommand(publish.getDeliveryProfileId()).getDeliveryProfileId());
+        assertEquals("dual-control", new SubmitDocumentReviewCommand(submit.getReviewRouteId()).getReviewRouteId());
+        assertEquals(
+            "Approved",
+            new ApproveWorkflowTaskCommand(approve.getComment(), approve.getDeliveryProfileId()).getComment()
+        );
+        assertEquals("Rejected", new RejectWorkflowTaskCommand(reject.getComment()).getComment());
+        assertNull(new PublishDocumentCommand().getDeliveryProfileId());
+    }
+}

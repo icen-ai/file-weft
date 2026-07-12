@@ -10,6 +10,7 @@ import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.application.idempotency.RequestIdempotencyService
 import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleDelegate
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowDelegate
 import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.Document
 import com.fileweft.domain.document.DocumentRepository
@@ -95,6 +96,7 @@ class DocumentCatalogLifecycleService(
 
     fun archive(documentId: Identifier): Document = archiveService.archive(documentId, guard)
 
+    @JvmSynthetic
     internal fun createIdempotentDelegate(
         idempotency: RequestIdempotencyService,
     ): IdempotentDocumentLifecycleDelegate = IdempotentDocumentLifecycleDelegate(
@@ -103,6 +105,15 @@ class DocumentCatalogLifecycleService(
         offlineService,
         restoreService,
         archiveService,
+        idempotency,
+        guard,
+    )
+
+    @JvmSynthetic
+    internal fun createIdempotentReviewDelegate(
+        idempotency: RequestIdempotencyService,
+    ): IdempotentDocumentReviewWorkflowDelegate = IdempotentDocumentReviewWorkflowDelegate(
+        reviews,
         idempotency,
         guard,
     )

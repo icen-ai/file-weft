@@ -393,22 +393,23 @@ async function runAction(action) {
     }
     if (["submit", "submitDualControl"].includes(action)) {
       const dualControl = action === "submitDualControl";
-      await api(`/api/documents/${id}/submit`, json(dualControl
-        ? { reviewRouteId: "dual-control" }
-        : { reviewerId: `${state.user.tenantId}-reviewer` }));
+      await v1Api(`${V1_DOCUMENTS_PATH}/${id}/submit`, lifecycleJson({
+        reviewRouteId: dualControl ? "dual-control" : "single-reviewer",
+      }, dualControl ? "submit-dual-control" : "submit"));
       notice(t(dualControl ? "notice.submittedDualControl" : "notice.submitted"));
     }
     if (["approve", "reject"].includes(action)) {
       const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
       const task = workflow?.tasks.find((item) => item.state === "PENDING" && (!item.assigneeId || item.assigneeId === state.user.userId));
       if (!workflow || !task) throw new Error("No pending review task is available.");
-      await api(`/api/documents/workflows/${workflow.id}/tasks/${task.id}/${action}`, json({
-        comment: action === "approve" ? "Development proof approved" : "Development proof requires revision",
-        deliveryProfileId: action === "approve" ? $("#delivery-profile").value || null : null,
-      }));
+      const body = { comment: action === "approve" ? "Development proof approved" : "Development proof requires revision" };
+      if (action === "approve") body.deliveryProfileId = $("#delivery-profile").value || null;
+      await v1Api(`/fileweft/v1/workflows/${workflow.id}/tasks/${task.id}/${action}`, lifecycleJson(body, action));
       notice(t(action === "approve" ? "notice.approved" : "notice.rejected"));
     }
-    if (["revise", "restore", "offline", "archive"].includes(action)) await api(`/api/documents/${id}/${action}`, { method: "POST" });
+    if (["revise", "restore", "offline", "archive"].includes(action)) {
+      await v1Api(`${V1_DOCUMENTS_PATH}/${id}/${action}`, lifecycleRequest(action));
+    }
     await refreshDocuments();
   } catch (error) {
     notice(error.message, "error");
@@ -804,6 +805,12 @@ async function processTasks() {
 }
 
 const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const lifecycleKey = (action) => `dev-ui-${action}-${crypto.randomUUID()}`;
+const lifecycleRequest = (action) => ({ method: "POST", headers: { "Idempotency-Key": lifecycleKey(action) } });
+const lifecycleJson = (body, action) => ({
+  ...json(body),
+  headers: { "Content-Type": "application/json", "Idempotency-Key": lifecycleKey(action) },
+});
 
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -15,7 +15,7 @@
 
 Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；未装配某项安全应用服务时，对应 Controller 会保持不可用。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
 
-开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的创建、改名、新增版本和当前/历史版本授权下载已经走 `/fileweft/v1`；需要展示工作流、审批、Doctor、同步与审计综合投影的页面仍使用 `/api`。这种并行仅用于明确区分已稳定的公共协议与丰富的 Dev 验收能力，不能把后者视为兼容承诺。
+开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的文档写入、当前/历史版本授权下载和生命周期/审批动作已经走 `/fileweft/v1`；工作流详情、Doctor、同步与审计综合投影仍使用 `/api`。这种并行仅用于明确区分已稳定的公共协议与丰富的 Dev 验收能力，不能把后者视为兼容承诺。
 
 ## 信任边界
 
@@ -66,13 +66,16 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。自动生成目录访问边界时，默认 Starter 要求恰好一个 `DocumentCatalogProvider`；多个未聚合 provider 即使存在 `@Primary` 也会启动失败。宿主如需组合多个 provider，必须显式提供一个聚合 ACL 的 `DocumentCatalogAccessService`，且多个 access 候选同样会启动失败。具备 `FileAssetMutationRepository` 行锁能力时，Starter 才装配目录感知修改与 action-aware 生命周期 guard。创建必须给出目录并通过应用层目录授权与保留绑定；新增版本和改名会先快照并授权当前源目录，新增版本在上传后还会再次检查源目录权限，目录移动则在目标目录解析后重新验证源目录，再按 document → asset 顺序取得两级 mutation lock 并复核原始绑定。生命周期与审批 guard 使用实际动作权限和源目录 `BROWSE` ACL，在审批路由或交付策略外调后再次验证，最终按 document → asset → workflow 锁序复核原始绑定。Catalog SPI 始终在 FileWeft 管理的数据库事务外调用，权限撤销或绑定竞态会在提交前失败，新增版本已上传的对象会被补偿删除。自定义装配若只有目录创建，或资产仓储没有安全 mutation lock 能力，目录模式的正式写入口必须保持不可用，不能回退调用租户级底层服务；自定义 `DocumentDownloadService` 也必须显式保留等价的目录可见性校验。
 
-现有六个 lifecycle/workflow 应用服务继续作为无目录宿主的租户级兼容原语，因此不会被 Starter 静默改写语义。目录宿主若绕过 `DocumentCatalogLifecycleService` 直接调用这些原语，就不具备目录 ACL 保证。未来正式 lifecycle Controller 必须通过统一能力解析器选择 flat 或 guarded 路径：没有 access 时才允许 flat；存在 access 但缺少唯一 guarded capability 时固定返回 `503 FEATURE_UNAVAILABLE`；多个 access 或 lifecycle 候选即使有 `@Primary` 也必须启动失败。
+现有六个 lifecycle/workflow 应用服务继续作为无目录宿主的租户级兼容原语，因此不会被 Starter 静默改写语义。目录宿主若绕过 catalog-aware 幂等边界直接调用这些原语，就不具备目录 ACL 保证。正式 lifecycle Controller 通过统一能力解析器选择 flat 或 guarded 路径：没有 access 时才允许 flat；存在 access 但缺少唯一 guarded capability 时固定返回 `503 FEATURE_UNAVAILABLE`；多个 access 或 lifecycle 候选即使有 `@Primary` 也会启动失败。
 
-后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
+以下正式命令路由已由 Boot 2 与 Boot 3 Web Starter 对齐交付，成功与重放均返回 `200` 和仅含稳定 `documentId/workflowId/taskId` 的回执：
 
-- `revise`、`publish`、`offline`、`restore`、`archive`：Application 已提供 flat 与 catalog-aware 幂等命令边界，严格重放稳定文档 ID；正式路由仍需统一能力解析器和两代 MVC 契约后才开放。
-- `submit`：目录 guard 与持久化地基已就绪，但必须先把审批路由解析及工作流创建接入同一个最终幂等事务；不能退化调用仅改变文档状态的低层 `submit`。
+- `POST /fileweft/v1/documents/{documentId}/revise|publish|offline|restore|archive|submit`
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
+
+`publish` 可选 `deliveryProfileId`，`submit` 可选 `reviewRouteId`，审批/驳回可选有界评论；这些值进入服务端 typed-command 指纹。同一 key 改变动作、资源、任务、评论、路由或交付档案都会返回 `409`。
+
+以下运营路由仍按后续里程碑增量交付：
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。
 - `GET /sync-status`、`GET /logs`、`GET /plugins`、`GET /health`：在相应的脱敏读模型和系统授权服务完成后加入；不能复用 Dev 的直连 JDBC DTO。
 
@@ -80,7 +83,7 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 ## 持久化请求幂等地基
 
-`V020` 新增的请求幂等记录属于 Application/Persistence 能力，不代表上述生命周期路由已经开放。正式写入口接入时必须要求恰好一个 `Idempotency-Key`：首字符为 ASCII 字母或数字，后续只允许 ASCII 字母、数字、`.`、`_`、`~`、`:`、`-`，总长 1 到 128。缺失、重复、空白、控制字符或越界都固定归类为 `400 INVALID_REQUEST`，原始 key 不得进入日志、异常、审计或数据库。
+上述八条命令路由必须收到恰好一个 `Idempotency-Key`：首字符为 ASCII 字母或数字，后续只允许 ASCII 字母、数字、`.`、`_`、`~`、`:`、`-`，总长 1 到 128。缺失、重复、空白、控制字符或越界都固定归类为 `400 INVALID_REQUEST`，原始 key 不得进入日志、异常、审计或数据库。
 
 Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 摘要，只持久化摘要；同一租户下的摘要唯一。记录还绑定可信当前用户、动作、资源、可选子资源以及由已校验命令生成的请求指纹。完全相同的重试返回第一次提交的稳定资源 ID；任一绑定维度不同都固定返回 `409 CONFLICT`，不得说明冲突来自用户、路径还是请求体。请求指纹由服务端对 typed command 生成，客户端不能直接提交；未来 multipart 写入还必须纳入实际内容哈希，不能只使用文件名和长度。
 
@@ -94,12 +97,12 @@ Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 
 - 下载保持 `DocumentDownloadService` 的授权、目录可见性和审计，不向前端暴露存储地址或凭据；自定义 Service 装配不能绕过默认 Starter 的目录 guard。
 - Controller 只转发 runtime 已归一的 `Content-Disposition`、内容类型和 verified length，并关闭异常详情回显；它不会从持久化长度推测 `Content-Length`。
 - CORS、CSRF、会话、OAuth/OIDC、mTLS 和 Actuator 暴露由宿主安全策略决定；Web Adapter 不提供弱默认认证。
-- 正式写路由尚未开放 `Idempotency-Key` 协议；底层持久化记录、事务协调器及五个简单生命周期 Application 边界已经交付，工作流提交/审批和 MVC 协议仍需完成。Controller 进程内缓存不能代替该能力。
+- 正式生命周期写路由已强制使用持久化 `Idempotency-Key` 协议；Controller 进程内缓存不能代替该能力，宿主自定义持久化若不满足原子 claim/complete 契约必须让能力保持 `503`。
 
 ## 测试与迁移门槛
 
 每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
-本里程碑已完成相关常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 和 9 条 Playwright 浏览器用例；其中包含独立的 formal-v1 用例，验证 Dev 应用确实通过正式 Starter 暴露 v1，而不只是前端改写 URL。该结果闭环了当前已交付读写与下载路由的 Dev v1 验收；持久化请求幂等地基及五个简单生命周期 Application 边界已经独立交付，但尚未覆盖正式生命周期 MVC、工作流提交/多人审批接入及 Doctor、同步状态和日志等 HTTP 映射。
+本里程碑的 formal-v1 Playwright 用例会通过正式 Starter 实际执行缺失/非法 key、submit/approve fresh+replay 和同 key 异 typed command 冲突；其余浏览器用例继续覆盖中英文、角色控件、单人与双人审批、驳回修订和双租户隔离。Doctor、同步状态和日志仍属于待提升的正式 HTTP 映射。
 
 首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 当前的分阶段接入只作为可运行示例，不代表所有 `/api` 能力已经形成正式协议。

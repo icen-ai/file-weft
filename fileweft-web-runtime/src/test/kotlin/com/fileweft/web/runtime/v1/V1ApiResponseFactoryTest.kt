@@ -17,7 +17,6 @@ import com.fileweft.domain.workflow.WorkflowDecisionConflictException
 import com.fileweft.domain.workflow.WorkflowTaskAssignmentDeniedException
 import com.fileweft.domain.workflow.WorkflowTaskNotFoundException
 import com.fileweft.web.api.ApiErrorCodes
-import com.fileweft.web.runtime.v1.document.V1FeatureUnavailableException
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

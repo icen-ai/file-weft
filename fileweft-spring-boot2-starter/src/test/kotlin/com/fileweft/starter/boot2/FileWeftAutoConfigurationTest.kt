@@ -61,6 +61,8 @@ import com.fileweft.persistence.jdbc.JdbcFileAssetRepository
 import com.fileweft.persistence.jdbc.JdbcRequestIdempotencyRepository
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
+import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
@@ -369,6 +371,8 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(RequestIdempotencyService::class.java) != null)
             assertTrue(context.getBean(IdempotentDocumentLifecycleService::class.java) != null)
             assertTrue(context.getBeansOfType(IdempotentDocumentCatalogLifecycleService::class.java).isEmpty())
+            assertTrue(context.getBean(IdempotentDocumentReviewWorkflowService::class.java) != null)
+            assertTrue(context.getBeansOfType(IdempotentDocumentCatalogReviewWorkflowService::class.java).isEmpty())
             assertTrue(context.getBean(DocumentDraftService::class.java) != null)
             assertTrue(context.getBeansOfType(DocumentCatalogDraftService::class.java).isEmpty())
             assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
@@ -490,6 +494,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
                 assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
                 assertTrue(context.getBean(IdempotentDocumentCatalogLifecycleService::class.java) != null)
+                assertTrue(context.getBeansOfType(IdempotentDocumentReviewWorkflowService::class.java).isEmpty())
+                assertTrue(context.getBean(IdempotentDocumentCatalogReviewWorkflowService::class.java) != null)
                 assertTrue(context.getBean(FileAssetMutationRepository::class.java) != null)
                 assertTrue(context.getBean(JdbcFileAssetRepository::class.java) is FileAssetMutationRepository)
                 assertTrue(context.getBean(CatalogDoctorChecker::class.java) != null)
@@ -521,6 +527,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBeansOfType(DocumentCatalogLifecycleService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(IdempotentDocumentCatalogLifecycleService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(IdempotentDocumentReviewWorkflowService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(IdempotentDocumentCatalogReviewWorkflowService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(FileAssetMutationRepository::class.java).isEmpty())
             }
     }

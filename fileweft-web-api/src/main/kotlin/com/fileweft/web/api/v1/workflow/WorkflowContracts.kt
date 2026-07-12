@@ -36,6 +36,11 @@ class SubmitDocumentReviewCommand @JvmOverloads constructor(reviewRouteId: Strin
     val reviewRouteId: String? = optionalText(reviewRouteId, "Document review route id", 256)
 }
 
+/** Mutable JSON bean; controllers must convert it to [SubmitDocumentReviewCommand]. */
+class SubmitDocumentReviewRequest {
+    var reviewRouteId: String? = null
+}
+
 class ApproveWorkflowTaskCommand @JvmOverloads constructor(
     comment: String? = null,
     deliveryProfileId: String? = null,
@@ -44,6 +49,17 @@ class ApproveWorkflowTaskCommand @JvmOverloads constructor(
     val deliveryProfileId: String? = optionalText(deliveryProfileId, "Document delivery profile id", 256)
 }
 
+/** Mutable JSON bean; controllers must convert it to [ApproveWorkflowTaskCommand]. */
+class ApproveWorkflowTaskRequest {
+    var comment: String? = null
+    var deliveryProfileId: String? = null
+}
+
 class RejectWorkflowTaskCommand @JvmOverloads constructor(comment: String? = null) {
     val comment: String? = optionalText(comment, "Workflow rejection comment", 1_000)
+}
+
+/** Mutable JSON bean; controllers must convert it to [RejectWorkflowTaskCommand]. */
+class RejectWorkflowTaskRequest {
+    var comment: String? = null
 }

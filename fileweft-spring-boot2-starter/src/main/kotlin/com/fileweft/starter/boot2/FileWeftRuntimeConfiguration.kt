@@ -74,6 +74,8 @@ import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.application.workflow.DefaultDocumentReviewRouteProvider
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
+import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.DocumentRepository
@@ -401,6 +403,41 @@ class FileWeftRuntimeConfiguration {
             return null
         }
         return IdempotentDocumentCatalogLifecycleService(
+            requiredSecurityCandidate(catalogLifecycles, DocumentCatalogLifecycleService::class.java),
+            idempotency,
+        )
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+        value = [
+            DocumentCatalogAccessService::class,
+            IdempotentDocumentReviewWorkflowService::class,
+            IdempotentDocumentCatalogReviewWorkflowService::class,
+        ],
+    )
+    fun fileWeftIdempotentDocumentReviewWorkflowService(
+        reviews: DocumentReviewWorkflowService,
+        idempotency: RequestIdempotencyService,
+    ): IdempotentDocumentReviewWorkflowService =
+        IdempotentDocumentReviewWorkflowService(reviews, idempotency)
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(
+        value = [
+            IdempotentDocumentReviewWorkflowService::class,
+            IdempotentDocumentCatalogReviewWorkflowService::class,
+        ],
+    )
+    fun fileWeftIdempotentDocumentCatalogReviewWorkflowService(
+        catalogLifecycles: ObjectProvider<DocumentCatalogLifecycleService>,
+        idempotency: RequestIdempotencyService,
+    ): IdempotentDocumentCatalogReviewWorkflowService? {
+        if (!catalogLifecycles.stream().findAny().isPresent) {
+            return null
+        }
+        return IdempotentDocumentCatalogReviewWorkflowService(
             requiredSecurityCandidate(catalogLifecycles, DocumentCatalogLifecycleService::class.java),
             idempotency,
         )

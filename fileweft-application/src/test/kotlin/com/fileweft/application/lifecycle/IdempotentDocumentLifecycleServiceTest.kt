@@ -188,6 +188,64 @@ class IdempotentDocumentLifecycleServiceTest {
         assertOrder(fixture.events, "audit:append", "idem:complete")
     }
 
+    @Test
+    fun `publish normalizes an explicit profile and replay does not resolve or deliver twice`() {
+        val fixture = Fixture(pendingDocument())
+
+        val first = fixture.service.publish(fixture.document.id, "  regulated  ", "profile-key")
+        val replay = fixture.service.publish(fixture.document.id, "regulated", "profile-key")
+
+        assertEquals(first.documentId, replay.documentId)
+        assertEquals("regulated", fixture.deliveries.saved.single().profileId)
+        assertEquals(1, fixture.profileCalls)
+        assertEquals(1, fixture.deliveries.saved.size)
+        assertEquals(1, fixture.outbox.events.size)
+        assertEquals(1, fixture.documents.saveCalls)
+        assertEquals(1, fixture.idempotency.claimCalls)
+        assertEquals(1, fixture.idempotency.completeCalls)
+    }
+
+    @Test
+    fun `blank publish profile shares the default fingerprint while another profile conflicts before policy resolution`() {
+        val fixture = Fixture(pendingDocument())
+
+        fixture.service.publish(fixture.document.id, "default-profile-key")
+        val replay = fixture.service.publish(fixture.document.id, "   ", "default-profile-key")
+
+        assertEquals(fixture.document.id, replay.documentId)
+        assertEquals("default", fixture.deliveries.saved.single().profileId)
+        assertEquals(1, fixture.profileCalls)
+
+        assertThrows<IdempotencyKeyConflictException> {
+            fixture.service.publish(fixture.document.id, "regulated", "default-profile-key")
+        }
+        assertEquals(1, fixture.profileCalls)
+        assertEquals(1, fixture.deliveries.saved.size)
+        assertEquals(1, fixture.outbox.events.size)
+    }
+
+    @Test
+    fun `publish accepts the bounded profile limit and rejects unsafe or oversized profiles before authorization`() {
+        val maximumProfileId = "p".repeat(256)
+        val bounded = Fixture(pendingDocument())
+
+        bounded.service.publish(bounded.document.id, maximumProfileId, "bounded-profile-key")
+
+        assertEquals(maximumProfileId, bounded.deliveries.saved.single().profileId)
+
+        listOf("p".repeat(257), "regulated\nprofile", "regulated\u200Eprofile").forEach { invalidProfile ->
+            val fixture = Fixture(pendingDocument())
+            assertThrows<IllegalArgumentException> {
+                fixture.service.publish(fixture.document.id, invalidProfile, "invalid-profile-key")
+            }
+            assertEquals(0, fixture.users.currentUserCalls)
+            assertEquals(0, fixture.authorization.calls)
+            assertEquals(0, fixture.idempotency.findCalls)
+            assertEquals(0, fixture.profileCalls)
+            assertEquals(0, fixture.documents.saveCalls)
+        }
+    }
+
     private fun assertOrder(events: List<String>, first: String, second: String) {
         val firstIndex = events.indexOf(first)
         val secondIndex = events.indexOf(second)
@@ -224,18 +282,9 @@ class IdempotentDocumentLifecycleServiceTest {
                     profileTransactionStates += transaction.active
                     events += "delivery:profile"
                     return listOf(
-                        DocumentDeliveryProfile(
-                            "default",
-                            "Default",
-                            listOf(
-                                DocumentDeliveryTargetDefinition(
-                                    "primary",
-                                    "Primary",
-                                    "connector-1",
-                                    DeliveryRequirement.REQUIRED,
-                                ),
-                            ),
-                        ),
+                        deliveryProfile("default", "Default", "default-primary"),
+                        deliveryProfile("regulated", "Regulated", "regulated-primary"),
+                        deliveryProfile("p".repeat(256), "Bounded", "bounded-primary"),
                     )
                 }
             },
@@ -292,6 +341,23 @@ class IdempotentDocumentLifecycleServiceTest {
                 idempotencyService,
                 guard,
             )
+
+        private fun deliveryProfile(
+            id: String,
+            displayName: String,
+            targetId: String,
+        ): DocumentDeliveryProfile = DocumentDeliveryProfile(
+            id,
+            displayName,
+            listOf(
+                DocumentDeliveryTargetDefinition(
+                    targetId,
+                    displayName,
+                    "connector-1",
+                    DeliveryRequirement.REQUIRED,
+                ),
+            ),
+        )
 
         private fun tenantProvider() = object : TenantProvider {
             override fun currentTenant(): TenantContext = TenantContext(TENANT_ID)

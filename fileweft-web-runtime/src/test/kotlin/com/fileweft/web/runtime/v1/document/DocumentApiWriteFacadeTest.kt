@@ -1,5 +1,7 @@
 package com.fileweft.web.runtime.v1.document
 
+import com.fileweft.web.runtime.v1.V1FeatureUnavailableException
+
 import com.fileweft.application.catalog.DocumentCatalogAccessService
 import com.fileweft.application.catalog.DocumentCatalogDraftService
 import com.fileweft.application.catalog.DocumentCatalogMutationService

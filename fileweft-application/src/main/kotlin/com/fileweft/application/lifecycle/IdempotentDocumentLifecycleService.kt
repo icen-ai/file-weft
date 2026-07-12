@@ -22,7 +22,14 @@ import com.fileweft.domain.document.Document
 class DocumentLifecycleReceipt @JvmOverloads constructor(
     val documentId: Identifier,
     val workflowId: Identifier? = null,
-)
+    val taskId: Identifier? = null,
+) {
+    init {
+        require(taskId == null || workflowId != null) {
+            "A lifecycle task receipt requires its workflow identifier."
+        }
+    }
+}
 
 /**
  * Tenant-wide lifecycle boundary for hosts that do not install a catalog.
@@ -52,7 +59,13 @@ class IdempotentDocumentLifecycleService(
         delegate.revise(documentId, idempotencyKey)
 
     fun publish(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt =
-        delegate.publish(documentId, idempotencyKey)
+        delegate.publish(documentId, null, idempotencyKey)
+
+    fun publish(
+        documentId: Identifier,
+        deliveryProfileId: String?,
+        idempotencyKey: String,
+    ): DocumentLifecycleReceipt = delegate.publish(documentId, deliveryProfileId, idempotencyKey)
 
     fun offline(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt =
         delegate.offline(documentId, idempotencyKey)
@@ -75,7 +88,13 @@ class IdempotentDocumentCatalogLifecycleService(
         delegate.revise(documentId, idempotencyKey)
 
     fun publish(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt =
-        delegate.publish(documentId, idempotencyKey)
+        delegate.publish(documentId, null, idempotencyKey)
+
+    fun publish(
+        documentId: Identifier,
+        deliveryProfileId: String?,
+        idempotencyKey: String,
+    ): DocumentLifecycleReceipt = delegate.publish(documentId, deliveryProfileId, idempotencyKey)
 
     fun offline(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt =
         delegate.offline(documentId, idempotencyKey)
@@ -103,12 +122,17 @@ internal class IdempotentDocumentLifecycleDelegate(
         }
     }
 
-    fun publish(documentId: Identifier, idempotencyKey: String): DocumentLifecycleReceipt {
+    fun publish(
+        documentId: Identifier,
+        deliveryProfileId: String?,
+        idempotencyKey: String,
+    ): DocumentLifecycleReceipt {
+        val normalizedProfileId = normalizeDeliveryProfileId(deliveryProfileId)
         val context = publish.preparePublish(documentId, guard)
-        val request = request(context, idempotencyKey, PUBLISH_FINGERPRINT)
+        val request = request(context, idempotencyKey, publishFingerprint(normalizedProfileId))
         idempotency.findCompleted(request)?.let { return replayDocument(context.documentId, it) }
         publish.preflightPublish(context)
-        val preparation = publish.prepareDelivery(context, null)
+        val preparation = publish.prepareDelivery(context, normalizedProfileId)
         val validated = context.revalidate()
         return idempotency.execute(
             request,
@@ -208,10 +232,26 @@ internal class IdempotentDocumentLifecycleDelegate(
         return DocumentLifecycleReceipt(documentId)
     }
 
+    private fun normalizeDeliveryProfileId(deliveryProfileId: String?): String? {
+        if (deliveryProfileId == null) return null
+        require(deliveryProfileId.length <= MAX_DELIVERY_PROFILE_ID_LENGTH) {
+            "Document delivery profile id must not exceed $MAX_DELIVERY_PROFILE_ID_LENGTH characters."
+        }
+        require(deliveryProfileId.none { character ->
+            Character.isISOControl(character) || Character.getType(character) == Character.FORMAT.toInt()
+        }) {
+            "Document delivery profile id contains unsafe characters."
+        }
+        return deliveryProfileId.trim().takeIf { normalized -> normalized.isNotEmpty() }
+    }
+
+    private fun publishFingerprint(deliveryProfileId: String?): String =
+        RequestFingerprint.sha256("fileweft:lifecycle:publish:v2", deliveryProfileId)
+
     private companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        const val MAX_DELIVERY_PROFILE_ID_LENGTH = 256
         val REVISE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:revise:v1")
-        val PUBLISH_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:publish:v1")
         val OFFLINE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:offline:v1")
         val RESTORE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:restore:v1")
         val ARCHIVE_FINGERPRINT = RequestFingerprint.sha256("fileweft:lifecycle:archive:v1")

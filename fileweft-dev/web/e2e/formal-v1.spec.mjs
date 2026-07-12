@@ -159,12 +159,14 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   const historicalContent = Buffer.from(`FileWeft 正式 v1 历史字节 ${nonce}\n`, "utf8");
   const currentContent = Buffer.from(`FileWeft 正式 v1 当前字节 ${nonce}\n`, "utf8");
 
-  const [editor, viewer, betaEditor] = await Promise.all([
+  const [editor, reviewer, viewer, betaEditor] = await Promise.all([
     login(request, "editor@alpha", "dev-editor"),
+    login(request, "reviewer@alpha", "dev-reviewer"),
     login(request, "viewer@alpha", "dev-viewer"),
     login(request, "editor@beta", "dev-editor"),
   ]);
   expect(editor).toMatchObject({ userId: "alpha-editor", tenantId: "alpha", role: "EDITOR" });
+  expect(reviewer).toMatchObject({ userId: "alpha-reviewer", tenantId: "alpha", role: "REVIEWER" });
   expect(viewer).toMatchObject({ userId: "alpha-viewer", tenantId: "alpha", role: "VIEWER" });
   expect(betaEditor).toMatchObject({ userId: "beta-editor", tenantId: "beta", role: "EDITOR" });
 
@@ -349,4 +351,83 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     expect(audits).toHaveLength(expectedCount);
     expect(audits.every((audit) => audit.operatorId === "alpha-editor" && audit.operatorName === "Alpha 编辑者")).toBe(true);
   }
+
+  const missingKeyResponse = await request.post(`/fileweft/v1/documents/${documentId}/submit`, {
+    headers: authorization(editor.token, traceId),
+    data: {},
+  });
+  await failure(missingKeyResponse, 400, "INVALID_REQUEST", "Request is invalid.");
+
+  const leakedKey = `must-not-leak-${nonce}`;
+  const invalidKeyResponse = await request.post(`/fileweft/v1/documents/${documentId}/submit`, {
+    headers: { ...authorization(editor.token, traceId), "Idempotency-Key": `${leakedKey},duplicate` },
+    data: {},
+  });
+  const invalidKeyEnvelope = await failure(invalidKeyResponse, 400, "INVALID_REQUEST", "Request is invalid.");
+  expect(JSON.stringify(invalidKeyEnvelope)).not.toContain(leakedKey);
+
+  const submitKey = `formal-submit-${randomUUID()}`;
+  const submitOptions = {
+    headers: { ...authorization(editor.token, traceId), "Idempotency-Key": submitKey },
+    data: {},
+  };
+  const submitted = await success(
+    await request.post(`/fileweft/v1/documents/${documentId}/submit`, submitOptions),
+    200,
+  );
+  expect(sortedKeys(submitted)).toEqual(["documentId", "taskId", "workflowId"]);
+  expect(submitted).toMatchObject({ documentId, taskId: null });
+  expect(submitted.workflowId).toEqual(expect.any(String));
+  const replayedSubmit = await success(
+    await request.post(`/fileweft/v1/documents/${documentId}/submit`, submitOptions),
+    200,
+  );
+  expect(replayedSubmit).toEqual(submitted);
+
+  const submitConflict = await request.post(`/fileweft/v1/documents/${documentId}/submit`, {
+    headers: submitOptions.headers,
+    data: { reviewRouteId: "dual-control" },
+  });
+  await failure(submitConflict, 409, "CONFLICT", "Request conflicts with the current resource state.");
+
+  const submittedProjectionResponse = await request.get(`/api/documents/${documentId}`, {
+    headers: authorization(reviewer.token, traceId),
+  });
+  expect(submittedProjectionResponse.status(), await submittedProjectionResponse.text()).toBe(200);
+  const submittedProjection = await submittedProjectionResponse.json();
+  const workflow = submittedProjection.workflows.find((candidate) => candidate.id === submitted.workflowId);
+  expect(workflow).toBeDefined();
+  const reviewTask = workflow.tasks.find((candidate) => candidate.assigneeId === "alpha-reviewer") ?? workflow.tasks[0];
+  expect(reviewTask?.id).toEqual(expect.any(String));
+
+  const approveKey = `formal-approve-${randomUUID()}`;
+  const approveOptions = {
+    headers: { ...authorization(reviewer.token, traceId), "Idempotency-Key": approveKey },
+    data: { comment: `formal approval ${nonce}` },
+  };
+  const approved = await success(
+    await request.post(
+      `/fileweft/v1/workflows/${workflow.id}/tasks/${reviewTask.id}/approve`,
+      approveOptions,
+    ),
+    200,
+  );
+  expect(approved).toEqual({ documentId, workflowId: workflow.id, taskId: reviewTask.id });
+  const replayedApproval = await success(
+    await request.post(
+      `/fileweft/v1/workflows/${workflow.id}/tasks/${reviewTask.id}/approve`,
+      approveOptions,
+    ),
+    200,
+  );
+  expect(replayedApproval).toEqual(approved);
+
+  const approvalConflict = await request.post(
+    `/fileweft/v1/workflows/${workflow.id}/tasks/${reviewTask.id}/approve`,
+    {
+      headers: approveOptions.headers,
+      data: { comment: "same key, different typed command" },
+    },
+  );
+  await failure(approvalConflict, 409, "CONFLICT", "Request conflicts with the current resource state.");
 });

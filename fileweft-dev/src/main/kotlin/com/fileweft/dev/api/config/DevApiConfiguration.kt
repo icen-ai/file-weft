@@ -9,6 +9,7 @@ import com.fileweft.application.catalog.DocumentCatalogLifecycleService
 import com.fileweft.application.outbox.OutboxWorker
 import com.fileweft.application.task.TaskWorker
 import com.fileweft.application.upload.ResumableUploadService
+import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.application.doctor.DoctorApplicationService
 import com.fileweft.core.id.Identifier
 import com.fileweft.dev.api.catalog.DevCatalogDocumentService
@@ -187,6 +188,23 @@ class DevApiConfiguration {
         override fun listProfiles(tenantId: com.fileweft.core.id.Identifier): List<DocumentDeliveryProfile> = profiles
 
         override fun defaultProfile(tenantId: com.fileweft.core.id.Identifier): DocumentDeliveryProfile = profiles.first()
+    }
+
+    /** A deterministic seeded reviewer route for the formal submit API. */
+    @Bean
+    fun devSingleReviewerRoute(): DocumentReviewRouteProvider = object : DocumentReviewRouteProvider {
+        override fun id(): String = "single-reviewer"
+
+        override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute {
+            val tenantPrefix = request.tenantId.value
+            require(tenantPrefix == "alpha" || tenantPrefix == "beta") {
+                "The development reviewer route supports only the seeded alpha and beta tenants."
+            }
+            return DocumentReviewRoute(
+                workflowType = DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+                tasks = listOf(DocumentReviewRouteTask(Identifier("$tenantPrefix-reviewer"))),
+            )
+        }
     }
 
     /** A visible two-person route for exercising parallel review with both seeded tenants. */

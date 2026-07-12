@@ -10,6 +10,7 @@ import com.fileweft.web.api.v1.document.AddDocumentVersionCommand
 import com.fileweft.web.api.v1.document.CreateDocumentDraftCommand
 import com.fileweft.web.api.v1.document.DocumentCommandResultDto
 import com.fileweft.web.api.v1.document.RenameDocumentCommand
+import com.fileweft.web.runtime.v1.V1FeatureUnavailableException
 import java.io.InputStream
 
 /**
@@ -83,6 +84,3 @@ class DocumentApiWriteFacade @JvmOverloads constructor(
         versionId = currentVersionId?.value?.takeIf { includeCurrentVersion },
     )
 }
-
-/** Raised when a requested optional v1 capability is not installed by the host. */
-internal class V1FeatureUnavailableException : IllegalStateException("The requested v1 feature is unavailable.")

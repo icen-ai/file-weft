@@ -85,6 +85,32 @@ class DocumentCommandResultDto @JvmOverloads constructor(
 }
 
 /**
+ * Stable identifiers returned by a committed lifecycle or review command.
+ *
+ * These values originate from the committed application receipt. Deliberately
+ * do not add post-commit identifier validation here: a transport mapping
+ * failure must never make a successful mutation appear to have rolled back.
+ */
+class DocumentLifecycleCommandResultDto @JvmOverloads constructor(
+    val documentId: String,
+    val workflowId: String? = null,
+    val taskId: String? = null,
+)
+
+/** Optional delivery selection for direct document publication. */
+class PublishDocumentCommand @JvmOverloads constructor(deliveryProfileId: String? = null) {
+    val deliveryProfileId: String? = optionalText(deliveryProfileId, "Document delivery profile id", 256)
+}
+
+/**
+ * Zero-argument transport bean usable by both Spring Boot 2 and Spring Boot 3.
+ * Controllers must immediately convert it to [PublishDocumentCommand].
+ */
+class PublishDocumentRequest {
+    var deliveryProfileId: String? = null
+}
+
+/**
  * Public metadata for a multipart draft upload. The HTTP adapter owns the
  * binary stream; arbitrary asset/storage metadata is deliberately not a v1
  * client input. Folder binding is validated through the host catalog before

@@ -2,10 +2,12 @@ package com.fileweft.application.workflow
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
-import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryPreparation
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationContext
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationTransaction
+import com.fileweft.application.lifecycle.ValidatedDocumentLifecycleMutation
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.transaction.ApplicationTransaction
@@ -57,84 +59,134 @@ class DocumentReviewWorkflowService(
         reviewRouteId: String?,
         guard: DocumentLifecycleMutationGuard?,
     ): WorkflowInstance {
+        val context = prepareSubmitForReview(documentId, guard)
+        val preparation = prepareSubmitForReviewRoute(context, reviewerId, reviewRouteId)
+        val validated = context.revalidate()
+        return transaction.execute {
+            DocumentLifecycleMutationTransaction.execute {
+                submitForReviewInCurrentTransaction(validated, preparation).workflow
+            }
+        }
+    }
+
+    @JvmSynthetic
+    internal fun prepareSubmitForReview(
+        documentId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentLifecycleMutationContext {
         val tenant = tenantProvider.currentTenant()
         val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, SUBMIT_ACTION)
-        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
-            null
-        } else {
-            guard.prepareLifecycle(tenant.tenantId, operator, documentId, SUBMIT_ACTION)
+        return DocumentLifecycleMutationContext.prepare(
+            tenantId = tenant.tenantId,
+            operator = operator,
+            documentId = documentId,
+            action = SUBMIT_ACTION,
+            guard = guard,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun prepareSubmitForReviewRoute(
+        context: DocumentLifecycleMutationContext,
+        reviewerId: Identifier?,
+        reviewRouteId: String?,
+    ): DocumentReviewSubmitPreparation {
+        require(context.action == SUBMIT_ACTION) {
+            "Lifecycle mutation context belongs to a different action."
         }
         val routeRequest = transaction.execute {
-            val document = documentRepository.findById(tenant.tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenant.tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
+            val document = documentRepository.findById(context.tenantId, context.documentId)
+                ?: throw DocumentNotFoundException(context.documentId)
+            if (document.tenantId != context.tenantId || document.id != context.documentId) {
+                throw DocumentNotFoundException(context.documentId)
             }
-            requireNoActiveReview(tenant.tenantId, documentId)
+            requireNoActiveReview(context.tenantId, context.documentId)
             DocumentReviewRouteRequest(
-                tenantId = tenant.tenantId,
+                tenantId = context.tenantId,
                 documentId = document.id,
                 documentNumber = document.documentNumber,
                 documentTitle = document.title,
-                submittedBy = operator.id,
+                submittedBy = context.operator.id,
                 requestedReviewerId = reviewerId,
             )
         }
         // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
         val resolvedRoute = reviewRoutes.resolve(reviewRouteId, routeRequest)
-        if (guard != null) {
-            guard.revalidateLifecycle(tenant.tenantId, operator, documentId, checkNotNull(permit))
+        return DocumentReviewSubmitPreparation(
+            lifecycle = context,
+            reviewerId = reviewerId,
+            routeRequest = routeRequest,
+            resolvedRoute = resolvedRoute,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun submitForReviewInCurrentTransaction(
+        validated: ValidatedDocumentLifecycleMutation,
+        preparation: DocumentReviewSubmitPreparation,
+    ): DocumentReviewMutationResult {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(SUBMIT_ACTION)
+        require(preparation.lifecycle === context) {
+            "Review route preparation does not belong to this lifecycle operation."
         }
-        return transaction.execute {
-            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenant.tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
-            }
-            if (guard != null) {
-                // Preserve the shared document -> asset -> workflow lock order.
-                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
-            }
-            requireNoActiveReview(tenant.tenantId, documentId)
-            if (document.documentNumber != routeRequest.documentNumber || document.title != routeRequest.documentTitle) {
-                throw DocumentReviewConflictException(
-                    "Document changed while its review route was resolved; retry submission.",
+        require(
+            preparation.routeRequest.tenantId == context.tenantId &&
+                preparation.routeRequest.documentId == context.documentId &&
+                preparation.routeRequest.submittedBy == context.operator.id &&
+                preparation.routeRequest.requestedReviewerId == preparation.reviewerId
+        ) {
+            "Review route preparation does not match the authorized request."
+        }
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        // Preserve the shared document -> asset -> workflow lock order.
+        validated.verifyLocked(document, SUBMIT_ACTION)
+        requireNoActiveReview(context.tenantId, context.documentId)
+        if (
+            document.documentNumber != preparation.routeRequest.documentNumber ||
+            document.title != preparation.routeRequest.documentTitle
+        ) {
+            throw DocumentReviewConflictException(
+                "Document changed while its review route was resolved; retry submission.",
+            )
+        }
+        document.transition(LifecycleCommand.SUBMIT)
+        val workflowId = identifierGenerator.nextId()
+        val workflow = WorkflowInstance(
+            id = workflowId,
+            tenantId = context.tenantId,
+            documentId = document.id,
+            workflowType = preparation.resolvedRoute.route.workflowType,
+            tasks = preparation.resolvedRoute.route.tasks.map { routeTask ->
+                WorkflowTask(
+                    id = identifierGenerator.nextId(),
+                    tenantId = context.tenantId,
+                    workflowId = workflowId,
+                    assigneeId = routeTask.assigneeId,
                 )
-            }
-            document.transition(LifecycleCommand.SUBMIT)
-            val workflowId = identifierGenerator.nextId()
-            val workflow = WorkflowInstance(
-                id = workflowId,
-                tenantId = tenant.tenantId,
-                documentId = document.id,
-                workflowType = resolvedRoute.route.workflowType,
-                tasks = resolvedRoute.route.tasks.map { routeTask ->
-                    WorkflowTask(
-                        id = identifierGenerator.nextId(),
-                        tenantId = tenant.tenantId,
-                        workflowId = workflowId,
-                        assigneeId = routeTask.assigneeId,
-                    )
-                },
-            )
-            documentRepository.save(document)
-            workflowRepository.save(workflow)
-            auditTrail?.record(
-                tenantId = tenant.tenantId,
-                resourceType = DOCUMENT_RESOURCE_TYPE,
-                resourceId = document.id,
-                action = SUBMITTED_AUDIT_ACTION,
-                operatorId = operator.id,
-                operatorName = operator.displayName,
-                details = mapOf(
-                    "workflowId" to workflow.id.value,
-                    "reviewerId" to (reviewerId?.value ?: "UNASSIGNED"),
-                    "reviewRouteId" to resolvedRoute.routeId,
-                    "reviewerIds" to workflow.tasks.joinToString(",") { task -> task.assigneeId?.value ?: "UNASSIGNED" },
-                ),
-            )
-            workflow
-        }
+            },
+        )
+        documentRepository.save(document)
+        workflowRepository.save(workflow)
+        auditTrail?.record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = SUBMITTED_AUDIT_ACTION,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+            details = mapOf(
+                "workflowId" to workflow.id.value,
+                "reviewerId" to (preparation.reviewerId?.value ?: "UNASSIGNED"),
+                "reviewRouteId" to preparation.resolvedRoute.routeId,
+                "reviewerIds" to workflow.tasks.joinToString(",") { task -> task.assigneeId?.value ?: "UNASSIGNED" },
+            ),
+        )
+        return DocumentReviewMutationResult(document, workflow)
     }
 
     fun approve(workflowId: Identifier, taskId: Identifier, comment: String? = null): Document =
@@ -185,6 +237,31 @@ class DocumentReviewWorkflowService(
         deliveryProfileId: String?,
         guard: DocumentLifecycleMutationGuard?,
     ): Document {
+        val decision = prepareReviewDecision(workflowId, taskId, approved, guard)
+        var delivery = prepareInitialReviewDelivery(decision, deliveryProfileId)
+        while (true) {
+            val validated = revalidateReviewDecision(decision)
+            try {
+                return hideWorkflowDocumentVisibilityFailure(workflowId) {
+                    transaction.execute {
+                        DocumentLifecycleMutationTransaction.execute {
+                            decideInCurrentTransaction(validated, decision, comment, delivery).document
+                        }
+                    }
+                }
+            } catch (_: DocumentReviewDeliveryPreparationRequiredException) {
+                delivery = prepareCompletingReviewDelivery(decision, deliveryProfileId)
+            }
+        }
+    }
+
+    @JvmSynthetic
+    internal fun prepareReviewDecision(
+        workflowId: Identifier,
+        taskId: Identifier,
+        approved: Boolean,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentReviewDecisionContext {
         val tenant = tenantProvider.currentTenant()
         // Authenticate before the workflow lookup so an anonymous caller
         // cannot probe workflow identifiers through repository behavior.
@@ -198,131 +275,165 @@ class DocumentReviewWorkflowService(
                 ?.takeIf { workflow -> workflow.tenantId == tenant.tenantId && workflow.id == workflowId }
                 ?: throw WorkflowNotFoundException(workflowId)
         }
-        val permit: DocumentLifecycleMutationPermit? = hideWorkflowDocumentVisibilityFailure(workflowId) {
-            authorization.requireDocumentActionAs(
+        val lifecycle = hideWorkflowDocumentVisibilityFailure(workflowId) {
+            val authorizedOperator = authorization.requireDocumentActionAs(
                 tenant.tenantId,
                 workflowSnapshot.documentId,
                 AUDIT_ACTION,
                 operator,
             )
-            if (guard == null) {
-                null
-            } else {
-                // Catalog preparation repeats the document action decision
-                // after its local binding snapshot. A concurrent revocation
-                // must remain indistinguishable from a missing workflow.
-                guard.prepareLifecycle(tenant.tenantId, operator, workflowSnapshot.documentId, AUDIT_ACTION)
-            }
+            // Catalog preparation repeats the document action decision after
+            // its local binding snapshot. Revocation remains indistinguishable
+            // from a missing workflow.
+            DocumentLifecycleMutationContext.prepare(
+                tenantId = tenant.tenantId,
+                operator = authorizedOperator,
+                documentId = workflowSnapshot.documentId,
+                action = AUDIT_ACTION,
+                guard = guard,
+            )
         }
-        val snapshotCompletesApproval = approved && workflowSnapshot.willCompleteAfterApproval(taskId, operator.id)
-        if (snapshotCompletesApproval && guard == null) {
-            // Flat mode has no catalog guard snapshot. Confirm the referenced
-            // document before invoking a potentially remote delivery policy;
-            // the final mutation transaction still repeats this validation.
-            hideWorkflowDocumentVisibilityFailure(workflowId) {
-                transaction.execute {
-                    val document = documentRepository.findById(tenant.tenantId, workflowSnapshot.documentId)
-                        ?: throw DocumentNotFoundException(workflowSnapshot.documentId)
-                    if (
-                        document.tenantId != tenant.tenantId ||
-                        document.id != workflowSnapshot.documentId
-                    ) {
-                        throw DocumentNotFoundException(workflowSnapshot.documentId)
-                    }
-                }
-            }
-        }
-        var preparation: DocumentDeliveryPreparation? = if (snapshotCompletesApproval) {
-            deliveryPlanner.prepare(tenant.tenantId, deliveryProfileId)
+        return DocumentReviewDecisionContext(
+            lifecycle = lifecycle,
+            workflowId = workflowId,
+            taskId = taskId,
+            approved = approved,
+            workflowSnapshot = workflowSnapshot,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun prepareInitialReviewDelivery(
+        decision: DocumentReviewDecisionContext,
+        deliveryProfileId: String?,
+    ): DocumentReviewDecisionDelivery? {
+        if (!decision.approved) return null
+        val completes = decision.workflowSnapshot.willCompleteAfterApproval(
+            decision.taskId,
+            decision.lifecycle.operator.id,
+        )
+        return if (completes) {
+            prepareCompletingReviewDelivery(decision, deliveryProfileId)
         } else {
             null
         }
-        if (guard != null) {
-            hideWorkflowDocumentVisibilityFailure(workflowId) {
-                guard.revalidateLifecycle(
-                    tenant.tenantId,
-                    operator,
-                    workflowSnapshot.documentId,
-                    checkNotNull(permit),
-                )
-            }
-        }
-        while (true) {
-            val completed = hideWorkflowDocumentVisibilityFailure(workflowId) {
-                transaction.execute<Document?> {
-                    // Keep the document before workflow lock order everywhere so a
-                    // direct publish, submission, and review decision serialize on
-                    // one document aggregate without lock-order deadlocks.
-                    val document = documentRepository.findForMutation(tenant.tenantId, workflowSnapshot.documentId)
-                        ?: throw DocumentNotFoundException(workflowSnapshot.documentId)
-                    if (
-                        document.tenantId != tenant.tenantId ||
-                        document.id != workflowSnapshot.documentId
-                    ) {
-                        throw DocumentNotFoundException(workflowSnapshot.documentId)
-                    }
-                    if (guard != null) {
-                        // The catalog asset lock precedes the workflow decision lock.
-                        guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
-                    }
-                    val workflow = workflowRepository.findForDecision(tenant.tenantId, workflowId)
-                        ?: throw WorkflowNotFoundException(workflowId)
-                    if (
-                        workflow.tenantId != tenant.tenantId ||
-                        workflow.id != workflowId ||
-                        workflow.documentId != document.id
-                    ) {
-                        throw WorkflowNotFoundException(workflowId)
-                    }
-                    val completingApproval = approved && workflow.willCompleteAfterApproval(taskId, operator.id)
-                    if (completingApproval && preparation == null) {
-                        // A parallel reviewer completed another task after the first
-                        // snapshot. Leave state untouched, resolve the remote policy
-                        // outside the transaction, then retry under the row lock.
-                        return@execute null
-                    }
-                    if (approved) {
-                        workflow.approve(taskId, operator.id, comment)
-                        if (workflow.state == com.fileweft.domain.workflow.WorkflowState.APPROVED) {
-                            document.transition(LifecycleCommand.APPROVE)
-                            deliveryPlanner.plan(document, requireNotNull(preparation))
-                        }
-                    } else {
-                        workflow.reject(taskId, operator.id, comment)
-                        document.transition(LifecycleCommand.REJECT)
-                    }
-                    workflowRepository.save(workflow)
-                    documentRepository.save(document)
-                    auditTrail?.record(
-                        tenantId = tenant.tenantId,
-                        resourceType = DOCUMENT_RESOURCE_TYPE,
-                        resourceId = document.id,
-                        action = if (approved) APPROVED_AUDIT_ACTION else REJECTED_AUDIT_ACTION,
-                        operatorId = operator.id,
-                        operatorName = operator.displayName,
-                        details = linkedMapOf<String, String>().apply {
-                            put("workflowId", workflow.id.value)
-                            put("taskId", taskId.value)
-                            put("workflowState", workflow.state.name)
-                            comment?.let { put("comment", it) }
-                        },
-                    )
-                    document
-                }
-            }
-            if (completed != null) return completed
-            preparation = deliveryPlanner.prepare(tenant.tenantId, deliveryProfileId)
-            if (guard != null) {
-                hideWorkflowDocumentVisibilityFailure(workflowId) {
-                    guard.revalidateLifecycle(
-                        tenant.tenantId,
-                        operator,
-                        workflowSnapshot.documentId,
-                        checkNotNull(permit),
-                    )
+    }
+
+    @JvmSynthetic
+    internal fun prepareCompletingReviewDelivery(
+        decision: DocumentReviewDecisionContext,
+        deliveryProfileId: String?,
+    ): DocumentReviewDecisionDelivery {
+        require(decision.approved) { "Only an approval can prepare document delivery." }
+        val context = decision.lifecycle
+        // Confirm the document before invoking a potentially remote delivery
+        // policy. The final transaction repeats identity and lifecycle checks.
+        hideWorkflowDocumentVisibilityFailure(decision.workflowId) {
+            transaction.execute {
+                val document = documentRepository.findById(context.tenantId, context.documentId)
+                    ?: throw DocumentNotFoundException(context.documentId)
+                if (document.tenantId != context.tenantId || document.id != context.documentId) {
+                    throw DocumentNotFoundException(context.documentId)
                 }
             }
         }
+        return DocumentReviewDecisionDelivery(
+            decision = decision,
+            preparation = deliveryPlanner.prepare(context.tenantId, deliveryProfileId),
+        )
+    }
+
+    @JvmSynthetic
+    internal fun revalidateReviewDecision(
+        decision: DocumentReviewDecisionContext,
+    ): ValidatedDocumentLifecycleMutation = hideWorkflowDocumentVisibilityFailure(decision.workflowId) {
+        decision.lifecycle.revalidate()
+    }
+
+    @JvmSynthetic
+    internal fun decideInCurrentTransaction(
+        validated: ValidatedDocumentLifecycleMutation,
+        decision: DocumentReviewDecisionContext,
+        comment: String?,
+        delivery: DocumentReviewDecisionDelivery?,
+    ): DocumentReviewMutationResult {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(AUDIT_ACTION)
+        require(decision.lifecycle === context) {
+            "Review decision does not belong to this lifecycle operation."
+        }
+        if (delivery != null) {
+            require(decision.approved && delivery.decision === decision) {
+                "Review delivery preparation does not belong to this decision."
+            }
+            require(delivery.preparation.tenantId == context.tenantId) {
+                "Review delivery preparation belongs to a different tenant."
+            }
+        }
+        // Keep document -> asset -> workflow lock order everywhere. An
+        // idempotent caller has already locked its claim before entering here.
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        validated.verifyLocked(document, AUDIT_ACTION)
+        val workflow = workflowRepository.findForDecision(context.tenantId, decision.workflowId)
+            ?: throw WorkflowNotFoundException(decision.workflowId)
+        if (
+            workflow.tenantId != context.tenantId ||
+            workflow.id != decision.workflowId ||
+            workflow.documentId != document.id
+        ) {
+            throw WorkflowNotFoundException(decision.workflowId)
+        }
+        val completingApproval = decision.approved && workflow.willCompleteAfterApproval(
+            decision.taskId,
+            context.operator.id,
+        )
+        if (completingApproval && delivery == null) {
+            // Throw before any domain mutation so the claim and every local
+            // read/write in this attempt roll back together.
+            throw DocumentReviewDeliveryPreparationRequiredException()
+        }
+        if (decision.approved) {
+            workflow.approve(decision.taskId, context.operator.id, comment)
+            if (workflow.state == com.fileweft.domain.workflow.WorkflowState.APPROVED) {
+                document.transition(LifecycleCommand.APPROVE)
+                deliveryPlanner.plan(document, checkNotNull(delivery).preparation)
+            }
+        } else {
+            workflow.reject(decision.taskId, context.operator.id, comment)
+            document.transition(LifecycleCommand.REJECT)
+        }
+        workflowRepository.save(workflow)
+        documentRepository.save(document)
+        auditTrail?.record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = if (decision.approved) APPROVED_AUDIT_ACTION else REJECTED_AUDIT_ACTION,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+            details = linkedMapOf<String, String>().apply {
+                put("workflowId", workflow.id.value)
+                put("taskId", decision.taskId.value)
+                put("workflowState", workflow.state.name)
+                comment?.let { put("comment", it) }
+            },
+        )
+        return DocumentReviewMutationResult(document, workflow)
+    }
+
+    /** Keeps a concurrent document visibility change indistinguishable from a missing workflow. */
+    @JvmSynthetic
+    internal fun decideSafelyInCurrentTransaction(
+        validated: ValidatedDocumentLifecycleMutation,
+        decision: DocumentReviewDecisionContext,
+        comment: String?,
+        delivery: DocumentReviewDecisionDelivery?,
+    ): DocumentReviewMutationResult = hideWorkflowDocumentVisibilityFailure(decision.workflowId) {
+        decideInCurrentTransaction(validated, decision, comment, delivery)
     }
 
     private fun <T> hideWorkflowDocumentVisibilityFailure(workflowId: Identifier, action: () -> T): T = try {
