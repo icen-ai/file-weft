@@ -8,8 +8,7 @@ import ai.icen.fw.adapter.observability.NoOpFileWeftMetrics
 import ai.icen.fw.adapter.observability.NoOpTraceContextProvider
 import ai.icen.fw.adapter.identity.DefaultUserRealmProvider
 import ai.icen.fw.adapter.storage.LocalStorageAdapter
-import ai.icen.fw.core.context.TenantContext
-import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.adapter.tenant.FixedTenantProvider
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.runtime.plugin.FileWeftPluginRegistry
 import ai.icen.fw.spi.authorization.AuthorizationProvider
@@ -43,8 +42,15 @@ import io.micrometer.core.instrument.MeterRegistry
 class FileWeftAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(TenantProvider::class)
-    fun fileWeftTenantProvider(properties: FileWeftProperties): TenantProvider = object : TenantProvider {
-        override fun currentTenant(): TenantContext = TenantContext(Identifier(properties.defaultTenantId))
+    fun fileWeftTenantProvider(properties: FileWeftProperties): TenantProvider {
+        require(properties.defaultTenantEnabled) {
+            "No TenantProvider is configured. Register a trusted TenantProvider bean or explicitly set " +
+                "fileweft.default-tenant-enabled=true for a fixed single-tenant deployment."
+        }
+        require(properties.defaultTenantId.isNotBlank()) {
+            "fileweft.default-tenant-id must not be blank when fileweft.default-tenant-enabled=true."
+        }
+        return FixedTenantProvider(properties.defaultTenantId)
     }
 
     @Bean
@@ -63,6 +69,10 @@ class FileWeftAutoConfiguration {
             "More than one plugin StorageAdapter is available; register the intended adapter as a customer Spring bean."
         }
         pluginAdapters.singleOrNull()?.let { return it }
+        require(properties.storage.localEnabled) {
+            "No StorageAdapter is configured. Register a StorageAdapter bean, install exactly one storage plugin, " +
+                "or explicitly set fileweft.storage.local-enabled=true to use local filesystem storage."
+        }
         require(properties.storage.localRoot.isNotBlank()) { "fileweft.storage.local-root must not be blank." }
         return LocalStorageAdapter(Paths.get(properties.storage.localRoot))
     }

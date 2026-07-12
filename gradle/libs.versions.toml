@@ -21,10 +21,12 @@ postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" 
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson-kotlin" }
 spring-boot2-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot2" }
+spring-boot2-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot2" }
 spring-boot2-test = { module = "org.springframework.boot:spring-boot-test", version.ref = "spring-boot2" }
 spring-boot2-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot2" }
 spring-boot2-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot2" }
 spring-boot3-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot3" }
+spring-boot3-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot3" }
 spring-boot3-test = { module = "org.springframework.boot:spring-boot-test", version.ref = "spring-boot3" }
 spring-boot3-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot3" }
 spring-boot3-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version.ref = "spring-boot3" }

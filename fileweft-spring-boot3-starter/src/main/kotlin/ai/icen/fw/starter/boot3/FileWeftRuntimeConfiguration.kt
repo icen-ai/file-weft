@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import ai.icen.fw.adapter.connector.ConnectorInvocationExecutor
 import ai.icen.fw.adapter.connector.ConnectorResiliencePolicy
 import ai.icen.fw.adapter.connector.ConnectorResilienceRegistry
+import ai.icen.fw.adapter.storage.LocalStorageAdapter
+import ai.icen.fw.adapter.tenant.FixedTenantProvider
 import ai.icen.fw.agent.AgentTaskHandler
 import ai.icen.fw.agent.AgentDoctorChecker
 import ai.icen.fw.agent.AgentTaskOrchestrator
@@ -857,6 +859,16 @@ class FileWeftRuntimeConfiguration {
     )
 
     @Bean
+    @ConditionalOnMissingBean(DeploymentSafetyDoctorChecker::class)
+    fun deploymentSafetyDoctor(
+        tenants: TenantProvider,
+        storage: StorageAdapter,
+    ) = DeploymentSafetyDoctorChecker(
+        fixedTenantProviderActive = tenants is FixedTenantProvider,
+        localStorageAdapterActive = storage is LocalStorageAdapter,
+    )
+
+    @Bean
     @ConditionalOnMissingBean(PermissionDoctorChecker::class)
     fun permissionDoctor(users: UserRealmProvider, authorization: AuthorizationProvider) = PermissionDoctorChecker(users, authorization)
 
@@ -898,7 +910,8 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun doctorService(
-        tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
+        tenants: TenantProvider, permission: PermissionDoctorChecker, deploymentSafety: DeploymentSafetyDoctorChecker,
+        lifecycle: LifecycleDoctorChecker,
         storage: StorageDoctorChecker, workflow: WorkflowDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
         deliveryProfile: DeliveryProfileDoctorChecker,
         agent: AgentDoctorChecker, transaction: ApplicationTransaction,
@@ -908,6 +921,7 @@ class FileWeftRuntimeConfiguration {
         return DoctorApplicationService(
             tenants, permission,
             listOf<DoctorChecker>(
+                deploymentSafety,
                 TransactionalDoctorChecker(lifecycle, transaction),
                 TransactionalDoctorChecker(workflow, transaction),
                 storage,

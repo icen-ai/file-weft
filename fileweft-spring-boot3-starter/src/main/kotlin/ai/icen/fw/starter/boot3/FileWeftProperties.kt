@@ -4,7 +4,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 
 @ConfigurationProperties(prefix = "fileweft")
 class FileWeftProperties {
-    var defaultTenantId: String = "default"
+    /** Explicitly permits the fixed single-tenant fallback when the host does not provide a TenantProvider. */
+    var defaultTenantEnabled: Boolean = false
+
+    var defaultTenantId: String = ""
 
     var storage: StorageProperties = StorageProperties()
 
@@ -21,7 +24,10 @@ class FileWeftProperties {
     var worker: WorkerProperties = WorkerProperties()
 
     class StorageProperties {
-        var localRoot: String = "./fileweft-data"
+        /** Explicitly permits process-local filesystem storage when no customer or plugin adapter is available. */
+        var localEnabled: Boolean = false
+
+        var localRoot: String = ""
     }
 
     class UploadProperties {

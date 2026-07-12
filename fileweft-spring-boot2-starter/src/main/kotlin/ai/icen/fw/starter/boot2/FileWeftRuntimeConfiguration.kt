@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import ai.icen.fw.adapter.connector.ConnectorInvocationExecutor
 import ai.icen.fw.adapter.connector.ConnectorResiliencePolicy
 import ai.icen.fw.adapter.connector.ConnectorResilienceRegistry
+import ai.icen.fw.adapter.storage.LocalStorageAdapter
+import ai.icen.fw.adapter.tenant.FixedTenantProvider
 import ai.icen.fw.agent.AgentTaskHandler
 import ai.icen.fw.agent.AgentDoctorChecker
 import ai.icen.fw.agent.AgentTaskOrchestrator
@@ -43,6 +45,7 @@ import ai.icen.fw.application.delivery.StaticDocumentDeliveryProfileProvider
 import ai.icen.fw.application.doctor.ConnectorDoctorChecker
 import ai.icen.fw.application.doctor.CatalogDoctorChecker
 import ai.icen.fw.application.doctor.DeliveryProfileDoctorChecker
+import ai.icen.fw.application.doctor.DeploymentSafetyDoctorChecker
 import ai.icen.fw.application.doctor.DoctorApplicationService
 import ai.icen.fw.application.doctor.DoctorReportRepository
 import ai.icen.fw.application.doctor.DocumentDoctorTaskHandler
@@ -969,6 +972,16 @@ class FileWeftRuntimeConfiguration {
     )
 
     @Bean
+    @ConditionalOnMissingBean(DeploymentSafetyDoctorChecker::class)
+    fun fileWeftDeploymentSafetyDoctorChecker(
+        tenants: TenantProvider,
+        storage: StorageAdapter,
+    ): DeploymentSafetyDoctorChecker = DeploymentSafetyDoctorChecker(
+        fixedTenantProviderActive = tenants is FixedTenantProvider,
+        localStorageAdapterActive = storage is LocalStorageAdapter,
+    )
+
+    @Bean
     @ConditionalOnMissingBean(PermissionDoctorChecker::class)
     fun fileWeftPermissionDoctorChecker(users: UserRealmProvider, authorization: AuthorizationProvider): PermissionDoctorChecker =
         PermissionDoctorChecker(users, authorization)
@@ -1011,7 +1024,8 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun fileWeftDoctorService(
-        tenants: TenantProvider, permission: PermissionDoctorChecker, lifecycle: LifecycleDoctorChecker,
+        tenants: TenantProvider, permission: PermissionDoctorChecker, deploymentSafety: DeploymentSafetyDoctorChecker,
+        lifecycle: LifecycleDoctorChecker,
         storage: StorageDoctorChecker, workflow: WorkflowDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
         deliveryProfile: DeliveryProfileDoctorChecker,
         agent: AgentDoctorChecker, transaction: ApplicationTransaction,
@@ -1022,6 +1036,7 @@ class FileWeftRuntimeConfiguration {
             tenants,
             permission,
             listOf<DoctorChecker>(
+                deploymentSafety,
                 TransactionalDoctorChecker(lifecycle, transaction),
                 TransactionalDoctorChecker(workflow, transaction),
                 storage,

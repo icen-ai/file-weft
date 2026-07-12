@@ -144,6 +144,9 @@ class DevFormalV1AutoConfigurationTest {
         )
         .withUserConfiguration(DevProbeConfiguration::class.java)
         .withPropertyValues(
+            "fileweft.default-tenant-enabled=true",
+            "fileweft.default-tenant-id=test-tenant",
+            "fileweft.storage.local-enabled=true",
             "fileweft.storage.local-root=${storageRoot.toAbsolutePath()}",
             "fileweft.outbox.backlog-metrics-enabled=false",
         )

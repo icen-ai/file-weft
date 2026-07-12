@@ -16,7 +16,6 @@ spring:
     create-schemas: true
 
 fileweft:
-  default-tenant-id: alpha
   sync:
     connector-name: dev-platform
     # Keeps the old /api development-only retry route available; the UI and formal tests use /fileweft/v1.

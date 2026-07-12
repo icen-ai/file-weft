@@ -1,0 +1,26 @@
+{
+  "properties": [
+    {
+      "name": "fileweft.default-tenant-enabled",
+      "type": "java.lang.Boolean",
+      "description": "Explicitly enables the fixed single-tenant fallback when no TenantProvider bean is configured. Leave disabled for production multi-tenant deployments.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.default-tenant-id",
+      "type": "java.lang.String",
+      "description": "Tenant identifier used only when fileweft.default-tenant-enabled is true. It must be configured explicitly."
+    },
+    {
+      "name": "fileweft.storage.local-enabled",
+      "type": "java.lang.Boolean",
+      "description": "Explicitly enables process-local filesystem storage when no customer or plugin StorageAdapter is available. Leave disabled for durable production storage.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.local-root",
+      "type": "java.lang.String",
+      "description": "Filesystem root used only when fileweft.storage.local-enabled is true. It must be configured explicitly."
+    }
+  ]
+}

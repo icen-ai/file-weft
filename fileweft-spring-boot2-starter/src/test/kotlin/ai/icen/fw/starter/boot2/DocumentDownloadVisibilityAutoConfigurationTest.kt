@@ -167,7 +167,12 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
 
     private fun contextRunner(): ApplicationContextRunner = ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
-        .withPropertyValues("fileweft.storage.local-root=${storageRoot.toAbsolutePath()}")
+        .withPropertyValues(
+            "fileweft.default-tenant-enabled=true",
+            "fileweft.default-tenant-id=test-tenant",
+            "fileweft.storage.local-enabled=true",
+            "fileweft.storage.local-root=${storageRoot.toAbsolutePath()}",
+        )
 
     private fun privateField(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name)
         .apply { isAccessible = true }

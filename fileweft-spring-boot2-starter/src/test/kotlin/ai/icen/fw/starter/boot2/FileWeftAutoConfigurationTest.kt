@@ -12,6 +12,7 @@ import ai.icen.fw.application.agent.AgentResultRepository
 import ai.icen.fw.application.agent.ConfirmAgentSuggestionService
 import ai.icen.fw.adapter.identity.DefaultUserRealmProvider
 import ai.icen.fw.adapter.storage.LocalStorageAdapter
+import ai.icen.fw.adapter.tenant.FixedTenantProvider
 import ai.icen.fw.adapter.observability.NoOpFileWeftMetrics
 import ai.icen.fw.adapter.micrometer.MicrometerFileWeftGauges
 import ai.icen.fw.adapter.micrometer.MicrometerFileWeftMetrics
@@ -24,6 +25,7 @@ import ai.icen.fw.application.catalog.DocumentCatalogLifecycleService
 import ai.icen.fw.application.catalog.DocumentCatalogMutationService
 import ai.icen.fw.application.doctor.CatalogDoctorChecker
 import ai.icen.fw.application.doctor.DeliveryProfileDoctorChecker
+import ai.icen.fw.application.doctor.DeploymentSafetyDoctorChecker
 import ai.icen.fw.application.doctor.DoctorApplicationService
 import ai.icen.fw.application.doctor.DocumentDoctorTaskHandler
 import ai.icen.fw.application.doctor.DocumentDoctorQueryService
@@ -87,9 +89,11 @@ import ai.icen.fw.application.workflow.WorkflowQueryRepository
 import ai.icen.fw.application.workflow.WorkflowQueryService
 import ai.icen.fw.application.workflow.WorkflowTaskPageRequest
 import ai.icen.fw.application.workflow.WorkflowTaskPageResult
+import ai.icen.fw.core.context.DoctorCheckContext
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
+import ai.icen.fw.core.result.DoctorStatus
 import ai.icen.fw.runtime.plugin.FileWeftPluginRegistry
 import ai.icen.fw.spi.plugin.FileWeftPlugin
 import ai.icen.fw.spi.catalog.DocumentCatalogFolder
@@ -134,6 +138,7 @@ import ai.icen.fw.spi.workflow.DocumentReviewRouteRequest
 import ai.icen.fw.spi.workflow.DocumentReviewRouteTask
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException
@@ -143,6 +148,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Primary
 import java.io.InputStream
 import java.net.URI
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
 import java.time.Duration
@@ -162,6 +168,155 @@ import kotlin.test.assertTrue
 class FileWeftAutoConfigurationTest {
     @TempDir
     lateinit var storageRoot: Path
+
+    @Test
+    fun `fails startup clearly when no trusted tenant provider is configured`() {
+        strictContextRunner()
+            .withPropertyValues(
+                "fileweft.storage.local-enabled=true",
+                "fileweft.storage.local-root=${storageRoot.toAbsolutePath()}",
+            )
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("No TenantProvider is configured") &&
+                        message.contains("fileweft.default-tenant-enabled=true")
+                })
+            }
+    }
+
+    @Test
+    fun `fails startup clearly when no durable storage adapter is configured`() {
+        strictContextRunner()
+            .withUserConfiguration(TenantOnlyConfiguration::class.java)
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("No StorageAdapter is configured") &&
+                        message.contains("fileweft.storage.local-enabled=true")
+                })
+            }
+    }
+
+    @Test
+    fun `legacy fixed tenant id alone does not opt into the fallback`() {
+        strictContextRunner()
+            .withUserConfiguration(StorageOnlyConfiguration::class.java)
+            .withPropertyValues("fileweft.default-tenant-id=legacy-tenant")
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("No TenantProvider is configured")
+                })
+            }
+    }
+
+    @Test
+    fun `legacy local root alone does not opt in or create the directory`() {
+        val inactiveRoot = storageRoot.resolve("legacy-local-root")
+        assertFalse(Files.exists(inactiveRoot))
+
+        strictContextRunner()
+            .withUserConfiguration(TenantOnlyConfiguration::class.java)
+            .withPropertyValues("fileweft.storage.local-root=${inactiveRoot.toAbsolutePath()}")
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("No StorageAdapter is configured")
+                })
+            }
+
+        assertFalse(Files.exists(inactiveRoot))
+    }
+
+    @Test
+    fun `creates fixed tenant and local storage only through complete explicit opt in`() {
+        val enabledRoot = storageRoot.resolve("explicit-local-root")
+        assertFalse(Files.exists(enabledRoot))
+
+        strictContextRunner()
+            .withPropertyValues(
+                "fileweft.default-tenant-enabled=true",
+                "fileweft.default-tenant-id=tenant-a",
+                "fileweft.storage.local-enabled=true",
+                "fileweft.storage.local-root=${enabledRoot.toAbsolutePath()}",
+            )
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertTrue(context.getBean(TenantProvider::class.java) is FixedTenantProvider)
+                assertEquals("tenant-a", context.getBean(TenantProvider::class.java).currentTenant().tenantId.value)
+                assertTrue(context.getBean(StorageAdapter::class.java) is LocalStorageAdapter)
+                assertTrue(Files.isDirectory(enabledRoot))
+            }
+    }
+
+    @Test
+    fun `rejects blank fixed tenant id during startup`() {
+        strictContextRunner()
+            .withPropertyValues(
+                "fileweft.default-tenant-enabled=true",
+                "fileweft.default-tenant-id=   ",
+                "fileweft.storage.local-enabled=true",
+                "fileweft.storage.local-root=${storageRoot.toAbsolutePath()}",
+            )
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("fileweft.default-tenant-id must not be blank")
+                })
+            }
+    }
+
+    @Test
+    fun `rejects blank local storage root during startup`() {
+        strictContextRunner()
+            .withUserConfiguration(TenantOnlyConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.storage.local-enabled=true",
+                "fileweft.storage.local-root=   ",
+            )
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("fileweft.storage.local-root must not be blank")
+                })
+            }
+    }
+
+    @Test
+    fun `publishes disabled by default metadata for explicit fallback settings`() {
+        val resource = requireNotNull(
+            javaClass.classLoader.getResourceAsStream("META-INF/spring-configuration-metadata.json"),
+        )
+        val metadata = resource.use { input -> ObjectMapper().readTree(input) }
+        val properties = metadata.path("properties").toList()
+        val expectedTypes = linkedMapOf(
+            "fileweft.default-tenant-enabled" to "java.lang.Boolean",
+            "fileweft.default-tenant-id" to "java.lang.String",
+            "fileweft.storage.local-enabled" to "java.lang.Boolean",
+            "fileweft.storage.local-root" to "java.lang.String",
+        )
+        val requiredDescriptionFragments = mapOf(
+            "fileweft.default-tenant-enabled" to listOf("fixed single-tenant", "TenantProvider", "production multi-tenant"),
+            "fileweft.default-tenant-id" to listOf("fileweft.default-tenant-enabled", "configured explicitly"),
+            "fileweft.storage.local-enabled" to listOf("process-local filesystem", "StorageAdapter", "durable production storage"),
+            "fileweft.storage.local-root" to listOf("fileweft.storage.local-enabled", "configured explicitly"),
+        )
+
+        expectedTypes.forEach { (name, type) ->
+            val matches = properties.filter { property -> property.path("name").asText() == name }
+            assertEquals(1, matches.size, "Expected exactly one generated metadata entry for $name")
+            val property = matches.single()
+            assertEquals(type, property.path("type").asText())
+            requiredDescriptionFragments.getValue(name).forEach { fragment ->
+                assertTrue(property.path("description").asText().contains(fragment, ignoreCase = true))
+            }
+        }
+
+        listOf("fileweft.default-tenant-enabled", "fileweft.storage.local-enabled").forEach { name ->
+            val property = properties.single { candidate -> candidate.path("name").asText() == name }
+            assertTrue(property.path("defaultValue").isBoolean)
+            assertFalse(property.path("defaultValue").booleanValue())
+        }
+        listOf("fileweft.default-tenant-id", "fileweft.storage.local-root").forEach { name ->
+            val property = properties.single { candidate -> candidate.path("name").asText() == name }
+            assertFalse(property.has("defaultValue"))
+        }
+    }
 
     @Test
     fun `binds the default tenant property`() {
@@ -247,12 +402,21 @@ class FileWeftAutoConfigurationTest {
 
     @Test
     fun `does not replace customer extension beans`() {
-        contextRunner().withUserConfiguration(CustomerConfiguration::class.java).run { context ->
-            assertSame(context.getBean("customerTenantProvider"), context.getBean(TenantProvider::class.java))
-            assertSame(context.getBean("customerUserRealmProvider"), context.getBean(UserRealmProvider::class.java))
-            assertSame(context.getBean("customerAuthorizationProvider"), context.getBean(AuthorizationProvider::class.java))
-            assertSame(context.getBean("customerStorageAdapter"), context.getBean(StorageAdapter::class.java))
-        }
+        strictContextRunner()
+            .withUserConfiguration(CustomerConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.default-tenant-enabled=true",
+                "fileweft.default-tenant-id=",
+                "fileweft.storage.local-enabled=true",
+                "fileweft.storage.local-root=",
+            )
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertSame(context.getBean("customerTenantProvider"), context.getBean(TenantProvider::class.java))
+                assertSame(context.getBean("customerUserRealmProvider"), context.getBean(UserRealmProvider::class.java))
+                assertSame(context.getBean("customerAuthorizationProvider"), context.getBean(AuthorizationProvider::class.java))
+                assertSame(context.getBean("customerStorageAdapter"), context.getBean(StorageAdapter::class.java))
+            }
     }
 
     @Test
@@ -355,7 +519,7 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
-    fun `defaults to safe identity authorization and local storage adapters`() {
+    fun `uses safe identity authorization and explicitly enabled local storage adapters`() {
         contextRunner().run { context ->
             assertNull(context.getBean(UserRealmProvider::class.java).currentUser())
             assertTrue(context.getBean(UserRealmProvider::class.java) is DefaultUserRealmProvider)
@@ -371,11 +535,19 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
-    fun `uses plugin storage ahead of the default while retaining plugin diagnostics`() {
-        contextRunner().withUserConfiguration(PluginConfiguration::class.java).run { context ->
-            assertSame(CustomerStorageAdapter, context.getBean(StorageAdapter::class.java))
-            assertTrue(context.getBean(FileWeftPluginRegistry::class.java).plugins().any { it.id() == "test-storage-plugin" })
-        }
+    fun `uses plugin storage without local fallback opt in and ignores invalid local settings`() {
+        strictContextRunner()
+            .withUserConfiguration(TenantOnlyConfiguration::class.java, PluginConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.storage.local-enabled=false",
+                "fileweft.storage.local-root=",
+            )
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertSame(CustomerStorageAdapter, context.getBean(StorageAdapter::class.java))
+                assertTrue(context.getBean(FileWeftPluginRegistry::class.java).plugins().any { it.id() == "test-storage-plugin" })
+                assertFalse(context.getBean(FileWeftProperties::class.java).storage.localEnabled)
+            }
     }
 
     @Test
@@ -390,6 +562,55 @@ class FileWeftAutoConfigurationTest {
             assertTrue(storage.accessUrl(stored.location, Duration.ofMinutes(1)).toString().startsWith(storageRoot.toUri().toString()))
             storage.delete(stored.location)
         }
+    }
+
+    @Test
+    fun `deployment safety Doctor warns when explicit bootstrap adapters are active`() {
+        strictContextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(
+                "fileweft.default-tenant-enabled=true",
+                "fileweft.default-tenant-id=tenant-a",
+                "fileweft.storage.local-enabled=true",
+                "fileweft.storage.local-root=${storageRoot.toAbsolutePath()}",
+            )
+            .run { context ->
+                assertNull(context.startupFailure)
+                val direct = context.getBean(DeploymentSafetyDoctorChecker::class.java)
+                    .check(DoctorCheckContext(Identifier("tenant-a")))
+                assertEquals(DoctorStatus.WARNING, direct.status)
+                assertEquals("fixed-tenant,local-filesystem", direct.evidence["activeModes"])
+
+                val wired = context.getBean(DoctorApplicationService::class.java)
+                    .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
+                    .checks
+                    .single { check -> check.checkerName == DeploymentSafetyDoctorChecker.NAME }
+                assertEquals(DoctorStatus.WARNING, wired.status)
+            }
+    }
+
+    @Test
+    fun `deployment safety Doctor is healthy for customer tenant and storage beans`() {
+        strictContextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java, CustomerConfiguration::class.java)
+            .run { context ->
+                assertNull(context.startupFailure)
+                val properties = context.getBean(FileWeftProperties::class.java)
+                assertFalse(properties.defaultTenantEnabled)
+                assertTrue(properties.defaultTenantId.isEmpty())
+                assertFalse(properties.storage.localEnabled)
+                assertTrue(properties.storage.localRoot.isEmpty())
+                val direct = context.getBean(DeploymentSafetyDoctorChecker::class.java)
+                    .check(DoctorCheckContext(Identifier("customer")))
+                assertEquals(DoctorStatus.HEALTHY, direct.status)
+                assertTrue(direct.evidence.isEmpty())
+
+                val wired = context.getBean(DoctorApplicationService::class.java)
+                    .inspectDocumentAsSystem(Identifier("customer"), Identifier("document-a"))
+                    .checks
+                    .single { check -> check.checkerName == DeploymentSafetyDoctorChecker.NAME }
+                assertEquals(DoctorStatus.HEALTHY, wired.status)
+            }
     }
 
     @Test
@@ -845,7 +1066,19 @@ class FileWeftAutoConfigurationTest {
 
     private fun contextRunner(): ApplicationContextRunner = ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
-        .withPropertyValues("fileweft.storage.local-root=${storageRoot.toAbsolutePath()}")
+        .withPropertyValues(
+            "fileweft.default-tenant-enabled=true",
+            "fileweft.default-tenant-id=test-tenant",
+            "fileweft.storage.local-enabled=true",
+            "fileweft.storage.local-root=${storageRoot.toAbsolutePath()}",
+        )
+
+    private fun strictContextRunner(): ApplicationContextRunner = ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
+
+    private fun Throwable?.causeMessages(): List<String> = generateSequence(requireNotNull(this)) { failure -> failure.cause }
+        .mapNotNull { failure -> failure.message }
+        .toList()
 
     private fun privateField(target: Any, name: String): Any? = target.javaClass.getDeclaredField(name)
         .apply { isAccessible = true }
@@ -879,6 +1112,20 @@ class FileWeftAutoConfigurationTest {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
         }
 
+        @Bean
+        fun customerStorageAdapter(): StorageAdapter = CustomerStorageAdapter
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class TenantOnlyConfiguration {
+        @Bean
+        fun customerTenantProvider(): TenantProvider = object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(Identifier("customer"))
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class StorageOnlyConfiguration {
         @Bean
         fun customerStorageAdapter(): StorageAdapter = CustomerStorageAdapter
     }

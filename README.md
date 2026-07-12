@@ -236,11 +236,20 @@ Outbox 将 Trace 作为独立的 `trace_id` 持久化字段，而不是混入业
 
 开发验收 API 仍保留当前版本和指定历史版本的流式兼容端点。Dev 控制台只为服务端下发了 `document:download` 的角色显示下载控件；按钮已经使用带 Bearer Token 的正式 `/fileweft/v1` 授权下载请求而非裸 S3 地址，便于演示下载授权与跨租户拒绝。
 
-Spring Boot Starter 默认使用本地存储；可通过以下配置修改根目录：
+## Starter 租户与存储边界
+
+Spring Boot Starter 不会静默推断租户，也不会静默在当前工作目录创建本地文件。多租户生产宿主必须提供可信、逐请求解析的 `TenantProvider`；多节点 API/Worker 必须提供共享且持久的 `StorageAdapter` Bean，或安装唯一的存储插件。客户 Bean 优先于插件，插件优先于显式本地适配器。
+
+只有经过评审的固定单租户、开发或单节点部署，才应同时显式选择 fallback 并填写不可为空的值：
 
 ```properties
-fileweft.storage.local-root=./fileweft-data
+fileweft.default-tenant-enabled=true
+fileweft.default-tenant-id=tenant-a
+fileweft.storage.local-enabled=true
+fileweft.storage.local-root=/var/lib/fileweft
 ```
+
+未提供正式 SPI 实现且未显式启用对应 fallback 时，应用会在启动期给出包含修复属性的错误，而不会带着 `default` 租户或相对本地目录继续运行。即使显式启用，系统 Doctor 仍会把固定租户或本地文件系统标记为 `WARNING`，提醒部署者在扩容或切换多租户前完成替换。
 
 运行 PostgreSQL 集成测试：
 
