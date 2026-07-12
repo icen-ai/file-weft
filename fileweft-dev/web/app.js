@@ -50,6 +50,7 @@ const MAXIMUM_RESUMABLE_PARTS = 10_000;
 const V1_DOCUMENTS_PATH = "/fileweft/v1/documents";
 const V1_WORKFLOW_TASKS_PATH = "/fileweft/v1/workflows/tasks";
 const V1_SYSTEM_DOCTOR_PATH = "/fileweft/v1/doctor";
+const DOWNSTREAM_MIRROR_CAPABILITY = "document:delivery:read";
 const DOCTOR_REPORT_STATUSES = new Set(["HEALTHY", "WARNING", "ERROR", "SKIPPED"]);
 const DOCTOR_TASK_STATUSES = new Set(["PENDING", "RUNNING", "RETRY", "SUCCESS", "FAILED"]);
 const DOCTOR_TASK_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED"]);
@@ -60,6 +61,8 @@ const DOCTOR_PUBLIC_CHECKERS = new Set([
 let doctorPollSequence = 0;
 let doctorContextSequence = 0;
 let documentSelectionSequence = 0;
+let sessionGeneration = 0;
+const activeRequestControllers = new Set();
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => translate(state.locale, key);
 const can = (action) => state.permissions.has(action);
@@ -83,13 +86,62 @@ const localizedApiError = (payload, status) => {
   return translated && translated !== key ? translated : (payload?.message || `Request failed (${status})`);
 };
 
+function supersededSessionError() {
+  const error = new Error("The browser session changed before the request completed.");
+  error.name = "AbortError";
+  error.sessionSuperseded = true;
+  return error;
+}
+
+function assertCurrentSession(generation) {
+  if (generation !== sessionGeneration) throw supersededSessionError();
+}
+
+function isRequestCancellation(error) {
+  return error?.name === "AbortError" || error?.sessionSuperseded === true;
+}
+
+function reportRequestError(error) {
+  if (!isRequestCancellation(error)) notice(error.message, "error");
+}
+
+async function fetchForCurrentSession(path, options, consume) {
+  const generation = sessionGeneration;
+  const controller = new AbortController();
+  const { signal: externalSignal, ...requestOptions } = options || {};
+  const abortFromExternalSignal = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", abortFromExternalSignal, { once: true });
+  activeRequestControllers.add(controller);
+  try {
+    assertCurrentSession(generation);
+    const response = await fetch(path, {
+      ...requestOptions,
+      cache: requestOptions.cache || "no-store",
+      signal: controller.signal,
+    });
+    assertCurrentSession(generation);
+    const result = await consume(response);
+    assertCurrentSession(generation);
+    return result;
+  } catch (error) {
+    if (generation !== sessionGeneration && !isRequestCancellation(error)) throw supersededSessionError();
+    throw error;
+  } finally {
+    activeRequestControllers.delete(controller);
+    externalSignal?.removeEventListener("abort", abortFromExternalSignal);
+  }
+}
+
 const api = async (path, options = {}) => {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-  const response = await fetch(path, { ...options, headers });
-  const text = await response.text();
-  const payload = text ? safeJson(text) : null;
-  if (!response.ok) throw new Error(localizedApiError(payload, response.status));
+  const result = await fetchForCurrentSession(path, { ...options, headers }, async (response) => {
+    const text = await response.text();
+    return { ok: response.ok, status: response.status, payload: text ? safeJson(text) : null };
+  });
+  if (!result.ok) throw new Error(localizedApiError(result.payload, result.status));
+  const payload = result.payload;
   return payload;
 };
 
@@ -143,29 +195,141 @@ function syncPermissionSurface() {
   document.querySelectorAll("[data-permission]").forEach((element) => {
     element.classList.toggle("hidden", !can(element.dataset.permission));
   });
+  const platformNavigation = document.querySelector(".nav-item[data-panel='platform']");
+  platformNavigation?.classList.toggle("hidden", !can(DOWNSTREAM_MIRROR_CAPABILITY));
   if (!can("file:upload:maintenance")) $("#resumable-maintenance-output").classList.add("hidden");
 }
 
-async function login(username, password) {
-  const result = await api("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
-  state.token = result.token;
-  state.user = result;
-  state.permissions = new Set(result.permissions || []);
-  resetDoctorState();
+function setLoginBusy(busy) {
+  const form = $("#login-form");
+  form.setAttribute("aria-busy", String(busy));
+  form.querySelector("button[type='submit']").disabled = busy;
+}
+
+function resetSessionState() {
+  cancelDoctorPolling();
+  documentSelectionSequence += 1;
+  state.token = null;
+  state.user = null;
+  state.permissions = new Set();
+  state.documents = [];
+  state.folders = [];
+  state.deliveryProfiles = [];
+  state.workflowTasks = [];
+  state.workflowHistory = [];
+  state.syncStatus = null;
+  state.selectedFolderId = null;
+  state.selectedId = null;
+  state.detail = null;
+  state.doctor = newDoctorState();
+  state.doctor.contextGeneration = ++doctorContextSequence;
+  state.doctor.pollGeneration = ++doctorPollSequence;
+  state.resumableBusy = false;
   state.stalledResumableCompletions = null;
-  $("#login-view").classList.add("hidden");
-  $("#app-view").classList.remove("hidden");
-  $("#identity-name").textContent = result.displayName;
-  $("#identity-meta").textContent = `${result.tenantId} / ${result.username}`;
-  $("#identity-role").textContent = t(`role.${result.role}`);
-  $("#metric-tenant").textContent = result.tenantId;
-  $("#catalog-tenant-mark").textContent = result.tenantId.toUpperCase();
+}
+
+function clearSensitiveDom() {
+  window.clearTimeout(notice.timer);
+  $("#notice").textContent = "";
+  $("#notice").className = "notice hidden";
+  $("#app-view").classList.add("hidden");
+  $("#login-view").classList.remove("hidden");
+  $("#login-form").reset();
+
+  $("#identity-name").textContent = "—";
+  $("#identity-meta").textContent = "—";
+  $("#identity-role").textContent = "—";
+  $("#metric-tenant").textContent = "—";
+  $("#metric-documents").textContent = "0";
+  $("#metric-review").textContent = "0";
+  $("#metric-sync").textContent = "0";
+  $("#catalog-tenant-mark").textContent = "—";
+  $("#catalog-folder-title").textContent = "—";
+  $("#catalog-folder-meta").textContent = "—";
+
+  [
+    "#catalog-tree", "#document-list", "#workflow-task-list", "#role-route", "#fixture-grid", "#document-actions",
+    "#version-list", "#workflow-list", "#delivery-list", "#task-list", "#agent-result-list", "#sync-list",
+    "#audit-list", "#operation-log-list", "#resumable-maintenance-output",
+  ].forEach((selector) => $(selector).replaceChildren());
+  $("#platform-output").textContent = t("platform.empty");
+
+  $("#create-drawer").classList.add("hidden");
+  $("#create-form").reset();
+  $("#folder-id").replaceChildren();
+  $("#selection-count").textContent = t("inspector.none");
+  $("#empty-inspector").classList.remove("hidden");
+  $("#document-inspector").classList.add("hidden");
+  $("#selected-number").textContent = "—";
+  $("#selected-title").textContent = "—";
+  $("#selected-state").textContent = "—";
+  $("#selected-state").className = "state-tag";
+  delete $("#selected-state").dataset.lifecycleState;
+  $("#delivery-profile-section").classList.add("hidden");
+  $("#delivery-profile").replaceChildren();
+  $("#rename-form").classList.add("hidden");
+  $("#rename-form").reset();
+  $("#version-form").classList.add("hidden");
+  $("#version-form").reset();
+  $("#agent-results-section").classList.add("hidden");
+
+  $("#resumable-upload-form").reset();
+  $("#resumable-upload-status").className = "resumable-status";
+  $("#resumable-upload-status").textContent = t("upload.idle");
+  $("#resumable-abort").classList.add("hidden");
+  $("#resumable-abort").disabled = false;
+  $("#resumable-maintenance-output").classList.add("hidden");
+
+  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === "documents"));
+  ["documents", "workflow", "fixtures", "platform", "doctor", "uploads"].forEach((name) => {
+    $("#" + name + "-panel").classList.toggle("hidden", name !== "documents");
+  });
   syncPermissionSurface();
-  await Promise.all([refreshDocuments(), loadDeliveryProfiles()]);
-  if (state.detail) renderInspector();
-  renderFixtures();
-  renderResumableUpload();
-  notice(t("notice.login"));
+  renderDoctorPanel();
+}
+
+function invalidateSession() {
+  sessionGeneration += 1;
+  activeRequestControllers.forEach((controller) => controller.abort());
+  activeRequestControllers.clear();
+  resetSessionState();
+  clearSensitiveDom();
+  return sessionGeneration;
+}
+
+async function login(username, password) {
+  const generation = invalidateSession();
+  setLoginBusy(true);
+  try {
+    const result = await api("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+    assertCurrentSession(generation);
+    state.token = result.token;
+    state.user = result;
+    state.permissions = new Set(result.permissions || []);
+    resetDoctorState();
+    state.stalledResumableCompletions = null;
+    syncPermissionSurface();
+    await Promise.all([refreshDocuments(), loadDeliveryProfiles()]);
+    assertCurrentSession(generation);
+    $("#identity-name").textContent = result.displayName;
+    $("#identity-meta").textContent = `${result.tenantId} / ${result.username}`;
+    $("#identity-role").textContent = t(`role.${result.role}`);
+    $("#metric-tenant").textContent = result.tenantId;
+    $("#catalog-tenant-mark").textContent = result.tenantId.toUpperCase();
+    if (state.detail) renderInspector();
+    renderFixtures();
+    renderResumableUpload();
+    $("#login-view").classList.add("hidden");
+    $("#app-view").classList.remove("hidden");
+    notice(t("notice.login"));
+  } catch (error) {
+    if (generation !== sessionGeneration || isRequestCancellation(error)) return;
+    invalidateSession();
+    setLoginBusy(false);
+    throw error;
+  } finally {
+    if (generation === sessionGeneration) setLoginBusy(false);
+  }
 }
 
 async function refreshDocuments() {
@@ -301,7 +465,7 @@ function renderWorkflowInbox() {
       await decideWorkflowTask(item, button.dataset.workflowDecision, null);
       await refreshDocuments();
     } catch (error) {
-      notice(error.message, "error");
+      reportRequestError(error);
     }
   }));
 }
@@ -314,6 +478,7 @@ async function decideWorkflowTask(item, action, deliveryProfileId) {
 }
 
 async function selectDocument(documentId, refreshPanels = true) {
+  const generation = sessionGeneration;
   const selectionSequence = ++documentSelectionSequence;
   if (state.doctor.documentId !== documentId) resetDoctorState(documentId);
   const [detail, workflowPage, syncStatus] = await Promise.all([
@@ -321,7 +486,7 @@ async function selectDocument(documentId, refreshPanels = true) {
     v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/workflows?limit=100`),
     v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/sync-status`),
   ]);
-  if (selectionSequence !== documentSelectionSequence || state.doctor.documentId !== documentId) return;
+  if (generation !== sessionGeneration || selectionSequence !== documentSelectionSequence || state.doctor.documentId !== documentId) return;
   state.selectedId = documentId;
   state.detail = detail;
   state.workflowHistory = workflowPage?.items || [];
@@ -335,7 +500,7 @@ async function selectDocument(documentId, refreshPanels = true) {
   syncFolderOptions();
   renderInspector();
   renderDoctorPanel();
-  if (refreshPanels) loadPlatform();
+  if (refreshPanels && can(DOWNSTREAM_MIRROR_CAPABILITY)) loadPlatform();
 }
 
 function evidenceItem(title, content) {
@@ -569,7 +734,7 @@ async function refreshDoctorTask(generation) {
     state.doctor.taskLoading = false;
     state.doctor.taskRefreshFailure = true;
     renderDoctorPanel();
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
@@ -803,7 +968,7 @@ async function runAction(action) {
     }
     await refreshDocuments();
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
@@ -815,7 +980,7 @@ async function retryDelivery(deliveryId, operation) {
     await refreshDocuments();
     loadPlatform();
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
@@ -823,12 +988,19 @@ async function downloadDocument(versionId, fileName) {
   try {
     const headers = new Headers();
     if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-    const response = await fetch(`${V1_DOCUMENTS_PATH}/${state.selectedId}/versions/${versionId}/content`, { headers });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(localizedApiError(text ? safeJson(text) : null, response.status));
+    const result = await fetchForCurrentSession(
+      `${V1_DOCUMENTS_PATH}/${state.selectedId}/versions/${versionId}/content`,
+      { headers },
+      async (response) => {
+        if (response.ok) return { ok: true, blob: await response.blob() };
+        const text = await response.text();
+        return { ok: false, status: response.status, payload: text ? safeJson(text) : null };
+      },
+    );
+    if (!result.ok) {
+      throw new Error(localizedApiError(result.payload, result.status));
     }
-    const objectUrl = URL.createObjectURL(await response.blob());
+    const objectUrl = URL.createObjectURL(result.blob);
     const link = document.createElement("a");
     link.href = objectUrl;
     link.download = fileName || "fileweft-download";
@@ -838,7 +1010,7 @@ async function downloadDocument(versionId, fileName) {
     URL.revokeObjectURL(objectUrl);
     notice(t("notice.download"));
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
@@ -893,9 +1065,13 @@ async function createFixture(fixtureId) {
   if (!can("document:create")) return;
   const fixture = FIXTURES.find((item) => item.id === fixtureId);
   try {
-    const response = await fetch(fixture.path);
-    if (!response.ok) throw new Error(`Fixture download failed (${response.status})`);
-    const blob = await response.blob();
+    const fixtureResponse = await fetchForCurrentSession(fixture.path, {}, async (response) => ({
+      ok: response.ok,
+      status: response.status,
+      blob: response.ok ? await response.blob() : null,
+    }));
+    if (!fixtureResponse.ok) throw new Error(`Fixture download failed (${fixtureResponse.status})`);
+    const blob = fixtureResponse.blob;
     const form = new FormData();
     const suffix = Date.now().toString(36).toUpperCase();
     form.append("documentNumber", `LAB-${fixture.id.toUpperCase()}-${suffix}`);
@@ -909,22 +1085,30 @@ async function createFixture(fixtureId) {
     activatePanel("documents");
     notice(t("notice.fixtureCreated"));
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
 async function loadPlatform() {
-  if (!state.selectedId || !state.user) return;
+  const generation = sessionGeneration;
+  if (!state.selectedId || !state.user || !can(DOWNSTREAM_MIRROR_CAPABILITY)) {
+    $("#platform-output").textContent = t("platform.empty");
+    return;
+  }
+  const documentId = state.selectedId;
   try {
     const deliveries = state.detail?.deliveries || [];
     if (!deliveries.length) {
       $("#platform-output").textContent = t("platform.empty");
       return;
     }
-    const records = await api(`/api/documents/${state.selectedId}/platform-mirror`);
+    const records = await api(`/api/documents/${documentId}/platform-mirror`);
+    if (generation !== sessionGeneration || state.selectedId !== documentId || !can(DOWNSTREAM_MIRROR_CAPABILITY)) return;
     $("#platform-output").textContent = JSON.stringify(records, null, 2);
   } catch (error) {
-    $("#platform-output").textContent = error.message;
+    if (generation === sessionGeneration && !isRequestCancellation(error) && can(DOWNSTREAM_MIRROR_CAPABILITY)) {
+      $("#platform-output").textContent = error.message;
+    }
   }
 }
 
@@ -1005,6 +1189,7 @@ function chunkSizeFromForm() {
 async function startOrResumeUpload(event) {
   event.preventDefault();
   if (!can("file:upload") || state.resumableBusy) return;
+  const generation = sessionGeneration;
   const file = $("#resumable-file").files[0];
   if (!file || file.size <= 0) {
     notice(t("upload.emptyFile"), "error");
@@ -1057,10 +1242,12 @@ async function startOrResumeUpload(event) {
     }
     await uploadResumableParts(file, checkpoint, session);
   } catch (error) {
+    if (generation !== sessionGeneration || isRequestCancellation(error)) return;
     failureMessage = error.message;
     setResumableStatus(error.message, "active");
-    notice(error.message, "error");
+    reportRequestError(error);
   } finally {
+    if (generation !== sessionGeneration) return;
     setResumableBusy(false);
     if (readResumableCheckpoint()) renderResumableUpload();
     if (failureMessage) setResumableStatus(failureMessage, "active");
@@ -1104,6 +1291,7 @@ async function uploadResumableParts(file, checkpoint, session) {
 
 async function abortResumableUpload() {
   if (state.resumableBusy) return;
+  const generation = sessionGeneration;
   const checkpoint = readResumableCheckpoint();
   if (!checkpoint) return;
   let failureMessage = null;
@@ -1115,10 +1303,12 @@ async function abortResumableUpload() {
     setResumableStatus(t("upload.aborted"));
     notice(t("upload.aborted"));
   } catch (error) {
+    if (generation !== sessionGeneration || isRequestCancellation(error)) return;
     failureMessage = error.message;
     setResumableStatus(error.message, "active");
-    notice(error.message, "error");
+    reportRequestError(error);
   } finally {
+    if (generation !== sessionGeneration) return;
     setResumableBusy(false);
     if (readResumableCheckpoint()) renderResumableUpload();
     if (failureMessage) setResumableStatus(failureMessage, "active");
@@ -1160,12 +1350,14 @@ async function loadStalledResumableCompletions() {
     state.stalledResumableCompletions = await api("/api/resumable-uploads/maintenance?limit=20");
     renderStalledResumableCompletions();
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
 function activatePanel(panel) {
-  const target = (panel === "doctor" && !can("document:doctor")) || (panel === "workflow" && !can("document:audit")) ? "documents" : panel;
+  const target = (panel === "doctor" && !can("document:doctor")) ||
+    (panel === "workflow" && !can("document:audit")) ||
+    (panel === "platform" && !can(DOWNSTREAM_MIRROR_CAPABILITY)) ? "documents" : panel;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === target));
   ["documents", "workflow", "fixtures", "platform", "doctor", "uploads"].forEach((name) => $(`#${name}-panel`).classList.toggle("hidden", name !== target));
   if (target === "platform") loadPlatform();
@@ -1182,7 +1374,7 @@ async function processOutbox() {
     await refreshDocuments();
     loadPlatform();
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
@@ -1192,7 +1384,7 @@ async function processTasks() {
     notice(interpolate("notice.tasks", result));
     await refreshDocuments();
   } catch (error) {
-    notice(error.message, "error");
+    reportRequestError(error);
   }
 }
 
@@ -1207,17 +1399,17 @@ const lifecycleJson = (body, action) => ({
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  try { await login(form.get("username"), form.get("password")); } catch (error) { notice(error.message, "error"); }
+  try { await login(form.get("username"), form.get("password")); } catch (error) { reportRequestError(error); }
 });
 document.querySelectorAll(".preset").forEach((button) => button.addEventListener("click", () => { $("#username").value = button.dataset.user; $("#password").value = button.dataset.password; }));
 document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => setLocale(button.dataset.locale)));
-$("#refresh").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
+$("#refresh").addEventListener("click", () => refreshDocuments().catch(reportRequestError));
 $("#process-outbox").addEventListener("click", processOutbox);
 $("#process-tasks").addEventListener("click", processTasks);
-$("#run-doctor").addEventListener("click", () => runImmediateDoctor().catch((error) => notice(error.message, "error")));
-$("#schedule-doctor").addEventListener("click", () => scheduleDoctorTask().catch((error) => notice(error.message, "error")));
-$("#run-system-doctor").addEventListener("click", () => runSystemDoctor().catch((error) => notice(error.message, "error")));
-$("#refresh-workflow-inbox").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
+$("#run-doctor").addEventListener("click", () => runImmediateDoctor().catch(reportRequestError));
+$("#schedule-doctor").addEventListener("click", () => scheduleDoctorTask().catch(reportRequestError));
+$("#run-system-doctor").addEventListener("click", () => runSystemDoctor().catch(reportRequestError));
+$("#refresh-workflow-inbox").addEventListener("click", () => refreshDocuments().catch(reportRequestError));
 $("#open-create").addEventListener("click", () => $("#create-drawer").classList.remove("hidden"));
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));
 $("#create-form").addEventListener("submit", async (event) => {
@@ -1230,7 +1422,7 @@ $("#create-form").addEventListener("submit", async (event) => {
     state.selectedId = result.documentId;
     await refreshDocuments();
     if (state.detail?.document.id !== result.documentId) await selectDocument(result.documentId, false);
-  } catch (error) { notice(error.message, "error"); }
+  } catch (error) { reportRequestError(error); }
 });
 $("#rename-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1239,7 +1431,7 @@ $("#rename-form").addEventListener("submit", async (event) => {
     await v1Api(`${V1_DOCUMENTS_PATH}/${state.selectedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: new FormData(form).get("title") }) });
     form.reset();
     await refreshDocuments();
-  } catch (error) { notice(error.message, "error"); }
+  } catch (error) { reportRequestError(error); }
 });
 $("#version-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1248,19 +1440,24 @@ $("#version-form").addEventListener("submit", async (event) => {
     await v1Api(`${V1_DOCUMENTS_PATH}/${state.selectedId}/versions`, { method: "POST", body: new FormData(form) });
     form.reset();
     await refreshDocuments();
-  } catch (error) { notice(error.message, "error"); }
+  } catch (error) { reportRequestError(error); }
 });
 $("#resumable-upload-form").addEventListener("submit", startOrResumeUpload);
 $("#resumable-abort").addEventListener("click", abortResumableUpload);
 $("#resumable-maintenance").addEventListener("click", loadStalledResumableCompletions);
-$("#logout").addEventListener("click", async () => {
-  try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    cancelDoctorPolling();
-    documentSelectionSequence += 1;
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.workflowTasks = []; state.workflowHistory = []; state.syncStatus = null; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.doctor = newDoctorState(); state.doctor.contextGeneration = ++doctorContextSequence; state.resumableBusy = false; state.stalledResumableCompletions = null;
-    $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
+$("#logout").addEventListener("click", () => {
+  const token = state.token;
+  invalidateSession();
+  setLoginBusy(false);
+  if (token) {
+    api("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   }
 });
 document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", () => activatePanel(button.dataset.panel)));
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  invalidateSession();
+  setLoginBusy(false);
+});
 
 applyTranslations();
