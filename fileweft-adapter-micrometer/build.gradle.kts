@@ -4,7 +4,8 @@ plugins {
 
 dependencies {
     api(project(":fileweft-spi"))
-    implementation(libs.micrometer.core)
+    // MeterRegistry is part of the public adapter constructor contract.
+    api(libs.micrometer.core)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)

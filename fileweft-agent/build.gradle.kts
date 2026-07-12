@@ -5,7 +5,8 @@ plugins {
 dependencies {
     api(project(":fileweft-core"))
     api(project(":fileweft-spi"))
-    implementation(project(":fileweft-application"))
+    // Public handlers and confirmation services expose application contracts.
+    api(project(":fileweft-application"))
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)

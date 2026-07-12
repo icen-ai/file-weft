@@ -4,10 +4,13 @@ plugins {
 
 dependencies {
     api(project(":fileweft-domain"))
-    implementation(project(":fileweft-application"))
-    implementation(project(":fileweft-core"))
+    // JDBC adapters implement application contracts and expose identifiers and
+    // ObjectMapper in their public constructors, so Maven consumers need these
+    // dependencies on their compile classpath as well as at runtime.
+    api(project(":fileweft-application"))
+    api(project(":fileweft-core"))
     implementation(libs.flyway.core)
-    implementation(libs.jackson.databind)
+    api(libs.jackson.databind)
     runtimeOnly(libs.postgresql)
     testImplementation(platform(libs.junit.bom))
     testImplementation(project(":fileweft-agent"))

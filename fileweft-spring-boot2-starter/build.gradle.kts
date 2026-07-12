@@ -4,12 +4,14 @@ plugins {
 
 dependencies {
     api(project(":fileweft-runtime"))
-    implementation(project(":fileweft-agent"))
-    implementation(project(":fileweft-adapter"))
-    implementation(project(":fileweft-adapter-micrometer"))
-    implementation(libs.micrometer.core)
-    implementation(project(":fileweft-persistence"))
-    implementation(libs.jackson.databind)
+    // Auto-configuration bean methods are public JVM API. Keep every type used
+    // in their signatures available to Java and Kotlin consumers.
+    api(project(":fileweft-agent"))
+    api(project(":fileweft-adapter"))
+    api(project(":fileweft-adapter-micrometer"))
+    api(libs.micrometer.core)
+    api(project(":fileweft-persistence"))
+    api(libs.jackson.databind)
     api(libs.spring.boot2.autoconfigure)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
