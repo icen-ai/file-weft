@@ -7,6 +7,8 @@ import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.publish.PublishDocumentService
 import com.fileweft.application.transaction.ApplicationTransaction
+import com.fileweft.application.idempotency.RequestIdempotencyService
+import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleDelegate
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.core.id.Identifier
 import com.fileweft.domain.document.Document
@@ -92,4 +94,16 @@ class DocumentCatalogLifecycleService(
     fun restore(documentId: Identifier): Document = restoreService.restore(documentId, guard)
 
     fun archive(documentId: Identifier): Document = archiveService.archive(documentId, guard)
+
+    internal fun createIdempotentDelegate(
+        idempotency: RequestIdempotencyService,
+    ): IdempotentDocumentLifecycleDelegate = IdempotentDocumentLifecycleDelegate(
+        commands,
+        publishService,
+        offlineService,
+        restoreService,
+        archiveService,
+        idempotency,
+        guard,
+    )
 }

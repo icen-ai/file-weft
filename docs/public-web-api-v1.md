@@ -70,7 +70,8 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 后续正式路由按以下形态增量交付；在对应 Controller 和测试完成前不视为可用接口：
 
-- `submit`、`revise`、`publish`、`offline`、`restore`、`archive`：应用层目录 guard 与持久化幂等地基已就绪，但正式路由仍需完成各用例的事务内幂等接入、统一 flat/guarded 能力解析器和两代 MVC 契约后才开放。
+- `revise`、`publish`、`offline`、`restore`、`archive`：Application 已提供 flat 与 catalog-aware 幂等命令边界，严格重放稳定文档 ID；正式路由仍需统一能力解析器和两代 MVC 契约后才开放。
+- `submit`：目录 guard 与持久化地基已就绪，但必须先把审批路由解析及工作流创建接入同一个最终幂等事务；不能退化调用仅改变文档状态的低层 `submit`。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。
 - `GET /sync-status`、`GET /logs`、`GET /plugins`、`GET /health`：在相应的脱敏读模型和系统授权服务完成后加入；不能复用 Dev 的直连 JDBC DTO。
@@ -93,12 +94,12 @@ Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 
 - 下载保持 `DocumentDownloadService` 的授权、目录可见性和审计，不向前端暴露存储地址或凭据；自定义 Service 装配不能绕过默认 Starter 的目录 guard。
 - Controller 只转发 runtime 已归一的 `Content-Disposition`、内容类型和 verified length，并关闭异常详情回显；它不会从持久化长度推测 `Content-Length`。
 - CORS、CSRF、会话、OAuth/OIDC、mTLS 和 Actuator 暴露由宿主安全策略决定；Web Adapter 不提供弱默认认证。
-- 正式写路由尚未开放 `Idempotency-Key` 协议；底层持久化记录与事务协调器已经交付，但每个生命周期用例仍必须把 claim、业务结果、审计和 Outbox 接入自己的最终短事务后才能发布。Controller 进程内缓存不能代替该能力。
+- 正式写路由尚未开放 `Idempotency-Key` 协议；底层持久化记录、事务协调器及五个简单生命周期 Application 边界已经交付，工作流提交/审批和 MVC 协议仍需完成。Controller 进程内缓存不能代替该能力。
 
 ## 测试与迁移门槛
 
 每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
-本里程碑已完成相关常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 和 9 条 Playwright 浏览器用例；其中包含独立的 formal-v1 用例，验证 Dev 应用确实通过正式 Starter 暴露 v1，而不只是前端改写 URL。该结果闭环了当前已交付读写与下载路由的 Dev v1 验收；持久化请求幂等地基已经独立交付，但尚未覆盖正式生命周期/多人审批用例接入及 Doctor、同步状态和日志等 HTTP 映射。
+本里程碑已完成相关常规模块测试、真实 PostgreSQL/RustFS 双租户 Compose E2E 和 9 条 Playwright 浏览器用例；其中包含独立的 formal-v1 用例，验证 Dev 应用确实通过正式 Starter 暴露 v1，而不只是前端改写 URL。该结果闭环了当前已交付读写与下载路由的 Dev v1 验收；持久化请求幂等地基及五个简单生命周期 Application 边界已经独立交付，但尚未覆盖正式生命周期 MVC、工作流提交/多人审批接入及 Doctor、同步状态和日志等 HTTP 映射。
 
 首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 当前的分阶段接入只作为可运行示例，不代表所有 `/api` 能力已经形成正式协议。

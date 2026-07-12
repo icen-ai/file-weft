@@ -12,6 +12,7 @@ import com.fileweft.domain.file.FileAsset
 import com.fileweft.domain.file.FileAssetMutationRepository
 import com.fileweft.domain.file.FileAssetRepository
 import com.fileweft.spi.catalog.DocumentCatalogBinding
+import com.fileweft.spi.identity.UserIdentity
 
 /**
  * Catalog ACL decision followed by a local binding recheck under the document
@@ -47,6 +48,7 @@ internal class DocumentCatalogMutationGuard(
 
     override fun prepareLifecycle(
         tenantId: Identifier,
+        operator: UserIdentity,
         documentId: Identifier,
         actionName: String,
     ): DocumentLifecycleMutationPermit {
@@ -55,10 +57,13 @@ internal class DocumentCatalogMutationGuard(
             documentId,
             DocumentCatalogMutationPurpose.LIFECYCLE,
             actionName,
+            operator,
         )
         // Base authorization and the host-owned folder ACL are intentionally
         // outside FileWeft's short snapshot transaction.
         catalogAccess.requireCurrentFolderForDocumentLifecycle(
+            permit.tenantId,
+            operator,
             permit.documentId,
             permit.effectiveFolderId,
             permit.actionName,
@@ -83,14 +88,21 @@ internal class DocumentCatalogMutationGuard(
 
     override fun revalidateLifecycle(
         tenantId: Identifier,
+        operator: UserIdentity,
         documentId: Identifier,
         permit: DocumentLifecycleMutationPermit,
     ) {
         val catalogPermit = lifecyclePermit(permit)
-        if (catalogPermit.tenantId != tenantId || catalogPermit.documentId != documentId) {
+        if (
+            catalogPermit.tenantId != tenantId ||
+            catalogPermit.operator != operator ||
+            catalogPermit.documentId != documentId
+        ) {
             throw DocumentCatalogBindingChangedException(documentId)
         }
         catalogAccess.requireCurrentFolderForDocumentLifecycle(
+            catalogPermit.tenantId,
+            operator,
             catalogPermit.documentId,
             catalogPermit.effectiveFolderId,
             catalogPermit.actionName,
@@ -144,6 +156,7 @@ internal class DocumentCatalogMutationGuard(
         documentId: Identifier,
         purpose: DocumentCatalogMutationPurpose,
         actionName: String = DRAFT_EDIT_ACTION,
+        operator: UserIdentity? = null,
     ): DocumentCatalogMutationPermit = transaction.execute {
         val document = documents.findById(tenantId, documentId)
             ?: throw DocumentNotFoundException(documentId)
@@ -165,6 +178,7 @@ internal class DocumentCatalogMutationGuard(
                 ?: DocumentSummaryView.DEFAULT_FOLDER_ID,
             purpose = purpose,
             actionName = actionName,
+            operator = operator,
         )
     }
 
@@ -175,7 +189,10 @@ internal class DocumentCatalogMutationGuard(
     private fun lifecyclePermit(permit: DocumentLifecycleMutationPermit): DocumentCatalogMutationPermit {
         val catalogPermit = permit as? DocumentCatalogMutationPermit
             ?: throw IllegalStateException("Document lifecycle permit does not belong to the catalog guard.")
-        if (catalogPermit.purpose != DocumentCatalogMutationPurpose.LIFECYCLE) {
+        if (
+            catalogPermit.purpose != DocumentCatalogMutationPurpose.LIFECYCLE ||
+            catalogPermit.operator == null
+        ) {
             throw IllegalStateException("Document lifecycle permit was created for a different mutation purpose.")
         }
         return catalogPermit
@@ -197,6 +214,7 @@ private class DocumentCatalogMutationPermit(
     val effectiveFolderId: String,
     val purpose: DocumentCatalogMutationPurpose,
     val actionName: String,
+    val operator: UserIdentity?,
 ) : DocumentMutationPermit, DocumentLifecycleMutationPermit
 
 private enum class DocumentCatalogMutationPurpose {
@@ -212,12 +230,14 @@ private enum class DocumentCatalogMutationPurpose {
 internal interface DocumentLifecycleMutationGuard {
     fun prepareLifecycle(
         tenantId: Identifier,
+        operator: UserIdentity,
         documentId: Identifier,
         actionName: String,
     ): DocumentLifecycleMutationPermit
 
     fun revalidateLifecycle(
         tenantId: Identifier,
+        operator: UserIdentity,
         documentId: Identifier,
         permit: DocumentLifecycleMutationPermit,
     )

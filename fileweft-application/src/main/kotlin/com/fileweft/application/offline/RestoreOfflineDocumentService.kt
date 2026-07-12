@@ -2,11 +2,13 @@ package com.fileweft.application.offline
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
-import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.delivery.DocumentDeliveryRemovalStatus
 import com.fileweft.application.delivery.DocumentDeliveryStatus
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationContext
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationTransaction
+import com.fileweft.application.lifecycle.ValidatedDocumentLifecycleMutation
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -24,7 +26,7 @@ import com.fileweft.spi.tenant.TenantProvider
  */
 class RestoreOfflineDocumentService(
     private val tenantProvider: TenantProvider,
-    private val userRealmProvider: UserRealmProvider,
+    userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val documentRepository: DocumentRepository,
     private val deliveries: DocumentDeliveryTargetRepository,
@@ -35,55 +37,71 @@ class RestoreOfflineDocumentService(
 
     fun restore(documentId: Identifier): Document = execute(documentId, null)
 
+    @JvmSynthetic
     internal fun restore(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
         execute(documentId, guard)
 
     private fun execute(documentId: Identifier, guard: DocumentLifecycleMutationGuard?): Document {
-        val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, RESTORE_ACTION)
-        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
-            null
-        } else {
-            guard.prepareLifecycle(tenant.tenantId, documentId, RESTORE_ACTION).also { prepared ->
-                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
-            }
-        }
+        val context = prepareRestore(documentId, guard)
+        val validated = context.revalidate()
         return transaction.execute {
-            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenant.tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
-            }
-            if (guard != null) {
-                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
-            }
-            val currentDeliveries = deliveries.findByDocumentGeneration(
-                tenant.tenantId,
-                document.id,
-                document.deliveryGeneration,
-            )
-            require(currentDeliveries.none { it.status in ACTIVE_DELIVERY_STATES }) {
-                "Document still has downstream synchronization in progress; wait for the current publication generation to settle."
-            }
-            require(currentDeliveries.none {
-                it.status == DocumentDeliveryStatus.SUCCEEDED && it.removalStatus != DocumentDeliveryRemovalStatus.SUCCEEDED
-            }) {
-                "Document still has delivered downstream targets awaiting withdrawal."
-            }
-            document.transition(LifecycleCommand.RESTORE_DRAFT)
-            documentRepository.save(document)
-            auditTrail?.record(
-                tenantId = tenant.tenantId,
-                resourceType = DOCUMENT_RESOURCE_TYPE,
-                resourceId = document.id,
-                action = RESTORE_ACTION,
-                operatorId = operator?.id,
-                operatorName = operator?.displayName,
-                details = mapOf("completedDeliveryGeneration" to document.deliveryGeneration.toString()),
-            )
-            document
+            DocumentLifecycleMutationTransaction.execute { restoreInCurrentTransaction(validated) }
         }
+    }
+
+    @JvmSynthetic
+    internal fun prepareRestore(
+        documentId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentLifecycleMutationContext {
+        val tenant = tenantProvider.currentTenant()
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, RESTORE_ACTION)
+        return DocumentLifecycleMutationContext.prepare(
+            tenantId = tenant.tenantId,
+            operator = operator,
+            documentId = documentId,
+            action = RESTORE_ACTION,
+            guard = guard,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun restoreInCurrentTransaction(validated: ValidatedDocumentLifecycleMutation): Document {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(RESTORE_ACTION)
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        validated.verifyLocked(document, RESTORE_ACTION)
+        val currentDeliveries = deliveries.findByDocumentGeneration(
+            context.tenantId,
+            document.id,
+            document.deliveryGeneration,
+        )
+        if (currentDeliveries.any { it.status in ACTIVE_DELIVERY_STATES }) {
+            throw DocumentRestoreConflictException(DocumentRestoreConflictReason.DELIVERY_IN_PROGRESS)
+        }
+        if (currentDeliveries.any {
+                it.status == DocumentDeliveryStatus.SUCCEEDED &&
+                    it.removalStatus != DocumentDeliveryRemovalStatus.SUCCEEDED
+            }
+        ) {
+            throw DocumentRestoreConflictException(DocumentRestoreConflictReason.WITHDRAWAL_INCOMPLETE)
+        }
+        document.transition(LifecycleCommand.RESTORE_DRAFT)
+        documentRepository.save(document)
+        auditTrail?.record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = RESTORE_ACTION,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+            details = mapOf("completedDeliveryGeneration" to document.deliveryGeneration.toString()),
+        )
+        return document
     }
 
     private companion object {
@@ -92,3 +110,19 @@ class RestoreOfflineDocumentService(
         val ACTIVE_DELIVERY_STATES = setOf(DocumentDeliveryStatus.PENDING, DocumentDeliveryStatus.RETRYING)
     }
 }
+
+enum class DocumentRestoreConflictReason {
+    DELIVERY_IN_PROGRESS,
+    WITHDRAWAL_INCOMPLETE,
+}
+
+class DocumentRestoreConflictException(
+    val reason: DocumentRestoreConflictReason,
+) : IllegalStateException(
+    when (reason) {
+        DocumentRestoreConflictReason.DELIVERY_IN_PROGRESS ->
+            "Document delivery is still in progress."
+        DocumentRestoreConflictReason.WITHDRAWAL_INCOMPLETE ->
+            "Document delivery withdrawal is incomplete."
+    },
+)

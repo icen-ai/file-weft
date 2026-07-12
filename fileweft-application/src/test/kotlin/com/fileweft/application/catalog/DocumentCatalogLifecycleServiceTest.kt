@@ -6,6 +6,7 @@ import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
 import com.fileweft.application.document.DocumentCommandService
+import com.fileweft.application.document.DocumentMutationComponents
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
@@ -293,6 +294,63 @@ class DocumentCatalogLifecycleServiceTest {
             assertTrue(fixture.catalog.requests.isEmpty())
             assertTrue(fixture.audits.records.isEmpty())
         }
+    }
+
+    @Test
+    fun `lifecycle prepare and revalidation retain one entry tenant and operator snapshot`() {
+        val tenants = SwitchingTenantProvider(
+            TenantContext(TENANT_ID),
+            TenantContext(FOREIGN_TENANT_ID),
+        )
+        val entryOperator = UserIdentity(REVIEWER_ONE_ID, "Reviewer One")
+        val users = SwitchingUserProvider(
+            entryOperator,
+            UserIdentity(REVIEWER_TWO_ID, "Reviewer Two"),
+        )
+        val fixture = Fixture(
+            initialDocument = publishedDocument(),
+            tenantProvider = tenants,
+            userProvider = users,
+        )
+
+        fixture.service.archive(DOCUMENT_ID)
+
+        assertEquals(1, tenants.calls)
+        assertEquals(1, users.calls)
+        assertEquals(3, fixture.authorization.requests.size)
+        assertTrue(fixture.authorization.requests.all { request -> request.resource.tenantId == TENANT_ID })
+        assertTrue(fixture.authorization.requests.all { request -> request.subject.id == entryOperator.id })
+        assertEquals(2, fixture.catalog.accessRequests.size)
+        assertTrue(fixture.catalog.accessRequests.all { request -> request.tenantId == TENANT_ID })
+        assertTrue(fixture.catalog.accessRequests.all { request -> request.userId == entryOperator.id })
+        assertEquals(entryOperator.id, fixture.audits.records.single().operatorId)
+    }
+
+    @Test
+    fun `lifecycle permit cannot be revalidated by another operator`() {
+        val fixture = Fixture(initialDocument = publishedDocument())
+        val guard = DocumentCatalogMutationGuard(
+            fixture.catalogAccess,
+            DocumentMutationComponents(fixture.documents, fixture.assets, fixture.transaction),
+        )
+        val entryOperator = UserIdentity(REVIEWER_ONE_ID, "Reviewer One")
+        val otherOperator = UserIdentity(REVIEWER_TWO_ID, "Reviewer Two")
+        val permit = guard.prepareLifecycle(
+            TENANT_ID,
+            entryOperator,
+            DOCUMENT_ID,
+            "document:archive",
+        )
+        val catalogCallsAfterPrepare = fixture.catalog.accessRequests.size
+        val authorizationCallsAfterPrepare = fixture.authorization.requests.size
+
+        assertFailsWith<DocumentCatalogBindingChangedException> {
+            guard.revalidateLifecycle(TENANT_ID, otherOperator, DOCUMENT_ID, permit)
+        }
+
+        assertEquals(catalogCallsAfterPrepare, fixture.catalog.accessRequests.size)
+        assertEquals(authorizationCallsAfterPrepare, fixture.authorization.requests.size)
+        assertEquals(0, fixture.assets.mutationReads)
     }
 
     @Test
@@ -613,6 +671,8 @@ class DocumentCatalogLifecycleServiceTest {
         allowed: Boolean = true,
         catalogVisible: Boolean = true,
         authorizationDecision: (AuthorizationRequest) -> Boolean = { allowed },
+        tenantProvider: TenantProvider? = null,
+        userProvider: UserRealmProvider? = null,
     ) {
         val events = mutableListOf<String>()
         val transaction = TrackingTransaction(events)
@@ -624,11 +684,12 @@ class DocumentCatalogLifecycleServiceTest {
         val audits = RecordingAudits()
         val outbox = RecordingOutbox()
         val users = MutableUsers(currentUser)
+        private val identities = userProvider ?: users
         val authorization = RecordingAuthorization(authorizationDecision, transaction)
         val catalog = RecordingCatalog(catalogVisible, transaction, events)
         val deliveryResolutionTransactionStates = mutableListOf<Boolean>()
-        private val tenants = object : TenantProvider {
-            override fun currentTenant() = TenantContext(TENANT_ID)
+        private val tenants = tenantProvider ?: object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(TENANT_ID)
         }
         private val ids = CountingIds()
         private val auditTrail = AuditTrail(
@@ -645,7 +706,7 @@ class DocumentCatalogLifecycleServiceTest {
         )
         private val commands = DocumentCommandService(
             tenants,
-            users,
+            identities,
             authorization,
             documents,
             transaction,
@@ -653,7 +714,7 @@ class DocumentCatalogLifecycleServiceTest {
         )
         private val reviews = DocumentReviewWorkflowService(
             tenants,
-            users,
+            identities,
             authorization,
             documents,
             workflows,
@@ -664,7 +725,7 @@ class DocumentCatalogLifecycleServiceTest {
         )
         private val publish = PublishDocumentService(
             tenants,
-            users,
+            identities,
             authorization,
             documents,
             deliveryPlanner,
@@ -674,7 +735,7 @@ class DocumentCatalogLifecycleServiceTest {
         )
         private val offline = OfflineDocumentService(
             tenants,
-            users,
+            identities,
             authorization,
             documents,
             transaction,
@@ -682,7 +743,7 @@ class DocumentCatalogLifecycleServiceTest {
         )
         private val restore = RestoreOfflineDocumentService(
             tenants,
-            users,
+            identities,
             authorization,
             documents,
             workflows.deliveries,
@@ -691,15 +752,15 @@ class DocumentCatalogLifecycleServiceTest {
         )
         private val archive = ArchiveDocumentService(
             tenants,
-            users,
+            identities,
             authorization,
             documents,
             transaction,
             auditTrail,
         )
-        private val catalogAccess = DocumentCatalogAccessService(
+        val catalogAccess = DocumentCatalogAccessService(
             tenants,
-            users,
+            identities,
             authorization,
             catalog,
         )
@@ -867,6 +928,7 @@ class DocumentCatalogLifecycleServiceTest {
         private var visible = visible
         var revokeAfterFirstLookup = false
         val requests = mutableListOf<String>()
+        val accessRequests = mutableListOf<DocumentCatalogAccessRequest>()
         val operations = mutableListOf<DocumentCatalogOperation>()
         val transactionStates = mutableListOf<Boolean>()
 
@@ -879,6 +941,7 @@ class DocumentCatalogLifecycleServiceTest {
             transactionStates += transaction.active
             assertFalse(transaction.active, "Catalog ACL must run outside FileWeft transactions.")
             requests += folderId
+            accessRequests += request
             operations += request.operation
             events += "catalog:$folderId"
             val result = if (visible) DocumentCatalogFolder(folderId, null, "Folder $folderId") else null
@@ -891,6 +954,28 @@ class DocumentCatalogLifecycleServiceTest {
 
     private class MutableUsers(var current: UserIdentity?) : UserRealmProvider {
         override fun currentUser(): UserIdentity? = current
+        override fun findUser(userId: Identifier): UserIdentity? = null
+    }
+
+    private class SwitchingTenantProvider(
+        vararg values: TenantContext,
+    ) : TenantProvider {
+        private val values = values
+        var calls: Int = 0
+            private set
+
+        override fun currentTenant(): TenantContext = values[minOf(calls++, values.lastIndex)]
+    }
+
+    private class SwitchingUserProvider(
+        vararg values: UserIdentity?,
+    ) : UserRealmProvider {
+        private val values = values
+        var calls: Int = 0
+            private set
+
+        override fun currentUser(): UserIdentity? = values[minOf(calls++, values.lastIndex)]
+
         override fun findUser(userId: Identifier): UserIdentity? = null
     }
 

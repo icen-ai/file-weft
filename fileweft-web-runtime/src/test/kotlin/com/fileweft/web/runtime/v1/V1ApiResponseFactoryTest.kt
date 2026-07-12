@@ -3,6 +3,10 @@ package com.fileweft.web.runtime.v1
 import com.fileweft.application.document.DocumentFolderReadAccessUnavailableException
 import com.fileweft.application.document.DocumentContentUnavailableException
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.idempotency.IdempotencyInProgressException
+import com.fileweft.application.idempotency.IdempotencyKeyConflictException
+import com.fileweft.application.offline.DocumentRestoreConflictException
+import com.fileweft.application.offline.DocumentRestoreConflictReason
 import com.fileweft.application.workflow.DocumentReviewConflictException
 import com.fileweft.application.upload.StoredObjectIntegrityException
 import com.fileweft.application.security.ApplicationForbiddenException
@@ -54,6 +58,16 @@ class V1ApiResponseFactoryTest {
                 ApiErrorCodes.CONFLICT,
                 "Request conflicts with the current resource state.",
             ),
+            IdempotencyKeyConflictException() to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            DocumentRestoreConflictException(DocumentRestoreConflictReason.WITHDRAWAL_INCOMPLETE) to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
             DocumentContentUnavailableException(
                 "s3://private-bucket/internal-object is unavailable",
                 IllegalStateException("sdk credential detail"),
@@ -64,6 +78,11 @@ class V1ApiResponseFactoryTest {
             ),
             IllegalArgumentException("cursor=secret-token") to Triple(400, ApiErrorCodes.INVALID_REQUEST, "Request is invalid."),
             StoredObjectIntegrityException("storage acknowledged a private path") to Triple(
+                500,
+                ApiErrorCodes.INTERNAL_ERROR,
+                "An unexpected error occurred.",
+            ),
+            IdempotencyInProgressException() to Triple(
                 500,
                 ApiErrorCodes.INTERNAL_ERROR,
                 "An unexpected error occurred.",

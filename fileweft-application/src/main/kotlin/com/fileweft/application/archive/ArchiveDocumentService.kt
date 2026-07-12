@@ -2,9 +2,11 @@ package com.fileweft.application.archive
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
-import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationContext
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationTransaction
+import com.fileweft.application.lifecycle.ValidatedDocumentLifecycleMutation
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -18,7 +20,7 @@ import com.fileweft.spi.tenant.TenantProvider
 /** Archives a published document through its domain lifecycle. */
 class ArchiveDocumentService(
     private val tenantProvider: TenantProvider,
-    private val userRealmProvider: UserRealmProvider,
+    userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val documentRepository: DocumentRepository,
     private val transaction: ApplicationTransaction,
@@ -29,43 +31,57 @@ class ArchiveDocumentService(
 
     fun archive(documentId: Identifier): Document = execute(documentId, null)
 
+    @JvmSynthetic
     internal fun archive(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
         execute(documentId, guard)
 
     private fun execute(documentId: Identifier, guard: DocumentLifecycleMutationGuard?): Document {
-        val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, ARCHIVE_ACTION)
-        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
-            null
-        } else {
-            guard.prepareLifecycle(tenant.tenantId, documentId, ARCHIVE_ACTION).also { prepared ->
-                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
-            }
-        }
+        val context = prepareArchive(documentId, guard)
+        val validated = context.revalidate()
         return transaction.execute {
-            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenant.tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
-            }
-            if (guard != null) {
-                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
-            }
-            document.transition(LifecycleCommand.ARCHIVE)
-            val removalPlan = removalPlanner?.plan(document)
-            documentRepository.save(document)
-            auditTrail?.record(
-                tenantId = tenant.tenantId,
-                resourceType = DOCUMENT_RESOURCE_TYPE,
-                resourceId = document.id,
-                action = ARCHIVE_AUDIT_ACTION,
-                operatorId = operator?.id,
-                operatorName = operator?.displayName,
-                details = removalPlan?.let { plan -> mapOf("downstreamRemovalCount" to plan.deliveries.size.toString()) } ?: emptyMap(),
-            )
-            document
+            DocumentLifecycleMutationTransaction.execute { archiveInCurrentTransaction(validated) }
         }
+    }
+
+    @JvmSynthetic
+    internal fun prepareArchive(
+        documentId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentLifecycleMutationContext {
+        val tenant = tenantProvider.currentTenant()
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, ARCHIVE_ACTION)
+        return DocumentLifecycleMutationContext.prepare(
+            tenantId = tenant.tenantId,
+            operator = operator,
+            documentId = documentId,
+            action = ARCHIVE_ACTION,
+            guard = guard,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun archiveInCurrentTransaction(validated: ValidatedDocumentLifecycleMutation): Document {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(ARCHIVE_ACTION)
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        validated.verifyLocked(document, ARCHIVE_ACTION)
+        document.transition(LifecycleCommand.ARCHIVE)
+        val removalPlan = removalPlanner?.plan(document)
+        documentRepository.save(document)
+        auditTrail?.record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = ARCHIVE_AUDIT_ACTION,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+            details = removalPlan?.let { plan -> mapOf("downstreamRemovalCount" to plan.deliveries.size.toString()) } ?: emptyMap(),
+        )
+        return document
     }
 
     private companion object {

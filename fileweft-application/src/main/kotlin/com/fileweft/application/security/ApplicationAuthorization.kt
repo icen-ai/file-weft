@@ -7,22 +7,54 @@ import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.authorization.AuthorizationRequest
 import com.fileweft.spi.authorization.AuthorizationResource
 import com.fileweft.spi.authorization.AuthorizationSubject
+import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
+import java.util.Collections
+import java.util.LinkedHashMap
 
 internal class ApplicationAuthorization(
     private val userRealmProvider: UserRealmProvider,
     private val authorizationProvider: AuthorizationProvider,
 ) {
-    fun requireDocumentAction(tenantId: Identifier, documentId: Identifier, action: String) {
+    fun requireDocumentAction(tenantId: Identifier, documentId: Identifier, action: String): UserIdentity =
         requireAction(tenantId, documentId, "DOCUMENT", action)
+
+    fun requireDocumentActionAs(
+        tenantId: Identifier,
+        documentId: Identifier,
+        action: String,
+        user: UserIdentity,
+    ): UserIdentity = requireActionAs(tenantId, documentId, "DOCUMENT", action, user)
+
+    fun requireCurrentUser(): UserIdentity = snapshot(
+        userRealmProvider.currentUser() ?: throw ApplicationUnauthenticatedException(),
+    )
+
+    fun requireAction(
+        tenantId: Identifier,
+        resourceId: Identifier,
+        resourceType: String,
+        action: String,
+    ): UserIdentity {
+        val user = requireCurrentUser()
+        return requireActionAs(tenantId, resourceId, resourceType, action, user)
     }
 
-    fun requireAction(tenantId: Identifier, resourceId: Identifier, resourceType: String, action: String) {
-        val user = userRealmProvider.currentUser()
-            ?: throw ApplicationUnauthenticatedException()
+    /**
+     * Reuses the trusted identity snapshot captured at the application boundary.
+     * Callers must never construct [UserIdentity] from request parameters.
+     */
+    fun requireActionAs(
+        tenantId: Identifier,
+        resourceId: Identifier,
+        resourceType: String,
+        action: String,
+        user: UserIdentity,
+    ): UserIdentity {
+        val snapshot = snapshot(user)
         val decision = authorizationProvider.authorize(
             AuthorizationRequest(
-                subject = AuthorizationSubject(user.id, "USER", user.attributes),
+                subject = AuthorizationSubject(snapshot.id, "USER", snapshot.attributes),
                 resource = AuthorizationResource(resourceId, resourceType, tenantId),
                 action = AuthorizationAction(action),
                 environment = AuthorizationEnvironment(),
@@ -31,7 +63,14 @@ internal class ApplicationAuthorization(
         if (!decision.allowed) {
             throw ApplicationForbiddenException(decision.reason ?: ApplicationForbiddenException.DEFAULT_MESSAGE)
         }
+        return snapshot
     }
+
+    private fun snapshot(user: UserIdentity): UserIdentity = UserIdentity(
+        id = user.id,
+        displayName = user.displayName,
+        attributes = Collections.unmodifiableMap(LinkedHashMap(user.attributes)),
+    )
 }
 
 /**

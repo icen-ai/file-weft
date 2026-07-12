@@ -2,7 +2,9 @@ package com.fileweft.application.document
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
-import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationContext
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationTransaction
+import com.fileweft.application.lifecycle.ValidatedDocumentLifecycleMutation
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -15,7 +17,7 @@ import com.fileweft.spi.tenant.TenantProvider
 
 class DocumentCommandService(
     private val tenantProvider: TenantProvider,
-    private val userRealmProvider: UserRealmProvider,
+    userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val documentRepository: DocumentRepository,
     private val transaction: ApplicationTransaction,
@@ -25,18 +27,32 @@ class DocumentCommandService(
 
     fun submit(documentId: Identifier): Document = execute(documentId, SUBMIT_ACTION, LifecycleCommand.SUBMIT, null)
 
+    @JvmSynthetic
     internal fun submit(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
         execute(documentId, SUBMIT_ACTION, LifecycleCommand.SUBMIT, guard)
 
     fun reject(documentId: Identifier): Document = execute(documentId, REJECT_ACTION, LifecycleCommand.REJECT, null)
 
+    @JvmSynthetic
     internal fun reject(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
         execute(documentId, REJECT_ACTION, LifecycleCommand.REJECT, guard)
 
     fun revise(documentId: Identifier): Document = execute(documentId, REVISE_ACTION, LifecycleCommand.REVISE, null)
 
+    @JvmSynthetic
     internal fun revise(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
         execute(documentId, REVISE_ACTION, LifecycleCommand.REVISE, guard)
+
+    @JvmSynthetic
+    internal fun prepareRevise(
+        documentId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentLifecycleMutationContext = prepare(documentId, REVISE_ACTION, guard)
+
+    /** Runs only inside the caller's already-open final local transaction. */
+    @JvmSynthetic
+    internal fun reviseInCurrentTransaction(validated: ValidatedDocumentLifecycleMutation): Document =
+        mutateInCurrentTransaction(validated, REVISE_ACTION, LifecycleCommand.REVISE)
 
     private fun execute(
         documentId: Identifier,
@@ -44,38 +60,56 @@ class DocumentCommandService(
         command: LifecycleCommand,
         guard: DocumentLifecycleMutationGuard?,
     ): Document {
-        val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        // Base authorization must precede every repository and catalog access.
-        authorization.requireDocumentAction(tenant.tenantId, documentId, action)
-        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
-            null
-        } else {
-            guard.prepareLifecycle(tenant.tenantId, documentId, action).also { prepared ->
-                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
-            }
-        }
+        val context = prepare(documentId, action, guard)
+        val validated = context.revalidate()
         return transaction.execute {
-            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenant.tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
+            DocumentLifecycleMutationTransaction.execute {
+                mutateInCurrentTransaction(validated, action, command)
             }
-            if (guard != null) {
-                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
-            }
-            document.transition(command)
-            documentRepository.save(document)
-            auditTrail?.record(
-                tenantId = tenant.tenantId,
-                resourceType = DOCUMENT_RESOURCE_TYPE,
-                resourceId = document.id,
-                action = action,
-                operatorId = operator?.id,
-                operatorName = operator?.displayName,
-            )
-            document
         }
+    }
+
+    private fun prepare(
+        documentId: Identifier,
+        action: String,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentLifecycleMutationContext {
+        val tenant = tenantProvider.currentTenant()
+        // Base authorization must precede every repository and catalog access.
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, action)
+        return DocumentLifecycleMutationContext.prepare(
+            tenantId = tenant.tenantId,
+            operator = operator,
+            documentId = documentId,
+            action = action,
+            guard = guard,
+        )
+    }
+
+    private fun mutateInCurrentTransaction(
+        validated: ValidatedDocumentLifecycleMutation,
+        expectedAction: String,
+        command: LifecycleCommand,
+    ): Document {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(expectedAction)
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        validated.verifyLocked(document, expectedAction)
+        document.transition(command)
+        documentRepository.save(document)
+        auditTrail?.record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = expectedAction,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+        )
+        return document
     }
 
     private companion object {

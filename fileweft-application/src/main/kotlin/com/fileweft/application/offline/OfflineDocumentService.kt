@@ -2,9 +2,11 @@ package com.fileweft.application.offline
 
 import com.fileweft.application.audit.AuditTrail
 import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
-import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.delivery.DocumentDeliveryRemovalPlanner
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationContext
+import com.fileweft.application.lifecycle.DocumentLifecycleMutationTransaction
+import com.fileweft.application.lifecycle.ValidatedDocumentLifecycleMutation
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
@@ -17,7 +19,7 @@ import com.fileweft.spi.tenant.TenantProvider
 
 class OfflineDocumentService(
     private val tenantProvider: TenantProvider,
-    private val userRealmProvider: UserRealmProvider,
+    userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val documentRepository: DocumentRepository,
     private val transaction: ApplicationTransaction,
@@ -28,43 +30,57 @@ class OfflineDocumentService(
 
     fun offline(documentId: Identifier): Document = execute(documentId, null)
 
+    @JvmSynthetic
     internal fun offline(documentId: Identifier, guard: DocumentLifecycleMutationGuard): Document =
         execute(documentId, guard)
 
     private fun execute(documentId: Identifier, guard: DocumentLifecycleMutationGuard?): Document {
-        val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, OFFLINE_ACTION)
-        val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
-            null
-        } else {
-            guard.prepareLifecycle(tenant.tenantId, documentId, OFFLINE_ACTION).also { prepared ->
-                guard.revalidateLifecycle(tenant.tenantId, documentId, prepared)
-            }
-        }
+        val context = prepareOffline(documentId, guard)
+        val validated = context.revalidate()
         return transaction.execute {
-            val document = documentRepository.findForMutation(tenant.tenantId, documentId)
-                ?: throw DocumentNotFoundException(documentId)
-            if (document.tenantId != tenant.tenantId || document.id != documentId) {
-                throw DocumentNotFoundException(documentId)
-            }
-            if (guard != null) {
-                guard.verifyLifecycleLocked(tenant.tenantId, document, checkNotNull(permit))
-            }
-            document.transition(LifecycleCommand.OFFLINE)
-            val removalPlan = removalPlanner?.plan(document)
-            documentRepository.save(document)
-            auditTrail?.record(
-                tenantId = tenant.tenantId,
-                resourceType = DOCUMENT_RESOURCE_TYPE,
-                resourceId = document.id,
-                action = OFFLINE_AUDIT_ACTION,
-                operatorId = operator?.id,
-                operatorName = operator?.displayName,
-                details = removalPlan?.let { plan -> mapOf("downstreamRemovalCount" to plan.deliveries.size.toString()) } ?: emptyMap(),
-            )
-            document
+            DocumentLifecycleMutationTransaction.execute { offlineInCurrentTransaction(validated) }
         }
+    }
+
+    @JvmSynthetic
+    internal fun prepareOffline(
+        documentId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentLifecycleMutationContext {
+        val tenant = tenantProvider.currentTenant()
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, OFFLINE_ACTION)
+        return DocumentLifecycleMutationContext.prepare(
+            tenantId = tenant.tenantId,
+            operator = operator,
+            documentId = documentId,
+            action = OFFLINE_ACTION,
+            guard = guard,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun offlineInCurrentTransaction(validated: ValidatedDocumentLifecycleMutation): Document {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(OFFLINE_ACTION)
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        validated.verifyLocked(document, OFFLINE_ACTION)
+        document.transition(LifecycleCommand.OFFLINE)
+        val removalPlan = removalPlanner?.plan(document)
+        documentRepository.save(document)
+        auditTrail?.record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = OFFLINE_AUDIT_ACTION,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+            details = removalPlan?.let { plan -> mapOf("downstreamRemovalCount" to plan.deliveries.size.toString()) } ?: emptyMap(),
+        )
+        return document
     }
 
     private companion object {

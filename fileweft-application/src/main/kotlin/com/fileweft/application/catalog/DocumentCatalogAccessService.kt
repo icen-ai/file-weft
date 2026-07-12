@@ -10,6 +10,7 @@ import com.fileweft.spi.catalog.DocumentCatalogAccessRequest
 import com.fileweft.spi.catalog.DocumentCatalogFolder
 import com.fileweft.spi.catalog.DocumentCatalogOperation
 import com.fileweft.spi.catalog.DocumentCatalogProvider
+import com.fileweft.spi.identity.UserIdentity
 import com.fileweft.spi.identity.UserRealmProvider
 import com.fileweft.spi.tenant.TenantProvider
 import java.util.Collections
@@ -97,6 +98,26 @@ class DocumentCatalogAccessService(
         DocumentCatalogOperation.BROWSE,
     )
 
+    /**
+     * Lifecycle guards use the identity and tenant captured at the outer
+     * application boundary. Re-reading ambient providers here could authorize
+     * a different principal from the one persisted in audit/idempotency data.
+     */
+    internal fun requireCurrentFolderForDocumentLifecycle(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        documentId: Identifier,
+        folderId: String,
+        actionName: String,
+    ): DocumentCatalogFolder = requireCurrentFolderForDocumentActionAs(
+        tenantId,
+        operator,
+        documentId,
+        folderId,
+        actionName,
+        DocumentCatalogOperation.BROWSE,
+    )
+
     private fun requireCurrentFolderForDocumentAction(
         documentId: Identifier,
         folderId: String,
@@ -108,6 +129,33 @@ class DocumentCatalogAccessService(
             "Persisted document catalog binding must be a canonical folder id."
         }
         requireFolder(
+            folderId,
+            documentId,
+            DOCUMENT_RESOURCE_TYPE,
+            actionName,
+            operation,
+        )
+    } catch (_: DocumentCatalogFolderUnavailableException) {
+        throw DocumentNotFoundException(documentId)
+    } catch (failure: IllegalArgumentException) {
+        throw IllegalStateException("Persisted document catalog binding is invalid.", failure)
+    }
+
+    private fun requireCurrentFolderForDocumentActionAs(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        documentId: Identifier,
+        folderId: String,
+        actionName: String,
+        operation: DocumentCatalogOperation,
+    ): DocumentCatalogFolder = try {
+        requireValidDocumentAction(actionName)
+        require(folderId == folderId.trim()) {
+            "Persisted document catalog binding must be a canonical folder id."
+        }
+        requireFolderAs(
+            tenantId,
+            operator,
             folderId,
             documentId,
             DOCUMENT_RESOURCE_TYPE,
@@ -157,6 +205,29 @@ class DocumentCatalogAccessService(
         actionName: String,
         operation: DocumentCatalogOperation = DocumentCatalogOperation.BIND_DOCUMENT,
     ): DocumentCatalogFolder {
+        val tenant = tenantProvider.currentTenant()
+        val user = userRealmProvider.currentUser()
+            ?: throw ApplicationUnauthenticatedException()
+        return requireFolderAs(
+            tenant.tenantId,
+            user,
+            folderId,
+            resourceId,
+            resourceType,
+            actionName,
+            operation,
+        )
+    }
+
+    private fun requireFolderAs(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        folderId: String,
+        resourceId: Identifier,
+        resourceType: String,
+        actionName: String,
+        operation: DocumentCatalogOperation = DocumentCatalogOperation.BIND_DOCUMENT,
+    ): DocumentCatalogFolder {
         val normalizedFolderId = folderId.trim()
         require(normalizedFolderId.isNotEmpty()) { "Document catalog folder id must not be blank." }
         require(normalizedFolderId.length <= MAX_FOLDER_ID_LENGTH) {
@@ -165,7 +236,7 @@ class DocumentCatalogAccessService(
         require(normalizedFolderId.none { character -> Character.isISOControl(character) }) {
             "Document catalog folder id must not contain control characters."
         }
-        return access(operation, resourceId, resourceType, actionName) { request ->
+        return accessAs(tenantId, operator, operation, resourceId, resourceType, actionName) { request ->
             val folder = catalog.findFolder(request, normalizedFolderId)
                 ?: throw DocumentCatalogFolderUnavailableException()
             requireValidCanonicalFolder(folder)
@@ -200,13 +271,34 @@ class DocumentCatalogAccessService(
         val tenant = tenantProvider.currentTenant()
         val user = userRealmProvider.currentUser()
             ?: throw ApplicationUnauthenticatedException()
-        authorization.requireAction(
+        return accessAs(
             tenant.tenantId,
+            user,
+            operation,
             resourceId,
             resourceType,
             actionName,
+            action,
         )
-        return action(DocumentCatalogAccessRequest(tenant.tenantId, user.id, operation))
+    }
+
+    private fun <T> accessAs(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        operation: DocumentCatalogOperation,
+        resourceId: Identifier,
+        resourceType: String,
+        actionName: String,
+        action: (DocumentCatalogAccessRequest) -> T,
+    ): T {
+        val authorizedOperator = authorization.requireActionAs(
+            tenantId,
+            resourceId,
+            resourceType,
+            actionName,
+            operator,
+        )
+        return action(DocumentCatalogAccessRequest(tenantId, authorizedOperator.id, operation))
     }
 
     private companion object {

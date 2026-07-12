@@ -8,7 +8,6 @@ import com.fileweft.application.delivery.DocumentDeliveryPreparation
 import com.fileweft.application.document.DocumentNotFoundException
 import com.fileweft.application.security.ApplicationAuthorization
 import com.fileweft.application.security.ApplicationForbiddenException
-import com.fileweft.application.security.ApplicationUnauthenticatedException
 import com.fileweft.application.transaction.ApplicationTransaction
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
@@ -44,6 +43,7 @@ class DocumentReviewWorkflowService(
     fun submit(documentId: Identifier, reviewerId: Identifier?, reviewRouteId: String?): WorkflowInstance =
         executeSubmit(documentId, reviewerId, reviewRouteId, null)
 
+    @JvmSynthetic
     internal fun submit(
         documentId: Identifier,
         reviewerId: Identifier?,
@@ -58,12 +58,11 @@ class DocumentReviewWorkflowService(
         guard: DocumentLifecycleMutationGuard?,
     ): WorkflowInstance {
         val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, SUBMIT_ACTION)
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, SUBMIT_ACTION)
         val permit: DocumentLifecycleMutationPermit? = if (guard == null) {
             null
         } else {
-            guard.prepareLifecycle(tenant.tenantId, documentId, SUBMIT_ACTION)
+            guard.prepareLifecycle(tenant.tenantId, operator, documentId, SUBMIT_ACTION)
         }
         val routeRequest = transaction.execute {
             val document = documentRepository.findById(tenant.tenantId, documentId)
@@ -77,14 +76,14 @@ class DocumentReviewWorkflowService(
                 documentId = document.id,
                 documentNumber = document.documentNumber,
                 documentTitle = document.title,
-                submittedBy = operator?.id,
+                submittedBy = operator.id,
                 requestedReviewerId = reviewerId,
             )
         }
         // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
         val resolvedRoute = reviewRoutes.resolve(reviewRouteId, routeRequest)
         if (guard != null) {
-            guard.revalidateLifecycle(tenant.tenantId, documentId, checkNotNull(permit))
+            guard.revalidateLifecycle(tenant.tenantId, operator, documentId, checkNotNull(permit))
         }
         return transaction.execute {
             val document = documentRepository.findForMutation(tenant.tenantId, documentId)
@@ -125,8 +124,8 @@ class DocumentReviewWorkflowService(
                 resourceType = DOCUMENT_RESOURCE_TYPE,
                 resourceId = document.id,
                 action = SUBMITTED_AUDIT_ACTION,
-                operatorId = operator?.id,
-                operatorName = operator?.displayName,
+                operatorId = operator.id,
+                operatorName = operator.displayName,
                 details = mapOf(
                     "workflowId" to workflow.id.value,
                     "reviewerId" to (reviewerId?.value ?: "UNASSIGNED"),
@@ -144,6 +143,7 @@ class DocumentReviewWorkflowService(
     fun approve(workflowId: Identifier, taskId: Identifier, comment: String?, deliveryProfileId: String?): Document =
         executeDecision(workflowId, taskId, comment, approved = true, deliveryProfileId = deliveryProfileId, guard = null)
 
+    @JvmSynthetic
     internal fun approve(
         workflowId: Identifier,
         taskId: Identifier,
@@ -162,6 +162,7 @@ class DocumentReviewWorkflowService(
     fun reject(workflowId: Identifier, taskId: Identifier, comment: String? = null): Document =
         executeDecision(workflowId, taskId, comment, approved = false, deliveryProfileId = null, guard = null)
 
+    @JvmSynthetic
     internal fun reject(
         workflowId: Identifier,
         taskId: Identifier,
@@ -187,8 +188,7 @@ class DocumentReviewWorkflowService(
         val tenant = tenantProvider.currentTenant()
         // Authenticate before the workflow lookup so an anonymous caller
         // cannot probe workflow identifiers through repository behavior.
-        val operator = userRealmProvider.currentUser()
-            ?: throw ApplicationUnauthenticatedException()
+        val operator = authorization.requireCurrentUser()
         // Existing authorization providers know document resources only. A
         // single tenant-scoped snapshot therefore resolves that resource; a
         // missing workflow and a denied document are both exposed as the same
@@ -199,14 +199,19 @@ class DocumentReviewWorkflowService(
                 ?: throw WorkflowNotFoundException(workflowId)
         }
         val permit: DocumentLifecycleMutationPermit? = hideWorkflowDocumentVisibilityFailure(workflowId) {
-            authorization.requireDocumentAction(tenant.tenantId, workflowSnapshot.documentId, AUDIT_ACTION)
+            authorization.requireDocumentActionAs(
+                tenant.tenantId,
+                workflowSnapshot.documentId,
+                AUDIT_ACTION,
+                operator,
+            )
             if (guard == null) {
                 null
             } else {
                 // Catalog preparation repeats the document action decision
                 // after its local binding snapshot. A concurrent revocation
                 // must remain indistinguishable from a missing workflow.
-                guard.prepareLifecycle(tenant.tenantId, workflowSnapshot.documentId, AUDIT_ACTION)
+                guard.prepareLifecycle(tenant.tenantId, operator, workflowSnapshot.documentId, AUDIT_ACTION)
             }
         }
         val snapshotCompletesApproval = approved && workflowSnapshot.willCompleteAfterApproval(taskId, operator.id)
@@ -236,6 +241,7 @@ class DocumentReviewWorkflowService(
             hideWorkflowDocumentVisibilityFailure(workflowId) {
                 guard.revalidateLifecycle(
                     tenant.tenantId,
+                    operator,
                     workflowSnapshot.documentId,
                     checkNotNull(permit),
                 )
@@ -310,6 +316,7 @@ class DocumentReviewWorkflowService(
                 hideWorkflowDocumentVisibilityFailure(workflowId) {
                     guard.revalidateLifecycle(
                         tenant.tenantId,
+                        operator,
                         workflowSnapshot.documentId,
                         checkNotNull(permit),
                     )

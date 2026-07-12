@@ -50,6 +50,8 @@ import com.fileweft.application.doctor.UnavailableDoctorChecker
 import com.fileweft.application.doctor.WorkflowDoctorChecker
 import com.fileweft.application.idempotency.RequestIdempotencyRepository
 import com.fileweft.application.idempotency.RequestIdempotencyService
+import com.fileweft.application.lifecycle.IdempotentDocumentCatalogLifecycleService
+import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleService
 import com.fileweft.application.offline.OfflineDocumentService
 import com.fileweft.application.offline.RestoreOfflineDocumentService
 import com.fileweft.application.outbox.OutboxEventRepository
@@ -360,6 +362,48 @@ class FileWeftRuntimeConfiguration {
         } else {
             null
         }
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(
+        value = [
+            DocumentCatalogAccessService::class,
+            IdempotentDocumentLifecycleService::class,
+            IdempotentDocumentCatalogLifecycleService::class,
+        ],
+    )
+    fun fileWeftIdempotentDocumentLifecycleService(
+        commands: DocumentCommandService,
+        publish: PublishDocumentService,
+        offline: OfflineDocumentService,
+        restore: RestoreOfflineDocumentService,
+        archive: ArchiveDocumentService,
+        idempotency: RequestIdempotencyService,
+    ): IdempotentDocumentLifecycleService = IdempotentDocumentLifecycleService(
+        commands,
+        publish,
+        offline,
+        restore,
+        archive,
+        idempotency,
+    )
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(
+        value = [IdempotentDocumentLifecycleService::class, IdempotentDocumentCatalogLifecycleService::class],
+    )
+    fun fileWeftIdempotentDocumentCatalogLifecycleService(
+        catalogLifecycles: ObjectProvider<DocumentCatalogLifecycleService>,
+        idempotency: RequestIdempotencyService,
+    ): IdempotentDocumentCatalogLifecycleService? {
+        if (!catalogLifecycles.stream().findAny().isPresent) {
+            return null
+        }
+        return IdempotentDocumentCatalogLifecycleService(
+            requiredSecurityCandidate(catalogLifecycles, DocumentCatalogLifecycleService::class.java),
+            idempotency,
+        )
     }
 
     @Bean

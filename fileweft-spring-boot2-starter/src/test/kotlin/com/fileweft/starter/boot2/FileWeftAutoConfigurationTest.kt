@@ -42,6 +42,8 @@ import com.fileweft.application.idempotency.RequestIdempotencyClaim
 import com.fileweft.application.idempotency.RequestIdempotencyRecord
 import com.fileweft.application.idempotency.RequestIdempotencyRepository
 import com.fileweft.application.idempotency.RequestIdempotencyService
+import com.fileweft.application.lifecycle.IdempotentDocumentCatalogLifecycleService
+import com.fileweft.application.lifecycle.IdempotentDocumentLifecycleService
 import com.fileweft.application.upload.ResumableUploadService
 import com.fileweft.application.upload.ResumableUploadSessionRepository
 import com.fileweft.application.outbox.OutboxWorker
@@ -365,6 +367,8 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(ResumableUploadSessionRepository::class.java) != null)
             assertTrue(context.getBean(RequestIdempotencyRepository::class.java) is JdbcRequestIdempotencyRepository)
             assertTrue(context.getBean(RequestIdempotencyService::class.java) != null)
+            assertTrue(context.getBean(IdempotentDocumentLifecycleService::class.java) != null)
+            assertTrue(context.getBeansOfType(IdempotentDocumentCatalogLifecycleService::class.java).isEmpty())
             assertTrue(context.getBean(DocumentDraftService::class.java) != null)
             assertTrue(context.getBeansOfType(DocumentCatalogDraftService::class.java).isEmpty())
             assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
@@ -419,6 +423,52 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `backs off the flat idempotent lifecycle boundary for a customer bean`() {
+        contextRunner().withUserConfiguration(
+            DatabaseConfiguration::class.java,
+            CustomerIdempotentLifecycleConfiguration::class.java,
+        ).run { context ->
+            assertSame(
+                context.getBean("customerIdempotentDocumentLifecycleService"),
+                context.getBean(IdempotentDocumentLifecycleService::class.java),
+            )
+            assertTrue(context.getBeansOfType(IdempotentDocumentCatalogLifecycleService::class.java).isEmpty())
+        }
+    }
+
+    @Test
+    fun `backs off the guarded idempotent lifecycle boundary for a customer bean`() {
+        contextRunner().withUserConfiguration(
+            DatabaseConfiguration::class.java,
+            CustomerConfiguration::class.java,
+            CatalogConfiguration::class.java,
+            CustomerIdempotentCatalogLifecycleConfiguration::class.java,
+        ).run { context ->
+            assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
+            assertSame(
+                context.getBean("customerIdempotentDocumentCatalogLifecycleService"),
+                context.getBean(IdempotentDocumentCatalogLifecycleService::class.java),
+            )
+        }
+    }
+
+    @Test
+    fun `does not add a guarded lifecycle boundary beside an explicit flat customer boundary`() {
+        contextRunner().withUserConfiguration(
+            DatabaseConfiguration::class.java,
+            CustomerConfiguration::class.java,
+            CatalogConfiguration::class.java,
+            CustomerIdempotentLifecycleConfiguration::class.java,
+        ).run { context ->
+            assertSame(
+                context.getBean("customerIdempotentDocumentLifecycleService"),
+                context.getBean(IdempotentDocumentLifecycleService::class.java),
+            )
+            assertTrue(context.getBeansOfType(IdempotentDocumentCatalogLifecycleService::class.java).isEmpty())
+        }
+    }
+
+    @Test
     fun `combines a host review route with the configured default route id`() {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java, ReviewRouteConfiguration::class.java)
             .withPropertyValues("fileweft.workflow.default-review-route-id=host-route")
@@ -438,6 +488,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
+                assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
+                assertTrue(context.getBean(IdempotentDocumentCatalogLifecycleService::class.java) != null)
                 assertTrue(context.getBean(FileAssetMutationRepository::class.java) != null)
                 assertTrue(context.getBean(JdbcFileAssetRepository::class.java) is FileAssetMutationRepository)
                 assertTrue(context.getBean(CatalogDoctorChecker::class.java) != null)
@@ -467,6 +519,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBeansOfType(DocumentCatalogBindingService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(DocumentCatalogMutationService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(DocumentCatalogLifecycleService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(IdempotentDocumentCatalogLifecycleService::class.java).isEmpty())
                 assertTrue(context.getBeansOfType(FileAssetMutationRepository::class.java).isEmpty())
             }
     }
@@ -488,6 +542,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
+                assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
+                assertTrue(context.getBean(IdempotentDocumentCatalogLifecycleService::class.java) != null)
             }
     }
 
@@ -509,6 +565,8 @@ class FileWeftAutoConfigurationTest {
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogLifecycleService::class.java) != null)
+                assertTrue(context.getBeansOfType(IdempotentDocumentLifecycleService::class.java).isEmpty())
+                assertTrue(context.getBean(IdempotentDocumentCatalogLifecycleService::class.java) != null)
             }
     }
 
@@ -519,6 +577,20 @@ class FileWeftAutoConfigurationTest {
                 DatabaseConfiguration::class.java,
                 CustomerConfiguration::class.java,
                 MultipleCatalogConfiguration::class.java,
+            )
+            .run { context ->
+                assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
+            }
+    }
+
+    @Test
+    fun `fails closed when multiple guarded catalog lifecycle services are present`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                CustomerConfiguration::class.java,
+                CatalogConfiguration::class.java,
+                MultipleCatalogLifecycleConfiguration::class.java,
             )
             .run { context ->
                 assertTrue(requireNotNull(context.startupFailure).hasCause(NoUniqueBeanDefinitionException::class.java))
@@ -689,6 +761,36 @@ class FileWeftAutoConfigurationTest {
         ): RequestIdempotencyService = RequestIdempotencyService(repository, transaction, identifiers, clock)
     }
 
+    @Configuration(proxyBeanMethods = false)
+    class CustomerIdempotentLifecycleConfiguration {
+        @Bean
+        fun customerIdempotentDocumentLifecycleService(
+            commands: DocumentCommandService,
+            publish: PublishDocumentService,
+            offline: OfflineDocumentService,
+            restore: RestoreOfflineDocumentService,
+            archive: ArchiveDocumentService,
+            idempotency: RequestIdempotencyService,
+        ): IdempotentDocumentLifecycleService = IdempotentDocumentLifecycleService(
+            commands,
+            publish,
+            offline,
+            restore,
+            archive,
+            idempotency,
+        )
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CustomerIdempotentCatalogLifecycleConfiguration {
+        @Bean
+        fun customerIdempotentDocumentCatalogLifecycleService(
+            catalogLifecycle: DocumentCatalogLifecycleService,
+            idempotency: RequestIdempotencyService,
+        ): IdempotentDocumentCatalogLifecycleService =
+            IdempotentDocumentCatalogLifecycleService(catalogLifecycle, idempotency)
+    }
+
     private object CustomerRequestIdempotencyRepository : RequestIdempotencyRepository {
         override fun findByKeyDigest(tenantId: Identifier, keyDigest: String): RequestIdempotencyRecord? = null
 
@@ -748,6 +850,57 @@ class FileWeftAutoConfigurationTest {
             override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> =
                 listOf(DocumentCatalogFolder("inbox-b", null, "Inbox B"))
         }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class MultipleCatalogLifecycleConfiguration {
+        @Bean
+        @Primary
+        fun primaryCatalogLifecycleService(
+            commands: DocumentCommandService,
+            workflows: DocumentReviewWorkflowService,
+            publish: PublishDocumentService,
+            offline: OfflineDocumentService,
+            restore: RestoreOfflineDocumentService,
+            archive: ArchiveDocumentService,
+            catalogAccess: DocumentCatalogAccessService,
+            documents: DocumentRepository,
+            assets: FileAssetRepository,
+            transaction: ApplicationTransaction,
+        ): DocumentCatalogLifecycleService = catalogLifecycle(
+            commands, workflows, publish, offline, restore, archive, catalogAccess, documents, assets, transaction,
+        )
+
+        @Bean
+        fun secondaryCatalogLifecycleService(
+            commands: DocumentCommandService,
+            workflows: DocumentReviewWorkflowService,
+            publish: PublishDocumentService,
+            offline: OfflineDocumentService,
+            restore: RestoreOfflineDocumentService,
+            archive: ArchiveDocumentService,
+            catalogAccess: DocumentCatalogAccessService,
+            documents: DocumentRepository,
+            assets: FileAssetRepository,
+            transaction: ApplicationTransaction,
+        ): DocumentCatalogLifecycleService = catalogLifecycle(
+            commands, workflows, publish, offline, restore, archive, catalogAccess, documents, assets, transaction,
+        )
+
+        private fun catalogLifecycle(
+            commands: DocumentCommandService,
+            workflows: DocumentReviewWorkflowService,
+            publish: PublishDocumentService,
+            offline: OfflineDocumentService,
+            restore: RestoreOfflineDocumentService,
+            archive: ArchiveDocumentService,
+            catalogAccess: DocumentCatalogAccessService,
+            documents: DocumentRepository,
+            assets: FileAssetRepository,
+            transaction: ApplicationTransaction,
+        ): DocumentCatalogLifecycleService = DocumentCatalogLifecycleService(
+            commands, workflows, publish, offline, restore, archive, catalogAccess, documents, assets, transaction,
+        )
     }
 
     @Configuration(proxyBeanMethods = false)

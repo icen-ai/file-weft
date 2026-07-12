@@ -1,6 +1,8 @@
 package com.fileweft.application.workflow
 
 import com.fileweft.application.audit.AuditTrail
+import com.fileweft.application.catalog.DocumentLifecycleMutationGuard
+import com.fileweft.application.catalog.DocumentLifecycleMutationPermit
 import com.fileweft.application.delivery.DocumentDeliveryPlanner
 import com.fileweft.application.delivery.DocumentDeliveryTarget
 import com.fileweft.application.delivery.DocumentDeliveryTargetRepository
@@ -52,8 +54,59 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class DocumentReviewWorkflowServiceTest {
+    @Test
+    fun `submit uses one fixed user snapshot for authorization guard route and audit`() {
+        val operator = UserIdentity(
+            Identifier("submitter-primary"),
+            "固定提交人",
+            mapOf("identity-source" to "primary"),
+        )
+        val users = RotatingUsers(operator)
+        val authorizationRequests = mutableListOf<AuthorizationRequest>()
+        val guard = IdentitySnapshotGuard()
+        val route = RecordingIdentityRouteProvider()
+        val audits = RecordingAudits()
+        val document = draftDocument()
+        val service = service(
+            documents = InMemoryDocuments(document),
+            workflows = InMemoryWorkflows(),
+            outbox = RecordingOutbox(),
+            identifiers = listOf("workflow-1", "task-1"),
+            userRealmProviderOverride = users,
+            auditTrail = auditTrail(audits),
+            reviewRoutes = DocumentReviewRouteResolver(listOf(route), route.id()),
+            authorization = { request ->
+                authorizationRequests += request
+                AuthorizationDecision(true)
+            },
+        )
+
+        service.submit(document.id, Identifier("reviewer-1"), route.id(), guard)
+
+        assertEquals(1, users.currentUserCalls)
+        assertEquals(1, authorizationRequests.size)
+        assertEquals(operator.id, authorizationRequests.single().subject.id)
+        assertEquals(operator.attributes, authorizationRequests.single().subject.attributes)
+        assertEquals(DocumentReviewWorkflowService.SUBMIT_ACTION, authorizationRequests.single().action.name)
+        guard.assertSingleSnapshot(operator, DocumentReviewWorkflowService.SUBMIT_ACTION)
+        assertEquals(operator.id, route.request?.submittedBy)
+        assertAuditOperator(audits.records.single(), operator)
+    }
+
+    @Test
+    fun `approve uses one fixed user snapshot for authorization guard and audit`() {
+        assertDecisionUsesOneFixedUserSnapshot(approved = true)
+    }
+
+    @Test
+    fun `reject uses one fixed user snapshot for authorization guard and audit`() {
+        assertDecisionUsesOneFixedUserSnapshot(approved = false)
+    }
+
     @Test
     fun `submits document into a persisted reviewer workflow`() {
         val documents = InMemoryDocuments(draftDocument())
@@ -443,6 +496,7 @@ class DocumentReviewWorkflowServiceTest {
         outbox: RecordingOutbox,
         identifiers: List<String>,
         currentUser: UserIdentity? = UserIdentity(Identifier("reviewer-1"), "审批者"),
+        userRealmProviderOverride: UserRealmProvider? = null,
         auditTrail: AuditTrail? = null,
         reviewRoutes: DocumentReviewRouteResolver = DocumentReviewRouteResolver(),
         transaction: ApplicationTransaction = DirectTransaction,
@@ -452,7 +506,7 @@ class DocumentReviewWorkflowServiceTest {
         val ids = ArrayDeque(identifiers)
         return DocumentReviewWorkflowService(
             tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(Identifier("tenant-1")) },
-            userRealmProvider = object : UserRealmProvider {
+            userRealmProvider = userRealmProviderOverride ?: object : UserRealmProvider {
                 override fun currentUser(): UserIdentity? = currentUser
                 override fun findUser(userId: Identifier): UserIdentity? = null
             },
@@ -465,6 +519,56 @@ class DocumentReviewWorkflowServiceTest {
             auditTrail = auditTrail,
             reviewRoutes = reviewRoutes,
         )
+    }
+
+    private fun assertDecisionUsesOneFixedUserSnapshot(approved: Boolean) {
+        val operator = UserIdentity(
+            Identifier(if (approved) "approver-primary" else "rejecter-primary"),
+            if (approved) "固定审批人" else "固定驳回人",
+            mapOf("identity-source" to "primary"),
+        )
+        val users = RotatingUsers(operator)
+        val authorizationRequests = mutableListOf<AuthorizationRequest>()
+        val guard = IdentitySnapshotGuard()
+        val audits = RecordingAudits()
+        val document = pendingReviewDocument()
+        val workflow = pendingWorkflow(document.id, operator.id)
+        val service = service(
+            documents = InMemoryDocuments(document),
+            workflows = InMemoryWorkflows(workflow),
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            userRealmProviderOverride = users,
+            auditTrail = auditTrail(audits),
+            authorization = { request ->
+                authorizationRequests += request
+                AuthorizationDecision(true)
+            },
+        )
+
+        if (approved) {
+            service.approve(workflow.id, workflow.tasks.single().id, "approved", null, guard)
+        } else {
+            service.reject(workflow.id, workflow.tasks.single().id, "rejected", guard)
+        }
+
+        assertEquals(1, users.currentUserCalls)
+        assertEquals(1, authorizationRequests.size)
+        assertEquals(operator.id, authorizationRequests.single().subject.id)
+        assertEquals(operator.attributes, authorizationRequests.single().subject.attributes)
+        assertEquals(DocumentReviewWorkflowService.AUDIT_ACTION, authorizationRequests.single().action.name)
+        guard.assertSingleSnapshot(operator, DocumentReviewWorkflowService.AUDIT_ACTION)
+        val audit = audits.records.single()
+        assertEquals(
+            if (approved) DocumentReviewWorkflowService.APPROVED_AUDIT_ACTION else DocumentReviewWorkflowService.REJECTED_AUDIT_ACTION,
+            audit.action,
+        )
+        assertAuditOperator(audit, operator)
+    }
+
+    private fun assertAuditOperator(audit: AuditRecord, operator: UserIdentity) {
+        assertEquals(operator.id, audit.operatorId)
+        assertEquals(operator.displayName, audit.operatorName)
     }
 
     private fun auditTrail(repository: RecordingAudits) = AuditTrail(
@@ -499,6 +603,89 @@ class DocumentReviewWorkflowServiceTest {
         Identifier("workflow-1"), Identifier("tenant-1"), documentId, DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
         tasks = listOf(WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), assigneeId)),
     )
+
+    private class RotatingUsers(first: UserIdentity) : UserRealmProvider {
+        private val identities = listOf(
+            first,
+            UserIdentity(Identifier("rotating-secondary"), "错误的第二身份", mapOf("identity-source" to "secondary")),
+            UserIdentity(Identifier("rotating-tertiary"), "错误的第三身份", mapOf("identity-source" to "tertiary")),
+        )
+        var currentUserCalls: Int = 0
+            private set
+
+        override fun currentUser(): UserIdentity {
+            val identity = identities[currentUserCalls.coerceAtMost(identities.lastIndex)]
+            currentUserCalls++
+            return identity
+        }
+
+        override fun findUser(userId: Identifier): UserIdentity? = null
+    }
+
+    private class RecordingIdentityRouteProvider : DocumentReviewRouteProvider {
+        var request: DocumentReviewRouteRequest? = null
+            private set
+
+        override fun id(): String = "identity-snapshot"
+
+        override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute {
+            this.request = request
+            return DocumentReviewRoute(
+                DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+                listOf(DocumentReviewRouteTask(request.requestedReviewerId)),
+            )
+        }
+    }
+
+    private class IdentitySnapshotGuard : DocumentLifecycleMutationGuard {
+        private val preparedOperators = mutableListOf<UserIdentity>()
+        private val revalidatedOperators = mutableListOf<UserIdentity>()
+        private val actions = mutableListOf<String>()
+        private var permit: IdentitySnapshotPermit? = null
+        private var verifyCalls: Int = 0
+
+        override fun prepareLifecycle(
+            tenantId: Identifier,
+            operator: UserIdentity,
+            documentId: Identifier,
+            actionName: String,
+        ): DocumentLifecycleMutationPermit {
+            preparedOperators += operator
+            actions += actionName
+            return IdentitySnapshotPermit(operator).also { permit = it }
+        }
+
+        override fun revalidateLifecycle(
+            tenantId: Identifier,
+            operator: UserIdentity,
+            documentId: Identifier,
+            permit: DocumentLifecycleMutationPermit,
+        ) {
+            revalidatedOperators += operator
+            assertTrue(this.permit === permit)
+            assertSame((permit as IdentitySnapshotPermit).operator, operator)
+        }
+
+        override fun verifyLifecycleLocked(
+            tenantId: Identifier,
+            document: Document,
+            permit: DocumentLifecycleMutationPermit,
+        ) {
+            verifyCalls++
+            assertTrue(this.permit === permit)
+        }
+
+        fun assertSingleSnapshot(operator: UserIdentity, action: String) {
+            assertEquals(1, preparedOperators.size)
+            assertEquals(1, revalidatedOperators.size)
+            assertEquals(1, verifyCalls)
+            assertEquals(operator, preparedOperators.single())
+            assertSame(preparedOperators.single(), revalidatedOperators.single())
+            assertEquals(listOf(action), actions)
+        }
+    }
+
+    private class IdentitySnapshotPermit(val operator: UserIdentity) : DocumentLifecycleMutationPermit
 
     private class InMemoryDocuments(var document: Document?) : DocumentRepository {
         var saveCalls: Int = 0

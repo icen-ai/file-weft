@@ -3,6 +3,8 @@ package com.fileweft.web.runtime.v1
 import com.fileweft.application.document.DocumentFolderReadAccessUnavailableException
 import com.fileweft.application.document.DocumentContentUnavailableException
 import com.fileweft.application.document.DocumentNotFoundException
+import com.fileweft.application.idempotency.IdempotencyConflictException
+import com.fileweft.application.offline.DocumentRestoreConflictException
 import com.fileweft.application.publish.ActiveDocumentReviewWorkflowException
 import com.fileweft.application.security.ApplicationForbiddenException
 import com.fileweft.application.security.ApplicationUnauthenticatedException
@@ -63,6 +65,8 @@ class V1ApiResponseFactory {
             is DocumentConflictException,
             is WorkflowConflictException,
             is ActiveDocumentReviewWorkflowException,
+            is IdempotencyConflictException,
+            is DocumentRestoreConflictException,
             -> MappedFailure(
                 ApiHttpStatus.CONFLICT,
                 ApiErrorCodes.CONFLICT,

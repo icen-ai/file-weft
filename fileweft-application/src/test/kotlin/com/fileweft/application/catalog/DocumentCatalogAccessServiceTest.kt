@@ -147,6 +147,44 @@ class DocumentCatalogAccessServiceTest {
         assertEquals(null, catalog.lastRequest)
     }
 
+    @Test
+    fun `lifecycle access uses the captured tenant and operator without rereading ambient providers`() {
+        val tenantProvider = SwitchingTenantProvider(
+            TenantContext(Identifier("tenant-entry")),
+            TenantContext(Identifier("tenant-switched")),
+        )
+        val userProvider = SwitchingUserProvider(
+            UserIdentity(Identifier("operator-entry"), "Entry operator"),
+            UserIdentity(Identifier("operator-switched"), "Switched operator"),
+        )
+        val catalog = RecordingCatalog()
+        val authorization = RecordingAuthorization()
+        val service = DocumentCatalogAccessService(
+            tenantProvider,
+            userProvider,
+            authorization,
+            catalog,
+        )
+        val capturedTenantId = Identifier("tenant-captured")
+        val capturedOperator = UserIdentity(Identifier("operator-captured"), "Captured operator")
+
+        service.requireCurrentFolderForDocumentLifecycle(
+            tenantId = capturedTenantId,
+            operator = capturedOperator,
+            documentId = Identifier("document-a"),
+            folderId = "visible",
+            actionName = "document:archive",
+        )
+
+        assertEquals(0, tenantProvider.calls)
+        assertEquals(0, userProvider.calls)
+        assertEquals(capturedTenantId, authorization.lastRequest?.resource?.tenantId)
+        assertEquals(capturedOperator.id, authorization.lastRequest?.subject?.id)
+        assertEquals(capturedTenantId, catalog.lastRequest?.tenantId)
+        assertEquals(capturedOperator.id, catalog.lastRequest?.userId)
+        assertEquals(DocumentCatalogOperation.BROWSE, catalog.lastRequest?.operation)
+    }
+
     private fun service(
         catalog: DocumentCatalogProvider,
         authorization: AuthorizationProvider,
@@ -183,5 +221,27 @@ class DocumentCatalogAccessServiceTest {
             lastRequest = request
             return AuthorizationDecision(allowed, "denied")
         }
+    }
+
+    private class SwitchingTenantProvider(
+        vararg values: TenantContext,
+    ) : TenantProvider {
+        private val values = values
+        var calls: Int = 0
+            private set
+
+        override fun currentTenant(): TenantContext = values[minOf(calls++, values.lastIndex)]
+    }
+
+    private class SwitchingUserProvider(
+        vararg values: UserIdentity?,
+    ) : UserRealmProvider {
+        private val values = values
+        var calls: Int = 0
+            private set
+
+        override fun currentUser(): UserIdentity? = values[minOf(calls++, values.lastIndex)]
+
+        override fun findUser(userId: Identifier): UserIdentity? = null
     }
 }
