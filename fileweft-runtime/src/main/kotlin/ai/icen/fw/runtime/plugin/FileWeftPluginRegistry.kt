@@ -16,19 +16,30 @@ import java.util.ServiceLoader
 /**
  * Deterministic plugin registry. Spring contributions take precedence over a
  * ServiceLoader copy of the same implementation, while conflicting plugin ids
- * and connector ids fail fast with a startup diagnostic.
+ * and connector ids fail fast with a startup diagnostic. Every accepted
+ * plugin is queried exactly once during construction; all consumers then read
+ * immutable contribution snapshots containing the original instances.
  */
 class FileWeftPluginRegistry @JvmOverloads constructor(
     springPlugins: List<FileWeftPlugin> = emptyList(),
     classLoader: ClassLoader = contextClassLoader(),
 ) {
-    private val pluginsById: Map<String, FileWeftPlugin> = collectPlugins(springPlugins, classLoader)
+    private val snapshotsById: Map<String, PluginSnapshot> = collectPlugins(springPlugins, classLoader)
+    private val pluginList: List<FileWeftPlugin> = immutableList(snapshotsById.values.map { it.plugin })
+    private val storageAdapterList: List<StorageAdapter> = contributions { it.storageAdapters }
+    private val connectorSnapshot: ConnectorSnapshot = snapshotConnectors(snapshotsById.values)
+    private val doctorCheckerList: List<DoctorChecker> = contributions { it.doctorCheckers }
+    private val agentList: List<FileWeftAgent> = contributions { it.agents }
+    private val agentTaskTriggerList: List<AgentTaskTrigger> = contributions { it.agentTaskTriggers }
+    private val outboxEventHandlerList: List<OutboxEventHandler> = contributions { it.outboxEventHandlers }
+    private val taskHandlerList: List<FileWeftTaskHandler> = contributions { it.taskHandlers }
+    private val reviewRouteProviderList: List<DocumentReviewRouteProvider> = contributions { it.reviewRouteProviders }
 
-    fun plugins(): List<FileWeftPlugin> = Collections.unmodifiableList(ArrayList(pluginsById.values))
+    fun plugins(): List<FileWeftPlugin> = pluginList
 
-    fun storageAdapters(): List<StorageAdapter> = contributions { it.storageAdapters() }
+    fun storageAdapters(): List<StorageAdapter> = storageAdapterList
 
-    fun connectors(): Map<String, FileConnector> = mergeConnectors(emptyMap())
+    fun connectors(): Map<String, FileConnector> = connectorSnapshot.connectors
 
     fun mergeConnectors(springConnectors: Map<String, FileConnector>): Map<String, FileConnector> {
         val merged = LinkedHashMap<String, FileConnector>()
@@ -36,56 +47,140 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
             require(id.isNotBlank()) { "Spring FileConnector bean name must not be blank." }
             merged[id] = connector
         }
-        plugins().forEach { plugin ->
-            plugin.connectors().forEach { (connectorId, connector) ->
-                require(connectorId.isNotBlank()) { "Plugin ${plugin.id()} contributes a blank connector id." }
-                require(merged.putIfAbsent(connectorId, connector) == null) {
-                    "Plugin ${plugin.id()} connector id $connectorId conflicts with a Spring or earlier plugin connector."
-                }
+        connectorSnapshot.connectors.forEach { (connectorId, connector) ->
+            val pluginId = requireNotNull(connectorSnapshot.pluginIds[connectorId])
+            require(merged.putIfAbsent(connectorId, connector) == null) {
+                "Plugin $pluginId connector id $connectorId conflicts with a Spring or earlier plugin connector."
             }
         }
         return Collections.unmodifiableMap(merged)
     }
 
-    fun doctorCheckers(): List<DoctorChecker> = contributions { it.doctorCheckers() }
+    fun doctorCheckers(): List<DoctorChecker> = doctorCheckerList
 
-    fun agents(): List<FileWeftAgent> = contributions { it.agents() }
+    fun agents(): List<FileWeftAgent> = agentList
 
-    fun agentTaskTriggers(): List<AgentTaskTrigger> = contributions { it.agentTaskTriggers() }
+    fun agentTaskTriggers(): List<AgentTaskTrigger> = agentTaskTriggerList
 
-    fun outboxEventHandlers(): List<OutboxEventHandler> = contributions { it.outboxEventHandlers() }
+    fun outboxEventHandlers(): List<OutboxEventHandler> = outboxEventHandlerList
 
-    fun taskHandlers(): List<FileWeftTaskHandler> = contributions { it.taskHandlers() }
+    fun taskHandlers(): List<FileWeftTaskHandler> = taskHandlerList
 
-    fun reviewRouteProviders(): List<DocumentReviewRouteProvider> = contributions { it.reviewRouteProviders() }
+    fun reviewRouteProviders(): List<DocumentReviewRouteProvider> = reviewRouteProviderList
 
-    private fun <T> contributions(extract: (FileWeftPlugin) -> List<T>): List<T> =
-        Collections.unmodifiableList(plugins().flatMap(extract))
+    private fun <T> contributions(extract: (PluginSnapshot) -> List<T>): List<T> {
+        val merged = ArrayList<T>()
+        snapshotsById.values.forEach { snapshot -> merged.addAll(extract(snapshot)) }
+        return Collections.unmodifiableList(merged)
+    }
 
     private companion object {
-        fun collectPlugins(springPlugins: List<FileWeftPlugin>, classLoader: ClassLoader): Map<String, FileWeftPlugin> {
-            val discovered = LinkedHashMap<String, FileWeftPlugin>()
-            springPlugins.forEach { register(discovered, it, "Spring") }
+        fun collectPlugins(springPlugins: List<FileWeftPlugin>, classLoader: ClassLoader): Map<String, PluginSnapshot> {
+            val discovered = LinkedHashMap<String, DiscoveredPlugin>()
+            springPlugins.forEach { plugin -> register(discovered, discover(plugin, PluginOrigin.SPRING)) }
             ServiceLoader.load(FileWeftPlugin::class.java, classLoader).forEach { plugin ->
-                val existing = discovered[plugin.id()]
+                val candidate = discover(plugin, PluginOrigin.SERVICE_LOADER)
+                val existing = discovered[candidate.id]
                 if (existing == null) {
-                    register(discovered, plugin, "ServiceLoader")
+                    register(discovered, candidate)
                 } else {
-                    require(existing.javaClass == plugin.javaClass) {
-                        "ServiceLoader plugin id ${plugin.id()} conflicts with ${existing.javaClass.name}."
+                    require(existing.plugin.javaClass == candidate.plugin.javaClass) {
+                        "ServiceLoader plugin id ${candidate.id} conflicts with ${existing.plugin.javaClass.name}."
                     }
                 }
             }
-            return Collections.unmodifiableMap(discovered)
+            val snapshots = LinkedHashMap<String, PluginSnapshot>()
+            discovered.forEach { (id, plugin) -> snapshots[id] = snapshot(plugin) }
+            return Collections.unmodifiableMap(snapshots)
         }
 
-        fun register(target: MutableMap<String, FileWeftPlugin>, plugin: FileWeftPlugin, source: String) {
+        fun discover(plugin: FileWeftPlugin, origin: PluginOrigin): DiscoveredPlugin {
             val id = plugin.id()
-            require(id.isNotBlank()) { "$source FileWeftPlugin id must not be blank." }
-            require(target.putIfAbsent(id, plugin) == null) { "$source FileWeftPlugin id $id is registered more than once." }
+            require(id.isNotBlank()) { "${origin.label} FileWeftPlugin id must not be blank." }
+            return DiscoveredPlugin(id, plugin, origin)
+        }
+
+        fun register(target: MutableMap<String, DiscoveredPlugin>, discovered: DiscoveredPlugin) {
+            require(target.putIfAbsent(discovered.id, discovered) == null) {
+                "${discovered.origin.label} FileWeftPlugin id ${discovered.id} is registered more than once."
+            }
+        }
+
+        fun snapshot(discovered: DiscoveredPlugin): PluginSnapshot = try {
+            val plugin = discovered.plugin
+            PluginSnapshot(
+                id = discovered.id,
+                plugin = plugin,
+                origin = discovered.origin,
+                storageAdapters = immutableList(plugin.storageAdapters()),
+                connectors = immutableMap(plugin.connectors()),
+                doctorCheckers = immutableList(plugin.doctorCheckers()),
+                agents = immutableList(plugin.agents()),
+                agentTaskTriggers = immutableList(plugin.agentTaskTriggers()),
+                outboxEventHandlers = immutableList(plugin.outboxEventHandlers()),
+                taskHandlers = immutableList(plugin.taskHandlers()),
+                reviewRouteProviders = immutableList(plugin.reviewRouteProviders()),
+            )
+        } catch (failure: Exception) {
+            throw IllegalArgumentException(
+                "${discovered.origin.label} FileWeftPlugin ${discovered.id} contribution snapshot failed.",
+                failure,
+            )
+        }
+
+        fun snapshotConnectors(snapshots: Collection<PluginSnapshot>): ConnectorSnapshot {
+            val connectors = LinkedHashMap<String, FileConnector>()
+            val pluginIds = LinkedHashMap<String, String>()
+            snapshots.forEach { snapshot ->
+                snapshot.connectors.forEach { (connectorId, connector) ->
+                    require(connectorId.isNotBlank()) { "Plugin ${snapshot.id} contributes a blank connector id." }
+                    require(connectors.putIfAbsent(connectorId, connector) == null) {
+                        "Plugin ${snapshot.id} connector id $connectorId conflicts with a Spring or earlier plugin connector."
+                    }
+                    pluginIds[connectorId] = snapshot.id
+                }
+            }
+            return ConnectorSnapshot(immutableMap(connectors), immutableMap(pluginIds))
         }
 
         fun contextClassLoader(): ClassLoader = Thread.currentThread().contextClassLoader
             ?: FileWeftPluginRegistry::class.java.classLoader
+
+        fun <T> immutableList(source: Collection<T>): List<T> =
+            Collections.unmodifiableList(ArrayList(source))
+
+        fun <K, V> immutableMap(source: Map<K, V>): Map<K, V> =
+            Collections.unmodifiableMap(LinkedHashMap(source))
+    }
+
+    private class DiscoveredPlugin(
+        val id: String,
+        val plugin: FileWeftPlugin,
+        val origin: PluginOrigin,
+    )
+
+    private class PluginSnapshot(
+        val id: String,
+        val plugin: FileWeftPlugin,
+        /** Retained for later inventory and Doctor diagnostics without rediscovering the plugin. */
+        val origin: PluginOrigin,
+        val storageAdapters: List<StorageAdapter>,
+        val connectors: Map<String, FileConnector>,
+        val doctorCheckers: List<DoctorChecker>,
+        val agents: List<FileWeftAgent>,
+        val agentTaskTriggers: List<AgentTaskTrigger>,
+        val outboxEventHandlers: List<OutboxEventHandler>,
+        val taskHandlers: List<FileWeftTaskHandler>,
+        val reviewRouteProviders: List<DocumentReviewRouteProvider>,
+    )
+
+    private class ConnectorSnapshot(
+        val connectors: Map<String, FileConnector>,
+        val pluginIds: Map<String, String>,
+    )
+
+    private enum class PluginOrigin(val label: String) {
+        SPRING("Spring"),
+        SERVICE_LOADER("ServiceLoader"),
     }
 }
