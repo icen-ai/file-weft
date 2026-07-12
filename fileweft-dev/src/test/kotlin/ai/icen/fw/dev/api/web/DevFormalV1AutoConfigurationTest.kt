@@ -97,6 +97,7 @@ class DevFormalV1AutoConfigurationTest {
                 .andExpect(header().string("X-Trace-Id", "formal-auth-test"))
                 .andExpect(header().string("WWW-Authenticate", "Bearer realm=\"fileweft-dev\""))
                 .andExpect(header().string("Cache-Control", "private, no-store"))
+                .andExpect(header().string("Pragma", "no-cache"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(jsonPath("$.*").value(org.hamcrest.Matchers.hasSize<Any>(5)))
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
@@ -124,6 +125,8 @@ class DevFormalV1AutoConfigurationTest {
 
             mvc.perform(get("/api/documents"))
                 .andExpect(status().isUnauthorized)
+                .andExpect(header().string("Cache-Control", "private, no-store"))
+                .andExpect(header().string("Pragma", "no-cache"))
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                 .andExpect(jsonPath("$.message").value("请先登录开发测试平台。"))
                 .andExpect(jsonPath("$.data").doesNotExist())

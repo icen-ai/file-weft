@@ -6,6 +6,7 @@ import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import jakarta.servlet.http.HttpServletResponseWrapper
 import org.springframework.core.Ordered
 import org.springframework.core.annotation.Order
 import org.springframework.stereotype.Component
@@ -19,26 +20,33 @@ class DevAuthenticationFilter(
     private val objectMapper: ObjectMapper,
     private val traces: DevTraceContextProvider,
 ) : OncePerRequestFilter() {
-    override fun shouldNotFilter(request: HttpServletRequest): Boolean =
-        request.requestURI == "/api/auth/login" || request.requestURI == "/api/health"
-
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+        val protectedResponse = if (isPrivateNoStorePath(request.requestURI)) {
+            PrivateNoStoreResponse(response)
+        } else {
+            response
+        }
+        if (isPublicPath(request.requestURI)) {
+            chain.doFilter(request, protectedResponse)
+            return
+        }
+
         val authorization = request.getHeader(AUTHORIZATION_HEADER)
         val token = authorization?.takeIf { it.startsWith(BEARER_PREFIX) }?.removePrefix(BEARER_PREFIX)
         val principal = token?.let(sessions::find)
         if (principal == null) {
             if (isFormalV1Path(request.requestURI)) {
-                writeFormalUnauthenticated(response)
+                writeFormalUnauthenticated(protectedResponse)
             } else {
-                response.status = HttpServletResponse.SC_UNAUTHORIZED
-                response.contentType = JSON_CONTENT_TYPE
-                response.writer.write("{\"code\":\"UNAUTHENTICATED\",\"message\":\"请先登录开发测试平台。\"}")
+                protectedResponse.status = HttpServletResponse.SC_UNAUTHORIZED
+                protectedResponse.contentType = JSON_CONTENT_TYPE
+                protectedResponse.writer.write("{\"code\":\"UNAUTHENTICATED\",\"message\":\"请先登录开发测试平台。\"}")
             }
             return
         }
         DevRequestIdentityContext.bind(principal)
         try {
-            chain.doFilter(request, response)
+            chain.doFilter(request, protectedResponse)
         } finally {
             DevRequestIdentityContext.clear()
         }
@@ -62,10 +70,113 @@ class DevAuthenticationFilter(
     private fun isFormalV1Path(requestUri: String): Boolean =
         requestUri == FORMAL_V1_ROOT || requestUri.startsWith("$FORMAL_V1_ROOT/")
 
+    private fun isPrivateNoStorePath(requestUri: String): Boolean =
+        requestUri == DEV_API_ROOT || requestUri.startsWith("$DEV_API_ROOT/") || isFormalV1Path(requestUri)
+
+    private fun isPublicPath(requestUri: String): Boolean =
+        requestUri == LOGIN_PATH || requestUri == HEALTH_PATH
+
+    /**
+     * Installs the safe defaults before the request can be rejected, while presenting those defaults as
+     * unwritten to downstream response writers. This lets a download endpoint replace them with stricter
+     * directives. Any downstream cache policy is augmented when it omits the mandatory private/no-store
+     * directives, so a controller cannot accidentally weaken the boundary.
+     */
+    private class PrivateNoStoreResponse(response: HttpServletResponse) : HttpServletResponseWrapper(response) {
+        private val explicitlyWrittenHeaders = mutableSetOf<String>()
+
+        init {
+            super.setHeader(CACHE_CONTROL_HEADER, PRIVATE_NO_STORE)
+            super.setHeader(PRAGMA_HEADER, NO_CACHE)
+        }
+
+        override fun containsHeader(name: String): Boolean =
+            if (isImplicitManagedHeader(name)) false else super.containsHeader(name)
+
+        override fun getHeader(name: String): String? =
+            if (isImplicitManagedHeader(name)) null else super.getHeader(name)
+
+        override fun getHeaders(name: String): Collection<String> =
+            if (isImplicitManagedHeader(name)) emptyList() else super.getHeaders(name)
+
+        override fun getHeaderNames(): Collection<String> =
+            super.getHeaderNames().filterNot(::isImplicitManagedHeader)
+
+        override fun setHeader(name: String, value: String?) {
+            if (isManagedHeader(name)) {
+                explicitlyWrittenHeaders += normalize(name)
+                super.setHeader(name, secureValue(name, value.orEmpty()))
+            } else {
+                super.setHeader(name, value)
+            }
+        }
+
+        override fun addHeader(name: String, value: String?) {
+            if (isManagedHeader(name)) {
+                setHeader(name, value)
+            } else {
+                super.addHeader(name, value)
+            }
+        }
+
+        override fun reset() {
+            super.reset()
+            explicitlyWrittenHeaders.clear()
+            super.setHeader(CACHE_CONTROL_HEADER, PRIVATE_NO_STORE)
+            super.setHeader(PRAGMA_HEADER, NO_CACHE)
+        }
+
+        private fun isImplicitManagedHeader(name: String): Boolean =
+            isManagedHeader(name) && normalize(name) !in explicitlyWrittenHeaders
+
+        private fun isManagedHeader(name: String): Boolean =
+            name.equals(CACHE_CONTROL_HEADER, ignoreCase = true) || name.equals(PRAGMA_HEADER, ignoreCase = true)
+
+        private fun secureValue(name: String, value: String): String = when {
+            name.equals(CACHE_CONTROL_HEADER, ignoreCase = true) -> ensureCacheControl(value)
+            name.equals(PRAGMA_HEADER, ignoreCase = true) -> ensureDirectives(value, NO_CACHE)
+            else -> value
+        }
+
+        private fun ensureCacheControl(value: String): String = appendMissingDirectives(
+            directives = parseDirectives(value).filterNot { directiveName(it) == PUBLIC_DIRECTIVE },
+            required = listOf(PRIVATE_DIRECTIVE, NO_STORE_DIRECTIVE),
+        )
+
+        private fun ensureDirectives(value: String, vararg required: String): String =
+            appendMissingDirectives(parseDirectives(value), required.toList())
+
+        private fun appendMissingDirectives(directives: List<String>, required: List<String>): String {
+            val present = directives
+                .map(::directiveName)
+                .toSet()
+            return (directives + required.filterNot(present::contains)).joinToString(", ")
+        }
+
+        private fun parseDirectives(value: String): List<String> =
+            value.split(',')
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+
+        private fun directiveName(directive: String): String = directive.substringBefore('=').trim().lowercase()
+
+        private fun normalize(name: String): String = name.lowercase()
+    }
+
     private companion object {
         const val AUTHORIZATION_HEADER = "Authorization"
         const val BEARER_PREFIX = "Bearer "
+        const val DEV_API_ROOT = "/api"
         const val FORMAL_V1_ROOT = "/fileweft/v1"
+        const val LOGIN_PATH = "/api/auth/login"
+        const val HEALTH_PATH = "/api/health"
+        const val CACHE_CONTROL_HEADER = "Cache-Control"
+        const val PRIVATE_NO_STORE = "private, no-store"
+        const val PRIVATE_DIRECTIVE = "private"
+        const val NO_STORE_DIRECTIVE = "no-store"
+        const val PUBLIC_DIRECTIVE = "public"
+        const val PRAGMA_HEADER = "Pragma"
+        const val NO_CACHE = "no-cache"
         const val JSON_CONTENT_TYPE = "application/json;charset=UTF-8"
     }
 }
