@@ -58,10 +58,17 @@ import com.fileweft.application.upload.UploadApplicationService
 import com.fileweft.persistence.jdbc.JdbcOutboxBacklogReader
 import com.fileweft.persistence.jdbc.JdbcDocumentQueryRepository
 import com.fileweft.persistence.jdbc.JdbcRequestIdempotencyRepository
+import com.fileweft.persistence.jdbc.JdbcWorkflowQueryRepository
 import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
+import com.fileweft.application.workflow.DocumentWorkflowPageRequest
+import com.fileweft.application.workflow.DocumentWorkflowPageResult
 import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
 import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
+import com.fileweft.application.workflow.WorkflowQueryRepository
+import com.fileweft.application.workflow.WorkflowQueryService
+import com.fileweft.application.workflow.WorkflowTaskPageRequest
+import com.fileweft.application.workflow.WorkflowTaskPageResult
 import com.fileweft.core.context.TenantContext
 import com.fileweft.core.id.Identifier
 import com.fileweft.core.id.IdentifierGenerator
@@ -362,6 +369,9 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(DocumentQueryService::class.java) != null)
             assertTrue(context.getBeansOfType(DocumentFolderReadAccess::class.java).isEmpty())
             assertNull(privateField(context.getBean(DocumentQueryService::class.java), "folderReadAccess"))
+            assertTrue(context.getBean(WorkflowQueryRepository::class.java) is JdbcWorkflowQueryRepository)
+            assertTrue(context.getBean(WorkflowQueryService::class.java) != null)
+            assertNull(privateField(context.getBean(WorkflowQueryService::class.java), "folderReadAccess"))
             assertTrue(context.getBean(WorkflowInstanceRepository::class.java) != null)
             assertTrue(context.getBean(UploadApplicationService::class.java) != null)
             assertTrue(context.getBean(ResumableUploadService::class.java) != null)
@@ -504,6 +514,10 @@ class FileWeftAutoConfigurationTest {
                 assertSame(
                     context.getBean(DocumentCatalogAccessService::class.java),
                     privateField(context.getBean(DocumentQueryService::class.java), "folderReadAccess"),
+                )
+                assertSame(
+                    context.getBean(DocumentCatalogAccessService::class.java),
+                    privateField(context.getBean(WorkflowQueryService::class.java), "folderReadAccess"),
                 )
             }
     }
@@ -654,7 +668,7 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
-    fun `fails closed when one of multiple catalog access boundaries is primary`() {
+    fun `fails closed for workflow reads when one of multiple catalog access boundaries is primary`() {
         contextRunner()
             .withUserConfiguration(
                 DatabaseConfiguration::class.java,
@@ -707,6 +721,16 @@ class FileWeftAutoConfigurationTest {
             .run { context ->
                 assertSame(context.getBean("customerDocumentQueryRepository"), context.getBean(DocumentQueryRepository::class.java))
                 assertSame(context.getBean("customerDocumentQueryService"), context.getBean(DocumentQueryService::class.java))
+            }
+    }
+
+    @Test
+    fun `does not replace customer workflow query ports or services when assembling runtime services`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java, CustomerWorkflowQueryConfiguration::class.java)
+            .run { context ->
+                assertSame(context.getBean("customerWorkflowQueryRepository"), context.getBean(WorkflowQueryRepository::class.java))
+                assertSame(context.getBean("customerWorkflowQueryService"), context.getBean(WorkflowQueryService::class.java))
             }
     }
 
@@ -1079,6 +1103,35 @@ class FileWeftAutoConfigurationTest {
             queries: DocumentQueryRepository,
             transaction: ApplicationTransaction,
         ): DocumentQueryService = DocumentQueryService(tenants, users, authorization, queries, transaction)
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CustomerWorkflowQueryConfiguration {
+        @Bean
+        fun customerWorkflowQueryRepository(): WorkflowQueryRepository = object : WorkflowQueryRepository {
+            override fun findPendingTaskPage(
+                tenantId: Identifier,
+                currentUserId: Identifier,
+                request: WorkflowTaskPageRequest,
+                folderReadScope: com.fileweft.application.document.DocumentFolderReadScope?,
+            ) = WorkflowTaskPageResult(emptyList())
+
+            override fun findDocumentWorkflowPage(
+                tenantId: Identifier,
+                documentId: Identifier,
+                request: DocumentWorkflowPageRequest,
+                folderReadScope: com.fileweft.application.document.DocumentFolderReadScope?,
+            ) = DocumentWorkflowPageResult(emptyList())
+        }
+
+        @Bean
+        fun customerWorkflowQueryService(
+            tenants: TenantProvider,
+            users: UserRealmProvider,
+            authorization: AuthorizationProvider,
+            queries: WorkflowQueryRepository,
+            transaction: ApplicationTransaction,
+        ): WorkflowQueryService = WorkflowQueryService(tenants, users, authorization, queries, transaction)
     }
 
     private object CustomerStorageAdapter : StorageAdapter {

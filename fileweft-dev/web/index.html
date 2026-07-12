@@ -63,10 +63,11 @@
           </div>
           <nav class="rail-nav" aria-label="Development proof navigation">
             <button class="nav-item active" type="button" data-panel="documents"><span>01</span><b data-i18n="nav.documents">Documents</b></button>
-            <button class="nav-item" type="button" data-panel="fixtures"><span>02</span><b data-i18n="nav.fixtures">Proof lab</b></button>
-            <button class="nav-item" type="button" data-panel="platform"><span>03</span><b data-i18n="nav.platform">Downstream mirror</b></button>
-            <button class="nav-item" type="button" data-panel="doctor" data-permission="document:doctor"><span>04</span><b data-i18n="nav.doctor">Doctor</b></button>
-            <button class="nav-item" type="button" data-panel="uploads" data-permission="file:upload"><span>05</span><b data-i18n="nav.uploads">Resumable upload</b></button>
+            <button class="nav-item" type="button" data-panel="workflow" data-permission="document:audit" data-testid="workflow-inbox-nav"><span>02</span><b data-i18n="nav.workflow">Review inbox</b></button>
+            <button class="nav-item" type="button" data-panel="fixtures"><span>03</span><b data-i18n="nav.fixtures">Proof lab</b></button>
+            <button class="nav-item" type="button" data-panel="platform"><span>04</span><b data-i18n="nav.platform">Downstream mirror</b></button>
+            <button class="nav-item" type="button" data-panel="doctor" data-permission="document:doctor"><span>05</span><b data-i18n="nav.doctor">Doctor</b></button>
+            <button class="nav-item" type="button" data-panel="uploads" data-permission="file:upload"><span>06</span><b data-i18n="nav.uploads">Resumable upload</b></button>
           </nav>
           <div class="rail-footer"><span class="pulse"></span><span data-i18n-html="rail.status">POSTGRES / RUSTFS / V1 API / OUTBOX<br />connected to the proof stack</span></div>
           <button id="logout" class="text-button" type="button" data-i18n="session.logout">End session</button>
@@ -114,6 +115,12 @@
               <div class="ledger-head"><span data-i18n="ledger.document">Number / title</span><span data-i18n="ledger.state">State</span><span data-i18n="ledger.updated">Updated</span><span data-i18n="ledger.version">Current version</span></div>
               <div id="document-list" class="document-list"></div>
             </div>
+          </section>
+
+          <section id="workflow-panel" class="aux-panel workflow-inbox hidden">
+            <div class="aux-title workflow-inbox-head"><div><span data-i18n="workflow.inbox.title">Review inbox</span><small data-i18n="workflow.inbox.subtitle">Only tasks actionable by the current trusted identity are listed.</small></div><button id="refresh-workflow-inbox" class="ghost" type="button" data-i18n="action.refresh">Refresh</button></div>
+            <div class="workflow-inbox-note"><span>ACL</span><p data-i18n="workflow.inbox.note">Tenant, reviewer assignment and catalog scope are derived by the formal v1 application boundary.</p></div>
+            <div id="workflow-task-list" class="workflow-task-list" data-testid="workflow-task-list"></div>
           </section>
 
           <section id="fixtures-panel" class="proof-lab hidden">

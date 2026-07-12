@@ -105,6 +105,7 @@ test("uploads a real fixture, submits it, and keeps it isolated from Beta", asyn
   await expect(submit).toHaveCount(1);
   await submit.click();
   await expect(page.locator("#selected-state")).toHaveAttribute("data-lifecycle-state", "PENDING_REVIEW");
+  await expect(page.getByTestId("workflow-inbox-nav")).toBeHidden();
 
   const betaContext = await browser.newContext();
   try {
@@ -130,13 +131,12 @@ test("exposes administrator processing controls and reviewer approval only to th
   try {
     const reviewerPage = await reviewerContext.newPage();
     await login(reviewerPage, "reviewer@alpha");
-    const reviewerRow = reviewerPage.locator(`[data-document-id='${created.documentId}']`);
-    await expect(reviewerRow).toHaveCount(1);
-    await reviewerRow.click();
-    const approve = reviewerPage.locator("#document-actions [data-action='approve']");
-    await expect(approve).toHaveCount(1);
-    await approve.click();
-    await expect(reviewerPage.locator("#selected-state")).not.toHaveAttribute("data-lifecycle-state", "PENDING_REVIEW");
+    await expect(reviewerPage.getByTestId("workflow-inbox-nav")).toBeVisible();
+    await reviewerPage.getByTestId("workflow-inbox-nav").click();
+    const taskCard = reviewerPage.locator(`[data-workflow-document='${created.documentId}']`);
+    await expect(taskCard).toHaveCount(1);
+    await taskCard.getByTestId("workflow-task-approve").click();
+    await expect(taskCard).toHaveCount(0);
   } finally {
     await reviewerContext.close();
   }
@@ -147,6 +147,7 @@ test("exposes administrator processing controls and reviewer approval only to th
     await login(administratorPage, "admin@alpha");
     await expect(administratorPage.locator("#process-outbox")).toBeVisible();
     await expect(administratorPage.locator("#process-tasks")).toBeVisible();
+    await expect(administratorPage.getByTestId("workflow-inbox-nav")).toBeVisible();
     await expect(administratorPage.locator("[data-panel='doctor']")).toBeVisible();
     await expect(administratorPage.locator("[data-panel='uploads']")).toBeVisible();
   } finally {
@@ -224,8 +225,12 @@ test("holds a dual-control document until both reviewer and administrator approv
   try {
     const reviewerPage = await reviewerContext.newPage();
     await login(reviewerPage, "reviewer@alpha");
+    await reviewerPage.getByTestId("workflow-inbox-nav").click();
+    const reviewerTask = reviewerPage.locator(`[data-workflow-document='${created.documentId}']`);
+    await expect(reviewerTask).toHaveCount(1);
+    await reviewerTask.getByTestId("workflow-task-approve").click();
+    await reviewerPage.locator("[data-panel='documents']").click();
     await selectDocument(reviewerPage, created.documentId);
-    await reviewerPage.locator("#document-actions [data-action='approve']").click();
     await expect(reviewerPage.locator("#selected-state")).toHaveAttribute("data-lifecycle-state", "PENDING_REVIEW");
   } finally {
     await reviewerContext.close();
@@ -235,8 +240,12 @@ test("holds a dual-control document until both reviewer and administrator approv
   try {
     const administratorPage = await administratorContext.newPage();
     await login(administratorPage, "admin@alpha");
+    await administratorPage.getByTestId("workflow-inbox-nav").click();
+    const administratorTask = administratorPage.locator(`[data-workflow-document='${created.documentId}']`);
+    await expect(administratorTask).toHaveCount(1);
+    await administratorTask.getByTestId("workflow-task-approve").click();
+    await administratorPage.locator("[data-panel='documents']").click();
     await selectDocument(administratorPage, created.documentId);
-    await administratorPage.locator("#document-actions [data-action='approve']").click();
     await expect(administratorPage.locator("#selected-state")).not.toHaveAttribute("data-lifecycle-state", "PENDING_REVIEW");
     await administratorPage.locator("[data-panel='platform']").click();
     await expect(administratorPage.locator("#platform-output")).toContainText("targetId");

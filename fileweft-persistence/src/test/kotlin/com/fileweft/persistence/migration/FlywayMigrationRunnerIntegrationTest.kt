@@ -55,10 +55,10 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `applies schema migrations for durable runtime recovery and request idempotency`() {
+    fun `applies schema migrations for durable runtime recovery idempotency and workflow queries`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(20, migrations)
+        assertEquals(22, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -124,6 +124,10 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(indexExists(connection, "fw_idempotency_record", "uq_fw_idempotency_tenant_key_digest"))
             assertTrue(indexExists(connection, "fw_idempotency_record", "idx_fw_idempotency_tenant_resource_time"))
             assertTrue(indexExists(connection, "fw_idempotency_record", "idx_fw_idempotency_in_progress_diagnostic"))
+            assertTrue(indexExists(connection, "fw_workflow_task", "idx_fw_workflow_task_tenant_pending_inbox"))
+            assertTrue(indexExists(connection, "fw_workflow_task", "idx_fw_workflow_task_tenant_assignee_pending_inbox"))
+            assertTrue(indexExists(connection, "fw_workflow_instance", "idx_fw_workflow_instance_tenant_document_history"))
+            assertTrue(indexExists(connection, "fw_workflow_task", "idx_fw_workflow_task_tenant_workflow_history"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_digests"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_binding"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_status"))

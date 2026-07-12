@@ -28,6 +28,10 @@ const INTERNAL_FIELDS = new Set([
   "fileAssetId",
   "fileObjectId",
   "objectKey",
+  "assigneeId",
+  "comment",
+  "operatorId",
+  "operatorName",
   "storagePath",
   "storageUrl",
   "tenantId",
@@ -390,15 +394,66 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   });
   await failure(submitConflict, 409, "CONFLICT", "Request conflicts with the current resource state.");
 
-  const submittedProjectionResponse = await request.get(`/api/documents/${documentId}`, {
+  const reviewerInboxResponse = await request.get("/fileweft/v1/workflows/tasks", {
     headers: authorization(reviewer.token, traceId),
+    params: { limit: 100 },
   });
-  expect(submittedProjectionResponse.status(), await submittedProjectionResponse.text()).toBe(200);
-  const submittedProjection = await submittedProjectionResponse.json();
-  const workflow = submittedProjection.workflows.find((candidate) => candidate.id === submitted.workflowId);
-  expect(workflow).toBeDefined();
-  const reviewTask = workflow.tasks.find((candidate) => candidate.assigneeId === "alpha-reviewer") ?? workflow.tasks[0];
-  expect(reviewTask?.id).toEqual(expect.any(String));
+  const reviewerInbox = await success(reviewerInboxResponse, 200);
+  expect(sortedKeys(reviewerInbox)).toEqual(["items", "nextCursor", "total"]);
+  const inboxItem = reviewerInbox.items.find((candidate) => candidate.document.id === documentId);
+  expect(inboxItem).toBeDefined();
+  expect(sortedKeys(inboxItem)).toEqual(["actionableByCurrentUser", "document", "task", "workflowState", "workflowType"]);
+  expect(sortedKeys(inboxItem.task)).toEqual(["assignedToCurrentUser", "createdTime", "id", "state", "updatedTime", "workflowId"]);
+  expect(inboxItem).toMatchObject({
+    actionableByCurrentUser: true,
+    workflowState: "PENDING",
+    task: {
+      workflowId: submitted.workflowId,
+      state: "PENDING",
+      assignedToCurrentUser: false,
+    },
+    document: { id: documentId, title: renamedTitle, lifecycleState: "PENDING_REVIEW", folderId: "contracts" },
+  });
+
+  for (const identity of [editor, viewer]) {
+    await failure(
+      await request.get("/fileweft/v1/workflows/tasks", { headers: authorization(identity.token, traceId) }),
+      403,
+      "FORBIDDEN",
+      "Access denied.",
+    );
+  }
+  const betaInbox = await success(
+    await request.get("/fileweft/v1/workflows/tasks", {
+      headers: authorization((await login(request, "reviewer@beta", "dev-reviewer")).token, traceId),
+      params: { limit: 100 },
+    }),
+    200,
+  );
+  expect(betaInbox.items.some((candidate) => candidate.document.id === documentId)).toBe(false);
+
+  const historyBeforeApproval = await success(
+    await request.get(`/fileweft/v1/documents/${documentId}/workflows`, {
+      headers: authorization(viewer.token, traceId),
+      params: { limit: 100 },
+    }),
+    200,
+  );
+  expect(sortedKeys(historyBeforeApproval)).toEqual(["items", "nextCursor", "total"]);
+  const historyWorkflow = historyBeforeApproval.items.find((candidate) => candidate.id === submitted.workflowId);
+  expect(historyWorkflow).toBeDefined();
+  expect(sortedKeys(historyWorkflow)).toEqual(["createdTime", "documentId", "id", "state", "tasks", "updatedTime", "workflowType"]);
+  expect(historyWorkflow.state).toBe("PENDING");
+  expect(historyWorkflow.tasks).toHaveLength(1);
+  expect(sortedKeys(historyWorkflow.tasks[0])).toEqual(["createdTime", "id", "state", "updatedTime"]);
+
+  const betaHistory = await request.get(`/fileweft/v1/documents/${documentId}/workflows`, {
+    headers: authorization(betaEditor.token, traceId),
+  });
+  await failure(betaHistory, 404, "NOT_FOUND", "Resource was not found.");
+
+  const workflow = { id: inboxItem.task.workflowId };
+  const reviewTask = { id: inboxItem.task.id };
 
   const approveKey = `formal-approve-${randomUUID()}`;
   const approveOptions = {
@@ -430,4 +485,23 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     },
   );
   await failure(approvalConflict, 409, "CONFLICT", "Request conflicts with the current resource state.");
+
+  const historyAfterApproval = await success(
+    await request.get(`/fileweft/v1/documents/${documentId}/workflows`, {
+      headers: authorization(viewer.token, traceId),
+      params: { limit: 100 },
+    }),
+    200,
+  );
+  const completedWorkflow = historyAfterApproval.items.find((candidate) => candidate.id === workflow.id);
+  expect(completedWorkflow).toMatchObject({ state: "APPROVED" });
+  expect(completedWorkflow.tasks.find((candidate) => candidate.id === reviewTask.id)).toMatchObject({ state: "APPROVED" });
+  const inboxAfterApproval = await success(
+    await request.get("/fileweft/v1/workflows/tasks", {
+      headers: authorization(reviewer.token, traceId),
+      params: { limit: 100 },
+    }),
+    200,
+  );
+  expect(inboxAfterApproval.items.some((candidate) => candidate.task.id === reviewTask.id)).toBe(false);
 });

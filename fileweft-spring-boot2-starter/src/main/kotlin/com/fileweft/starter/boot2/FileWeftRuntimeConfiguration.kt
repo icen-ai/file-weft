@@ -76,6 +76,8 @@ import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
 import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
+import com.fileweft.application.workflow.WorkflowQueryRepository
+import com.fileweft.application.workflow.WorkflowQueryService
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.DocumentRepository
@@ -102,6 +104,7 @@ import com.fileweft.persistence.jdbc.JdbcResumableUploadSessionRepository
 import com.fileweft.persistence.jdbc.JdbcSyncRecordRepository
 import com.fileweft.persistence.jdbc.JdbcTaskRepository
 import com.fileweft.persistence.jdbc.JdbcWorkflowInstanceRepository
+import com.fileweft.persistence.jdbc.JdbcWorkflowQueryRepository
 import com.fileweft.runtime.plugin.FileWeftPluginRegistry
 import com.fileweft.spi.authorization.AuthorizationProvider
 import com.fileweft.spi.catalog.DocumentCatalogProvider
@@ -149,6 +152,10 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DocumentQueryRepository::class)
     fun fileWeftDocumentQueryRepository(): DocumentQueryRepository = JdbcDocumentQueryRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowQueryRepository::class)
+    fun fileWeftWorkflowQueryRepository(): WorkflowQueryRepository = JdbcWorkflowQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(FileObjectRepository::class)
@@ -662,6 +669,24 @@ class FileWeftRuntimeConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ): DocumentQueryService = DocumentQueryService(
         tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowQueryService::class)
+    fun fileWeftWorkflowQueryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        queries: WorkflowQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ): WorkflowQueryService = WorkflowQueryService(
+        tenants,
+        users,
+        authorization,
+        queries,
+        transaction,
+        singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java),
     )
 
     @Bean

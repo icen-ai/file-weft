@@ -14,6 +14,8 @@ const state = {
   documents: [],
   folders: [],
   deliveryProfiles: [],
+  workflowTasks: [],
+  workflowHistory: [],
   selectedFolderId: null,
   selectedId: null,
   detail: null,
@@ -25,6 +27,7 @@ const RESUMABLE_CHECKPOINT_PREFIX = "fileweft.resumable.v1";
 const MINIMUM_RESUMABLE_CHUNK_BYTES = 5 * 1024 * 1024;
 const MAXIMUM_RESUMABLE_PARTS = 10_000;
 const V1_DOCUMENTS_PATH = "/fileweft/v1/documents";
+const V1_WORKFLOW_TASKS_PATH = "/fileweft/v1/workflows/tasks";
 const $ = (selector) => document.querySelector(selector);
 const t = (key) => translate(state.locale, key);
 const can = (action) => state.permissions.has(action);
@@ -89,6 +92,7 @@ function applyTranslations() {
     renderDocuments();
     syncFolderOptions();
     renderFixtures();
+    renderWorkflowInbox();
     renderResumableUpload();
     renderStalledResumableCompletions();
     if (state.detail) renderInspector();
@@ -130,15 +134,20 @@ async function login(username, password) {
 }
 
 async function refreshDocuments() {
-  const [documents, folders] = await Promise.all([
+  const [documents, folders, workflowPage] = await Promise.all([
     api("/api/documents?limit=60"),
     api("/api/catalog/folders"),
+    can("document:audit") && can("document:read")
+      ? v1Api(`${V1_WORKFLOW_TASKS_PATH}?limit=100`)
+      : Promise.resolve({ items: [], nextCursor: null }),
   ]);
   state.documents = documents;
   state.folders = folders;
+  state.workflowTasks = workflowPage?.items || [];
   ensureSelectedFolder();
   renderCatalog();
   renderDocuments();
+  renderWorkflowInbox();
   syncFolderOptions();
   updateMetrics();
   if (state.selectedId && state.documents.some((document) => document.id === state.selectedId)) await selectDocument(state.selectedId, false);
@@ -226,9 +235,57 @@ function renderDocuments() {
   list.querySelectorAll("[data-document-id]").forEach((button) => button.addEventListener("click", () => selectDocument(button.dataset.documentId)));
 }
 
+function pendingTaskForDocument(documentId) {
+  return state.workflowTasks.find((item) => item.document.id === documentId && item.actionableByCurrentUser);
+}
+
+function renderWorkflowInbox() {
+  const list = $("#workflow-task-list");
+  if (!list) return;
+  if (!state.user || !can("document:audit")) {
+    list.replaceChildren();
+    return;
+  }
+  if (!state.workflowTasks.length) {
+    list.innerHTML = `<div class="workflow-task-empty"><span>✓</span><b>${escapeHtml(t("workflow.inbox.emptyTitle"))}</b><small>${escapeHtml(t("workflow.inbox.emptyDetail"))}</small></div>`;
+    return;
+  }
+  list.innerHTML = state.workflowTasks.map((item) => `
+    <article class="workflow-task-card" data-testid="workflow-task-card" data-workflow-document="${escapeHtml(item.document.id)}">
+      <div><span class="eyebrow">${escapeHtml(item.document.documentNumber)} · ${escapeHtml(item.task.assignedToCurrentUser ? t("workflow.inbox.assigned") : t("workflow.unassigned"))}</span><h3>${escapeHtml(item.document.title)}</h3><small>${escapeHtml(localized("workflow.type", item.workflowType))} · ${escapeHtml(item.task.id)} · ${escapeHtml(formatTime(item.task.createdTime))}</small></div>
+      <div class="workflow-task-actions"><button type="button" data-workflow-decision="approve" data-workflow-task="${escapeHtml(item.task.id)}" data-testid="workflow-task-approve">${escapeHtml(t("action.approve"))}</button><button type="button" data-workflow-decision="reject" data-workflow-task="${escapeHtml(item.task.id)}" data-testid="workflow-task-reject">${escapeHtml(t("action.reject"))}</button><button class="workflow-open" type="button" data-workflow-open="${escapeHtml(item.document.id)}">${escapeHtml(t("workflow.inbox.openDocument"))}</button></div>
+    </article>`).join("");
+  list.querySelectorAll("[data-workflow-open]").forEach((button) => button.addEventListener("click", async () => {
+    await selectDocument(button.dataset.workflowOpen);
+    activatePanel("documents");
+  }));
+  list.querySelectorAll("[data-workflow-decision]").forEach((button) => button.addEventListener("click", async () => {
+    const item = state.workflowTasks.find((candidate) => candidate.task.id === button.dataset.workflowTask);
+    if (!item) return;
+    try {
+      await decideWorkflowTask(item, button.dataset.workflowDecision, null);
+      await refreshDocuments();
+    } catch (error) {
+      notice(error.message, "error");
+    }
+  }));
+}
+
+async function decideWorkflowTask(item, action, deliveryProfileId) {
+  const body = { comment: action === "approve" ? "Development proof approved" : "Development proof requires revision" };
+  if (action === "approve" && deliveryProfileId) body.deliveryProfileId = deliveryProfileId;
+  await v1Api(`/fileweft/v1/workflows/${item.task.workflowId}/tasks/${item.task.id}/${action}`, lifecycleJson(body, action));
+  notice(t(action === "approve" ? "notice.approved" : "notice.rejected"));
+}
+
 async function selectDocument(documentId, refreshPanels = true) {
   state.selectedId = documentId;
-  state.detail = await api(`/api/documents/${documentId}`);
+  const [detail, workflowPage] = await Promise.all([
+    api(`/api/documents/${documentId}`),
+    v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/workflows?limit=100`),
+  ]);
+  state.detail = detail;
+  state.workflowHistory = workflowPage?.items || [];
   state.selectedFolderId = state.detail.document.folderId || state.selectedFolderId;
   $("#empty-inspector").classList.add("hidden");
   $("#document-inspector").classList.remove("hidden");
@@ -265,9 +322,9 @@ function renderInspector() {
   $("#version-list").querySelectorAll("[data-version-download]").forEach((button) => button.addEventListener("click", () => {
     downloadDocument(button.dataset.versionDownload, button.dataset.fileName);
   }));
-  $("#workflow-list").innerHTML = detail.workflows.map((workflow) => {
-    const tasks = workflow.tasks.map((task) => `${escapeHtml(task.assigneeId || t("workflow.unassigned"))} · ${escapeHtml(localizedState(task.state))}${task.comment ? ` · ${escapeHtml(task.comment)}` : ""}`).join("<br />");
-    return evidenceItem(`${localized("workflow.type", workflow.type)} / ${localizedState(workflow.state)}`, tasks);
+  $("#workflow-list").innerHTML = state.workflowHistory.map((workflow) => {
+    const tasks = workflow.tasks.map((task) => `${escapeHtml(task.id)} · ${escapeHtml(localizedState(task.state))} · ${escapeHtml(formatTime(task.updatedTime))}`).join("<br />");
+    return evidenceItem(`${localized("workflow.type", workflow.workflowType)} / ${localizedState(workflow.state)}`, tasks);
   }).join("") || emptyEvidence("empty.workflow");
   $("#delivery-list").innerHTML = detail.deliveries.map((delivery) => {
     const responsibility = delivery.ownerRef ? ` · ${escapeHtml(delivery.ownerRef)}` : "";
@@ -355,9 +412,8 @@ function renderActions() {
   if (document.lifecycleState === "DRAFT" && can("document:submit")) {
     actions.push(actionButton("action.submit", "submit"), actionButton("action.submitDualControl", "submitDualControl"));
   }
-  const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
-  const task = workflow?.tasks.find((item) => item.state === "PENDING" && (!item.assigneeId || item.assigneeId === state.user.userId));
-  if (document.lifecycleState === "PENDING_REVIEW" && task && can("document:audit")) {
+  const pending = pendingTaskForDocument(document.id);
+  if (document.lifecycleState === "PENDING_REVIEW" && pending && can("document:audit")) {
     actions.push(actionButton("action.approve", "approve"), actionButton("action.reject", "reject"));
   }
   if (document.lifecycleState === "REJECTED" && can("document:revise")) actions.push(actionButton("action.revise", "revise"));
@@ -399,13 +455,9 @@ async function runAction(action) {
       notice(t(dualControl ? "notice.submittedDualControl" : "notice.submitted"));
     }
     if (["approve", "reject"].includes(action)) {
-      const workflow = state.detail.workflows.find((item) => item.state === "PENDING");
-      const task = workflow?.tasks.find((item) => item.state === "PENDING" && (!item.assigneeId || item.assigneeId === state.user.userId));
-      if (!workflow || !task) throw new Error("No pending review task is available.");
-      const body = { comment: action === "approve" ? "Development proof approved" : "Development proof requires revision" };
-      if (action === "approve") body.deliveryProfileId = $("#delivery-profile").value || null;
-      await v1Api(`/fileweft/v1/workflows/${workflow.id}/tasks/${task.id}/${action}`, lifecycleJson(body, action));
-      notice(t(action === "approve" ? "notice.approved" : "notice.rejected"));
+      const pending = pendingTaskForDocument(id);
+      if (!pending) throw new Error(t("workflow.inbox.noneForDocument"));
+      await decideWorkflowTask(pending, action, action === "approve" ? ($("#delivery-profile").value || null) : null);
     }
     if (["revise", "restore", "offline", "archive"].includes(action)) {
       await v1Api(`${V1_DOCUMENTS_PATH}/${id}/${action}`, lifecycleRequest(action));
@@ -490,13 +542,11 @@ async function runRoleRoute(action) {
     notice(t("notice.readOnly"));
     return;
   }
-  const pending = state.documents.find((document) => document.lifecycleState === "PENDING_REVIEW");
-  if (!pending) {
+  if (!state.workflowTasks.length) {
     notice(t("notice.noPending"));
     return;
   }
-  await selectDocument(pending.id);
-  activatePanel("documents");
+  activatePanel("workflow");
 }
 
 async function createFixture(fixtureId) {
@@ -775,10 +825,11 @@ async function loadStalledResumableCompletions() {
 }
 
 function activatePanel(panel) {
-  const target = panel === "doctor" && !can("document:doctor") ? "documents" : panel;
+  const target = (panel === "doctor" && !can("document:doctor")) || (panel === "workflow" && !can("document:audit")) ? "documents" : panel;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.panel === target));
-  ["documents", "fixtures", "platform", "doctor", "uploads"].forEach((name) => $(`#${name}-panel`).classList.toggle("hidden", name !== target));
+  ["documents", "workflow", "fixtures", "platform", "doctor", "uploads"].forEach((name) => $(`#${name}-panel`).classList.toggle("hidden", name !== target));
   if (target === "platform") loadPlatform();
+  if (target === "workflow") renderWorkflowInbox();
   if (target === "fixtures") renderFixtures();
   if (target === "uploads") renderResumableUpload();
 }
@@ -822,6 +873,7 @@ document.querySelectorAll("[data-locale]").forEach((button) => button.addEventLi
 $("#refresh").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
 $("#process-outbox").addEventListener("click", processOutbox);
 $("#process-tasks").addEventListener("click", processTasks);
+$("#refresh-workflow-inbox").addEventListener("click", () => refreshDocuments().catch((error) => notice(error.message, "error")));
 $("#open-create").addEventListener("click", () => $("#create-drawer").classList.remove("hidden"));
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));
 $("#create-form").addEventListener("submit", async (event) => {
@@ -859,7 +911,7 @@ $("#resumable-abort").addEventListener("click", abortResumableUpload);
 $("#resumable-maintenance").addEventListener("click", loadStalledResumableCompletions);
 $("#logout").addEventListener("click", async () => {
   try { await api("/api/auth/logout", { method: "POST" }); } finally {
-    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false; state.stalledResumableCompletions = null;
+    state.token = null; state.user = null; state.permissions = new Set(); state.documents = []; state.folders = []; state.deliveryProfiles = []; state.workflowTasks = []; state.workflowHistory = []; state.selectedFolderId = null; state.selectedId = null; state.detail = null; state.resumableBusy = false; state.stalledResumableCompletions = null;
     $("#app-view").classList.add("hidden"); $("#login-view").classList.remove("hidden"); $("#document-inspector").classList.add("hidden"); $("#empty-inspector").classList.remove("hidden");
   }
 });

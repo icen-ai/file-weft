@@ -9,13 +9,13 @@
 当前已交付的工件是：
 
 - `fileweft-web-api`：JDK 8 基线的纯契约、响应模型、错误码与 DTO；不依赖 Spring、JDBC、领域实体或任意 FileWeft 运行时模块。
-- `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读写与下载门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，将应用层已授权、已脱敏的读取视图和草稿命令结果映射为公共 DTO，并把 caller-owned 下载归一为只含安全响应元数据的 `Closeable` 句柄。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
+- `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读写、工作流查询与下载门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，将应用层已授权、已脱敏的读取视图和草稿命令结果映射为公共 DTO，并把 caller-owned 下载归一为只含安全响应元数据的 `Closeable` 句柄。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
 - `fileweft-web-spring-boot2-starter`：JDK 8 / Spring Boot 2.7 的可选 MVC 适配器；通过 `spring.factories` 注册。读取路由以安全的 `DocumentQueryService` 为条件，首批写入路由以 `DocumentDraftService` 为条件，内容路由以 `DocumentDownloadService` 为条件，能力未安装时不会伪装成可用接口。
 - `fileweft-web-spring-boot3-starter`：JDK 17 / Spring Boot 3 的可选 MVC 适配器；通过 `AutoConfiguration.imports` 注册，并与 Boot 2 保持同一路径、状态码和响应外层及条件装配语义。
 
 Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；条件式读取/写入 Controller 在缺少安全应用服务时不会注册，生命周期 Controller 则始终注册并以 `503 FEATURE_UNAVAILABLE` 明确表示缺少对应 flat/catalog-aware 能力。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
 
-开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的文档写入、当前/历史版本授权下载和生命周期/审批动作已经走 `/fileweft/v1`；工作流详情、Doctor、同步与审计综合投影仍使用 `/api`。这种并行仅用于明确区分已稳定的公共协议与丰富的 Dev 验收能力，不能把后者视为兼容承诺。
+开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的文档写入、当前/历史版本授权下载、审批待办与历史和生命周期/审批动作已经走 `/fileweft/v1`；Doctor、同步与审计综合投影仍使用 `/api`。这种并行仅用于明确区分已稳定的公共协议与丰富的 Dev 验收能力，不能把后者视为兼容承诺。
 
 ## 信任边界
 
@@ -57,6 +57,8 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `PATCH /fileweft/v1/documents/{documentId}`：以 JSON `{\"title\": \"...\"}` 修改草稿标题。
 - `GET /fileweft/v1/documents/{documentId}/content`：经当前租户、用户、目录范围和 `document:download` 授权后的当前版本内容流。
 - `GET /fileweft/v1/documents/{documentId}/versions/{versionId}/content`：同一授权边界下显式选择属于该文档的历史版本内容流。
+- `GET /fileweft/v1/workflows/tasks`：当前用户的待审批任务分页；只含分配给当前用户或未分配、且文档与工作流仍待审批的任务。
+- `GET /fileweft/v1/documents/{documentId}/workflows`：当前用户可见文档的审批历史分页；任务投影不含受理人、评论和操作者。
 
 上传文件名、长度和内容类型只从服务器收到的 multipart file part 派生，客户端不能另行提交对象键、资产 ID、哈希或存储 metadata；文件名拒绝路径分隔符、`.` 和 `..`。创建和新增版本返回 `201`，改名返回 `200`。成功创建后仅当文档 ID 是长度受限的安全单路径段时才附带相对 `Location`；自定义标识不满足这个条件时仍返回成功 body，不会在业务提交后制造一次失败。
 
@@ -75,12 +77,13 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 `publish` 可选 `deliveryProfileId`，`submit` 可选 `reviewRouteId`，审批/驳回可选有界评论；这些值进入服务端 typed-command 指纹。同一 key 改变动作、资源、任务、评论、路由或交付档案都会返回 `409`。
 
+审批待办同时要求 `document:audit` 和 `document:read`；文档审批历史作为文档详情的安全投影，只要求 `document:read`。两者都在目录模式下将查询限制在当前用户可浏览的目录范围。待办项的 `assignedToCurrentUser` 与 `actionableByCurrentUser` 均由可信用户快照计算，客户端不能提交用户 ID；不可见或跨租户文档的历史固定表现为 `404`，可见但没有历史则返回空页。首版没有持久化“决策操作者 ID”，因此不会把已完成任务描述为“我的审批”；如需该能力，必须先以新迁移保存决策身份快照。
+
 以下运营路由仍按后续里程碑增量交付：
-- `GET /workflows/tasks`（或宿主等价待办查询）：审批者发现任务的正式入口；在此之前八条命令 API 不能被描述为独立审批门户。
 - `GET /fileweft/v1/documents/{documentId}/doctor` 与 `POST /doctor/tasks`：即时 Doctor 和可恢复的异步 Doctor。
 - `GET /sync-status`、失败同步人工重排命令、`GET /logs`、`GET /plugins`、`GET /health`：在相应的脱敏读模型和系统授权服务完成后加入；不能复用 Dev 的直连 JDBC DTO。
 
-分页使用不透明 cursor 而不是让调用方拼接数据库 offset；当前 runtime 的 v1 codec 版本化 Base64URL 编码只包含稳定排序键 `updatedTime` 与 `documentId`，不含租户、用户、路径或密钥。它不是加密或签名机制：篡改/损坏 cursor 会被统一拒绝，而租户过滤与授权仍由应用层负责。每个列表请求仍以可信当前租户作为唯一数据域。所有文本输入均限制长度并拒绝控制字符；下载文件名与内容类型则由共享 runtime 策略归一，保证 Boot 2 与 Boot 3 不会各自解释不受信任的持久化 metadata。
+分页使用不透明 cursor 而不是让调用方拼接数据库 offset。文档分页 codec 封装 `updatedTime + documentId`；审批待办和历史使用带查询种类的独立 codec，封装不可变的 `createdTime + id`，避免审批保存时批量更新任务时间造成跳页。版本化 Base64URL 内容不含租户、用户、路径或密钥，也不是加密或签名机制：错种类、篡改或损坏 cursor 会被统一拒绝，而租户过滤与授权仍由应用层负责。每个列表请求仍以可信当前租户作为唯一数据域。所有文本输入均限制长度并拒绝控制字符；下载文件名与内容类型则由共享 runtime 策略归一，保证 Boot 2 与 Boot 3 不会各自解释不受信任的持久化 metadata。
 
 ## 持久化请求幂等地基
 
@@ -104,6 +107,6 @@ Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 
 
 每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
-本里程碑的 formal-v1 Playwright 用例会通过正式 Starter 实际执行缺失/非法 key、submit/approve fresh+replay 和同 key 异 typed command 冲突；其余浏览器用例继续覆盖中英文、角色控件、单人与双人审批、驳回修订和双租户隔离。Doctor、同步状态和日志仍属于待提升的正式 HTTP 映射。
+本里程碑的 formal-v1 Playwright 用例通过正式 Starter 实际执行缺失/非法 key、submit/approve fresh+replay、同 key 异 typed command 冲突，并从正式待办发现审批任务、验证审批历史脱敏和双租户隔离；其余浏览器用例继续覆盖中英文、角色控件、单人与双人审批和驳回修订。Doctor、同步状态和日志仍属于待提升的正式 HTTP 映射。
 
 首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 当前的分阶段接入只作为可运行示例，不代表所有 `/api` 能力已经形成正式协议。

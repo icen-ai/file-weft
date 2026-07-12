@@ -113,11 +113,13 @@ fileweft:
 
 ## 数据库迁移与查询索引
 
-所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
+所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021` 新增待办和审批历史的稳定 keyset 查询索引；`V022` 增加受理人前导的待办部分索引，避免大租户为一个用户取待办时扫描其他用户的任务。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
 
-对于已有大量 `fw_sync_record` 或 `fw_task` 数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql) 和 [V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
+对于已有大量同步、任务或工作流数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql)、[V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)、[V021 审批查询并发预建脚本](sql/postgresql-v021-concurrent-workflow-query-indexes.sql) 和 [V022 受理人待办并发预建脚本](sql/postgresql-v022-concurrent-workflow-assignee-inbox-index.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
 
 `V020` 只新增 `fw_idempotency_record`，不回填或重写现有业务表，因此升级前检查重点是新表、索引所需磁盘以及应用账号的建表权限。回滚到不认识 V020 的旧应用在尚未开放正式幂等写入口时可以保留该表；只有确认没有新版本写流量和待重放客户端后才可手工删除。幂等记录当前没有自动 TTL：不得以通用历史清理作业删除该表数据，否则迟到重试可能重复推进业务。正确事务不会提交 `IN_PROGRESS`；诊断索引一旦发现可见行，应按应用缺陷或自定义仓储不满足原子性处理，禁止自动改为完成、删除或接管。
+
+`V021` 与 `V022` 只创建索引，不回填或重写工作流数据。高数据量数据库应先使用并发脚本预建同名索引，再由 Flyway 记录迁移；回滚旧应用可以保留这些兼容索引。V021 保留全局 `created_time + id` 有序路径，V022 为当前受理人和未分配池提供可检索路径；只有在目标环境比较真实查询计划、确认没有新版本查询流量且磁盘预算允许时，才可由 DBA 并发删除任一索引。
 
 ## 断点续传与对象完整性
 

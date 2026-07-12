@@ -47,6 +47,8 @@ import com.fileweft.application.workflow.DocumentReviewRouteResolver
 import com.fileweft.application.workflow.DocumentReviewWorkflowService
 import com.fileweft.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
 import com.fileweft.application.workflow.IdempotentDocumentReviewWorkflowService
+import com.fileweft.application.workflow.WorkflowQueryRepository
+import com.fileweft.application.workflow.WorkflowQueryService
 import com.fileweft.core.id.IdentifierGenerator
 import com.fileweft.domain.audit.AuditRecordRepository
 import com.fileweft.domain.document.DocumentRepository
@@ -103,6 +105,10 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DocumentQueryRepository::class)
     fun documentQueries(): DocumentQueryRepository = JdbcDocumentQueryRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowQueryRepository::class)
+    fun workflowQueries(): WorkflowQueryRepository = JdbcWorkflowQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(FileObjectRepository::class)
@@ -587,6 +593,24 @@ class FileWeftRuntimeConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = DocumentQueryService(
         tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowQueryService::class)
+    fun workflowQueryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        queries: WorkflowQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ) = WorkflowQueryService(
+        tenants,
+        users,
+        authorization,
+        queries,
+        transaction,
+        singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java),
     )
 
     @Bean
