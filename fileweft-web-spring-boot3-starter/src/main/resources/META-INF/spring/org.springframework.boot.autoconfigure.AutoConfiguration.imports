@@ -4,3 +4,5 @@ ai.icen.fw.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration
 ai.icen.fw.web.spring.boot3.FileWeftWebBoot3LifecycleAutoConfiguration
 ai.icen.fw.web.spring.boot3.FileWeftWebBoot3WorkflowAutoConfiguration
 ai.icen.fw.web.spring.boot3.FileWeftWebBoot3DoctorAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3AuditLogAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3SystemProjectionAutoConfiguration

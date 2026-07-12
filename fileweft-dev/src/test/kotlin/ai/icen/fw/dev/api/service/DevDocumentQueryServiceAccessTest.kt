@@ -25,25 +25,6 @@ class DevDocumentQueryServiceAccessTest {
     }
 
     @Test
-    fun `rejects logs when document read is denied before querying the database`() {
-        val failure = assertFailsWith<SecurityException> {
-            deniedQueries().logs(Identifier("document-1"), 20)
-        }
-
-        assertEquals("Test policy denied document:read.", failure.message)
-    }
-
-    @Test
-    fun `rejects document log limits outside the documented bounds`() {
-        assertFailsWith<IllegalArgumentException> {
-            deniedQueries().logs(Identifier("document-1"), 0)
-        }
-        assertFailsWith<IllegalArgumentException> {
-            deniedQueries().logs(Identifier("document-1"), 101)
-        }
-    }
-
-    @Test
     fun `projects Agent results only through the matching successful Agent task`() {
         val normalizedSql = DEV_AGENT_RESULTS_SQL.trimIndent().replace(Regex("\\s+"), " ")
 

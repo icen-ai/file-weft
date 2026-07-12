@@ -53,25 +53,6 @@ data class DevWorkflowView(
     val tasks: List<DevWorkflowTaskView>,
 )
 
-data class DevAuditView(
-    val id: String,
-    val action: String,
-    val operatorId: String?,
-    val operatorName: String?,
-    val details: String?,
-    val createdTime: Long,
-)
-
-data class DevOperationLogView(
-    val id: String,
-    val action: String,
-    val operatorId: String?,
-    val operatorName: String?,
-    val traceId: String?,
-    val details: String?,
-    val createdTime: Long,
-)
-
 data class DevSyncView(
     val id: String,
     val sourceEventId: String,
@@ -130,20 +111,6 @@ data class DevOutboxStatusView(
     val updatedTime: Long,
 )
 
-/**
- * A redacted, time-ordered document history entry. Operation entries retain
- * their trace ID; audit entries are identified explicitly through [source].
- */
-data class DevDocumentLogEntry(
-    val id: String,
-    val source: String,
-    val action: String,
-    val operatorId: String?,
-    val operatorName: String?,
-    val traceId: String?,
-    val createdTime: Long,
-)
-
 data class DevDeliveryView(
     val id: String,
     val profileId: String,
@@ -196,8 +163,9 @@ data class DevDocumentDetail(
     val document: DevDocumentSummary,
     val versions: List<DevDocumentVersionView>,
     val workflows: List<DevWorkflowView>,
-    val audits: List<DevAuditView>,
-    val operationLogs: List<DevOperationLogView>,
+    /** Legacy JSON placeholders that are deliberately impossible to populate. */
+    val audits: List<Nothing>,
+    val operationLogs: List<Nothing>,
     val deliveries: List<DevDeliveryView>,
     val tasks: List<DevBackgroundTaskView>,
     val agentResults: List<DevAgentResultView>,
@@ -232,8 +200,10 @@ class DevDocumentQueryService(
             document = document,
             versions = jdbcTemplate.query(VERSIONS_SQL, VERSION_MAPPER, tenantId, documentId.value),
             workflows = loadWorkflows(tenantId, documentId.value),
-            audits = jdbcTemplate.query(AUDITS_SQL, AUDIT_MAPPER, tenantId, documentId.value),
-            operationLogs = jdbcTemplate.query(OPERATION_LOGS_SQL, OPERATION_LOG_MAPPER, tenantId, documentId.value),
+            // Dev detail keeps its legacy JSON shape, but audit evidence is exposed only by the
+            // authorized, redacted /fileweft/v1/documents/{id}/logs projection.
+            audits = emptyList(),
+            operationLogs = emptyList(),
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
             agentResults = if (access.allowsDocumentAction(documentId, AGENT_SUGGESTION_READ_ACTION)) {
@@ -274,22 +244,6 @@ class DevDocumentQueryService(
         )
     }
 
-    fun logs(documentId: Identifier, limit: Int): List<DevDocumentLogEntry> {
-        require(limit in 1..MAX_DOCUMENT_LOG_ENTRIES) {
-            "Document log limit must be between 1 and $MAX_DOCUMENT_LOG_ENTRIES."
-        }
-        val accessibleDocument = requireReadableDocument(documentId)
-        return jdbcTemplate.query(
-            DOCUMENT_LOGS_SQL,
-            DOCUMENT_LOG_ENTRY_MAPPER,
-            accessibleDocument.tenantId,
-            documentId.value,
-            accessibleDocument.tenantId,
-            documentId.value,
-            limit,
-        )
-    }
-
     private fun requireReadableDocument(documentId: Identifier): AccessibleDocument {
         access.requireDocumentAction(documentId, "document:read")
         val tenantId = tenantProvider.currentTenant().tenantId.value
@@ -325,7 +279,6 @@ class DevDocumentQueryService(
 
     private companion object {
         const val AGENT_SUGGESTION_READ_ACTION = "agent:suggestion:read"
-        const val MAX_DOCUMENT_LOG_ENTRIES = 100
         const val MAX_SYNC_STATUS_ENTRIES = 100
         val SUMMARY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentSummary> { result, _ ->
             DevDocumentSummary(
@@ -342,19 +295,6 @@ class DevDocumentQueryService(
         }
         val WORKFLOW_TASK_MAPPER = org.springframework.jdbc.core.RowMapper<DevWorkflowTaskView> { result, _ ->
             DevWorkflowTaskView(result.getString("id"), result.getString("assignee_id"), result.getString("task_state"), result.getString("comment_text"))
-        }
-        val AUDIT_MAPPER = org.springframework.jdbc.core.RowMapper<DevAuditView> { result, _ ->
-            DevAuditView(
-                result.getString("id"), result.getString("action"), result.getString("operator_id"),
-                result.getString("operator_name"), result.getString("detail_json"), result.getLong("created_time"),
-            )
-        }
-        val OPERATION_LOG_MAPPER = org.springframework.jdbc.core.RowMapper<DevOperationLogView> { result, _ ->
-            DevOperationLogView(
-                result.getString("id"), result.getString("action"), result.getString("operator_id"),
-                result.getString("operator_name"), result.getString("trace_id"), result.getString("detail_json"),
-                result.getLong("created_time"),
-            )
         }
         val SYNC_MAPPER = org.springframework.jdbc.core.RowMapper<DevSyncView> { result, _ ->
             DevSyncView(
@@ -386,12 +326,6 @@ class DevDocumentQueryService(
             DevOutboxStatusView(
                 result.getString("event_type"), result.getString("event_status"), result.getInt("retry_count"),
                 result.getLong("created_time"), result.getLong("updated_time"),
-            )
-        }
-        val DOCUMENT_LOG_ENTRY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentLogEntry> { result, _ ->
-            DevDocumentLogEntry(
-                result.getString("id"), result.getString("source"), result.getString("action"), result.getString("operator_id"),
-                result.getString("operator_name"), result.getString("trace_id"), result.getLong("created_time"),
             )
         }
         val DELIVERY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDeliveryView> { result, _ ->
@@ -462,16 +396,6 @@ class DevDocumentQueryService(
             SELECT id, assignee_id, task_state, comment_text FROM fw_workflow_task
             WHERE tenant_id = ? AND workflow_id = ? ORDER BY created_time, id
         """
-        const val AUDITS_SQL = """
-            SELECT id, action, operator_id, operator_name, detail_json::text AS detail_json, created_time FROM fw_audit_record
-            WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ? ORDER BY created_time DESC
-        """
-        const val OPERATION_LOGS_SQL = """
-            SELECT id, action, operator_id, operator_name, trace_id, detail_json::text AS detail_json, created_time
-            FROM fw_operation_log
-            WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ?
-            ORDER BY created_time DESC, id DESC
-        """
         const val SYNC_SQL = """
             SELECT id, source_event_id, connector_name, sync_status, external_id, error_message, retry_count, updated_time
             FROM fw_sync_record WHERE tenant_id = ? AND document_id = ? ORDER BY updated_time DESC
@@ -497,21 +421,6 @@ class DevDocumentQueryService(
             SELECT event_type, event_status, retry_count, created_time, updated_time
             FROM fw_outbox_event
             WHERE tenant_id = ? AND payload_json ->> 'documentId' = ?
-            ORDER BY created_time DESC, id DESC
-            LIMIT ?
-        """
-        const val DOCUMENT_LOGS_SQL = """
-            SELECT id, source, action, operator_id, operator_name, trace_id, created_time
-            FROM (
-                SELECT id, 'AUDIT' AS source, action, operator_id, operator_name,
-                       CAST(NULL AS varchar(128)) AS trace_id, created_time
-                FROM fw_audit_record
-                WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ?
-                UNION ALL
-                SELECT id, 'OPERATION' AS source, action, operator_id, operator_name, trace_id, created_time
-                FROM fw_operation_log
-                WHERE tenant_id = ? AND resource_type = 'DOCUMENT' AND resource_id = ?
-            ) AS document_log
             ORDER BY created_time DESC, id DESC
             LIMIT ?
         """

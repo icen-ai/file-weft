@@ -51,7 +51,7 @@ class ResumableUploadOwnerMigrationIntegrationTest {
     fun `migration preserves legacy sessions as unowned while system cleanup still reconciles them`() {
         insertLegacySession("legacy-expired", "legacy-request", expiresAt = 50)
 
-        assertEquals(1, FlywayMigrationRunner(dataSource).migrate())
+        assertEquals(2, FlywayMigrationRunner(dataSource).migrate())
         dataSource.connection.use { connection ->
             assertEquals("YES", ownerColumnNullable(connection))
             assertTrue(constraintExists(connection, "ck_fw_upload_session_owner_id"))
@@ -101,7 +101,7 @@ class ResumableUploadOwnerMigrationIntegrationTest {
 
     @Test
     fun `database constraint rejects blank padded control format and oversized owners`() {
-        assertEquals(1, FlywayMigrationRunner(dataSource).migrate())
+        assertEquals(2, FlywayMigrationRunner(dataSource).migrate())
         val transaction = JdbcApplicationTransaction(dataSource)
         val repository = JdbcResumableUploadSessionRepository(ObjectMapper())
         transaction.execute {
@@ -132,7 +132,7 @@ class ResumableUploadOwnerMigrationIntegrationTest {
 
     @Test
     fun `database constraint counts supplementary owners as two UTF-16 units without blocking cleanup`() {
-        assertEquals(1, FlywayMigrationRunner(dataSource).migrate())
+        assertEquals(2, FlywayMigrationRunner(dataSource).migrate())
         val transaction = JdbcApplicationTransaction(dataSource)
         val repository = JdbcResumableUploadSessionRepository(ObjectMapper())
         val supplementaryCharacter = String(Character.toChars(0x1F600))
@@ -173,7 +173,7 @@ class ResumableUploadOwnerMigrationIntegrationTest {
 
     @Test
     fun `status constraint accepts quarantined and rejects unknown states`() {
-        assertEquals(1, FlywayMigrationRunner(dataSource).migrate())
+        assertEquals(2, FlywayMigrationRunner(dataSource).migrate())
         val transaction = JdbcApplicationTransaction(dataSource)
         val repository = JdbcResumableUploadSessionRepository(ObjectMapper())
         transaction.execute {

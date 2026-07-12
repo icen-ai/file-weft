@@ -26,6 +26,17 @@ function newDoctorState(documentId = null) {
   };
 }
 
+function newRuntimeSurfaceState() {
+  return {
+    health: null,
+    plugins: [],
+    loading: false,
+    loaded: false,
+    healthError: false,
+    pluginsError: false,
+  };
+}
+
 const state = {
   token: null,
   user: null,
@@ -39,7 +50,9 @@ const state = {
   selectedFolderId: null,
   selectedId: null,
   detail: null,
+  auditLogs: [],
   doctor: newDoctorState(),
+  runtimeSurface: newRuntimeSurfaceState(),
   resumableBusy: false,
   stalledResumableCompletions: null,
   locale: localStorage.getItem("fileweft.locale") || DEFAULT_LOCALE,
@@ -50,6 +63,8 @@ const MAXIMUM_RESUMABLE_PARTS = 10_000;
 const V1_DOCUMENTS_PATH = "/fileweft/v1/documents";
 const V1_WORKFLOW_TASKS_PATH = "/fileweft/v1/workflows/tasks";
 const V1_SYSTEM_DOCTOR_PATH = "/fileweft/v1/doctor";
+const V1_HEALTH_PATH = "/fileweft/v1/health";
+const V1_PLUGINS_PATH = "/fileweft/v1/plugins";
 const DOWNSTREAM_MIRROR_CAPABILITY = "document:delivery:read";
 const DOCTOR_REPORT_STATUSES = new Set(["HEALTHY", "WARNING", "ERROR", "SKIPPED"]);
 const DOCTOR_TASK_STATUSES = new Set(["PENDING", "RUNNING", "RETRY", "SUCCESS", "FAILED"]);
@@ -197,6 +212,7 @@ function syncPermissionSurface() {
   });
   const platformNavigation = document.querySelector(".nav-item[data-panel='platform']");
   platformNavigation?.classList.toggle("hidden", !can(DOWNSTREAM_MIRROR_CAPABILITY));
+  $("#audit-section")?.classList.toggle("hidden", !(can("document:audit") && can("document:read")));
   if (!can("file:upload:maintenance")) $("#resumable-maintenance-output").classList.add("hidden");
 }
 
@@ -221,9 +237,11 @@ function resetSessionState() {
   state.selectedFolderId = null;
   state.selectedId = null;
   state.detail = null;
+  state.auditLogs = [];
   state.doctor = newDoctorState();
   state.doctor.contextGeneration = ++doctorContextSequence;
   state.doctor.pollGeneration = ++doctorPollSequence;
+  state.runtimeSurface = newRuntimeSurfaceState();
   state.resumableBusy = false;
   state.stalledResumableCompletions = null;
 }
@@ -250,7 +268,7 @@ function clearSensitiveDom() {
   [
     "#catalog-tree", "#document-list", "#workflow-task-list", "#role-route", "#fixture-grid", "#document-actions",
     "#version-list", "#workflow-list", "#delivery-list", "#task-list", "#agent-result-list", "#sync-list",
-    "#audit-list", "#operation-log-list", "#resumable-maintenance-output",
+    "#audit-list", "#resumable-maintenance-output", "#runtime-health-output", "#plugin-inventory-list",
   ].forEach((selector) => $(selector).replaceChildren());
   $("#platform-output").textContent = t("platform.empty");
 
@@ -482,16 +500,23 @@ async function selectDocument(documentId, refreshPanels = true) {
   const generation = sessionGeneration;
   const selectionSequence = ++documentSelectionSequence;
   if (state.doctor.documentId !== documentId) resetDoctorState(documentId);
-  const [detail, workflowPage, syncStatus] = await Promise.all([
-    api(`/api/documents/${documentId}`),
-    v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/workflows?limit=100`),
-    v1Api(`${V1_DOCUMENTS_PATH}/${documentId}/sync-status`),
+  const encodedDocumentId = encodeURIComponent(documentId);
+  const mayReadAudit = can("document:audit") && can("document:read");
+  state.auditLogs = [];
+  const [detail, workflowPage, syncStatus, auditPage] = await Promise.all([
+    api(`/api/documents/${encodedDocumentId}`),
+    v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/workflows?limit=100`),
+    v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/sync-status`),
+    mayReadAudit
+      ? v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/logs?limit=100`)
+      : Promise.resolve({ items: [], nextCursor: null }),
   ]);
   if (generation !== sessionGeneration || selectionSequence !== documentSelectionSequence || state.doctor.documentId !== documentId) return;
   state.selectedId = documentId;
   state.detail = detail;
   state.workflowHistory = workflowPage?.items || [];
   state.syncStatus = syncStatus;
+  state.auditLogs = Array.isArray(auditPage?.items) ? auditPage.items : [];
   state.selectedFolderId = state.detail.document.folderId || state.selectedFolderId;
   $("#empty-inspector").classList.add("hidden");
   $("#document-inspector").classList.remove("hidden");
@@ -676,6 +701,84 @@ function renderDoctorPanel() {
     setDoctorStatus($("#doctor-system-status"), "SKIPPED", true);
     doctorEmpty(systemOutput, "doctor.system.empty");
   }
+  renderRuntimeSurface();
+}
+
+function renderRuntimeSurface() {
+  const status = $("#runtime-health-status");
+  const healthOutput = $("#runtime-health-output");
+  const pluginOutput = $("#plugin-inventory-list");
+  const refresh = $("#refresh-runtime-surface");
+  if (!status || !healthOutput || !pluginOutput || !refresh) return;
+  refresh.disabled = !state.user || state.runtimeSurface.loading;
+
+  if (state.runtimeSurface.loading && !state.runtimeSurface.loaded) {
+    setDoctorStatus(status, "SKIPPED", true);
+    status.textContent = t("runtime.health.pending");
+    healthOutput.innerHTML = `<small>${escapeHtml(t("runtime.health.pending"))}</small>`;
+  } else if (state.runtimeSurface.health?.status === "UP") {
+    setDoctorStatus(status, "HEALTHY");
+    status.textContent = "UP";
+    healthOutput.innerHTML = `<strong>UP</strong><small>${escapeHtml(t("runtime.health.up"))}</small>`;
+  } else if (state.runtimeSurface.healthError) {
+    setDoctorStatus(status, "ERROR");
+    healthOutput.innerHTML = `<small>${escapeHtml(t("runtime.health.error"))}</small>`;
+  } else {
+    setDoctorStatus(status, "SKIPPED", true);
+    status.textContent = t("runtime.health.pending");
+    healthOutput.innerHTML = `<small>${escapeHtml(t("runtime.health.pending"))}</small>`;
+  }
+
+  if (!can("system:plugins:read")) {
+    pluginOutput.replaceChildren();
+  } else if (state.runtimeSurface.loading && !state.runtimeSurface.loaded) {
+    pluginOutput.innerHTML = `<small>${escapeHtml(t("runtime.plugins.loading"))}</small>`;
+  } else if (state.runtimeSurface.pluginsError) {
+    pluginOutput.innerHTML = `<small>${escapeHtml(t("runtime.plugins.error"))}</small>`;
+  } else if (!state.runtimeSurface.loaded) {
+    pluginOutput.innerHTML = `<small>${escapeHtml(t("runtime.plugins.pending"))}</small>`;
+  } else {
+    pluginOutput.innerHTML = state.runtimeSurface.plugins.map((plugin) => {
+      const capabilities = (Array.isArray(plugin.capabilities) ? plugin.capabilities : []).map((capability) =>
+        `<span class="plugin-capability">${escapeHtml(capability.type)} × ${escapeHtml(capability.count)}</span>`,
+      ).join("");
+      return `<article class="plugin-entry"><b>${escapeHtml(plugin.id)}</b><div class="plugin-capabilities">${capabilities}</div></article>`;
+    }).join("") || `<small>${escapeHtml(t("runtime.plugins.empty"))}</small>`;
+  }
+}
+
+async function loadRuntimeSurface(force = false) {
+  if (!state.user || state.runtimeSurface.loading || (state.runtimeSurface.loaded && !force)) return;
+  const generation = sessionGeneration;
+  const sessionToken = state.token;
+  const tenantId = state.user.tenantId;
+  const mayReadPlugins = can("system:plugins:read");
+  state.runtimeSurface.loading = true;
+  state.runtimeSurface.healthError = false;
+  state.runtimeSurface.pluginsError = false;
+  renderRuntimeSurface();
+
+  const [healthResult, pluginsResult] = await Promise.allSettled([
+    v1Api(V1_HEALTH_PATH),
+    mayReadPlugins ? v1Api(`${V1_PLUGINS_PATH}?limit=100`) : Promise.resolve({ items: [] }),
+  ]);
+  if (generation !== sessionGeneration || state.token !== sessionToken || state.user?.tenantId !== tenantId) return;
+
+  state.runtimeSurface.health = healthResult.status === "fulfilled" && healthResult.value?.status === "UP"
+    ? healthResult.value
+    : null;
+  state.runtimeSurface.healthError = state.runtimeSurface.health === null;
+  if (mayReadPlugins) {
+    const pluginPage = pluginsResult.status === "fulfilled" ? pluginsResult.value : null;
+    state.runtimeSurface.plugins = Array.isArray(pluginPage?.items) ? pluginPage.items : [];
+    state.runtimeSurface.pluginsError = !Array.isArray(pluginPage?.items);
+  } else {
+    state.runtimeSurface.plugins = [];
+    state.runtimeSurface.pluginsError = false;
+  }
+  state.runtimeSurface.loading = false;
+  state.runtimeSurface.loaded = true;
+  renderRuntimeSurface();
 }
 
 async function runImmediateDoctor() {
@@ -879,18 +982,16 @@ function renderInspector() {
     `${localizedState(sync.status)} / ${sync.connectorName}`,
     `${escapeHtml(sync.externalId || "—")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`,
   )).join("") || emptyEvidence("empty.sync");
-  $("#audit-list").innerHTML = detail.audits.map((audit) => {
+  const mayReadAudit = can("document:audit") && can("document:read");
+  $("#audit-section").classList.toggle("hidden", !mayReadAudit);
+  $("#audit-list").innerHTML = (mayReadAudit ? state.auditLogs : []).map((audit) => {
     const actorName = audit.operatorName || (audit.operatorId ? t("actor.unnamed") : t("actor.system"));
     const actorId = audit.operatorId ? ` · ${escapeHtml(audit.operatorId)}` : "";
-    return evidenceItem(localizedAudit(audit.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(audit.createdTime))}`);
+    const trace = audit.traceId
+      ? ` · ${escapeHtml(t("operation.trace"))}: ${escapeHtml(audit.traceId)}`
+      : ` · ${escapeHtml(t("operation.noTrace"))}`;
+    return evidenceItem(localizedAudit(audit.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(audit.createdTime))}${trace}`);
   }).join("") || emptyEvidence("empty.audit");
-  $("#operation-log-list").innerHTML = detail.operationLogs.map((operation) => {
-    const actorName = operation.operatorName || (operation.operatorId ? t("actor.unnamed") : t("actor.system"));
-    const actorId = operation.operatorId ? ` · ${escapeHtml(operation.operatorId)}` : "";
-    const trace = operation.traceId ? ` · ${escapeHtml(t("operation.trace"))}:${escapeHtml(operation.traceId)}` : ` · ${escapeHtml(t("operation.noTrace"))}`;
-    const details = operation.details ? ` · ${escapeHtml(operation.details)}` : "";
-    return evidenceItem(localizedAudit(operation.action), `${escapeHtml(actorName)}${actorId} · ${escapeHtml(formatTime(operation.createdTime))}${trace}${details}`);
-  }).join("") || emptyEvidence("empty.operation");
   renderActions();
 }
 
@@ -1389,7 +1490,10 @@ function activatePanel(panel) {
   if (target === "workflow") renderWorkflowInbox();
   if (target === "fixtures") renderFixtures();
   if (target === "uploads") renderResumableUpload();
-  if (target === "doctor") renderDoctorPanel();
+  if (target === "doctor") {
+    renderDoctorPanel();
+    loadRuntimeSurface().catch(reportRequestError);
+  }
 }
 
 async function processOutbox() {
@@ -1434,6 +1538,7 @@ $("#process-tasks").addEventListener("click", processTasks);
 $("#run-doctor").addEventListener("click", () => runImmediateDoctor().catch(reportRequestError));
 $("#schedule-doctor").addEventListener("click", () => scheduleDoctorTask().catch(reportRequestError));
 $("#run-system-doctor").addEventListener("click", () => runSystemDoctor().catch(reportRequestError));
+$("#refresh-runtime-surface").addEventListener("click", () => loadRuntimeSurface(true).catch(reportRequestError));
 $("#refresh-workflow-inbox").addEventListener("click", () => refreshDocuments().catch(reportRequestError));
 $("#open-create").addEventListener("click", () => $("#create-drawer").classList.remove("hidden"));
 $("#close-create").addEventListener("click", () => $("#create-drawer").classList.add("hidden"));

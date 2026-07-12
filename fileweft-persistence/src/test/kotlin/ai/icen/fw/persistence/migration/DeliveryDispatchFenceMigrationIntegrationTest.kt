@@ -45,7 +45,7 @@ class DeliveryDispatchFenceMigrationIntegrationTest {
         insertEvent("delivery-success", "delivery-removal", DELIVERY_EVENT, "SUCCESS", 10)
         insertEvent("removal-failure", "delivery-removal", REMOVAL_EVENT, "FAILED", 20)
 
-        assertEquals(2, FlywayMigrationRunner(dataSource).migrate())
+        assertEquals(3, FlywayMigrationRunner(dataSource).migrate())
 
         assertEquals(Fence("sync-event-2", "DELIVERY", 2), fence("delivery-sync"))
         assertEquals(Fence("removal-failure", "REMOVAL", 2), fence("delivery-removal"))

@@ -16,6 +16,8 @@ import ai.icen.fw.application.agent.AgentResultRepository
 import ai.icen.fw.application.agent.ConfirmAgentSuggestionService
 import ai.icen.fw.application.archive.ArchiveDocumentService
 import ai.icen.fw.application.audit.AuditTrail
+import ai.icen.fw.application.audit.DocumentAuditLogQueryRepository
+import ai.icen.fw.application.audit.DocumentAuditLogQueryService
 import ai.icen.fw.application.catalog.DocumentCatalogAccessService
 import ai.icen.fw.application.catalog.DocumentCatalogBindingService
 import ai.icen.fw.application.catalog.DocumentCatalogDraftService
@@ -107,6 +109,10 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DocumentQueryRepository::class)
     fun documentQueries(): DocumentQueryRepository = JdbcDocumentQueryRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentAuditLogQueryRepository::class)
+    fun documentAuditLogQueries(): DocumentAuditLogQueryRepository = JdbcDocumentAuditLogQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(DocumentSyncStatusQueryRepository::class)
@@ -690,6 +696,24 @@ class FileWeftRuntimeConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = DocumentQueryService(
         tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentAuditLogQueryService::class)
+    fun documentAuditLogQueryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        queries: DocumentAuditLogQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ) = DocumentAuditLogQueryService(
+        tenants,
+        users,
+        authorization,
+        queries,
+        transaction,
+        singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java),
     )
 
     @Bean

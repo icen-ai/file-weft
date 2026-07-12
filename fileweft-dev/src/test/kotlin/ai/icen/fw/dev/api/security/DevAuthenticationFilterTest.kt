@@ -16,7 +16,9 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.test.web.servlet.setup.StandaloneMockMvcBuilder
@@ -67,6 +69,12 @@ class DevAuthenticationFilterTest {
         mvc.perform(get("/fileweft/v1/cache-probe").bearer())
             .andExpect(status().isOk)
             .andExpectPrivateNoStore()
+        mvc.perform(get("/fileweft/plugins").bearer())
+            .andExpect(status().isOk)
+            .andExpectPrivateNoStore()
+        mvc.perform(get("/fileweft/doctor").bearer())
+            .andExpect(status().isOk)
+            .andExpectPrivateNoStore()
     }
 
     @Test
@@ -80,11 +88,36 @@ class DevAuthenticationFilterTest {
     }
 
     @Test
+    fun `formal compatibility aliases use the formal unauthenticated envelope`() {
+        listOf("/fileweft/plugins", "/fileweft/doctor").forEach { path ->
+            mvc.perform(get(path))
+                .andExpect(status().isUnauthorized)
+                .andExpect(content().contentType(JSON_CONTENT_TYPE))
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, FILEWEFT_DEV_BEARER_CHALLENGE))
+                .andExpect(header().string(X_CONTENT_TYPE_OPTIONS, NOSNIFF))
+                .andExpectPrivateNoStore()
+                .andExpect(jsonPath("$.*").value(org.hamcrest.Matchers.hasSize<Any>(5)))
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.message").value("Authentication is required."))
+                .andExpect(jsonPath("$.data").isEmpty())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.error.message").value("Authentication is required."))
+                .andExpect(jsonPath("$.traceId").isEmpty())
+        }
+    }
+
+    @Test
     fun `adds private no-store headers to public login and health responses`() {
         mvc.perform(post("/api/auth/login"))
             .andExpect(status().isOk)
             .andExpectPrivateNoStore()
         mvc.perform(get("/api/health"))
+            .andExpect(status().isOk)
+            .andExpectPrivateNoStore()
+        mvc.perform(get("/fileweft/v1/health"))
+            .andExpect(status().isOk)
+            .andExpectPrivateNoStore()
+        mvc.perform(get("/fileweft/health"))
             .andExpect(status().isOk)
             .andExpectPrivateNoStore()
     }
@@ -130,13 +163,13 @@ class DevAuthenticationFilterTest {
 
     @RestController
     private class CacheProbeController {
-        @GetMapping("/api/cache-probe", "/fileweft/v1/cache-probe")
+        @GetMapping("/api/cache-probe", "/fileweft/v1/cache-probe", "/fileweft/plugins", "/fileweft/doctor")
         fun authenticated(): Map<String, String> = mapOf("tenantId" to "tenant-private")
 
         @PostMapping("/api/auth/login")
         fun login(): Map<String, String> = mapOf("token" to "private-session", "tenantId" to "tenant-private")
 
-        @GetMapping("/api/health")
+        @GetMapping("/api/health", "/fileweft/v1/health", "/fileweft/health")
         fun health(): Map<String, String> = mapOf("status" to "UP")
 
         @GetMapping("/api/cache-probe/forbidden")
@@ -177,5 +210,9 @@ class DevAuthenticationFilterTest {
         const val PRIVATE_NO_STORE = "private, no-store"
         const val NO_CACHE = "no-cache"
         const val STRICT_DOWNLOAD_CACHE_CONTROL = "private, no-store, no-cache, max-age=0"
+        const val JSON_CONTENT_TYPE = "application/json;charset=UTF-8"
+        const val FILEWEFT_DEV_BEARER_CHALLENGE = "Bearer realm=\"fileweft-dev\""
+        const val X_CONTENT_TYPE_OPTIONS = "X-Content-Type-Options"
+        const val NOSNIFF = "nosniff"
     }
 }

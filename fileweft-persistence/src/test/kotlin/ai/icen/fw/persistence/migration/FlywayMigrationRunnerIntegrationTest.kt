@@ -58,7 +58,7 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `applies schema migrations for durable runtime recovery idempotency and workflow queries`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(24, migrations)
+        assertEquals(25, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -132,6 +132,7 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(indexExists(connection, "fw_workflow_task", "idx_fw_workflow_task_tenant_assignee_pending_inbox"))
             assertTrue(indexExists(connection, "fw_workflow_instance", "idx_fw_workflow_instance_tenant_document_history"))
             assertTrue(indexExists(connection, "fw_workflow_task", "idx_fw_workflow_task_tenant_workflow_history"))
+            assertTrue(auditLogKeysetIndexIsExact(connection))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_digests"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_binding"))
             assertTrue(constraintExists(connection, "fw_idempotency_record", "ck_fw_idempotency_status"))
@@ -299,6 +300,44 @@ class FlywayMigrationRunnerIntegrationTest {
         assertTrue(messages.contains("tenant_id=tenant-1, document_id=document-1, pending_count=2"))
     }
 
+    @Test
+    fun `refuses V025 when the expected audit index name has an incompatible definition`() {
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations("classpath:db/migration")
+            .target("24")
+            .load()
+            .migrate()
+
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    "CREATE INDEX idx_fw_audit_tenant_resource_time_id ON fw_audit_record(tenant_id)",
+                )
+            }
+        }
+
+        val failure = assertFailsWith<FlywayException> {
+            FlywayMigrationRunner(dataSource).migrate()
+        }
+        val messages = generateSequence<Throwable>(failure) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+        assertTrue(messages.contains("V025 requires one valid idx_fw_audit_tenant_resource_time_id"))
+
+        dataSource.connection.use { connection ->
+            assertFalse(auditLogKeysetIndexIsExact(connection))
+            connection.prepareStatement(
+                "SELECT COUNT(*) FROM flyway_schema_history WHERE version = '25' AND success",
+            ).use { statement ->
+                statement.executeQuery().use { result ->
+                    assertTrue(result.next())
+                    assertEquals(0, result.getInt(1))
+                }
+            }
+        }
+    }
+
     private fun tableExists(connection: Connection, tableName: String): Boolean =
         connection.metaData.getTables(null, "public", tableName, arrayOf("TABLE")).use { it.next() }
 
@@ -309,6 +348,26 @@ class FlywayMigrationRunnerIntegrationTest {
         connection.metaData.getIndexInfo(null, "public", tableName, false, false).use { indexes ->
             generateSequence { if (indexes.next()) indexes.getString("INDEX_NAME") else null }
                 .any { it.equals(indexName, ignoreCase = true) }
+        }
+
+    private fun auditLogKeysetIndexIsExact(connection: Connection): Boolean =
+        connection.prepareStatement(
+            """
+            SELECT index_row.indisvalid
+               AND index_row.indisready
+               AND index_row.indislive
+               AND pg_get_indexdef(index_row.indexrelid) = FORMAT(
+                    'CREATE INDEX %I ON %I.%I USING btree (tenant_id, resource_type, resource_id, created_time DESC, id DESC)',
+                    'idx_fw_audit_tenant_resource_time_id', current_schema(), 'fw_audit_record'
+               )
+              FROM pg_index index_row
+              JOIN pg_class index_class ON index_class.oid = index_row.indexrelid
+              JOIN pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+             WHERE index_namespace.nspname = current_schema()
+               AND index_class.relname = 'idx_fw_audit_tenant_resource_time_id'
+            """.trimIndent(),
+        ).use { statement ->
+            statement.executeQuery().use { result -> result.next() && result.getBoolean(1) && !result.next() }
         }
 
     private fun constraintExists(connection: Connection, tableName: String, constraintName: String): Boolean =

@@ -1,5 +1,9 @@
 package ai.icen.fw.runtime.plugin
 
+import ai.icen.fw.application.plugin.PluginCapabilityDescriptor
+import ai.icen.fw.application.plugin.PluginCapabilityType
+import ai.icen.fw.application.plugin.PluginInventoryDescriptor
+import ai.icen.fw.application.plugin.PluginInventoryProvider
 import ai.icen.fw.spi.ai.AgentTaskTrigger
 import ai.icen.fw.spi.ai.FileWeftAgent
 import ai.icen.fw.spi.connector.FileConnector
@@ -23,8 +27,11 @@ import java.util.ServiceLoader
 class FileWeftPluginRegistry @JvmOverloads constructor(
     springPlugins: List<FileWeftPlugin> = emptyList(),
     classLoader: ClassLoader = contextClassLoader(),
-) {
+) : PluginInventoryProvider {
     private val snapshotsById: Map<String, PluginSnapshot> = collectPlugins(springPlugins, classLoader)
+    private val inventorySnapshot: List<PluginInventoryDescriptor> = immutableList(
+        snapshotsById.values.map(::inventoryDescriptor),
+    )
     private val pluginList: List<FileWeftPlugin> = immutableList(snapshotsById.values.map { it.plugin })
     private val storageAdapterList: List<StorageAdapter> = contributions { it.storageAdapters }
     private val connectorSnapshot: ConnectorSnapshot = snapshotConnectors(snapshotsById.values)
@@ -36,6 +43,8 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
     private val reviewRouteProviderList: List<DocumentReviewRouteProvider> = contributions { it.reviewRouteProviders }
 
     fun plugins(): List<FileWeftPlugin> = pluginList
+
+    override fun inventory(): List<PluginInventoryDescriptor> = inventorySnapshot
 
     fun storageAdapters(): List<StorageAdapter> = storageAdapterList
 
@@ -141,6 +150,26 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
                 }
             }
             return ConnectorSnapshot(immutableMap(connectors), immutableMap(pluginIds))
+        }
+
+        fun inventoryDescriptor(snapshot: PluginSnapshot): PluginInventoryDescriptor {
+            val capabilities = ArrayList<PluginCapabilityDescriptor>()
+            capabilities.addIfPresent(PluginCapabilityType.STORAGE_ADAPTER, snapshot.storageAdapters.size)
+            capabilities.addIfPresent(PluginCapabilityType.CONNECTOR, snapshot.connectors.size)
+            capabilities.addIfPresent(PluginCapabilityType.DOCTOR_CHECKER, snapshot.doctorCheckers.size)
+            capabilities.addIfPresent(PluginCapabilityType.AGENT, snapshot.agents.size)
+            capabilities.addIfPresent(PluginCapabilityType.AGENT_TASK_TRIGGER, snapshot.agentTaskTriggers.size)
+            capabilities.addIfPresent(PluginCapabilityType.OUTBOX_EVENT_HANDLER, snapshot.outboxEventHandlers.size)
+            capabilities.addIfPresent(PluginCapabilityType.TASK_HANDLER, snapshot.taskHandlers.size)
+            capabilities.addIfPresent(PluginCapabilityType.REVIEW_ROUTE_PROVIDER, snapshot.reviewRouteProviders.size)
+            return PluginInventoryDescriptor(
+                id = snapshot.id,
+                capabilities = capabilities,
+            )
+        }
+
+        fun MutableList<PluginCapabilityDescriptor>.addIfPresent(type: PluginCapabilityType, count: Int) {
+            if (count > 0) add(PluginCapabilityDescriptor(type, count))
         }
 
         fun contextClassLoader(): ClassLoader = Thread.currentThread().contextClassLoader

@@ -87,12 +87,16 @@ class DevSecurityTest {
         assertEquals(listOf("document:read", "document:download"), DevRolePolicy.proofLabPermissions(DevRole.VIEWER))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:outbox:process"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:doctor:read"))
+        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains(DevRolePolicy.DOCUMENT_DELIVERY_READ_ACTION))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains(DevRolePolicy.DOCUMENT_DELIVERY_READ_ACTION))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains(DevRolePolicy.DOCUMENT_DELIVERY_READ_ACTION))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.VIEWER).contains(DevRolePolicy.DOCUMENT_DELIVERY_READ_ACTION))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("system:doctor:read"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("system:doctor:read"))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
+        assertFalse(DevRolePolicy.proofLabPermissions(DevRole.VIEWER).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
     }
 
     private fun request(tenantId: String, action: String) = AuthorizationRequest(

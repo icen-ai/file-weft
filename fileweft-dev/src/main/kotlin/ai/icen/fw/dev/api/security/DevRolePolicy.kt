@@ -9,6 +9,7 @@ import ai.icen.fw.dev.api.config.DevRole
  */
 object DevRolePolicy {
     const val DOCUMENT_DELIVERY_READ_ACTION = "document:delivery:read"
+    const val PLUGIN_INVENTORY_READ_ACTION = "system:plugins:read"
 
     private val editorActions = setOf(
         "document:read", "document:create", "document:edit", "document:rename", "document:version:add",
@@ -20,7 +21,7 @@ object DevRolePolicy {
         "document:read", "document:download", "document:create", "document:edit", "file:upload", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:restore", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
-        "system:doctor:read",
+        "system:doctor:read", PLUGIN_INVENTORY_READ_ACTION,
         DOCUMENT_DELIVERY_READ_ACTION, "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm",
         "system:upload:cleanup", "file:upload:maintenance",
     )

@@ -16,6 +16,8 @@ import ai.icen.fw.application.agent.AgentResultRepository
 import ai.icen.fw.application.agent.ConfirmAgentSuggestionService
 import ai.icen.fw.application.archive.ArchiveDocumentService
 import ai.icen.fw.application.audit.AuditTrail
+import ai.icen.fw.application.audit.DocumentAuditLogQueryRepository
+import ai.icen.fw.application.audit.DocumentAuditLogQueryService
 import ai.icen.fw.application.catalog.DocumentCatalogAccessService
 import ai.icen.fw.application.catalog.DocumentCatalogBindingService
 import ai.icen.fw.application.catalog.DocumentCatalogDraftService
@@ -101,6 +103,7 @@ import ai.icen.fw.persistence.jdbc.JdbcAgentResultRepository
 import ai.icen.fw.persistence.jdbc.JdbcAuditRecordRepository
 import ai.icen.fw.persistence.jdbc.JdbcDocumentRepository
 import ai.icen.fw.persistence.jdbc.JdbcDocumentQueryRepository
+import ai.icen.fw.persistence.jdbc.JdbcDocumentAuditLogQueryRepository
 import ai.icen.fw.persistence.jdbc.JdbcDocumentSyncStatusQueryRepository
 import ai.icen.fw.persistence.jdbc.JdbcDoctorReportRepository
 import ai.icen.fw.persistence.jdbc.JdbcDocumentDeliveryTargetRepository
@@ -163,6 +166,11 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(DocumentQueryRepository::class)
     fun fileWeftDocumentQueryRepository(): DocumentQueryRepository = JdbcDocumentQueryRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentAuditLogQueryRepository::class)
+    fun fileWeftDocumentAuditLogQueryRepository(): DocumentAuditLogQueryRepository =
+        JdbcDocumentAuditLogQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(DocumentSyncStatusQueryRepository::class)
@@ -774,6 +782,24 @@ class FileWeftRuntimeConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ): DocumentQueryService = DocumentQueryService(
         tenants, users, authorization, queries, transaction, folderReadAccess.getIfAvailable(),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentAuditLogQueryService::class)
+    fun fileWeftDocumentAuditLogQueryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        queries: DocumentAuditLogQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ): DocumentAuditLogQueryService = DocumentAuditLogQueryService(
+        tenants,
+        users,
+        authorization,
+        queries,
+        transaction,
+        singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java),
     )
 
     @Bean

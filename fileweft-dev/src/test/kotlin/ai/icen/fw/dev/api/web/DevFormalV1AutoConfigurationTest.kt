@@ -1,8 +1,10 @@
 package ai.icen.fw.dev.api.web
 
+import ai.icen.fw.application.audit.DocumentAuditLogQueryService
 import ai.icen.fw.application.document.DocumentDownloadService
 import ai.icen.fw.application.document.DocumentDraftService
 import ai.icen.fw.application.document.DocumentQueryService
+import ai.icen.fw.application.plugin.PluginInventoryQueryService
 import ai.icen.fw.dev.api.config.DevRole
 import ai.icen.fw.dev.api.config.FileWeftDevProperties
 import ai.icen.fw.dev.api.security.DevAuthenticationFilter
@@ -13,19 +15,27 @@ import ai.icen.fw.dev.api.security.DevUserDirectory
 import ai.icen.fw.dev.api.service.DevAuthService
 import ai.icen.fw.starter.boot3.FileWeftAutoConfiguration
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
+import ai.icen.fw.web.runtime.v1.audit.DocumentAuditLogApiFacade
 import ai.icen.fw.web.runtime.v1.doctor.DoctorApiFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentApiDownloadFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentApiReadFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentApiWriteFacade
+import ai.icen.fw.web.runtime.v1.health.HealthApiFacade
+import ai.icen.fw.web.runtime.v1.plugin.PluginInventoryApiFacade
+import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3AuditLogAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3AutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3DoctorAutoConfiguration
+import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3SystemProjectionAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3WriteAutoConfiguration
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentContentController
+import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentAuditLogController
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentReadController
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentWriteController
 import ai.icen.fw.web.spring.boot3.v1.doctor.V1DocumentDoctorController
 import ai.icen.fw.web.spring.boot3.v1.doctor.V1SystemDoctorController
+import ai.icen.fw.web.spring.boot3.v1.system.V1HealthController
+import ai.icen.fw.web.spring.boot3.v1.system.V1PluginInventoryController
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.autoconfigure.AutoConfigurations
@@ -71,6 +81,14 @@ class DevFormalV1AutoConfigurationTest {
             assertEquals(1, context.getBeansOfType(DoctorApiFacade::class.java).size)
             assertEquals(1, context.getBeansOfType(V1DocumentDoctorController::class.java).size)
             assertEquals(1, context.getBeansOfType(V1SystemDoctorController::class.java).size)
+            assertEquals(1, context.getBeansOfType(DocumentAuditLogQueryService::class.java).size)
+            assertEquals(1, context.getBeansOfType(DocumentAuditLogApiFacade::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1DocumentAuditLogController::class.java).size)
+            assertEquals(1, context.getBeansOfType(PluginInventoryQueryService::class.java).size)
+            assertEquals(1, context.getBeansOfType(PluginInventoryApiFacade::class.java).size)
+            assertEquals(1, context.getBeansOfType(HealthApiFacade::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1PluginInventoryController::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1HealthController::class.java).size)
 
             assertEquals(1, context.getBeansOfType(DevAuthController::class.java).size)
             assertEquals(1, context.getBeansOfType(DevAuthenticationFilter::class.java).size)
@@ -84,10 +102,20 @@ class DevFormalV1AutoConfigurationTest {
             val controller: V1DocumentReadController = context.getBean(V1DocumentReadController::class.java)
             val doctorController: V1DocumentDoctorController = context.getBean(V1DocumentDoctorController::class.java)
             val systemDoctorController: V1SystemDoctorController = context.getBean(V1SystemDoctorController::class.java)
+            val auditLogController: V1DocumentAuditLogController = context.getBean(V1DocumentAuditLogController::class.java)
+            val pluginInventoryController: V1PluginInventoryController = context.getBean(V1PluginInventoryController::class.java)
+            val healthController: V1HealthController = context.getBean(V1HealthController::class.java)
             val traceFilter: jakarta.servlet.Filter = context.getBean(DevTraceFilter::class.java)
             val authenticationFilter: jakarta.servlet.Filter = context.getBean(DevAuthenticationFilter::class.java)
             val mvc = MockMvcBuilders
-                .standaloneSetup(controller, doctorController, systemDoctorController)
+                .standaloneSetup(
+                    controller,
+                    doctorController,
+                    systemDoctorController,
+                    auditLogController,
+                    pluginInventoryController,
+                    healthController,
+                )
                 .addFilters<StandaloneMockMvcBuilder>(traceFilter, authenticationFilter)
                 .build()
 
@@ -118,10 +146,50 @@ class DevFormalV1AutoConfigurationTest {
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                 .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
 
+            mvc.perform(get("/fileweft/v1/documents/document-1/logs"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+
             mvc.perform(get("/fileweft/v1/doctor"))
                 .andExpect(status().isUnauthorized)
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                 .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+
+            listOf("/fileweft/plugins", "/fileweft/doctor").forEach { path ->
+                mvc.perform(get(path).header("X-Trace-Id", "formal-compat-auth-test"))
+                    .andExpect(status().isUnauthorized)
+                    .andExpect(content().contentType("application/json;charset=UTF-8"))
+                    .andExpect(header().string("X-Trace-Id", "formal-compat-auth-test"))
+                    .andExpect(header().string("WWW-Authenticate", "Bearer realm=\"fileweft-dev\""))
+                    .andExpect(header().string("Cache-Control", "private, no-store"))
+                    .andExpect(header().string("Pragma", "no-cache"))
+                    .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                    .andExpect(jsonPath("$.*").value(org.hamcrest.Matchers.hasSize<Any>(5)))
+                    .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                    .andExpect(jsonPath("$.message").value("Authentication is required."))
+                    .andExpect(jsonPath("$.data").isEmpty())
+                    .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+                    .andExpect(jsonPath("$.error.message").value("Authentication is required."))
+                    .andExpect(jsonPath("$.traceId").value("formal-compat-auth-test"))
+            }
+
+            mvc.perform(get("/fileweft/health").header("X-Trace-Id", "formal-health-test"))
+                .andExpect(status().isOk)
+                .andExpect(header().string("X-Trace-Id", "formal-health-test"))
+                .andExpect(
+                    header().string(
+                        "Cache-Control",
+                        org.hamcrest.Matchers.allOf(
+                            org.hamcrest.Matchers.containsString("private"),
+                            org.hamcrest.Matchers.containsString("no-store"),
+                        ),
+                    ),
+                )
+                .andExpect(header().string("Pragma", "no-cache"))
+                .andExpect(jsonPath("$.code").value("OK"))
+                .andExpect(jsonPath("$.data.status").value("UP"))
+                .andExpect(jsonPath("$.traceId").value("formal-health-test"))
 
             mvc.perform(get("/api/documents"))
                 .andExpect(status().isUnauthorized)
@@ -143,6 +211,8 @@ class DevFormalV1AutoConfigurationTest {
                 FileWeftWebBoot3WriteAutoConfiguration::class.java,
                 FileWeftWebBoot3ContentAutoConfiguration::class.java,
                 FileWeftWebBoot3DoctorAutoConfiguration::class.java,
+                FileWeftWebBoot3AuditLogAutoConfiguration::class.java,
+                FileWeftWebBoot3SystemProjectionAutoConfiguration::class.java,
             ),
         )
         .withUserConfiguration(DevProbeConfiguration::class.java)

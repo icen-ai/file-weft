@@ -83,6 +83,8 @@ select:focus { border-color: var(--acid-deep); background: #fff; }
 .doctor-scope-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-top: 18px; }
 .doctor-scope { min-width: 0; padding: 17px; border: 1px solid var(--line); border-top: 4px solid #87948b; background: rgba(255,255,255,.4); box-shadow: inset 0 1px 0 rgba(255,255,255,.65); }
 .doctor-system-scope { grid-column: 1 / -1; border-top-color: var(--blue); background: linear-gradient(110deg, rgba(118,181,197,.13), rgba(255,255,255,.42) 54%); }
+.runtime-surface { grid-column: 1 / -1; border-top-color: var(--acid-deep); background: linear-gradient(118deg, rgba(200,237,60,.12), rgba(255,255,255,.46) 58%); }
+.runtime-surface .doctor-scope-index { color: var(--paper); background: var(--ink); }
 .doctor-scope-head { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 11px; align-items: start; }
 .doctor-scope-index { display: grid; place-items: center; width: 38px; height: 38px; color: var(--ink); background: var(--acid); font: 900 11px/1 "SFMono-Regular", Consolas, monospace; }
 .doctor-system-scope .doctor-scope-index { background: var(--blue); }
@@ -112,11 +114,23 @@ select:focus { border-color: var(--acid-deep); background: #fff; }
 .doctor-check-reason, .doctor-check-repair { grid-column: 2 / -1; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
 .doctor-check-repair { padding-top: 7px; border-top: 1px dotted #cbd2c8; color: #4b5e45; }
 .doctor-check-repair b { color: #33422f; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.runtime-projection-grid { display: grid; grid-template-columns: minmax(180px,.72fr) minmax(0,1.28fr); gap: 10px; }
+.runtime-projection { min-width: 0; padding: 13px; border: 1px solid #c5cec0; background: rgba(248,248,241,.74); }
+.runtime-label { display: block; margin-bottom: 10px; color: var(--muted); font: 900 9px/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
+.runtime-health-output { min-height: 61px; display: flex; align-items: center; gap: 10px; }
+.runtime-health-output strong { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid #9fb65c; background: var(--acid); color: #34420f; font: 900 10px/1 "SFMono-Regular", Consolas, monospace; }
+.runtime-health-output small, .plugin-inventory-list > small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.plugin-inventory-list { display: grid; gap: 7px; }
+.plugin-entry { display: grid; grid-template-columns: minmax(120px,.65fr) minmax(0,1.35fr); gap: 10px; align-items: start; padding: 9px 0; border-top: 1px dotted #cbd2c8; }
+.plugin-entry:first-child { padding-top: 0; border-top: 0; }
+.plugin-entry b { color: var(--ink); font: 800 11px/1.45 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+.plugin-capabilities { display: flex; flex-wrap: wrap; gap: 5px; }
+.plugin-capability { padding: 4px 6px; border: 1px solid #adc096; background: #edf3e4; color: #4b5e45; font: 800 9px/1 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
 @keyframes doctor-scan { to { transform: translateX(100%); } }
 @keyframes pulse { 50% { box-shadow: 0 0 0 7px rgba(143,180,24,0); } }
 @media (max-width: 1180px) { .catalog-panel { grid-template-columns: 180px minmax(0,1fr); }.draft-form { grid-template-columns: 1fr 1fr; }.draft-form .primary { grid-column: span 2; } }
 @media (max-width: 760px) { .catalog-panel { grid-template-columns: 1fr; }.catalog-tree-panel { border-right: 0; border-bottom: 1px solid var(--line); }.catalog-tree { max-height: 230px; overflow: auto; }.catalog-content { padding: 16px 10px 8px; } }
-@media (max-width: 1180px) { .app-view { grid-template-columns: 200px minmax(360px,1fr); }.inspector { grid-column: 2; max-height: none; border-left: 0; border-top: 1px solid var(--line); }.draft-form { grid-template-columns: 1fr 1fr; }.draft-form .primary { grid-column: span 2; }.doctor-scope-grid { grid-template-columns: 1fr; }.doctor-system-scope { grid-column: auto; } }
+@media (max-width: 1180px) { .app-view { grid-template-columns: 200px minmax(360px,1fr); }.inspector { grid-column: 2; max-height: none; border-left: 0; border-top: 1px solid var(--line); }.draft-form { grid-template-columns: 1fr 1fr; }.draft-form .primary { grid-column: span 2; }.doctor-scope-grid { grid-template-columns: 1fr; }.doctor-system-scope, .runtime-surface { grid-column: auto; } }
 @media (max-width: 760px) { .locale-switch { top: 10px; right: 10px; }.login-view, .app-view { grid-template-columns: 1fr; }.login-mark { min-height: 44vh; }.rail { min-height: auto; }.rail-nav { grid-template-columns: repeat(2,1fr); }.rail-footer, .text-button { display: none; }.workbench { padding: 28px 18px; }.topbar { align-items: flex-start; flex-direction: column; }.topbar h2 { font-size: 34px; }.signal-strip { grid-template-columns: 1fr 1fr; }.signal-strip div:nth-child(2) { border-right: 0; }.ledger-head { display: none; }.document-row { grid-template-columns: 1fr auto; }.document-row > :nth-child(3), .document-row > :nth-child(4) { display: none; }.inspector { grid-column: 1; }.draft-form { grid-template-columns: 1fr; }.draft-form .primary { grid-column: auto; }.role-route { grid-template-columns: 1fr; }.route-index { min-height: 46px; }.fixture-heading { display: grid; gap: 5px; }.fixture-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .workflow-task-card { grid-template-columns: 1fr; }.workflow-task-actions { grid-template-columns: repeat(3,1fr); }.workflow-task-actions .workflow-open { grid-column: auto; } }
-@media (max-width: 760px) { .doctor-console-title, .doctor-scope-actions { align-items: flex-start; flex-direction: column; }.doctor-scope-head { grid-template-columns: 34px minmax(0,1fr); }.doctor-scope-index { width: 34px; height: 34px; }.doctor-status { grid-column: 2; }.doctor-run { width: 100%; }.doctor-check { grid-template-columns: 5px minmax(0,1fr); }.doctor-check-state { grid-column: 2; }.doctor-check-reason, .doctor-check-repair { grid-column: 2; } }
+@media (max-width: 760px) { .doctor-console-title, .doctor-scope-actions { align-items: flex-start; flex-direction: column; }.doctor-scope-head { grid-template-columns: 34px minmax(0,1fr); }.doctor-scope-index { width: 34px; height: 34px; }.doctor-status { grid-column: 2; }.doctor-run { width: 100%; }.doctor-check { grid-template-columns: 5px minmax(0,1fr); }.doctor-check-state { grid-column: 2; }.doctor-check-reason, .doctor-check-repair { grid-column: 2; }.runtime-projection-grid, .plugin-entry { grid-template-columns: 1fr; } }

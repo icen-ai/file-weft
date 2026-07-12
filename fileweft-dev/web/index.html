@@ -170,6 +170,25 @@
                 <div class="doctor-scope-actions"><small data-i18n="doctor.system.safe">Tenant identifiers and infrastructure details are never returned.</small><button id="run-system-doctor" class="doctor-run" type="button" data-i18n="action.systemDoctor">Run system Doctor</button></div>
                 <div id="doctor-system-output" class="doctor-check-list" aria-live="polite"><div class="doctor-empty" data-i18n="doctor.system.empty">Run the system check to inspect the current tenant runtime.</div></div>
               </article>
+
+              <article class="doctor-scope runtime-surface" data-testid="runtime-surface">
+                <header class="doctor-scope-head">
+                  <span class="doctor-scope-index">04</span>
+                  <div><h3 data-i18n="runtime.title">Formal runtime surface</h3><p data-i18n="runtime.subtitle">Reads only the stable health and plugin inventory projections.</p></div>
+                  <span id="runtime-health-status" class="doctor-status SKIPPED" data-i18n="runtime.health.pending">PENDING</span>
+                </header>
+                <div class="doctor-scope-actions"><small data-i18n="runtime.safe">No configuration, class names, credentials or tenant identifiers are exposed.</small><button id="refresh-runtime-surface" class="doctor-run" type="button" data-i18n="action.refreshRuntime">Refresh runtime</button></div>
+                <div class="runtime-projection-grid">
+                  <section class="runtime-projection" aria-live="polite">
+                    <span class="runtime-label" data-i18n="runtime.health.title">Process health</span>
+                    <div id="runtime-health-output" class="runtime-health-output"><small data-i18n="runtime.health.pending">PENDING</small></div>
+                  </section>
+                  <section id="plugin-inventory-section" class="runtime-projection" data-permission="system:plugins:read" data-testid="plugin-inventory">
+                    <span class="runtime-label" data-i18n="runtime.plugins.title">Loaded plugin inventory</span>
+                    <div id="plugin-inventory-list" class="plugin-inventory-list"><small data-i18n="runtime.plugins.pending">Inventory has not been inspected.</small></div>
+                  </section>
+                </div>
+              </article>
             </div>
           </section>
 
@@ -202,8 +221,7 @@
             <section class="evidence-section"><h4 data-i18n="evidence.tasks">Background tasks</h4><div id="task-list"></div></section>
             <section id="agent-results-section" class="evidence-section"><h4 data-i18n="evidence.agent">Agent suggestions</h4><div id="agent-result-list"></div></section>
             <section class="evidence-section"><h4 data-i18n="evidence.sync">Sync records</h4><div id="sync-list"></div></section>
-            <section class="evidence-section"><h4 data-i18n="evidence.audit">Audit trail</h4><div id="audit-list"></div></section>
-            <section class="evidence-section"><h4 data-i18n="evidence.operation">Operation trace</h4><div id="operation-log-list"></div></section>
+            <section id="audit-section" class="evidence-section"><h4 data-i18n="evidence.audit">Audit &amp; trace</h4><div id="audit-list"></div></section>
           </div>
         </aside>
       </section>

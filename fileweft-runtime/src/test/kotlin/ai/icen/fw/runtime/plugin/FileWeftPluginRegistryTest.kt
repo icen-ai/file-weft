@@ -82,6 +82,13 @@ class FileWeftPluginRegistryTest {
         val outbox = registry.outboxEventHandlers().single()
         val task = registry.taskHandlers().single()
         val route = registry.reviewRouteProviders().single()
+        val inventory = registry.inventory().single { descriptor -> descriptor.id == FreshContributionPlugin.ID }
+
+        assertEquals(
+            FreshContributionPlugin.CONTRIBUTION_NAMES.size,
+            inventory.capabilities.size,
+        )
+        assertTrue(inventory.capabilities.all { capability -> capability.count == 1 })
 
         repeat(3) {
             assertSame(storage, registry.storageAdapters().single())
@@ -93,12 +100,16 @@ class FileWeftPluginRegistryTest {
             assertSame(outbox, registry.outboxEventHandlers().single())
             assertSame(task, registry.taskHandlers().single())
             assertSame(route, registry.reviewRouteProviders().single())
+            assertSame(inventory, registry.inventory().single { descriptor -> descriptor.id == FreshContributionPlugin.ID })
         }
 
         FreshContributionPlugin.CONTRIBUTION_NAMES.forEach { contribution ->
             assertEquals(1, plugin.callCount(contribution), "$contribution must not be re-read by registry getters.")
         }
         assertEquals(1, plugin.callCount(FreshContributionPlugin.ID_GETTER))
+        assertFailsWith<UnsupportedOperationException> {
+            (registry.inventory() as MutableList<ai.icen.fw.application.plugin.PluginInventoryDescriptor>).clear()
+        }
     }
 
     @Test

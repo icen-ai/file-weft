@@ -9,6 +9,8 @@ import ai.icen.fw.adapter.observability.NoOpTraceContextProvider
 import ai.icen.fw.adapter.identity.DefaultUserRealmProvider
 import ai.icen.fw.adapter.storage.LocalStorageAdapter
 import ai.icen.fw.adapter.tenant.FixedTenantProvider
+import ai.icen.fw.application.plugin.PluginInventoryProvider
+import ai.icen.fw.application.plugin.PluginInventoryQueryService
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.runtime.plugin.FileWeftPluginRegistry
 import ai.icen.fw.spi.authorization.AuthorizationProvider
@@ -24,9 +26,16 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
+import org.springframework.boot.autoconfigure.condition.AllNestedConditions
 import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.beans.factory.NoSuchBeanDefinitionException
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Import
+import org.springframework.context.annotation.ConfigurationCondition.ConfigurationPhase
 import java.nio.file.Paths
 import java.time.Clock
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -82,6 +91,21 @@ class FileWeftAutoConfiguration {
     fun fileWeftPluginRegistry(plugins: List<FileWeftPlugin>): FileWeftPluginRegistry = FileWeftPluginRegistry(plugins)
 
     @Bean
+    @ConditionalOnMissingBean(PluginInventoryQueryService::class)
+    @Conditional(TrustedPluginInventoryBoundariesCondition::class)
+    fun fileWeftPluginInventoryQueryService(
+        tenant: TenantProvider,
+        user: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        providers: ObjectProvider<PluginInventoryProvider>,
+    ): PluginInventoryQueryService = PluginInventoryQueryService(
+        tenant,
+        user,
+        authorization,
+        requiredPluginInventoryProvider(providers),
+    )
+
+    @Bean
     @ConditionalOnMissingBean(IdentifierGenerator::class)
     fun fileWeftIdentifierGenerator(): IdentifierGenerator = UuidIdentifierGenerator()
 
@@ -110,4 +134,39 @@ class FileWeftAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(TraceContextProvider::class)
     fun fileWeftTraceContextProvider(): NoOpTraceContextProvider = NoOpTraceContextProvider()
+
+    private fun requiredPluginInventoryProvider(
+        providers: ObjectProvider<PluginInventoryProvider>,
+    ): PluginInventoryProvider {
+        val candidates = providers.orderedStream().iterator().asSequence().toList()
+        val explicit = candidates.filterNot { candidate -> candidate is FileWeftPluginRegistry }
+        val registries = candidates.filterIsInstance<FileWeftPluginRegistry>()
+        if (explicit.size > 1) {
+            throw NoUniqueBeanDefinitionException(
+                PluginInventoryProvider::class.java,
+                explicit.size,
+                "Plugin inventory queries require at most one explicit PluginInventoryProvider.",
+            )
+        }
+        if (registries.size > 1) {
+            throw NoUniqueBeanDefinitionException(
+                FileWeftPluginRegistry::class.java,
+                registries.size,
+                "Plugin inventory queries require exactly one default FileWeftPluginRegistry.",
+            )
+        }
+        return explicit.singleOrNull() ?: registries.singleOrNull()
+            ?: throw NoSuchBeanDefinitionException(PluginInventoryProvider::class.java)
+    }
+
+    private class TrustedPluginInventoryBoundariesCondition : AllNestedConditions(ConfigurationPhase.REGISTER_BEAN) {
+        @ConditionalOnSingleCandidate(TenantProvider::class)
+        class Tenant
+
+        @ConditionalOnSingleCandidate(UserRealmProvider::class)
+        class User
+
+        @ConditionalOnSingleCandidate(AuthorizationProvider::class)
+        class Authorization
+    }
 }

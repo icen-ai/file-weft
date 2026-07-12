@@ -58,7 +58,7 @@ class DevDocumentControllerTest {
     }
 
     @Test
-    fun `keeps legacy Dev Doctor routes unmapped`() {
+    fun `keeps legacy Dev Doctor and document log routes unmapped`() {
         val mvc = MockMvcBuilders.standaloneSetup(
             controller(
                 Mockito.mock(DocumentCatalogMutationService::class.java),
@@ -69,6 +69,8 @@ class DevDocumentControllerTest {
         mvc.perform(get("/api/documents/document-1/doctor"))
             .andExpect(status().isNotFound)
         mvc.perform(post("/api/documents/document-1/doctor/tasks"))
+            .andExpect(status().isNotFound)
+        mvc.perform(get("/api/documents/document-1/logs"))
             .andExpect(status().isNotFound)
     }
 

@@ -180,11 +180,52 @@ test("exposes administrator processing controls and reviewer approval only to th
   }
 });
 
+test("loads the merged audit and trace only through the formal auditor projection", async ({ browser, page }) => {
+  const editorLogRequests = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/logs")) editorLogRequests.push(path);
+  });
+  await login(page, "editor@alpha");
+  const created = await createFixture(page, "contract");
+  await expect(page.locator("#audit-section")).toBeHidden();
+  expect(editorLogRequests).toEqual([]);
+
+  const reviewerContext = await browser.newContext();
+  try {
+    const reviewerPage = await reviewerContext.newPage();
+    const reviewerLogRequests = [];
+    reviewerPage.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (path.endsWith("/logs")) reviewerLogRequests.push(path);
+    });
+    await login(reviewerPage, "reviewer@alpha");
+    const responsePromise = reviewerPage.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname === `/fileweft/v1/documents/${created.documentId}/logs`,
+    );
+    await selectDocument(reviewerPage, created.documentId);
+    expect((await responsePromise).status()).toBe(200);
+    await expect(reviewerPage.locator("#audit-section")).toBeVisible();
+    await expect(reviewerPage.locator("#audit-list")).toContainText("Document created");
+    await expect(reviewerPage.locator("#audit-list")).toContainText("Alpha 编辑者");
+    await expect(reviewerPage.locator("#audit-list")).toContainText(/Trace ID|No request trace/);
+    expect(reviewerLogRequests).toEqual([`/fileweft/v1/documents/${created.documentId}/logs`]);
+    expect(reviewerLogRequests.some((path) => path.startsWith("/api/"))).toBe(false);
+    expect(await reviewerPage.locator("#audit-list").evaluate((element) => element.outerHTML)).not.toContain("details");
+    await expect(reviewerPage.locator("#operation-log-list")).toHaveCount(0);
+  } finally {
+    await reviewerContext.close();
+  }
+});
+
 test("runs immediate and asynchronous Doctor through formal v1 without rendering internal evidence", async ({ page }) => {
   const doctorPaths = [];
+  const pluginPaths = [];
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
     if (path.toLowerCase().includes("doctor")) doctorPaths.push(`${request.method()} ${path}`);
+    if (path.toLowerCase().includes("plugins")) pluginPaths.push(`${request.method()} ${path}`);
   });
 
   const appSourceResponse = await page.request.get("/app.js");
@@ -217,6 +258,9 @@ test("runs immediate and asynchronous Doctor through formal v1 without rendering
   expect((await immediateResponse).status()).toBe(200);
   await expect(page.getByTestId("doctor-panel")).toBeVisible();
   await expect(page.getByTestId("doctor-system-scope")).toBeHidden();
+  await expect(page.locator("#runtime-health-status")).toHaveText("UP");
+  await expect(page.getByTestId("plugin-inventory")).toBeHidden();
+  expect(pluginPaths).toEqual([]);
   await expect(page.locator("#doctor-immediate-status")).not.toHaveAttribute("data-doctor-status", "IDLE");
   await expect(page.locator("#doctor-output .doctor-check")).not.toHaveCount(0);
   await expect(page.getByTestId("doctor-check-permission")).toHaveCount(1);
@@ -269,7 +313,18 @@ test("shows tenant system Doctor only to administrators and keeps both tenant re
   });
 
   await login(page, "admin@alpha");
+  const healthResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === "/fileweft/v1/health",
+  );
+  const pluginsResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === "/fileweft/v1/plugins",
+  );
   await page.locator("[data-panel='doctor']").click();
+  expect((await healthResponsePromise).status()).toBe(200);
+  expect((await pluginsResponsePromise).status()).toBe(200);
+  await expect(page.locator("#runtime-health-status")).toHaveText("UP");
+  await expect(page.getByTestId("plugin-inventory")).toBeVisible();
+  await expect(page.locator("#plugin-inventory-list")).not.toContainText("Inventory has not been inspected");
   await expect(page.getByTestId("doctor-system-scope")).toBeVisible();
   const systemResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "GET" && new URL(response.url()).pathname === "/fileweft/v1/doctor",

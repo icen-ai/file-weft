@@ -15,7 +15,6 @@ import ai.icen.fw.dev.api.connector.DevPlatformMirrorService
 import ai.icen.fw.dev.api.security.DevRolePolicy
 import ai.icen.fw.dev.api.service.DevAccessService
 import ai.icen.fw.dev.api.service.DevDocumentDetail
-import ai.icen.fw.dev.api.service.DevDocumentLogEntry
 import ai.icen.fw.dev.api.service.DevDocumentQueryService
 import ai.icen.fw.dev.api.service.DevDocumentSyncStatus
 import ai.icen.fw.dev.api.service.DevReviewService
@@ -93,12 +92,6 @@ class DevDocumentController(
 
     @GetMapping("/{documentId}/sync-status")
     fun syncStatus(@PathVariable documentId: String): DevDocumentSyncStatus = queries.syncStatus(Identifier(documentId))
-
-    @GetMapping("/{documentId}/logs")
-    fun logs(
-        @PathVariable documentId: String,
-        @RequestParam(defaultValue = "20") limit: Int,
-    ): List<DevDocumentLogEntry> = queries.logs(Identifier(documentId), limit)
 
     @GetMapping("/{documentId}/content")
     fun downloadCurrent(@PathVariable documentId: String): ResponseEntity<StreamingResponseBody> =

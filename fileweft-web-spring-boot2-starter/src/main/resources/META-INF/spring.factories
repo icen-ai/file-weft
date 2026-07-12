@@ -4,4 +4,6 @@ ai.icen.fw.web.spring.boot2.FileWeftWebBoot2WriteAutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2ContentAutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2LifecycleAutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2WorkflowAutoConfiguration,\
-ai.icen.fw.web.spring.boot2.FileWeftWebBoot2DoctorAutoConfiguration
+ai.icen.fw.web.spring.boot2.FileWeftWebBoot2DoctorAutoConfiguration,\
+ai.icen.fw.web.spring.boot2.FileWeftWebBoot2AuditLogAutoConfiguration,\
+ai.icen.fw.web.spring.boot2.FileWeftWebBoot2SystemProjectionAutoConfiguration

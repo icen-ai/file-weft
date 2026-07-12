@@ -94,7 +94,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 
 审计将用户 ID 视为不透明字符串，并同时保存操作发生时的显示名快照。接入方可在 `UserRealmProvider` 中将 Long、Int、UUID 或其他身份系统 ID 转为字符串；FileWeft 不维护用户表，也不会在查询历史审计时反查并改写原有操作者名称。
 
-验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。控制台的创建、改名、新增版本、授权下载、审批待办与文档审批历史、当前代次同步状态、明确的交付/撤回重排、即时/异步/系统 Doctor，以及提交/审批/驳回/修订/下线/恢复/归档均走 `/fileweft/v1` 正式协议。旧 `/api/documents/{documentId}/doctor` 与 `/api/documents/{documentId}/doctor/tasks` 已撤销并保持 `404`，防止绕过正式目录授权和脱敏门面；审计综合投影仍走 `/api`，只用于 Dev 验收，不能被嵌入方当作公共协议。
+验收控制台默认英文，可切换完整中文。其“角色验收实验室”内置 TXT、Markdown、CSV、JSON 文件样例：拥有创建权限的用户可将它们上传为真实 RustFS 草稿；审批、Outbox 与只读路线则只展示当前用户经服务端授权的操作控件。控制台的创建、改名、新增版本、授权下载、审批待办与文档审批历史、当前代次同步状态、明确的交付/撤回重排、受权审计日志、插件清单、进程 liveness、即时/异步/系统 Doctor，以及提交/审批/驳回/修订/下线/恢复/归档均走 `/fileweft/v1` 正式协议。旧 `/api/documents/{documentId}/doctor`、`/api/documents/{documentId}/doctor/tasks` 与 `/api/documents/{documentId}/logs` 已撤销并保持 `404`，防止绕过正式目录授权、双权限检查和脱敏门面；通用 Dev 文档详情保留兼容字段名，但审计与操作列表固定为空。
 
 运行完整 Compose 验收回归：
 

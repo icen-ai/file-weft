@@ -134,6 +134,8 @@ fileweft:
 
 `current_event_id` 故意不外键关联 Outbox：生产环境可能按保留策略归档终态事件；但任何 Outbox 清理作业都必须排除仍被 `fw_document_delivery_target.current_event_id` 引用的记录。当前事件缺失表示一致性损坏，正式重排必须 fail closed 并交给 Doctor/运营处理。V023 落库后不能回滚到不了解事件围栏的旧 Worker；旧二进制会忽略事件身份，数据库也无法从旧的整行更新推断它正在处理哪个事件。
 
+`V025` 只为正式文档审计 keyset 查询增加 `(tenant_id, resource_type, resource_id, created_time DESC, id DESC)` 复合索引，不修改或回填审计数据。审计表较大的生产库应在升级前以自动提交会话运行 [V025 审计查询并发预建脚本](sql/postgresql-v025-concurrent-audit-log-index.sql)，建议使用 `psql -v ON_ERROR_STOP=1 -f docs/sql/postgresql-v025-concurrent-audit-log-index.sql`，并监控 `pg_stat_progress_create_index`、磁盘和复制延迟。脚本会在创建前后严格核验索引状态和精确定义；若早先失败的并发创建留下无效同名索引，必须按提示先 `DROP INDEX CONCURRENTLY`，不能让 `IF NOT EXISTS` 静默跳过。Flyway V025 也执行同等后置校验，只有索引有效、ready 且五列顺序与排序方向完全一致时才会记录迁移成功。回滚旧应用可以保留该兼容索引；只有确认所有新日志查询节点已下线并核对查询计划后，才可按脚本注释并发删除。无论是否保留索引，审计与操作记录本身都是合规证据，不属于迁移回滚可删除的数据。
+
 ## 断点续传与对象完整性
 
 `ResumableUploadService` 把 multipart 状态持久化到 `fw_upload_session` 与 `fw_upload_session_part`，并以可信上下文中的租户和用户 ID 绑定用户操作。所有者 ID 只从 `UserRealmProvider.currentUser()` 的单次身份快照取得，是区分大小写且不做 trim、大小写折叠或 Unicode 归一化的不透明字符串；禁止从请求 DTO、Header、metadata、查询参数或浏览器检查点接收。接入值必须非空、最多 256 个 UTF-16 code unit、首尾无 Unicode whitespace，且不含 ISO control 或 FileWeft 固定拒绝表中的 Unicode format 字符；应用校验与 V024 数据库约束使用同一固定码点表，不受 JDK 8～25 内置 Unicode 版本差异影响。宿主若使用 `Long`、`Int`、UUID 或组合主键，应先在身份 SPI 中稳定转换为字符串，后续不得改变格式。接入方的 HTTP API 应仅把会话 ID、已确认分片号、过期时间和完成结果返回给浏览器；`ownerId`、`storageUploadId`、对象路径和对象存储凭据始终只能留在服务端。

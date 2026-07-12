@@ -35,7 +35,7 @@ class DevAuthenticationFilter(
         val token = authorization?.takeIf { it.startsWith(BEARER_PREFIX) }?.removePrefix(BEARER_PREFIX)
         val principal = token?.let(sessions::find)
         if (principal == null) {
-            if (isFormalV1Path(request.requestURI)) {
+            if (isFormalApiPath(request.requestURI)) {
                 writeFormalUnauthenticated(protectedResponse)
             } else {
                 protectedResponse.status = HttpServletResponse.SC_UNAUTHORIZED
@@ -70,11 +70,16 @@ class DevAuthenticationFilter(
     private fun isFormalV1Path(requestUri: String): Boolean =
         requestUri == FORMAL_V1_ROOT || requestUri.startsWith("$FORMAL_V1_ROOT/")
 
+    private fun isFormalApiPath(requestUri: String): Boolean =
+        isFormalV1Path(requestUri) || requestUri in FORMAL_COMPATIBILITY_PATHS
+
     private fun isPrivateNoStorePath(requestUri: String): Boolean =
-        requestUri == DEV_API_ROOT || requestUri.startsWith("$DEV_API_ROOT/") || isFormalV1Path(requestUri)
+        requestUri == DEV_API_ROOT || requestUri.startsWith("$DEV_API_ROOT/") ||
+            isFormalApiPath(requestUri)
 
     private fun isPublicPath(requestUri: String): Boolean =
-        requestUri == LOGIN_PATH || requestUri == HEALTH_PATH
+        requestUri == LOGIN_PATH || requestUri == HEALTH_PATH ||
+            requestUri == FORMAL_HEALTH_PATH || requestUri == FORMAL_HEALTH_COMPATIBILITY_PATH
 
     /**
      * Installs the safe defaults before the request can be rejected, while presenting those defaults as
@@ -170,6 +175,15 @@ class DevAuthenticationFilter(
         const val FORMAL_V1_ROOT = "/fileweft/v1"
         const val LOGIN_PATH = "/api/auth/login"
         const val HEALTH_PATH = "/api/health"
+        const val FORMAL_HEALTH_PATH = "/fileweft/v1/health"
+        const val FORMAL_HEALTH_COMPATIBILITY_PATH = "/fileweft/health"
+        const val FORMAL_PLUGIN_COMPATIBILITY_PATH = "/fileweft/plugins"
+        const val FORMAL_DOCTOR_COMPATIBILITY_PATH = "/fileweft/doctor"
+        val FORMAL_COMPATIBILITY_PATHS = setOf(
+            FORMAL_HEALTH_COMPATIBILITY_PATH,
+            FORMAL_PLUGIN_COMPATIBILITY_PATH,
+            FORMAL_DOCTOR_COMPATIBILITY_PATH,
+        )
         const val CACHE_CONTROL_HEADER = "Cache-Control"
         const val PRIVATE_NO_STORE = "private, no-store"
         const val PRIVATE_DIRECTIVE = "private"

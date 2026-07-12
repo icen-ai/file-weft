@@ -89,8 +89,54 @@ class DevAcceptanceIntegrationTest {
         assertTrue(admin.path("permissions").any { it.asText() == "system:outbox:process" })
         assertTrue(admin.path("permissions").any { it.asText() == "agent:suggestion:confirm" })
         assertTrue(admin.path("permissions").any { it.asText() == "system:doctor:read" })
+        assertTrue(admin.path("permissions").any { it.asText() == "system:plugins:read" })
         assertTrue(editor.path("permissions").none { it.asText() == "system:doctor:read" })
         assertTrue(reviewer.path("permissions").none { it.asText() == "system:doctor:read" })
+        assertTrue(editor.path("permissions").none { it.asText() == "system:plugins:read" })
+        assertTrue(reviewer.path("permissions").none { it.asText() == "system:plugins:read" })
+        assertTrue(viewer.path("permissions").none { it.asText() == "system:plugins:read" })
+    }
+
+    @Test
+    fun `exposes anonymous formal health and administrator-only plugin inventory`() {
+        listOf("/fileweft/v1/health", "/fileweft/health").forEach { path ->
+            val response = client.send(
+                HttpRequest.newBuilder(URI("$apiUrl$path")).GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+            )
+            assertEquals(200, response.statusCode())
+            assertTrue(response.headers().firstValue("Cache-Control").orElse("").contains("no-store"))
+            val envelope = mapper.readTree(response.body())
+            assertV1SuccessEnvelope(envelope)
+            assertEquals("UP", envelope.path("data").path("status").asText())
+        }
+
+        val admin = login("admin@alpha", "dev-admin")
+        val editor = login("editor@alpha", "dev-editor")
+        val plugins = getResponse("$apiUrl/fileweft/v1/plugins?limit=100", admin)
+        assertEquals(200, plugins.statusCode())
+        assertTrue(plugins.headers().firstValue("Cache-Control").orElse("").contains("no-store"))
+        val pluginEnvelope = mapper.readTree(plugins.body())
+        assertV1SuccessEnvelope(pluginEnvelope)
+        assertTrue(pluginEnvelope.path("data").path("items").isArray)
+        assertTrue(pluginEnvelope.path("data").path("items").all { plugin ->
+            plugin.fieldNames().asSequence().toSet() == setOf("id", "capabilities") &&
+                plugin.path("capabilities").all { capability ->
+                    capability.fieldNames().asSequence().toSet() == setOf("type", "count")
+                }
+        })
+        assertTrue(pluginEnvelope.findValue("className") == null)
+        assertTrue(pluginEnvelope.findValue("configuration") == null)
+
+        val forbidden = getResponse("$apiUrl/fileweft/v1/plugins", editor)
+        assertEquals(403, forbidden.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(forbidden.body()), "FORBIDDEN", "Access denied.")
+        val unauthenticated = client.send(
+            HttpRequest.newBuilder(URI("$apiUrl/fileweft/v1/plugins")).GET().build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(401, unauthenticated.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(unauthenticated.body()), "UNAUTHENTICATED", "Authentication is required.")
     }
 
     @Test
@@ -140,8 +186,9 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
-    fun `mirrors document audit evidence into operation history with the request trace`() {
+    fun `exposes one redacted formal audit entry with its request trace`() {
         val editor = login("editor@alpha", "dev-editor")
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
         val traceId = "e2e-operation-${UUID.randomUUID().toString().take(12)}"
         val documentId = createDraft(
             editor,
@@ -150,15 +197,17 @@ class DevAcceptanceIntegrationTest {
         ).path("document").path("id").asText()
 
         val detail = getJson("$apiUrl/api/documents/$documentId", editor)
-        val audit = detail.path("audits").first { it.path("action").asText() == "document:create" }
-        val operation = detail.path("operationLogs").first { it.path("action").asText() == "document:create" }
-        assertEquals(audit.path("id").asText(), operation.path("id").asText())
-        assertEquals(traceId, operation.path("traceId").asText())
-        assertEquals("alpha-editor", operation.path("operatorId").asText())
+        assertEquals(0, detail.path("audits").size())
+        assertEquals(0, detail.path("operationLogs").size())
+        val audit = documentLogs(documentId, reviewer).first { it.path("action").asText() == "document:create" }
+        assertEquals(traceId, audit.path("traceId").asText())
+        assertEquals("alpha-editor", audit.path("operatorId").asText())
+        assertEquals("Alpha 编辑者", audit.path("operatorName").asText())
+        assertTrue(!audit.has("details") && !audit.has("detailJson") && !audit.has("source"))
     }
 
     @Test
-    fun `exposes redacted document sync status and bounded operation history only within the current tenant`() {
+    fun `exposes redacted sync and formal audit history only to the current tenant auditor`() {
         val editor = login("editor@alpha", "dev-editor")
         val traceId = "e2e-status-${UUID.randomUUID().toString().take(12)}"
         val documentId = createDraft(
@@ -203,29 +252,28 @@ class DevAcceptanceIntegrationTest {
         assertTrue(formalSyncStatus.findValue("dispatchSequence") == null)
         assertTrue(formalSyncStatus.findValue("errorMessage") == null)
 
-        val boundedLogs = getJson("$apiUrl/api/documents/$documentId/logs?limit=1", editor)
-        assertEquals(1, boundedLogs.size())
-        assertTrue(boundedLogs.first().path("source").asText() in setOf("AUDIT", "OPERATION"))
-        assertTrue(!boundedLogs.first().has("details"))
-        val logs = getJson("$apiUrl/api/documents/$documentId/logs?limit=20", editor)
+        val boundedEnvelope = getJson("$apiUrl/fileweft/v1/documents/$documentId/logs?limit=1", reviewer)
+        assertV1SuccessEnvelope(boundedEnvelope)
+        assertEquals(1, boundedEnvelope.path("data").path("items").size())
+        val logs = documentLogs(documentId, reviewer)
         assertTrue(logs.any { entry ->
-            entry.path("source").asText() == "AUDIT" && entry.path("action").asText() == "document:create"
+            entry.path("action").asText() == "document:create" && entry.path("traceId").asText() == traceId
         })
-        assertTrue(logs.any { entry ->
-            entry.path("source").asText() == "OPERATION" && entry.path("action").asText() == "document:create" &&
-                entry.path("traceId").asText() == traceId
-        })
-        assertTrue(logs.all { entry -> !entry.has("details") && !entry.has("detailJson") })
+        assertTrue(logs.all { entry -> !entry.has("details") && !entry.has("detailJson") && !entry.has("source") })
+
+        val forbiddenEditor = getResponse("$apiUrl/fileweft/v1/documents/$documentId/logs", editor)
+        assertEquals(403, forbiddenEditor.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(forbiddenEditor.body()), "FORBIDDEN", "Access denied.")
 
         val invalidLimit = client.send(
-            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/logs?limit=101"))
-                .header("Authorization", "Bearer $editor")
+            HttpRequest.newBuilder(URI("$apiUrl/fileweft/v1/documents/$documentId/logs?limit=101"))
+                .header("Authorization", "Bearer $reviewer")
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
         )
-        assertEquals(422, invalidLimit.statusCode())
-        assertEquals("INVALID_REQUEST", mapper.readTree(invalidLimit.body()).path("code").asText())
+        assertEquals(400, invalidLimit.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(invalidLimit.body()), "INVALID_REQUEST", "Request is invalid.")
 
         val betaEditor = login("editor@beta", "dev-editor")
         val crossTenant = client.send(
@@ -241,18 +289,28 @@ class DevAcceptanceIntegrationTest {
         assertEquals(404, formalCrossTenant.statusCode())
         assertV1FailureEnvelope(mapper.readTree(formalCrossTenant.body()), "NOT_FOUND", "Resource was not found.")
 
+        val betaReviewer = login("reviewer@beta", "dev-reviewer")
+        val auditCrossTenant = getResponse("$apiUrl/fileweft/v1/documents/$documentId/logs", betaReviewer)
+        assertEquals(404, auditCrossTenant.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(auditCrossTenant.body()), "NOT_FOUND", "Resource was not found.")
+
         val unauthenticated = client.send(
-            HttpRequest.newBuilder(URI("$apiUrl/api/documents/$documentId/logs"))
+            HttpRequest.newBuilder(URI("$apiUrl/fileweft/v1/documents/$documentId/logs"))
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
         )
         assertEquals(401, unauthenticated.statusCode())
+        assertV1FailureEnvelope(mapper.readTree(unauthenticated.body()), "UNAUTHENTICATED", "Authentication is required.")
+
+        val legacy = getResponse("$apiUrl/api/documents/$documentId/logs", reviewer)
+        assertEquals(404, legacy.statusCode())
     }
 
     @Test
     fun `authorizes a version stream without exposing storage urls or cross tenant content`() {
         val editor = login("editor@alpha", "dev-editor")
+        val reviewer = login("reviewer@alpha", "dev-reviewer")
         val documentId = createDraft(editor, "E2E-DOWNLOAD-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
         val detail = getJson("$apiUrl/api/documents/$documentId", editor)
         val versionId = detail.path("versions").first().path("id").asText()
@@ -278,15 +336,14 @@ class DevAcceptanceIntegrationTest {
         )
         assertEquals(404, crossTenant.statusCode())
 
-        val updated = getJson("$apiUrl/api/documents/$documentId", editor)
-        assertAuditActor(updated, "document:download", "alpha-editor", "Alpha 编辑者")
-        assertTrue(updated.path("operationLogs").any { it.path("action").asText() == "document:download" })
+        assertAuditActor(documentId, reviewer, "document:download", "alpha-editor", "Alpha 编辑者")
     }
 
     @Test
     fun `exercises the formal v1 document contract against the compose database and RustFS`() {
         val nonce = UUID.randomUUID().toString().replace("-", "")
         val editor = login("editor@alpha", "dev-editor")
+        val auditor = login("reviewer@alpha", "dev-reviewer")
         val viewer = login("viewer@alpha", "dev-viewer")
         val betaEditor = login("editor@beta", "dev-editor")
         val documentNumber = "V1-E2E-${nonce.take(20)}"
@@ -430,7 +487,7 @@ class DevAcceptanceIntegrationTest {
             versions.first { version -> version.path("id").asText() == currentVersionId }.path("fileName").asText(),
         )
 
-        assertEquals(0, downloadAuditCount(documentId, editor))
+        assertEquals(0, downloadAuditCount(documentId, auditor))
         val currentDownloadPath = "$apiUrl/fileweft/v1/documents/$documentId/content"
         val historicalDownloadPath =
             "$apiUrl/fileweft/v1/documents/$documentId/versions/$historicalVersionId/content"
@@ -438,7 +495,7 @@ class DevAcceptanceIntegrationTest {
         assertV1Download(currentDownload, currentContent, currentFileName)
         val historicalDownload = getBinary(historicalDownloadPath, editor)
         assertV1Download(historicalDownload, historicalContent, historicalFileName)
-        assertEquals(2, downloadAuditCount(documentId, editor))
+        assertEquals(2, downloadAuditCount(documentId, auditor))
 
         // The application persists download intent before it opens RustFS. An
         // unchanged count therefore proves these transport rejections never
@@ -456,7 +513,7 @@ class DevAcceptanceIntegrationTest {
             assertEquals("nosniff", rejectedRange.headers().firstValue("X-Content-Type-Options").orElse(""))
             assertTrue(!rejectedRange.headers().firstValue("Accept-Ranges").isPresent)
         }
-        assertEquals(2, downloadAuditCount(documentId, editor))
+        assertEquals(2, downloadAuditCount(documentId, auditor))
 
         listOf(currentDownloadPath, historicalDownloadPath).forEach { path ->
             val rejectedHead = client.send(
@@ -472,7 +529,7 @@ class DevAcceptanceIntegrationTest {
             assertEquals("nosniff", rejectedHead.headers().firstValue("X-Content-Type-Options").orElse(""))
             assertTrue(!rejectedHead.headers().firstValue("Accept-Ranges").isPresent)
         }
-        assertEquals(2, downloadAuditCount(documentId, editor))
+        assertEquals(2, downloadAuditCount(documentId, auditor))
 
         val betaDetail = getResponse("$apiUrl/fileweft/v1/documents/$documentId", betaEditor)
         assertEquals(404, betaDetail.statusCode())
@@ -492,10 +549,10 @@ class DevAcceptanceIntegrationTest {
         assertEquals(404, betaContent.statusCode())
         assertJsonContentType(betaContent)
         assertV1FailureEnvelope(mapper.readTree(betaContent.body()), "NOT_FOUND", "Resource was not found.")
-        assertEquals(2, downloadAuditCount(documentId, editor))
+        assertEquals(2, downloadAuditCount(documentId, auditor))
 
-        val downloadAudits = documentLogs(documentId, editor).filter { entry ->
-            entry.path("source").asText() == "AUDIT" && entry.path("action").asText() == "document:download"
+        val downloadAudits = documentLogs(documentId, auditor).filter { entry ->
+            entry.path("action").asText() == "document:download"
         }
         assertEquals(2, downloadAudits.size)
         assertTrue(downloadAudits.all { entry -> entry.path("operatorId").asText() == "alpha-editor" })
@@ -592,6 +649,7 @@ class DevAcceptanceIntegrationTest {
     @Test
     fun `keeps catalog folders and bound documents isolated between tenants`() {
         val alphaEditor = login("editor@alpha", "dev-editor")
+        val alphaReviewer = login("reviewer@alpha", "dev-reviewer")
         val betaEditor = login("editor@beta", "dev-editor")
         val alphaNumber = "E2E-ALPHA-${UUID.randomUUID().toString().take(8)}"
         val betaNumber = "E2E-BETA-${UUID.randomUUID().toString().take(8)}"
@@ -607,9 +665,10 @@ class DevAcceptanceIntegrationTest {
         assertTrue(betaFolders.none { it.path("id").asText() == "contracts" })
 
         val alphaCreatedDetail = getJson("$apiUrl/api/documents/$alphaDocument", alphaEditor)
-        val createAudit = alphaCreatedDetail.path("audits").firstOrNull { it.path("action").asText() == "document:create" }
-            ?: throw AssertionError("Catalog-bound document creation audit was not found.")
-        assertEquals("contracts", mapper.readTree(createAudit.path("details").asText()).path("folderId").asText())
+        assertEquals("contracts", alphaCreatedDetail.path("document").path("folderId").asText())
+        assertEquals(0, alphaCreatedDetail.path("audits").size())
+        assertEquals(0, alphaCreatedDetail.path("operationLogs").size())
+        assertAuditActor(alphaDocument, alphaReviewer, "document:create", "alpha-editor", "Alpha 编辑者")
 
         val betaCannotBindAlphaFolder = uploadFileResponse(
             "$apiUrl/api/documents",
@@ -624,7 +683,7 @@ class DevAcceptanceIntegrationTest {
             alphaEditor,
         )
         assertEquals("finance", moved.path("document").path("folderId").asText())
-        assertAuditActor(moved, "document:catalog:move", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(alphaDocument, alphaReviewer, "document:catalog:move", "alpha-editor", "Alpha 编辑者")
 
         val alphaDocuments = getJson("$apiUrl/api/documents?limit=100", alphaEditor)
         val betaDocuments = getJson("$apiUrl/api/documents?limit=100", betaEditor)
@@ -671,13 +730,12 @@ class DevAcceptanceIntegrationTest {
         assertEquals(3, detail.path("deliveries").size())
         assertTrue(detail.path("deliveries").all { it.path("status").asText() == "SUCCEEDED" })
         assertEquals(3, detail.path("outboxEvents").count { it.path("status").asText() == "SUCCESS" })
-        assertAuditActor(detail, "document:create", "alpha-editor", "Alpha 编辑者")
-        assertAuditActor(detail, "document:review:submit", "alpha-editor", "Alpha 编辑者")
-        assertAuditActor(detail, "document:review:approve", "alpha-reviewer", "Alpha 审批者")
-        assertEquals(3, detail.path("audits").count { it.path("action").asText() == "document:delivery:succeeded" })
-        val deliveryOperations = detail.path("operationLogs").filter { it.path("action").asText() == "document:delivery:succeeded" }
-        assertEquals(3, deliveryOperations.size)
-        assertTrue(deliveryOperations.all { it.path("traceId").asText() == deliveryTraceId })
+        assertAuditActor(documentId, reviewer, "document:create", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, reviewer, "document:review:submit", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, reviewer, "document:review:approve", "alpha-reviewer", "Alpha 审批者")
+        val deliveryAudits = documentLogs(documentId, reviewer).filter { it.path("action").asText() == "document:delivery:succeeded" }
+        assertEquals(3, deliveryAudits.size)
+        assertTrue(deliveryAudits.all { it.path("traceId").asText() == deliveryTraceId })
 
         listOf("compliance", "collaboration", "search").forEach { targetId ->
             val mirror = getPlatform(targetId, documentId)
@@ -736,8 +794,9 @@ class DevAcceptanceIntegrationTest {
         assertEquals("PENDING_REVIEW", afterReviewer.path("document").path("lifecycleState").asText())
         assertEquals("PENDING", afterReviewer.path("workflows").first().path("state").asText())
         assertEquals(0, afterReviewer.path("outboxEvents").size())
-        assertTrue(afterReviewer.path("audits").first { it.path("action").asText() == "document:review:submit" }
-            .path("details").asText().contains("dual-control"))
+        assertEquals(0, afterReviewer.path("audits").size())
+        assertEquals(0, afterReviewer.path("operationLogs").size())
+        assertAuditActor(documentId, reviewer, "document:review:submit", "alpha-editor", "Alpha 编辑者")
 
         val administrator = login("admin@alpha", "dev-admin")
         postJson(
@@ -779,8 +838,8 @@ class DevAcceptanceIntegrationTest {
         assertEquals("OFFLINE", withdrawn.path("document").path("lifecycleState").asText())
         assertEquals("SUCCEEDED", withdrawn.path("deliveries").single().path("removalStatus").asText())
         assertEquals(404, platformDocumentStatus("collaboration", documentId))
-        assertAuditActor(withdrawn, "document:offline", "alpha-admin", "Alpha 管理员")
-        assertTrue(withdrawn.path("audits").any { it.path("action").asText() == "document:delivery:remove:succeeded" })
+        assertAuditActor(documentId, reviewer, "document:offline", "alpha-admin", "Alpha 管理员")
+        assertTrue(documentLogs(documentId, reviewer).any { it.path("action").asText() == "document:delivery:remove:succeeded" })
 
         val restored = post("$apiUrl/api/documents/$documentId/restore", null, editor, "application/json")
         assertEquals("DRAFT", restored.path("document").path("lifecycleState").asText())
@@ -799,7 +858,7 @@ class DevAcceptanceIntegrationTest {
         val republished = awaitPublished(documentId, administrator)
         assertEquals(listOf(1, 2), republished.path("deliveries").map { it.path("deliveryGeneration").asInt() }.sorted())
         assertEquals(200, platformDocumentStatus("collaboration", documentId))
-        assertAuditActor(republished, "document:restore", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, reviewer, "document:restore", "alpha-editor", "Alpha 编辑者")
     }
 
     @Test
@@ -831,10 +890,10 @@ class DevAcceptanceIntegrationTest {
 
         val revised = post("$apiUrl/api/documents/$documentId/revise", null, editor, "application/json")
         assertEquals("DRAFT", revised.path("document").path("lifecycleState").asText())
-        assertAuditActor(revised, "document:rename", "alpha-editor", "Alpha 编辑者")
-        assertAuditActor(revised, "document:version:add", "alpha-editor", "Alpha 编辑者")
-        assertAuditActor(revised, "document:review:reject", "alpha-reviewer", "Alpha 审批者")
-        assertAuditActor(revised, "document:revise", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, reviewer, "document:rename", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, reviewer, "document:version:add", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, reviewer, "document:review:reject", "alpha-reviewer", "Alpha 审批者")
+        assertAuditActor(documentId, reviewer, "document:revise", "alpha-editor", "Alpha 编辑者")
     }
 
     @Test
@@ -1088,7 +1147,7 @@ class DevAcceptanceIntegrationTest {
 
         val detail = getJson("$apiUrl/api/documents/$documentId", admin)
         assertTrue(!detail.has("doctorRecords"))
-        assertAuditActor(detail, "document:doctor:schedule", "alpha-editor", "Alpha 编辑者")
+        assertAuditActor(documentId, admin, "document:doctor:schedule", "alpha-editor", "Alpha 编辑者")
 
         val systemResponse = getResponse("$apiUrl/fileweft/v1/doctor", admin)
         assertEquals(200, systemResponse.statusCode())
@@ -1363,8 +1422,8 @@ class DevAcceptanceIntegrationTest {
         throw AssertionError("Document $documentId did not receive an agent result within the expected window.")
     }
 
-    private fun assertAuditActor(detail: JsonNode, action: String, operatorId: String?, operatorName: String) {
-        val audit = detail.path("audits").firstOrNull { it.path("action").asText() == action }
+    private fun assertAuditActor(documentId: String, token: String, action: String, operatorId: String?, operatorName: String) {
+        val audit = documentLogs(documentId, token).firstOrNull { it.path("action").asText() == action }
             ?: throw AssertionError("Audit action $action was not found.")
         assertEquals(operatorId, audit.path("operatorId").takeUnless { it.isNull }?.asText())
         assertEquals(operatorName, audit.path("operatorName").asText())
@@ -1425,12 +1484,15 @@ class DevAcceptanceIntegrationTest {
         HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
     )
 
-    private fun documentLogs(documentId: String, token: String): JsonNode =
-        getJson("$apiUrl/api/documents/$documentId/logs?limit=100", token)
+    private fun documentLogs(documentId: String, token: String): JsonNode {
+        val envelope = getJson("$apiUrl/fileweft/v1/documents/$documentId/logs?limit=100", token)
+        assertV1SuccessEnvelope(envelope)
+        return envelope.path("data").path("items")
+    }
 
     private fun downloadAuditCount(documentId: String, token: String): Int =
         documentLogs(documentId, token).count { entry ->
-            entry.path("source").asText() == "AUDIT" && entry.path("action").asText() == "document:download"
+            entry.path("action").asText() == "document:download"
         }
 
     private fun assertV1SuccessEnvelope(response: JsonNode) {

@@ -152,6 +152,48 @@ async function assertDownload(response, expectedContent, expectedFileName) {
   })).toEqual([]);
 }
 
+test("formal runtime projections keep health public and plugin inventory administrator-only", async ({ request }) => {
+  for (const path of ["/fileweft/v1/health", "/fileweft/health"]) {
+    const response = await request.get(path);
+    const health = await success(response, 200);
+    expect(health).toEqual({ status: "UP" });
+    expect(header(response, "Cache-Control")).toContain("no-store");
+  }
+
+  const [admin, editor, betaAdmin] = await Promise.all([
+    login(request, "admin@alpha", "dev-admin"),
+    login(request, "editor@alpha", "dev-editor"),
+    login(request, "admin@beta", "dev-admin"),
+  ]);
+  expect(admin.permissions).toContain("system:plugins:read");
+  expect(editor.permissions).not.toContain("system:plugins:read");
+
+  for (const identity of [admin, betaAdmin]) {
+    const response = await request.get("/fileweft/v1/plugins", {
+      headers: authorization(identity.token, `plugins-${identity.tenantId}`),
+      params: { limit: 100 },
+    });
+    const plugins = await success(response, 200);
+    expect(sortedKeys(plugins)).toEqual(["items", "nextCursor", "total"]);
+    for (const plugin of plugins.items) {
+      expect(sortedKeys(plugin)).toEqual(["capabilities", "id"]);
+      for (const capability of plugin.capabilities) {
+        expect(sortedKeys(capability)).toEqual(["count", "type"]);
+        expect(capability.count).toBeGreaterThan(0);
+      }
+    }
+    expect(JSON.stringify(plugins)).not.toMatch(/className|configuration|credential|tenantId/i);
+  }
+
+  await failure(
+    await request.get("/fileweft/v1/plugins", { headers: authorization(editor.token, "plugins-editor") }),
+    403,
+    "FORBIDDEN",
+    "Access denied.",
+  );
+  await failure(await request.get("/fileweft/v1/plugins"), 401, "UNAUTHENTICATED", "Authentication is required.");
+});
+
 test("formal v1 shares one authorized, tenant-isolated document with the Dev proof projection", async ({ request }) => {
   const nonce = `${Date.now()}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   const traceId = `playwright-formal-v1-${nonce}`;
@@ -343,6 +385,8 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   expect(new Set(legacy.versions.map((version) => version.id))).toEqual(
     new Set([historicalVersionId, currentVersionId]),
   );
+  expect(legacy.audits).toEqual([]);
+  expect(legacy.operationLogs).toEqual([]);
 
   const expectedActors = new Map([
     ["document:create", 1],
@@ -350,11 +394,51 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     ["document:version:add", 1],
     ["document:download", 2],
   ]);
+  const logResponse = await request.get(`/fileweft/v1/documents/${documentId}/logs`, {
+    headers: authorization(reviewer.token, traceId),
+    params: { limit: 100 },
+  });
+  expect(logResponse.status(), await logResponse.text()).toBe(200);
+  expect(header(logResponse, "Cache-Control")).toBe("private, no-store");
+  const logEnvelope = await logResponse.json();
+  expect(sortedKeys(logEnvelope)).toEqual(ENVELOPE_FIELDS);
+  expect(logEnvelope).toMatchObject({ code: "OK", message: "OK", error: null });
+  expect(sortedKeys(logEnvelope.data)).toEqual(["items", "nextCursor", "total"]);
+  const logs = logEnvelope.data.items;
+  for (const entry of logs) {
+    expect(sortedKeys(entry)).toEqual(["action", "createdTime", "id", "operatorId", "operatorName", "traceId"]);
+    expect(entry).not.toHaveProperty("details");
+    expect(entry).not.toHaveProperty("detailJson");
+    expect(entry).not.toHaveProperty("source");
+  }
   for (const [action, expectedCount] of expectedActors) {
-    const audits = legacy.audits.filter((audit) => audit.action === action);
+    const audits = logs.filter((audit) => audit.action === action);
     expect(audits).toHaveLength(expectedCount);
     expect(audits.every((audit) => audit.operatorId === "alpha-editor" && audit.operatorName === "Alpha 编辑者")).toBe(true);
   }
+  expect(logs.find((audit) => audit.action === "document:create")?.traceId).toBe(traceId);
+
+  await failure(
+    await request.get(`/fileweft/v1/documents/${documentId}/logs`, {
+      headers: authorization(editor.token, traceId),
+    }),
+    403,
+    "FORBIDDEN",
+    "Access denied.",
+  );
+  const betaReviewer = await login(request, "reviewer@beta", "dev-reviewer");
+  await failure(
+    await request.get(`/fileweft/v1/documents/${documentId}/logs`, {
+      headers: authorization(betaReviewer.token, traceId),
+    }),
+    404,
+    "NOT_FOUND",
+    "Resource was not found.",
+  );
+  const legacyLogs = await request.get(`/api/documents/${documentId}/logs`, {
+    headers: authorization(reviewer.token, traceId),
+  });
+  expect(legacyLogs.status()).toBe(404);
 
   const missingKeyResponse = await request.post(`/fileweft/v1/documents/${documentId}/submit`, {
     headers: authorization(editor.token, traceId),
