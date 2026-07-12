@@ -107,7 +107,17 @@ abstract class FileConnectorContractTest {
 
     private fun assertSuccessfulReplay(result: ConnectorSyncResult) {
         assertEquals(ConnectorSyncStatus.SUCCESS, result.status, result.message)
-        assertTrue(!result.externalId.isNullOrBlank(), "Successful synchronization must return an external id.")
+        val externalId = result.externalId
+        assertTrue(!externalId.isNullOrBlank(), "Successful synchronization must return an external id.")
+        requireNotNull(externalId)
+        assertTrue(
+            externalId.length <= ConnectorSyncResult.MAX_EXTERNAL_ID_UTF16_LENGTH,
+            "A successful synchronization external id must not exceed 512 UTF-16 code units.",
+        )
+        assertTrue(
+            externalId.none { character -> Character.isISOControl(character) },
+            "A successful synchronization external id must not contain ISO control characters.",
+        )
     }
 
     private fun positiveMillis(duration: Duration, name: String): Long {

@@ -279,7 +279,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         lease: OutboxEventLease?,
         outboxMutations: OutboxEventMutationRepository?,
     ): OutboxHandlingResult = transaction.execute {
-        var normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
+        var normalizedResult = normalizeFormalDeliveryResult(result)
         if (expectation == null) {
             return@execute normalizedResult.toOutboxHandlingResult()
         }
@@ -345,6 +345,28 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
             },
         )
         normalizedResult.toOutboxHandlingResult()
+    }
+
+    /**
+     * Formal multi-target delivery persists a downstream identity for later
+     * removal and reconciliation. Legacy single-connector synchronization may
+     * still accept a null external id, so this validation deliberately stays
+     * at the formal delivery boundary instead of changing the shared SPI model.
+     */
+    private fun normalizeFormalDeliveryResult(result: ConnectorSyncResult): ConnectorSyncResult {
+        val normalizedMessage = DeliveryDiagnosticMessage.normalize(result.message)
+        if (result.status != ConnectorSyncStatus.SUCCESS) return result.copy(message = normalizedMessage)
+        val externalId = result.externalId
+        val validExternalId = externalId != null &&
+            externalId.isNotBlank() &&
+            externalId.length <= ConnectorSyncResult.MAX_EXTERNAL_ID_UTF16_LENGTH &&
+            externalId.none { character -> Character.isISOControl(character) }
+        if (validExternalId) return result.copy(message = normalizedMessage)
+        return ConnectorSyncResult(
+            status = ConnectorSyncStatus.PERMANENT_FAILURE,
+            externalId = null,
+            message = INVALID_SUCCESS_EXTERNAL_ID_MESSAGE,
+        )
     }
 
     private fun findDeliveryForMutation(tenantId: Identifier, deliveryId: Identifier): DocumentDeliveryTarget? =
@@ -483,6 +505,9 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     }
 
     private companion object {
+        const val INVALID_SUCCESS_EXTERNAL_ID_MESSAGE =
+            "Connector reported success with an invalid external identifier; expected a non-blank value without " +
+                "ISO control characters and at most 512 UTF-16 code units."
         val ACTIVE_DELIVERY_STATUSES = setOf(DocumentDeliveryStatus.PENDING, DocumentDeliveryStatus.RETRYING)
         val DELIVERY_COMPLETION_STATES = setOf(
             LifecycleState.PUBLISHING,

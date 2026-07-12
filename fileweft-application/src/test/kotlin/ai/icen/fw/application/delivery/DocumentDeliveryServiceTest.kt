@@ -44,6 +44,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DocumentDeliveryServiceTest {
@@ -106,6 +107,74 @@ class DocumentDeliveryServiceTest {
         assertEquals(DocumentDeliveryStatus.PENDING, fixture.deliveries.findById(TENANT, failed.id)?.status)
         assertEquals(2, fixture.events.events.size)
         assertEquals(failed.id.value, fixture.events.events.last().payload[DocumentDeliveryPlanner.DELIVERY_ID_PAYLOAD_KEY])
+    }
+
+    @Test
+    fun `formal delivery accepts one and 512 UTF-16 code unit external ids`() {
+        val validExternalIds = listOf(
+            1 to "x",
+            ConnectorSyncResult.MAX_EXTERNAL_ID_UTF16_LENGTH to "😀".repeat(256),
+        )
+
+        validExternalIds.forEach { (expectedLength, externalId) ->
+            assertEquals(expectedLength, externalId.length)
+            val fixture = fixture(
+                listOf(target("archive", DeliveryRequirement.REQUIRED)),
+                mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+                syncExternalIds = mapOf("archive" to externalId),
+            )
+
+            val result = fixture.sync.synchronize(fixture.events.events.single())
+            val delivery = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+
+            assertEquals(OutboxHandlingStatus.SUCCEEDED, result.status)
+            assertEquals(DocumentDeliveryStatus.SUCCEEDED, delivery.status)
+            assertEquals(externalId, delivery.externalId)
+            assertNull(delivery.errorMessage)
+            assertEquals(LifecycleState.PUBLISHED, fixture.document.lifecycleState)
+            assertEquals(1, fixture.connectors.getValue("archive").requests.size)
+        }
+    }
+
+    @Test
+    fun `formal delivery permanently rejects invalid success external ids without replaying connector`() {
+        val oversizedExternalId = "😀".repeat(256) + "x"
+        assertEquals(ConnectorSyncResult.MAX_EXTERNAL_ID_UTF16_LENGTH + 1, oversizedExternalId.length)
+        val invalidExternalIds = listOf(
+            "null" to null,
+            "empty" to "",
+            "blank" to "   ",
+            "control" to "remote\u0000id",
+            "513 UTF-16 code units" to oversizedExternalId,
+        )
+
+        invalidExternalIds.forEach { (case, externalId) ->
+            val fixture = fixture(
+                listOf(target("archive", DeliveryRequirement.REQUIRED)),
+                mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+                syncExternalIds = mapOf("archive" to externalId),
+            )
+            val event = fixture.events.events.single()
+
+            val result = fixture.sync.synchronize(event)
+            val repeatedResult = fixture.sync.synchronize(event)
+            val delivery = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+
+            assertEquals(OutboxHandlingStatus.PERMANENT_FAILURE, result.status, case)
+            assertEquals(
+                "Connector reported success with an invalid external identifier; expected a non-blank value without " +
+                    "ISO control characters and at most 512 UTF-16 code units.",
+                result.message,
+                case,
+            )
+            assertEquals(OutboxHandlingStatus.PERMANENT_FAILURE, repeatedResult.status, case)
+            assertEquals(DocumentDeliveryStatus.FAILED, delivery.status, case)
+            assertNull(delivery.externalId, case)
+            assertEquals(result.message, delivery.errorMessage, case)
+            assertEquals(LifecycleState.SYNC_ERROR, fixture.document.lifecycleState, case)
+            assertEquals(1, fixture.connectors.getValue("archive").requests.size, case)
+            assertEquals(1, fixture.events.events.size, case)
+        }
     }
 
     @Test
@@ -302,11 +371,11 @@ class DocumentDeliveryServiceTest {
                 override fun findConnector(connectorId: String): FileConnector? {
                     connectorResolutions++
                     return RecordingConnector(
-                        connectorId,
-                        ConnectorSyncStatus.SUCCESS,
-                        ConnectorSyncStatus.SUCCESS,
-                        "ok",
-                        "removed",
+                        outcome = ConnectorSyncStatus.SUCCESS,
+                        removalOutcome = ConnectorSyncStatus.SUCCESS,
+                        syncExternalId = "$connectorId-external",
+                        syncMessage = "ok",
+                        removalMessage = "removed",
                     )
                 }
             },
@@ -638,6 +707,7 @@ class DocumentDeliveryServiceTest {
         definitions: List<DocumentDeliveryTargetDefinition>,
         outcomes: Map<String, ConnectorSyncStatus>,
         removalOutcomes: Map<String, ConnectorSyncStatus> = emptyMap(),
+        syncExternalIds: Map<String, String?> = emptyMap(),
         syncMessages: Map<String, String> = emptyMap(),
         removalMessages: Map<String, String> = emptyMap(),
         plan: Boolean = true,
@@ -656,9 +726,13 @@ class DocumentDeliveryServiceTest {
         val events = RecordingOutbox()
         val connectors = outcomes.mapValues { (id, outcome) ->
             RecordingConnector(
-                id,
                 outcome,
                 removalOutcomes[id] ?: ConnectorSyncStatus.SUCCESS,
+                syncExternalId = if (syncExternalIds.containsKey(id)) {
+                    syncExternalIds[id]
+                } else {
+                    if (outcome == ConnectorSyncStatus.SUCCESS) "$id-external" else null
+                },
                 syncMessage = syncMessages[id] ?: "simulated-$id",
                 removalMessage = removalMessages[id] ?: "simulated-remove-$id",
                 beforeResult = { beforeConnectorResult?.invoke(id, document) },
@@ -741,9 +815,9 @@ class DocumentDeliveryServiceTest {
     }
 
     private class RecordingConnector(
-        private val targetId: String,
         private val outcome: ConnectorSyncStatus,
         private val removalOutcome: ConnectorSyncStatus,
+        private val syncExternalId: String?,
         private val syncMessage: String,
         private val removalMessage: String,
         private val beforeResult: () -> Unit = {},
@@ -753,7 +827,7 @@ class DocumentDeliveryServiceTest {
         override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
             requests += request
             beforeResult()
-            return ConnectorSyncResult(outcome, if (outcome == ConnectorSyncStatus.SUCCESS) "$targetId-external" else null, syncMessage)
+            return ConnectorSyncResult(outcome, syncExternalId, syncMessage)
         }
         override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
             removalRequests += request
