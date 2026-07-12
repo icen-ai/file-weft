@@ -58,7 +58,7 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `applies schema migrations for durable runtime recovery idempotency and workflow queries`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(23, migrations)
+        assertEquals(24, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -89,6 +89,7 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_outbox_event", "lease_expire_time"))
             assertTrue(columnExists(connection, "fw_agent_result", "result_json"))
             assertTrue(columnExists(connection, "fw_upload_session", "storage_upload_id"))
+            assertTrue(columnExists(connection, "fw_upload_session", "owner_id"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_status"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_error_message"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_retry_count"))
@@ -142,6 +143,7 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_sequence"))
             assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_removal_requires_success"))
             assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_state"))
+            assertTrue(constraintExists(connection, "fw_upload_session", "ck_fw_upload_session_owner_id"))
         }
     }
 

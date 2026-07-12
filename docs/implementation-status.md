@@ -15,7 +15,7 @@
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 计数器与受限 Outbox Gauge | Adapter 与 TestKit 合约测试 |
 | Doctor | 权限、生命周期、工作流一致性、存储、连接器、交付档案与连接器映射、宿主目录绑定与 Agent 的诊断；即时/异步/系统正式 v1、持久化历史与租约围栏投影 | 单元、Boot 2/3 MVC、PostgreSQL 与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
-| Hardening | 多租户隔离、Outbox、重试、固定状态的持久化 Outbox 积压/最老可执行年龄/读取失败 Gauge、零队列异步观测、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom` 与 Compose 验收 |
+| Hardening | 多租户与续传会话所有者隔离、单调 `QUARANTINED` 围栏、Storage 写入口顶层事务边界、Outbox、重试、事务提交未知结果对账、固定状态的持久化 Outbox 积压/最老可执行年龄/读取失败 Gauge、零队列异步观测、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、旧 Kotlin ABI 运行夹具、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom` 与 Compose 验收 |
 
 目前的关键验收命令：
 
@@ -37,7 +37,7 @@ Dev API E2E 由环境变量选择性启用；该环境变量不是 Gradle 任务
 
 根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。日常 `check` 会继续执行所有 Java 8 基线模块的独立 `java8Test`；发版门禁 `compatibilityCheck` 通过 Gradle 工具链在 Java 8、11、21、25 上执行所有 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。该矩阵已在实际工具链运行通过，而不是只依赖字节码目标声明。
 
-Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev` 已真实装配正式 Boot 3 Web Starter，控制台 Nginx 已代理 `/fileweft/`；UI 的文档读写/下载、审批待办与历史、生命周期/审批动作、当前代次同步状态、失败目标重排，以及即时/异步/系统 Doctor 均走正式 v1。Doctor 面板只展示允许列表内的安全卡片，异步任务以幂等键排队并轮询脱敏报告；通用 Dev 文档详情不再查询或返回 `fw_doctor_record.report_json`，旧 Dev Doctor GET/POST 路由也已撤销并由验收固定为 `404`。审计、丰富同步与日志投影仍由 `/api` 提供验收证据，但不构成公共协议。
+Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、同租户跨用户续传隔离、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。`fileweft-dev` 已真实装配正式 Boot 3 Web Starter，控制台 Nginx 已代理 `/fileweft/`；UI 的文档读写/下载、审批待办与历史、生命周期/审批动作、当前代次同步状态、失败目标重排，以及即时/异步/系统 Doctor 均走正式 v1。Doctor 面板只展示允许列表内的安全卡片，异步任务以幂等键排队并轮询脱敏报告；通用 Dev 文档详情不再查询或返回 `fw_doctor_record.report_json`，旧 Dev Doctor GET/POST 路由也已撤销并由验收固定为 `404`。审计、丰富同步与日志投影仍由 `/api` 提供验收证据，但不构成公共协议。
 
 浏览器回归包含独立的 formal-v1 与 Doctor 验收，并继续覆盖中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、驳回修订、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离。Doctor 场景额外验证即时、异步、系统三条正式路由、管理员权限、跨租户 404、响应全树与 DOM 脱敏，以及浏览器不调用 `/api/**` Doctor。设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后可由 `:fileweft-dev:check` 调用；最终通过数量只在本轮完整回归实际执行后更新。
 

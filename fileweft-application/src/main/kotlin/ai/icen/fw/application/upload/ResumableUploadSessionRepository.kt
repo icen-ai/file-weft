@@ -27,9 +27,15 @@ interface ResumableUploadSessionRepository {
     /**
      * Claims a session that has no in-flight completion for abort or expiry cleanup.
      * A COMPLETING session must be reconciled separately: deleting its object could race a successful completion.
+     * The transition must preserve [ResumableUploadSession.lastError] so isolation markers survive cleanup.
      */
     fun claimForAbort(tenantId: Identifier, sessionId: Identifier, updatedAt: Long): ResumableUploadSession?
 
+    /**
+     * Finalizes an ABORTING session without clearing [ResumableUploadSession.lastError].
+     * Implementations must preserve that field because it can contain an application isolation marker
+     * that must remain effective across ABORTED and EXPIRED terminal transitions.
+     */
     fun markAborted(tenantId: Identifier, sessionId: Identifier, expired: Boolean, updatedAt: Long): Boolean
 
     /** Includes safely abortable expired sessions across all tenants, excluding an in-flight completion. */
@@ -40,4 +46,51 @@ interface ResumableUploadSessionRepository {
 
     /** Tenant-scoped form for an administrator who is not a platform-wide operator. */
     fun findExpiredCompleting(tenantId: Identifier, now: Long, limit: Int): List<ResumableUploadSession>
+}
+
+/**
+ * Optional additive capability for repositories that can enforce session ownership in the query itself.
+ *
+ * The original [ResumableUploadSessionRepository] methods remain unchanged for binary compatibility.
+ * Application services still fail closed when a legacy repository does not implement this capability:
+ * they perform the tenant-scoped read and accept only an exact, non-null owner match.
+ */
+interface OwnerScopedResumableUploadSessionRepository : ResumableUploadSessionRepository {
+    fun findById(tenantId: Identifier, ownerId: String, sessionId: Identifier): ResumableUploadSession?
+
+    fun findByIdempotencyKey(
+        tenantId: Identifier,
+        ownerId: String,
+        idempotencyKey: String,
+    ): ResumableUploadSession?
+}
+
+/**
+ * Additive capability for repositories that can durably and monotonically fence an unusable
+ * upload session. Keeping this separate preserves the released repository ABI while allowing
+ * new upload creation to fail fast when safe ownership quarantine is unavailable.
+ */
+interface QuarantinableResumableUploadSessionRepository : ResumableUploadSessionRepository {
+    /** Transitions only an ABORTING session to QUARANTINED and records a stable diagnostic. */
+    fun markQuarantined(
+        tenantId: Identifier,
+        sessionId: Identifier,
+        message: String,
+        updatedAt: Long,
+    ): Boolean
+}
+
+/**
+ * Additive capability for publishing a newly persisted, owner-verified session. New sessions are
+ * first stored as an invisible ABORTING staging row; only this guarded transition may expose them
+ * as ACTIVE after all authoritative repository views agree.
+ */
+interface StagedResumableUploadSessionRepository : QuarantinableResumableUploadSessionRepository {
+    fun activateStaged(
+        tenantId: Identifier,
+        sessionId: Identifier,
+        expectedOwnerId: String,
+        stagingMarker: String,
+        activatedAt: Long,
+    ): Boolean
 }

@@ -514,22 +514,44 @@ class DevAcceptanceIntegrationTest {
         val sessionId = started.path("id").asText()
         assertEquals("ACTIVE", started.path("status").asText())
         assertEquals(0, started.path("parts").size())
+        assertTrue(!started.has("ownerId"))
+        assertTrue(!started.has("tenantId"))
+        assertTrue(!started.has("storageUploadId"))
+        assertTrue(!started.has("storageLocation"))
 
-        val uploaded = putBytes("$apiUrl/api/resumable-uploads/$sessionId/parts/1", "content".toByteArray(), editor)
-        assertEquals(1, uploaded.path("partNumber").asInt())
-        val checkpoint = getJson("$apiUrl/api/resumable-uploads/$sessionId", editor)
-        assertEquals(1, checkpoint.path("parts").size())
-        assertEquals(7, checkpoint.path("parts").first().path("contentLength").asLong())
+        val admin = login("admin@alpha", "dev-admin")
+        val nonOwnerResponses = listOf(
+            resumableResponse("GET", "$apiUrl/api/resumable-uploads/$sessionId", admin),
+            resumableResponse(
+                "PUT",
+                "$apiUrl/api/resumable-uploads/$sessionId/parts/1",
+                admin,
+                "hostile".toByteArray(),
+            ),
+            resumableResponse("POST", "$apiUrl/api/resumable-uploads/$sessionId/complete", admin),
+            resumableResponse("DELETE", "$apiUrl/api/resumable-uploads/$sessionId", admin),
+        )
+        nonOwnerResponses.forEach { response ->
+            assertEquals(404, response.statusCode())
+            assertJsonContentType(response)
+            val failure = mapper.readTree(response.body())
+            assertEquals(setOf("code", "message"), failure.fieldNames().asSequence().toSet())
+            assertEquals("NOT_FOUND", failure.path("code").asText())
+            assertEquals("Resource was not found.", failure.path("message").asText())
+            assertTrue(failure.findValue("ownerId") == null)
+            assertTrue(failure.findValue("tenantId") == null)
+            assertTrue(failure.findValue("storageUploadId") == null)
+            assertTrue(failure.findValue("storageLocation") == null)
+        }
 
         val viewer = login("viewer@alpha", "dev-viewer")
-        val forbidden = client.send(
-            HttpRequest.newBuilder(URI("$apiUrl/api/resumable-uploads/$sessionId"))
-                .header("Authorization", "Bearer $viewer")
-                .GET()
-                .build(),
-            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        val hiddenFromUnprivilegedNonOwner = resumableResponse(
+            "GET",
+            "$apiUrl/api/resumable-uploads/$sessionId",
+            viewer,
         )
-        assertEquals(403, forbidden.statusCode())
+        assertEquals(404, hiddenFromUnprivilegedNonOwner.statusCode())
+        assertEquals("NOT_FOUND", mapper.readTree(hiddenFromUnprivilegedNonOwner.body()).path("code").asText())
 
         val forbiddenMaintenance = client.send(
             HttpRequest.newBuilder(URI("$apiUrl/api/resumable-uploads/maintenance"))
@@ -540,11 +562,20 @@ class DevAcceptanceIntegrationTest {
         )
         assertEquals(403, forbiddenMaintenance.statusCode())
 
-        val admin = login("admin@alpha", "dev-admin")
+        val untouched = getJson("$apiUrl/api/resumable-uploads/$sessionId", editor)
+        assertEquals("ACTIVE", untouched.path("status").asText())
+        assertEquals(0, untouched.path("parts").size())
+
+        val uploaded = putBytes("$apiUrl/api/resumable-uploads/$sessionId/parts/1", "content".toByteArray(), editor)
+        assertEquals(1, uploaded.path("partNumber").asInt())
+        val checkpoint = getJson("$apiUrl/api/resumable-uploads/$sessionId", editor)
+        assertEquals(1, checkpoint.path("parts").size())
+        assertEquals(7, checkpoint.path("parts").first().path("contentLength").asLong())
+
         val maintenance = getJson("$apiUrl/api/resumable-uploads/maintenance?limit=10", admin)
         assertTrue(maintenance.isArray)
         assertTrue(maintenance.all { item ->
-            !item.has("tenantId") && !item.has("storageUploadId") && !item.has("storagePath")
+            !item.has("ownerId") && !item.has("tenantId") && !item.has("storageUploadId") && !item.has("storagePath")
         })
 
         val completed = post("$apiUrl/api/resumable-uploads/$sessionId/complete", null, editor, "application/json")
@@ -552,6 +583,10 @@ class DevAcceptanceIntegrationTest {
         assertEquals(completed.path("fileObjectId").asText(), repeated.path("fileObjectId").asText())
         assertTrue(completed.path("fileAssetId").asText().isNotBlank())
         assertEquals("COMPLETED", getJson("$apiUrl/api/resumable-uploads/$sessionId", editor).path("status").asText())
+        assertEquals(
+            404,
+            resumableResponse("GET", "$apiUrl/api/resumable-uploads/$sessionId", admin).statusCode(),
+        )
     }
 
     @Test
@@ -1512,6 +1547,23 @@ class DevAcceptanceIntegrationTest {
             .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
             .build(),
     )
+
+    private fun resumableResponse(
+        method: String,
+        url: String,
+        token: String,
+        body: ByteArray = ByteArray(0),
+    ): HttpResponse<String> {
+        val request = authorizedRequest(url, token)
+        if (method == "PUT") {
+            request.header("Content-Type", "application/octet-stream")
+            request.header("X-FileWeft-Part-Length", body.size.toString())
+        }
+        return client.send(
+            request.method(method, HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+    }
 
     private fun requestJson(method: String, url: String, body: String, token: String): JsonNode {
         val builder = HttpRequest.newBuilder(URI(url))

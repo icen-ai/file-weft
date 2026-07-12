@@ -136,13 +136,27 @@ fileweft:
 
 ## 断点续传与对象完整性
 
-`ResumableUploadService` 把 multipart 状态持久化到 `fw_upload_session` 与 `fw_upload_session_part`，并以租户和调用方幂等键隔离。接入方的 HTTP API 应仅把会话 ID、已确认分片号、过期时间和完成结果返回给浏览器；`storageUploadId`、对象路径和对象存储凭据始终只能留在服务端。
+`ResumableUploadService` 把 multipart 状态持久化到 `fw_upload_session` 与 `fw_upload_session_part`，并以可信上下文中的租户和用户 ID 绑定用户操作。所有者 ID 只从 `UserRealmProvider.currentUser()` 的单次身份快照取得，是区分大小写且不做 trim、大小写折叠或 Unicode 归一化的不透明字符串；禁止从请求 DTO、Header、metadata、查询参数或浏览器检查点接收。接入值必须非空、最多 256 个 UTF-16 code unit、首尾无 Unicode whitespace，且不含 ISO control 或 FileWeft 固定拒绝表中的 Unicode format 字符；应用校验与 V024 数据库约束使用同一固定码点表，不受 JDK 8～25 内置 Unicode 版本差异影响。宿主若使用 `Long`、`Int`、UUID 或组合主键，应先在身份 SPI 中稳定转换为字符串，后续不得改变格式。接入方的 HTTP API 应仅把会话 ID、已确认分片号、过期时间和完成结果返回给浏览器；`ownerId`、`storageUploadId`、对象路径和对象存储凭据始终只能留在服务端。
 
-推荐的服务端调用顺序是：`start` 创建或恢复幂等会话，`uploadPart` 逐片确认，`inspect` 在刷新或网络恢复后读取服务端确认点，`complete` 幂等完成，用户放弃时调用 `abort`。Worker 只会自动清理仍可安全取消的过期会话。`COMPLETING` 状态意味着对象存储可能已经接受完成请求，清理任务不会删除其对象，以免把刚完成的文件变成悬空记录；运营者应通过会话检查接口和存储日志处理这类不确定状态。
+`inspect`、`uploadPart`、`complete` 与用户 `abort` 会先执行所有者边界，再执行普通上传授权。同租户其他用户无论权限高低都收到与不存在会话相同的 404，且不会打开对象存储、写入分片或改变会话状态；所有者后来失去上传权限时才返回 403。租户内幂等键继续保持全局唯一：同一所有者与同一请求可重放，不同请求或不同所有者复用该键固定返回 409，不返回已有会话信息。系统 Worker 的过期清理和平台级卡滞检查不依赖用户所有者，因此仍能处理遗留会话。
+
+推荐的服务端调用顺序是：`start` 创建或恢复幂等会话，`uploadPart` 逐片确认，`inspect` 在刷新或网络恢复后读取服务端确认点，`complete` 幂等完成，用户放弃时调用 `abort`。新建会话不会先提交未经验证的 `ACTIVE` 行：初始行使用带固定 creation-staging 标记的不可见 `ABORTING` 状态，在同一事务内完成 global/owner 四路精确核验后，只有 tenant、ID、预期 owner、staging 标记和 `expires_at > activationTime` 均匹配时才条件激活并清除标记。即使自定义 transaction 缺乏真实回滚，异常最多遗留用户不可见的 staging 行，不能被另一用户接管。Worker 只会自动清理仍可安全取消且经固定时间再次核验已过期的会话；仓储错误返回未来行、`COMPLETING`、`QUARANTINED` 或终态时固定零状态变更、零 Storage 调用。`COMPLETING` 状态意味着对象存储可能已经接受完成请求，清理任务不会删除其对象，以免把刚完成的文件变成悬空记录；运营者应通过会话检查接口和存储日志处理这类不确定状态。`QUARANTINED` 是 owner/不可变身份映射异常后的单调安全状态：用户路径永久按 404 隐藏，普通失败和 TTL 清理都不能把它改回可见状态；远端 multipart 可在已确认围栏后安全终止，但数据库行和固定诊断会一直保留，需由运营审计而不是通用 TTL 作业删除。
+
+创建会话的数据库提交若丢失确认，`ApplicationTransactionOutcomeUnknownException` 表示“可能已提交”，不能按普通失败立即删除 multipart。服务会先按本次 session ID、所有者、幂等键和不可变存储身份重新对账：确认是同一次提交时返回已持久化会话；确认是另一竞争请求时才清理本次远端上传；数据库仍不可读或结果无法安全区分时保留远端状态并失败关闭。生产对象存储必须同时配置“未完成 multipart 生命周期”兜底，运维应结合应用 Trace、会话表和存储 upload ID 对账；客户端只重试原幂等键，不能收到 5xx 后换键盲目重传。
+
+普通上传、文档初版、新版本以及续传的 `start/uploadPart/complete/abort/cleanupExpired` 都会组合数据库状态与非事务型 Storage 副作用，必须作为顶层 Application 边界调用。不要从外层 Spring `@Transactional`、手写 JDBC transaction 或另一个尚未完成的 FileWeft transaction 调用这些入口。官方 `JdbcApplicationTransaction` 实现 `ApplicationTransactionState`，能在生成 ID、访问仓储或调用 Storage 前拒绝同一 DataSource 的环境事务；不同 DataSource 按引用身份使用独立连接上下文。自定义 transaction 若不实现这个 additive capability 仍保持二进制兼容，但宿主必须自行保证顶层调用；测试辅助方法 `JdbcConnectionContext.withConnection(Connection)` 是匿名绑定，不代表生产宿主事务，Spring `@Transactional` 也不会被它自动感知。
+
+同一规则覆盖普通上传、文档初版、新增版本和 multipart 完成：事务返回提交结果未知后，服务会按本次生成的 `FileObject`、`FileAsset`、文档和版本绑定重新读取。完整匹配时即使文档随后已改名、推进生命周期或新增版本，也返回当前已提交结果；读取失败、无记录、部分引用或冲突引用都不会触发删除。只有事务明确失败且权威回读确认本次生成的持久化引用全部不存在时，才删除远端对象。告警和故障处理必须保留原异常的 Trace，并以数据库引用与对象存储位置双向对账，不能仅凭一次 5xx 手工删除对象。
+
+自定义 `ResumableUploadSessionRepository` 必须原样持久化 `ownerId`，并让按 ID、幂等键的租户查询返回相同的不可变会话；实现 `OwnerScopedResumableUploadSessionRepository` 时还必须在查询内同时约束租户和 owner。服务不会信任 owner capability 的单次结果，而会在同一事务中与 tenant-global 权威快照逐字段核对。新建会话还要求 repository 同时实现 additive 的 `StagedResumableUploadSessionRepository` 与 `QuarantinableResumableUploadSessionRepository`，在任何 multipart 创建前确认支持带 owner/标记/过期条件的 staging 激活，以及 `ABORTING → QUARANTINED` 单调围栏；缺少任一能力都会明确拒绝新会话。保存后服务会对全局 ID/key 与 owner ID/key 四路回读并再次校验。旧映射器丢弃 owner、错误改写 owner、owner capability 返回克隆对象或 `save` 静默 no-op 时，新会话不会发布给客户端；已提交 `ACTIVE` 的异常行会先在独立事务中 claim 并持久隐藏，随后才尝试隔离，因而隔离事务失败只会回到隐藏的 `ABORTING`，绝不会恢复 `ACTIVE`。只有围栏事务内的不可变身份和两条权威回读全部一致，才允许终止远端 multipart，任何提交未知、读取失败或矛盾状态都会保留远端状态并报告结果未知。升级自定义仓储应先完成 owner 字段迁移、staging/quarantine 能力和合约测试，再开放续传入口。
+
+`V024` 为既有会话增加可空的 `owner_id`，安装固定 owner 校验约束，并把 `QUARANTINED` 加入状态约束。迁移无法可靠推导历史会话的创建者，因此不会自动认领旧行；`owner_id IS NULL` 的历史会话对所有用户路径一律不可见，只能由系统清理或运维检查处理。升级前应暂停新建续传、让可完成的活动会话完成或明确放弃，然后停止全部旧版 HTTP 入口节点，再执行迁移并一次性启动新节点。新旧入口节点不得滚动混跑：旧节点不了解所有者边界，即使数据库已有新列仍可能绕过隔离。被遗留行占用的租户级幂等键在清理前会固定冲突，客户端应等待清理或使用新的幂等键重新开始，不能把旧会话转交给新用户。
+
+紧急回滚不能直接重新开放旧版续传入口。必须先在网关关闭全部续传 HTTP/RPC 路由，停止新版本入口节点，逐条对账并终止或完成非终态 multipart，再按审计和保留策略清除 `fw_upload_session_part` 与 `fw_upload_session` 中所有仍可被旧代码读取的会话记录。只有确认会话表为空后，才可让旧节点重新承接续传流量；若不能清空，就应保持续传入口关闭，直到恢复具备所有者校验的新版本。回滚时保留 V024 列和约束，不以降级表结构代替安全处置。
 
 生产宿主可将 `inspectStalledCompletionsAsSystem(limit)` 封装为只授予平台运维角色的只读接口；`inspectStalledCompletions(limit)` 则会从可信的当前租户和 `file:upload:maintenance` 授权上下文中查询，适合租户管理员。开发验收 API 对应 `GET /api/resumable-uploads/maintenance`，它只读取当前认证租户的会话并返回会话 ID、文件名、长度、过期时间、更新时间和最后错误，不会返回 `storageUploadId`、存储路径或对象凭据。
 
-普通上传、文档初版与新增版本都会在落库前检查对象存储返回的长度；调用方提供 `contentHash` 时还会校验 SHA-256。任一失配都会补偿删除对象，文件、资产、文档和 Outbox 都不会落库。
+普通上传、文档初版与新增版本都会在落库前检查对象存储返回的长度；调用方提供 `contentHash` 时还会校验 SHA-256。任一失配都会补偿删除对象，文件、资产、文档和 Outbox 都不会落库。该“明确校验失败”补偿不得扩展到数据库提交结果未知的场景；后者必须遵循上述持久化对账与保留策略。
 
 网关必须显式允许单个续传分片加少量协议开销，不能沿用 Nginx 的默认 1 MiB 请求体限制。开发编排的页面上传分片上限为 512 MiB，因此 `.docker/nginx.dev.conf` 将 `client_max_body_size` 设为 513 MiB，并对 `/api/` 禁用代理请求体缓冲；生产网关应根据实际的 `fileweft` 分片上限、磁盘缓冲预算与超时策略作出同等或更严格的配置。仅增大网关限制不会绕过 FileWeft 的续传会话授权、长度校验和对象存储完整性校验。
 

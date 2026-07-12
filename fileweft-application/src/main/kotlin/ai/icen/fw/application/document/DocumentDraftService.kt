@@ -3,6 +3,8 @@ package ai.icen.fw.application.document
 import ai.icen.fw.application.audit.AuditTrail
 import ai.icen.fw.application.security.ApplicationAuthorization
 import ai.icen.fw.application.transaction.ApplicationTransaction
+import ai.icen.fw.application.transaction.ApplicationTransactionBoundary
+import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
 import ai.icen.fw.application.upload.StoredObjectIntegrity
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
@@ -30,8 +32,9 @@ import java.util.LinkedHashMap
 
 /**
  * Creates and edits draft documents while keeping object storage outside the
- * database transaction. If persistence cannot commit, the uploaded object is
- * removed as compensation.
+ * database transaction. A known rollback is compensated only after durable
+ * references are proven absent; an unknown commit outcome retains the object
+ * until persistence can be reconciled safely.
  */
 class DocumentDraftService(
     private val tenantProvider: TenantProvider,
@@ -54,6 +57,7 @@ class DocumentDraftService(
     )
 
     fun create(command: CreateDocumentDraftCommand, content: InputStream): Document {
+        ApplicationTransactionBoundary.requireInactive(transaction)
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         val metadata = immutableMetadata(command.metadata)
@@ -68,24 +72,34 @@ class DocumentDraftService(
         val assetId = identifierGenerator.nextId()
         val versionId = identifierGenerator.nextId()
         var stored: StoredObject? = null
+        var persistenceAttempt: CreatePersistenceAttempt? = null
         try {
             val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
+            val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
+            val asset = FileAsset(assetId, tenant.tenantId, fileObject.id, DOCUMENT_ASSET_TYPE, metadata)
+            val version = DocumentVersion(versionId, tenant.tenantId, documentId, INITIAL_VERSION, fileObject.id)
+            val created = Document(
+                id = documentId,
+                tenantId = tenant.tenantId,
+                assetId = asset.id,
+                documentNumber = command.documentNumber,
+                title = command.title,
+                versions = listOf(version),
+                currentVersionId = version.id,
+            )
+            persistenceAttempt = CreatePersistenceAttempt(
+                fileObject = fileObject,
+                fileAsset = asset,
+                documentId = created.id,
+                tenantId = created.tenantId,
+                assetId = created.assetId,
+                documentNumber = created.documentNumber,
+                initialVersion = version,
+            )
             val document = transaction.execute {
-                val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
-                val asset = FileAsset(assetId, tenant.tenantId, fileObject.id, DOCUMENT_ASSET_TYPE, metadata)
-                val version = DocumentVersion(versionId, tenant.tenantId, documentId, INITIAL_VERSION, fileObject.id)
-                val created = Document(
-                    id = documentId,
-                    tenantId = tenant.tenantId,
-                    assetId = asset.id,
-                    documentNumber = command.documentNumber,
-                    title = command.title,
-                    versions = listOf(version),
-                    currentVersionId = version.id,
-                )
                 fileObjectRepository.save(fileObject)
                 fileAssetRepository.save(asset)
                 documentRepository.save(created)
@@ -103,7 +117,21 @@ class DocumentDraftService(
             recordMetric(FileWeftMetric.UPLOAD_COUNT, tenant.tenantId.value)
             return document
         } catch (failure: Throwable) {
-            stored?.let { compensate(it.location, failure) }
+            try {
+                stored?.let { uploaded ->
+                    persistenceAttempt?.let { attempted ->
+                        reconcileFailedCreate(attempted, failure)?.let { recovered ->
+                            recordMetric(FileWeftMetric.UPLOAD_COUNT, tenant.tenantId.value)
+                            return recovered
+                        }
+                    }
+                    if (failure is ApplicationTransactionOutcomeUnknownException) throw failure
+                    compensate(uploaded.location, failure)
+                }
+            } catch (reconciledFailure: Throwable) {
+                recordMetric(FileWeftMetric.UPLOAD_FAILURE, tenant.tenantId.value)
+                throw reconciledFailure
+            }
             recordMetric(FileWeftMetric.UPLOAD_FAILURE, tenant.tenantId.value)
             throw failure
         }
@@ -118,6 +146,7 @@ class DocumentDraftService(
         content: InputStream,
         mutationGuard: DocumentMutationGuard?,
     ): Document {
+        ApplicationTransactionBoundary.requireInactive(transaction)
         val tenant = tenantProvider.currentTenant()
         val operator = userRealmProvider.currentUser()
         val metadata = immutableMetadata(command.metadata)
@@ -126,11 +155,15 @@ class DocumentDraftService(
         authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
         val mutationPermit = mutationGuard?.prepare(tenant.tenantId, documentId)
         var stored: StoredObject? = null
+        var persistenceAttempt: AddVersionPersistenceAttempt? = null
         try {
             val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
+            val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
+            val version = DocumentVersion(versionId, tenant.tenantId, documentId, command.versionNumber, fileObject.id)
+            persistenceAttempt = AddVersionPersistenceAttempt(fileObject, version)
             if (mutationGuard != null) {
                 mutationGuard.revalidate(tenant.tenantId, documentId, checkNotNull(mutationPermit))
             }
@@ -140,10 +173,7 @@ class DocumentDraftService(
                 if (mutationGuard != null) {
                     mutationGuard.verifyLocked(tenant.tenantId, existing, checkNotNull(mutationPermit))
                 }
-                val fileObject = uploaded.toFileObject(fileObjectId, tenant.tenantId, command.fileName)
-                existing.addVersion(
-                    DocumentVersion(versionId, tenant.tenantId, existing.id, command.versionNumber, fileObject.id),
-                )
+                existing.addVersion(version)
                 fileObjectRepository.save(fileObject)
                 documentRepository.save(existing)
                 auditTrail?.record(
@@ -160,7 +190,21 @@ class DocumentDraftService(
             recordMetric(FileWeftMetric.UPLOAD_COUNT, tenant.tenantId.value)
             return document
         } catch (failure: Throwable) {
-            stored?.let { compensate(it.location, failure) }
+            try {
+                stored?.let { uploaded ->
+                    persistenceAttempt?.let { attempted ->
+                        reconcileFailedAddVersion(attempted, failure)?.let { recovered ->
+                            recordMetric(FileWeftMetric.UPLOAD_COUNT, tenant.tenantId.value)
+                            return recovered
+                        }
+                    }
+                    if (failure is ApplicationTransactionOutcomeUnknownException) throw failure
+                    compensate(uploaded.location, failure)
+                }
+            } catch (reconciledFailure: Throwable) {
+                recordMetric(FileWeftMetric.UPLOAD_FAILURE, tenant.tenantId.value)
+                throw reconciledFailure
+            }
             recordMetric(FileWeftMetric.UPLOAD_FAILURE, tenant.tenantId.value)
             throw failure
         }
@@ -221,6 +265,155 @@ class DocumentDraftService(
         contentHash = contentHash,
     )
 
+    private fun reconcileFailedCreate(
+        attempted: CreatePersistenceAttempt,
+        failure: Throwable,
+    ): Document? {
+        val persisted = try {
+            transaction.execute {
+                CreatePersistenceSnapshot(
+                    documentById = documentRepository.findById(attempted.tenantId, attempted.documentId),
+                    documentByNumber = documentRepository.findByDocumentNumber(
+                        attempted.tenantId,
+                        attempted.documentNumber,
+                    ),
+                    fileObject = fileObjectRepository.findById(attempted.fileObject.tenantId, attempted.fileObject.id),
+                    fileAsset = fileAssetRepository.findById(attempted.fileAsset.tenantId, attempted.fileAsset.id),
+                )
+            }
+        } catch (reconciliationFailure: Throwable) {
+            throw outcomeUnknown(failure, reconciliationFailure)
+        }
+
+        val exactDocument = persisted.exactDocument(attempted)
+        val exactBinding =
+            exactDocument != null &&
+            sameFileObject(persisted.fileObject, attempted.fileObject) &&
+            sameFileAsset(persisted.fileAsset, attempted.fileAsset)
+        if (failure is ApplicationTransactionOutcomeUnknownException) {
+            if (exactBinding) return checkNotNull(exactDocument)
+            if (!persisted.references(attempted)) throw failure
+            throw outcomeUnknown(failure, IllegalStateException(RECONCILIATION_MISMATCH_MESSAGE))
+        }
+        if (persisted.references(attempted)) {
+            throw outcomeUnknown(failure, IllegalStateException(RECONCILIATION_MISMATCH_MESSAGE))
+        }
+        return null
+    }
+
+    private fun reconcileFailedAddVersion(
+        attempted: AddVersionPersistenceAttempt,
+        failure: Throwable,
+    ): Document? {
+        val persisted = try {
+            transaction.execute {
+                AddVersionPersistenceSnapshot(
+                    document = documentRepository.findById(attempted.version.tenantId, attempted.version.documentId),
+                    fileObject = fileObjectRepository.findById(
+                        attempted.fileObject.tenantId,
+                        attempted.fileObject.id,
+                    ),
+                )
+            }
+        } catch (reconciliationFailure: Throwable) {
+            throw outcomeUnknown(failure, reconciliationFailure)
+        }
+
+        val exactDocument = persisted.document?.takeIf { document ->
+            document.id == attempted.version.documentId &&
+                document.tenantId == attempted.version.tenantId &&
+                document.versions.any { version -> sameDocumentVersion(version, attempted.version) }
+        }
+        val exactBinding = exactDocument != null && sameFileObject(persisted.fileObject, attempted.fileObject)
+        if (failure is ApplicationTransactionOutcomeUnknownException) {
+            if (exactBinding) return checkNotNull(exactDocument)
+            if (persisted.fileObject == null && !persisted.document.references(attempted.version)) throw failure
+            throw outcomeUnknown(failure, IllegalStateException(RECONCILIATION_MISMATCH_MESSAGE))
+        }
+        if (persisted.fileObject != null || persisted.document.references(attempted.version)) {
+            throw outcomeUnknown(failure, IllegalStateException(RECONCILIATION_MISMATCH_MESSAGE))
+        }
+        return null
+    }
+
+    private fun outcomeUnknown(
+        failure: Throwable,
+        reconciliationFailure: Throwable,
+    ): ApplicationTransactionOutcomeUnknownException {
+        val unknown = failure as? ApplicationTransactionOutcomeUnknownException
+            ?: ApplicationTransactionOutcomeUnknownException(failure)
+        if (reconciliationFailure !== unknown && reconciliationFailure !== unknown.cause) {
+            unknown.addSuppressed(reconciliationFailure)
+        }
+        return unknown
+    }
+
+    private fun CreatePersistenceSnapshot.exactDocument(expected: CreatePersistenceAttempt): Document? {
+        val byIdMatches = documentById.matchesCreatedDocument(expected)
+        val byNumberMatches = documentByNumber.matchesCreatedDocument(expected)
+        return when {
+            byIdMatches && (documentByNumber == null || byNumberMatches) -> checkNotNull(documentById)
+            documentById == null && byNumberMatches -> checkNotNull(documentByNumber)
+            else -> null
+        }
+    }
+
+    private fun Document?.matchesCreatedDocument(expected: CreatePersistenceAttempt): Boolean =
+        this != null &&
+            id == expected.documentId &&
+            tenantId == expected.tenantId &&
+            assetId == expected.assetId &&
+            documentNumber == expected.documentNumber &&
+            versions.any { version -> sameDocumentVersion(version, expected.initialVersion) }
+
+    private fun CreatePersistenceSnapshot.references(attempted: CreatePersistenceAttempt): Boolean =
+        fileObject != null ||
+            fileAsset != null ||
+            documentById != null ||
+            documentByNumber.references(attempted)
+
+    private fun Document?.references(attempted: CreatePersistenceAttempt): Boolean =
+        this != null &&
+            (
+                id == attempted.documentId ||
+                    assetId == attempted.assetId ||
+                    versions.any { version ->
+                        version.id == attempted.initialVersion.id ||
+                            version.fileObjectId == attempted.fileObject.id
+                    }
+                )
+
+    private fun Document?.references(version: DocumentVersion): Boolean =
+        this != null && versions.any { persisted ->
+            persisted.id == version.id || persisted.fileObjectId == version.fileObjectId
+        }
+
+    private fun sameFileObject(actual: FileObject?, expected: FileObject): Boolean =
+        actual != null &&
+            actual.id == expected.id &&
+            actual.tenantId == expected.tenantId &&
+            actual.fileName == expected.fileName &&
+            actual.contentLength == expected.contentLength &&
+            actual.storageType == expected.storageType &&
+            actual.storagePath == expected.storagePath &&
+            actual.contentType == expected.contentType &&
+            actual.contentHash == expected.contentHash
+
+    private fun sameFileAsset(actual: FileAsset?, expected: FileAsset): Boolean =
+        actual != null &&
+            actual.id == expected.id &&
+            actual.tenantId == expected.tenantId &&
+            actual.fileObjectId == expected.fileObjectId &&
+            actual.assetType == expected.assetType &&
+            actual.metadata == expected.metadata
+
+    private fun sameDocumentVersion(actual: DocumentVersion, expected: DocumentVersion): Boolean =
+        actual.id == expected.id &&
+            actual.tenantId == expected.tenantId &&
+            actual.documentId == expected.documentId &&
+            actual.versionNumber == expected.versionNumber &&
+            actual.fileObjectId == expected.fileObjectId
+
     private fun compensate(location: StorageObjectLocation, failure: Throwable) {
         try {
             storageAdapter.delete(location)
@@ -264,6 +457,33 @@ class DocumentDraftService(
         val stored: StoredObject,
     )
 
+    private data class CreatePersistenceAttempt(
+        val fileObject: FileObject,
+        val fileAsset: FileAsset,
+        val documentId: Identifier,
+        val tenantId: Identifier,
+        val assetId: Identifier,
+        val documentNumber: String,
+        val initialVersion: DocumentVersion,
+    )
+
+    private data class CreatePersistenceSnapshot(
+        val documentById: Document?,
+        val documentByNumber: Document?,
+        val fileObject: FileObject?,
+        val fileAsset: FileAsset?,
+    )
+
+    private data class AddVersionPersistenceAttempt(
+        val fileObject: FileObject,
+        val version: DocumentVersion,
+    )
+
+    private data class AddVersionPersistenceSnapshot(
+        val document: Document?,
+        val fileObject: FileObject?,
+    )
+
     companion object {
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val DOCUMENT_ASSET_TYPE = "DOCUMENT"
@@ -272,5 +492,7 @@ class DocumentDraftService(
         const val EDIT_ACTION = "document:edit"
         const val ADD_VERSION_ACTION = "document:version:add"
         const val RENAME_ACTION = "document:rename"
+        private const val RECONCILIATION_MISMATCH_MESSAGE: String =
+            "Persisted document upload state is partial or inconsistent and requires reconciliation."
     }
 }

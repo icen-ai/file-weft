@@ -210,9 +210,9 @@ fileweft:
 3. 用 `inspect(sessionId)` 从服务端读取已确认分片，再继续缺失分片。
 4. 用 `complete(sessionId)` 幂等创建 `FileObject`、`FileAsset` 与 `file.uploaded` Outbox 事件；放弃时用 `abort(sessionId)`。
 
-会话和分片的用户操作全部带租户条件；跨租户扫描只存在于受控 Worker 的过期清理，不接受任何前端租户参数。底层对象存储 upload ID、存储路径及凭据不得交给前端；开发验收台只把安全的会话视图保存在浏览器本地。完成中的会话不被自动删除，因为对象存储可能已接受完成请求；该保守策略避免生成指向已删除对象的文件记录。
+会话和分片的用户操作同时绑定可信身份上下文中的租户与用户 ID；用户 ID 是区分大小写且不做 trim/大小写折叠/Unicode 归一化的不透明字符串，不能由 HTTP 参数、Header、metadata 或前端检查点指定。公共接入约束是：非空、最多 256 个 UTF-16 code unit、首尾无 Unicode whitespace，并且不含 ISO control 或受禁 Unicode format 字符；数字型宿主 ID 应先由宿主稳定转换成字符串。同租户的其他用户即使拥有相同上传权限，也不能查看、写分片、完成或终止该会话；不存在、跨租户、非所有者及迁移前无所有者的会话统一表现为资源不存在。跨租户、跨用户扫描只存在于受控 Worker 的过期清理，不接受任何前端租户或用户参数。底层对象存储 upload ID、存储路径、会话所有者及凭据不得交给前端；开发验收台只把安全的会话视图保存在浏览器本地。新会话首次持久化为不可见 staging，只有 owner、幂等键、存储身份和未过期条件全部核验后才原子激活；完成中的会话不被自动删除，因为对象存储可能已接受完成请求；持久化映射不可信时会话进入不可逆的 `QUARANTINED` 状态，即使远端 multipart 已安全终止也保留数据库证据且永不重新暴露给用户。
 
-普通上传、文档初版、新增版本与续传完成都会验证对象长度；调用方提供 `contentHash` 时还会验证 SHA-256。校验失败会补偿删除远端对象，绝不会写入不完整的文件、文档或 Outbox 状态。生产 Worker 的 TTL、批量清理和运行角色配置见 [生产部署与恢复](docs/production-operations.md)。
+普通上传、文档初版、新增版本与续传完成都会验证对象长度；调用方提供 `contentHash` 时还会验证 SHA-256。校验失败会补偿删除远端对象，绝不会写入不完整的文件、文档或 Outbox 状态。数据库明确回滚且权威回读确认没有任何持久化引用时，服务才会执行同类补偿；提交结果未知时会先对账，完整匹配则返回当前已提交结果，回读失败、无记录、部分引用或冲突引用则保留对象并抛出 `ApplicationTransactionOutcomeUnknownException`，避免把已经提交但确认丢失的文件删掉。所有会写对象存储的 Application API 必须作为顶层应用边界调用，Controller、`@Transactional` 方法或宿主事务不得在外层包裹它们；官方 JDBC transaction 会在任何 ID、仓储或 Storage 副作用前拒绝已激活的同数据源事务。生产 Worker 的 TTL、批量清理和运行角色配置见 [生产部署与恢复](docs/production-operations.md)。
 
 ## 持久化后台任务与 Doctor
 

@@ -2,10 +2,11 @@ package ai.icen.fw.persistence.jdbc
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
+import ai.icen.fw.application.upload.OwnerScopedResumableUploadSessionRepository
 import ai.icen.fw.application.upload.ResumableUploadPart
 import ai.icen.fw.application.upload.ResumableUploadSession
-import ai.icen.fw.application.upload.ResumableUploadSessionRepository
 import ai.icen.fw.application.upload.ResumableUploadSessionStatus
+import ai.icen.fw.application.upload.StagedResumableUploadSessionRepository
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.spi.storage.StorageObjectLocation
 import java.sql.ResultSet
@@ -13,37 +14,42 @@ import java.sql.ResultSet
 /** PostgreSQL persistence for durable multipart upload sessions and their acknowledged parts. */
 class JdbcResumableUploadSessionRepository(
     private val objectMapper: ObjectMapper,
-) : ResumableUploadSessionRepository {
+) : OwnerScopedResumableUploadSessionRepository,
+    StagedResumableUploadSessionRepository {
     override fun save(session: ResumableUploadSession) {
+        val ownerId = requireNotNull(session.ownerId) {
+            "New resumable upload sessions must have a trusted owner id."
+        }
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_upload_session(
-                id, tenant_id, idempotency_key, storage_upload_id, storage_type, storage_path,
+                id, tenant_id, owner_id, idempotency_key, storage_upload_id, storage_type, storage_path,
                 file_object_id, file_asset_id, file_name, content_length, asset_type, content_type, content_hash,
                 metadata_json, session_status, expires_at, last_error, completed_time, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, session.id.value)
             statement.setString(2, session.tenantId.value)
-            statement.setString(3, session.idempotencyKey)
-            statement.setString(4, session.storageUploadId.value)
-            statement.setString(5, session.storageLocation.storageType)
-            statement.setString(6, session.storageLocation.path)
-            statement.setString(7, session.fileObjectId.value)
-            statement.setString(8, session.fileAssetId.value)
-            statement.setString(9, session.fileName)
-            statement.setLong(10, session.contentLength)
-            statement.setString(11, session.assetType)
-            statement.setString(12, session.contentType)
-            statement.setString(13, session.expectedContentHash)
-            statement.setString(14, objectMapper.writeValueAsString(session.metadata))
-            statement.setString(15, session.status.name)
-            statement.setLong(16, session.expiresAt)
-            statement.setString(17, session.lastError)
-            session.completedAt?.let { statement.setLong(18, it) } ?: statement.setNull(18, java.sql.Types.BIGINT)
-            statement.setLong(19, session.createdTime)
-            statement.setLong(20, session.updatedTime)
+            statement.setString(3, ownerId)
+            statement.setString(4, session.idempotencyKey)
+            statement.setString(5, session.storageUploadId.value)
+            statement.setString(6, session.storageLocation.storageType)
+            statement.setString(7, session.storageLocation.path)
+            statement.setString(8, session.fileObjectId.value)
+            statement.setString(9, session.fileAssetId.value)
+            statement.setString(10, session.fileName)
+            statement.setLong(11, session.contentLength)
+            statement.setString(12, session.assetType)
+            statement.setString(13, session.contentType)
+            statement.setString(14, session.expectedContentHash)
+            statement.setString(15, objectMapper.writeValueAsString(session.metadata))
+            statement.setString(16, session.status.name)
+            statement.setLong(17, session.expiresAt)
+            statement.setString(18, session.lastError)
+            session.completedAt?.let { statement.setLong(19, it) } ?: statement.setNull(19, java.sql.Types.BIGINT)
+            statement.setLong(20, session.createdTime)
+            statement.setLong(21, session.updatedTime)
             statement.executeUpdate()
         }
     }
@@ -60,6 +66,30 @@ class JdbcResumableUploadSessionRepository(
     ) { statement ->
         statement.setString(1, tenantId.value)
         statement.setString(2, idempotencyKey)
+    }
+
+    override fun findById(
+        tenantId: Identifier,
+        ownerId: String,
+        sessionId: Identifier,
+    ): ResumableUploadSession? = querySession(
+        "SELECT $SESSION_COLUMNS FROM fw_upload_session WHERE tenant_id = ? AND owner_id = ? AND id = ?",
+    ) { statement ->
+        statement.setString(1, tenantId.value)
+        statement.setString(2, ownerId)
+        statement.setString(3, sessionId.value)
+    }
+
+    override fun findByIdempotencyKey(
+        tenantId: Identifier,
+        ownerId: String,
+        idempotencyKey: String,
+    ): ResumableUploadSession? = querySession(
+        "SELECT $SESSION_COLUMNS FROM fw_upload_session WHERE tenant_id = ? AND owner_id = ? AND idempotency_key = ?",
+    ) { statement ->
+        statement.setString(1, tenantId.value)
+        statement.setString(2, ownerId)
+        statement.setString(3, idempotencyKey)
     }
 
     override fun findParts(tenantId: Identifier, sessionId: Identifier): List<ResumableUploadPart> =
@@ -139,9 +169,38 @@ class JdbcResumableUploadSessionRepository(
             """
             UPDATE fw_upload_session SET session_status = 'FAILED', last_error = ?, updated_time = ?
             WHERE tenant_id = ? AND id = ? AND session_status IN ('COMPLETING', 'ABORTING')
+              AND (session_status <> 'ABORTING' OR last_error IS DISTINCT FROM ?)
             """.trimIndent(),
-            message, updatedAt, tenantId.value, sessionId.value,
+            message, updatedAt, tenantId.value, sessionId.value, CREATION_STAGING_MARKER,
         )
+
+    override fun markQuarantined(
+        tenantId: Identifier,
+        sessionId: Identifier,
+        message: String,
+        updatedAt: Long,
+    ): Boolean = transition(
+        """
+        UPDATE fw_upload_session SET session_status = 'QUARANTINED', last_error = ?, updated_time = ?
+        WHERE tenant_id = ? AND id = ? AND session_status = 'ABORTING'
+        """.trimIndent(),
+        message, updatedAt, tenantId.value, sessionId.value,
+    )
+
+    override fun activateStaged(
+        tenantId: Identifier,
+        sessionId: Identifier,
+        expectedOwnerId: String,
+        stagingMarker: String,
+        activatedAt: Long,
+    ): Boolean = transition(
+        """
+        UPDATE fw_upload_session SET session_status = 'ACTIVE', last_error = NULL, updated_time = ?
+        WHERE tenant_id = ? AND id = ? AND owner_id = ?
+          AND session_status = 'ABORTING' AND last_error = ? AND expires_at > ?
+        """.trimIndent(),
+        activatedAt, tenantId.value, sessionId.value, expectedOwnerId, stagingMarker, activatedAt,
+    )
 
     override fun markCompleted(tenantId: Identifier, sessionId: Identifier, completedAt: Long): Boolean =
         transition(
@@ -168,13 +227,15 @@ class JdbcResumableUploadSessionRepository(
 
     override fun markAborted(tenantId: Identifier, sessionId: Identifier, expired: Boolean, updatedAt: Long): Boolean = transition(
         """
-        UPDATE fw_upload_session SET session_status = ?, last_error = NULL, updated_time = ?
+        UPDATE fw_upload_session SET session_status = ?, updated_time = ?
         WHERE tenant_id = ? AND id = ? AND session_status = 'ABORTING'
+          AND last_error IS DISTINCT FROM ?
         """.trimIndent(),
         if (expired) ResumableUploadSessionStatus.EXPIRED.name else ResumableUploadSessionStatus.ABORTED.name,
         updatedAt,
         tenantId.value,
         sessionId.value,
+        CREATION_STAGING_MARKER,
     )
 
     override fun findExpired(now: Long, limit: Int): List<ResumableUploadSession> =
@@ -280,6 +341,7 @@ class JdbcResumableUploadSessionRepository(
             completedAt = completedTime,
             createdTime = result.getLong("created_time"),
             updatedTime = result.getLong("updated_time"),
+            ownerId = result.getString("owner_id"),
         )
     }
 
@@ -297,10 +359,11 @@ class JdbcResumableUploadSessionRepository(
     private companion object {
         val STRING_MAP_TYPE = object : TypeReference<Map<String, String>>() {}
         const val SESSION_COLUMNS = """
-            id, tenant_id, idempotency_key, storage_upload_id, storage_type, storage_path,
+            id, tenant_id, owner_id, idempotency_key, storage_upload_id, storage_type, storage_path,
             file_object_id, file_asset_id, file_name, content_length, asset_type, content_type, content_hash,
             metadata_json, session_status, expires_at, last_error, completed_time, created_time, updated_time
         """
         const val PART_COLUMNS = "id, tenant_id, session_id, part_number, part_etag, content_length, created_time, updated_time"
+        const val CREATION_STAGING_MARKER = "fileweft:resumable-upload:creation-staging:v1"
     }
 }

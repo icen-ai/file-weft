@@ -2,6 +2,9 @@ package ai.icen.fw.application.document
 
 import ai.icen.fw.application.audit.AuditTrail
 import ai.icen.fw.application.transaction.ApplicationTransaction
+import ai.icen.fw.application.transaction.ApplicationTransactionNestingException
+import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
+import ai.icen.fw.application.transaction.ApplicationTransactionState
 import ai.icen.fw.application.upload.StoredObjectIntegrityException
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
@@ -15,6 +18,7 @@ import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.DocumentVersionAlreadyExistsException
 import ai.icen.fw.domain.document.LifecycleCommand
+import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.domain.file.FileObject
@@ -48,6 +52,44 @@ import java.time.ZoneOffset
 import kotlin.test.assertTrue
 
 class DocumentDraftServiceTest {
+    @Test
+    fun `rejects create and add-version inside an active transaction before all side effects`() {
+        val storage = RecordingStorage()
+        val documents = RecordingDocuments()
+        val fileObjects = RecordingFileObjects()
+        val assets = RecordingAssets()
+        val identifiers = CountingIdentifiers()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            assets = assets,
+            identifiers = emptyList(),
+            identifierGenerator = identifiers,
+            transaction = ActiveTransaction,
+        )
+
+        val createFailure = assertThrows(ApplicationTransactionNestingException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+        val addVersionFailure = assertThrows(ApplicationTransactionNestingException::class.java) {
+            service.addVersion(
+                Identifier("document-1"),
+                AddDocumentVersionCommand("1.1", "revision.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals(ApplicationTransactionNestingException.DEFAULT_MESSAGE, createFailure.message)
+        assertEquals(ApplicationTransactionNestingException.DEFAULT_MESSAGE, addVersionFailure.message)
+        assertEquals(0, identifiers.calls)
+        assertEquals(0, documents.accesses)
+        assertTrue(storage.uploads.isEmpty())
+        assertTrue(storage.deleted.isEmpty())
+        assertTrue(fileObjects.saved.isEmpty())
+        assertTrue(assets.saved.isEmpty())
+    }
+
     @Test
     fun `creates a draft with an initial version and audit evidence`() {
         val documents = RecordingDocuments()
@@ -106,7 +148,7 @@ class DocumentDraftServiceTest {
         val metrics = RecordingMetrics()
         val service = service(
             storage = storage,
-            documents = FailingDocuments,
+            transaction = SimulatedTransaction(writeCall = 2, outcome = WriteOutcome.KNOWN_FAILURE),
             identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
             metrics = metrics,
         )
@@ -117,6 +159,182 @@ class DocumentDraftServiceTest {
 
         assertEquals(listOf(storage.location), storage.deleted)
         assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.recorded)
+    }
+
+    @Test
+    fun `returns a concurrently advanced committed draft when commit acknowledgement is lost`() {
+        val storage = RecordingStorage()
+        val documents = RecordingDocuments()
+        val fileObjects = RecordingFileObjects()
+        val assets = RecordingAssets()
+        val metrics = RecordingMetrics()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            assets = assets,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            transaction = SimulatedTransaction(
+                writeCall = 2,
+                outcome = WriteOutcome.UNKNOWN_AFTER_ACTION,
+                afterActionBeforeFailure = {
+                    val committed = checkNotNull(documents.current)
+                    committed.rename("Advanced after commit")
+                    committed.addVersion(
+                        DocumentVersion(
+                            Identifier("version-2"),
+                            Identifier("tenant-1"),
+                            Identifier("document-1"),
+                            "1.1",
+                            Identifier("file-2"),
+                        ),
+                    )
+                    committed.transition(LifecycleCommand.SUBMIT)
+                },
+            ),
+            metrics = metrics,
+        )
+
+        val created = service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+
+        assertEquals("document-1", created.id.value)
+        assertEquals(documents.current, created)
+        assertEquals("Advanced after commit", created.title)
+        assertEquals("version-2", created.currentVersionId?.value)
+        assertEquals(LifecycleState.PENDING_REVIEW, created.lifecycleState)
+        assertEquals("file-1", fileObjects.current?.id?.value)
+        assertEquals("asset-1", assets.current?.id?.value)
+        assertTrue(storage.deleted.isEmpty())
+        assertEquals(listOf(FileWeftMetric.UPLOAD_COUNT), metrics.recorded)
+    }
+
+    @Test
+    fun `does not report a created draft when audit append fails after all core rows are visible`() {
+        val storage = RecordingStorage()
+        val documents = RecordingDocuments()
+        val fileObjects = RecordingFileObjects()
+        val assets = RecordingAssets()
+        val audits = FailingAudits()
+        val metrics = RecordingMetrics()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            assets = assets,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            auditTrail = auditTrail(audits, listOf("audit-1")),
+            metrics = metrics,
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals("audit append failed", failure.cause?.message)
+        assertEquals("document-1", documents.current?.id?.value)
+        assertEquals("file-1", fileObjects.current?.id?.value)
+        assertEquals("asset-1", assets.current?.id?.value)
+        assertEquals(DocumentDraftService.CREATE_ACTION, audits.attempted?.action)
+        assertTrue(storage.deleted.isEmpty())
+        assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.recorded)
+    }
+
+    @Test
+    fun `retains storage when draft transaction outcome is unknown without a visible commit`() {
+        val storage = RecordingStorage()
+        val fileObjects = RecordingFileObjects()
+        val assets = RecordingAssets()
+        val metrics = RecordingMetrics()
+        val service = service(
+            storage = storage,
+            fileObjects = fileObjects,
+            assets = assets,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            transaction = SimulatedTransaction(writeCall = 2, outcome = WriteOutcome.UNKNOWN_BEFORE_ACTION),
+            metrics = metrics,
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals(ApplicationTransactionOutcomeUnknownException.DEFAULT_MESSAGE, failure.message)
+        assertEquals(null, fileObjects.current)
+        assertEquals(null, assets.current)
+        assertTrue(storage.deleted.isEmpty())
+        assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.recorded)
+    }
+
+    @Test
+    fun `retains storage when draft reconciliation cannot read persistence`() {
+        val storage = RecordingStorage()
+        val reconciliationFailure = IllegalStateException("reconciliation unavailable")
+        val service = service(
+            storage = storage,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            transaction = SimulatedTransaction(
+                writeCall = 2,
+                outcome = WriteOutcome.KNOWN_FAILURE,
+                reconciliationFailure = reconciliationFailure,
+            ),
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals("persistence failed", failure.cause?.message)
+        assertTrue(failure.suppressed.contains(reconciliationFailure))
+        assertTrue(storage.deleted.isEmpty())
+    }
+
+    @Test
+    fun `retains storage when failed draft persistence exposes a partial aggregate`() {
+        val storage = RecordingStorage()
+        val fileObjects = RecordingFileObjects()
+        val assets = RecordingAssets()
+        val service = service(
+            storage = storage,
+            documents = FailingDocuments,
+            fileObjects = fileObjects,
+            assets = assets,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals("database failed", failure.cause?.message)
+        assertEquals("file-1", fileObjects.current?.id?.value)
+        assertEquals("asset-1", assets.current?.id?.value)
+        assertTrue(storage.deleted.isEmpty())
+    }
+
+    @Test
+    fun `retains storage when draft reconciliation finds conflicting generated ids`() {
+        val storage = RecordingStorage()
+        val conflicting = FileObject(
+            Identifier("file-1"),
+            Identifier("tenant-1"),
+            "other.txt",
+            5,
+            "memory",
+            "objects/tenant/other",
+        )
+        val service = service(
+            storage = storage,
+            fileObjects = RecordingFileObjects(conflicting),
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            transaction = SimulatedTransaction(writeCall = 2, outcome = WriteOutcome.KNOWN_FAILURE),
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.create(createCommand(), ByteArrayInputStream("content".toByteArray()))
+        }
+
+        assertEquals("persistence failed", failure.cause?.message)
+        assertTrue(storage.deleted.isEmpty())
     }
 
     @Test
@@ -178,6 +396,177 @@ class DocumentDraftServiceTest {
         assertEquals(listOf("1.0", "1.1"), updated.versions.map { it.versionNumber })
         assertEquals("file-2", updated.versions.last().fileObjectId.value)
         assertEquals("file-2", fileObjects.saved.single().id.value)
+    }
+
+    @Test
+    fun `returns a concurrently advanced committed version when commit acknowledgement is lost`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage()
+        val documents = RecordingDocuments(existing)
+        val fileObjects = RecordingFileObjects()
+        val metrics = RecordingMetrics()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            identifiers = listOf("file-2", "version-2"),
+            transaction = SimulatedTransaction(
+                writeCall = 1,
+                outcome = WriteOutcome.UNKNOWN_AFTER_ACTION,
+                afterActionBeforeFailure = {
+                    val committed = checkNotNull(documents.current)
+                    committed.rename("Advanced version draft")
+                    committed.addVersion(
+                        DocumentVersion(
+                            Identifier("version-3"),
+                            Identifier("tenant-1"),
+                            Identifier("document-1"),
+                            "1.2",
+                            Identifier("file-3"),
+                        ),
+                    )
+                    committed.transition(LifecycleCommand.SUBMIT)
+                },
+            ),
+            metrics = metrics,
+        )
+
+        val updated = service.addVersion(
+            existing.id,
+            AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
+            ByteArrayInputStream("content".toByteArray()),
+        )
+
+        assertEquals("version-3", updated.currentVersionId?.value)
+        assertEquals(listOf("1.0", "1.1", "1.2"), updated.versions.map { it.versionNumber })
+        assertEquals("Advanced version draft", updated.title)
+        assertEquals(LifecycleState.PENDING_REVIEW, updated.lifecycleState)
+        assertEquals("file-2", fileObjects.current?.id?.value)
+        assertTrue(storage.deleted.isEmpty())
+        assertEquals(listOf(FileWeftMetric.UPLOAD_COUNT), metrics.recorded)
+    }
+
+    @Test
+    fun `does not report an added version when a live document is mutated before save fails`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage()
+        val documents = FailingSaveDocuments(existing)
+        val fileObjects = RecordingFileObjects()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            identifiers = listOf("file-2", "version-2"),
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.addVersion(
+                existing.id,
+                AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals("document save failed", failure.cause?.message)
+        assertEquals(listOf("1.0", "1.1"), existing.versions.map { it.versionNumber })
+        assertEquals("file-2", fileObjects.current?.id?.value)
+        assertTrue(storage.deleted.isEmpty())
+    }
+
+    @Test
+    fun `does not report an added version when audit append fails after document save`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage()
+        val documents = RecordingDocuments(existing)
+        val fileObjects = RecordingFileObjects()
+        val audits = FailingAudits()
+        val metrics = RecordingMetrics()
+        val service = service(
+            storage = storage,
+            documents = documents,
+            fileObjects = fileObjects,
+            identifiers = listOf("file-2", "version-2"),
+            auditTrail = auditTrail(audits, listOf("audit-1")),
+            metrics = metrics,
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.addVersion(
+                existing.id,
+                AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals("audit append failed", failure.cause?.message)
+        assertEquals(listOf("1.0", "1.1"), documents.current?.versions?.map { it.versionNumber })
+        assertEquals("file-2", fileObjects.current?.id?.value)
+        assertEquals(DocumentDraftService.ADD_VERSION_ACTION, audits.attempted?.action)
+        assertTrue(storage.deleted.isEmpty())
+        assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.recorded)
+    }
+
+    @Test
+    fun `retains storage when added version transaction outcome is unknown without a visible commit`() {
+        val existing = draftDocument()
+        val storage = RecordingStorage()
+        val fileObjects = RecordingFileObjects()
+        val metrics = RecordingMetrics()
+        val service = service(
+            storage = storage,
+            documents = RecordingDocuments(existing),
+            fileObjects = fileObjects,
+            identifiers = listOf("file-2", "version-2"),
+            transaction = SimulatedTransaction(writeCall = 1, outcome = WriteOutcome.UNKNOWN_BEFORE_ACTION),
+            metrics = metrics,
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.addVersion(
+                existing.id,
+                AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals(ApplicationTransactionOutcomeUnknownException.DEFAULT_MESSAGE, failure.message)
+        assertEquals(null, fileObjects.current)
+        assertEquals(listOf("1.0"), existing.versions.map { it.versionNumber })
+        assertTrue(storage.deleted.isEmpty())
+        assertEquals(listOf(FileWeftMetric.UPLOAD_FAILURE), metrics.recorded)
+    }
+
+    @Test
+    fun `retains storage when an existing version conflicts with the generated version binding`() {
+        val existing = draftDocument().also { document ->
+            document.addVersion(
+                DocumentVersion(
+                    Identifier("version-2"),
+                    Identifier("tenant-1"),
+                    Identifier("document-1"),
+                    "conflicting",
+                    Identifier("other-file"),
+                ),
+            )
+        }
+        val storage = RecordingStorage()
+        val service = service(
+            storage = storage,
+            documents = RecordingDocuments(existing),
+            identifiers = listOf("file-2", "version-2"),
+            transaction = SimulatedTransaction(writeCall = 1, outcome = WriteOutcome.KNOWN_FAILURE),
+        )
+
+        val failure = assertThrows(ApplicationTransactionOutcomeUnknownException::class.java) {
+            service.addVersion(
+                existing.id,
+                AddDocumentVersionCommand("1.1", "revised.txt", 7, "text/plain"),
+                ByteArrayInputStream("content".toByteArray()),
+            )
+        }
+
+        assertEquals("persistence failed", failure.cause?.message)
+        assertTrue(storage.deleted.isEmpty())
     }
 
     @Test
@@ -316,13 +705,14 @@ class DocumentDraftServiceTest {
     private fun service(
         storage: RecordingStorage = RecordingStorage(),
         documents: DocumentRepository = RecordingDocuments(),
-        fileObjects: RecordingFileObjects = RecordingFileObjects(),
-        assets: RecordingAssets = RecordingAssets(),
+        fileObjects: FileObjectRepository = RecordingFileObjects(),
+        assets: FileAssetRepository = RecordingAssets(),
         identifiers: List<String>,
         transaction: ApplicationTransaction = DirectTransaction,
         auditTrail: AuditTrail? = null,
         metrics: FileWeftMetrics? = null,
         authorization: (AuthorizationRequest) -> AuthorizationDecision = { AuthorizationDecision(true) },
+        identifierGenerator: IdentifierGenerator = SequentialIdentifiers(identifiers),
     ): DocumentDraftService = DocumentDraftService(
         tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(Identifier("tenant-1")) },
         userRealmProvider = object : UserRealmProvider {
@@ -336,13 +726,13 @@ class DocumentDraftServiceTest {
         documentRepository = documents,
         fileObjectRepository = fileObjects,
         fileAssetRepository = assets,
-        identifierGenerator = SequentialIdentifiers(identifiers),
+        identifierGenerator = identifierGenerator,
         transaction = transaction,
         auditTrail = auditTrail,
         metrics = metrics,
     )
 
-    private fun auditTrail(repository: RecordingAudits, identifiers: List<String>): AuditTrail = AuditTrail(
+    private fun auditTrail(repository: AuditRecordRepository, identifiers: List<String>): AuditTrail = AuditTrail(
         repository,
         SequentialIdentifiers(identifiers),
         Clock.fixed(Instant.ofEpochMilli(10), ZoneOffset.UTC),
@@ -367,16 +757,36 @@ class DocumentDraftServiceTest {
         override fun nextId(): Identifier = Identifier(values.removeFirst())
     }
 
+    private class CountingIdentifiers : IdentifierGenerator {
+        var calls: Int = 0
+            private set
+        override fun nextId(): Identifier {
+            calls++
+            return Identifier("unexpected-$calls")
+        }
+    }
+
     private class RecordingDocuments(initial: Document? = null) : DocumentRepository {
         private var document: Document? = initial
+        var accesses: Int = 0
+            private set
+        val current: Document?
+            get() = document
         val saved = mutableListOf<Document>()
-        override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
-            document?.takeIf { it.tenantId == tenantId && it.id == documentId }
-        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
-            findById(tenantId, documentId)
-        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? =
-            document?.takeIf { it.tenantId == tenantId && it.documentNumber == documentNumber }
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? {
+            accesses++
+            return document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? {
+            accesses++
+            return document?.takeIf { it.tenantId == tenantId && it.id == documentId }
+        }
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? {
+            accesses++
+            return document?.takeIf { it.tenantId == tenantId && it.documentNumber == documentNumber }
+        }
         override fun save(document: Document) {
+            accesses++
             this.document = document
             saved += document
         }
@@ -388,21 +798,53 @@ class DocumentDraftServiceTest {
         override fun save(document: Document): Nothing = throw IllegalStateException("database failed")
     }
 
-    private class RecordingFileObjects : FileObjectRepository {
-        val saved = mutableListOf<FileObject>()
-        override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? = null
-        override fun save(fileObject: FileObject) { saved += fileObject }
+    private class FailingSaveDocuments(private val document: Document) : DocumentRepository {
+        override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
+            document.takeIf { it.tenantId == tenantId && it.id == documentId }
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
+            findById(tenantId, documentId)
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? =
+            document.takeIf { it.tenantId == tenantId && it.documentNumber == documentNumber }
+        override fun save(document: Document): Nothing = throw IllegalStateException("document save failed")
     }
 
-    private class RecordingAssets : FileAssetRepository {
+    private class RecordingFileObjects(initial: FileObject? = null) : FileObjectRepository {
+        var current: FileObject? = initial
+            private set
+        val saved = mutableListOf<FileObject>()
+        override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? =
+            current?.takeIf { it.tenantId == tenantId && it.id == fileObjectId }
+        override fun save(fileObject: FileObject) {
+            current = fileObject
+            saved += fileObject
+        }
+    }
+
+    private class RecordingAssets(initial: FileAsset? = null) : FileAssetRepository {
+        var current: FileAsset? = initial
+            private set
         val saved = mutableListOf<FileAsset>()
-        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? = null
-        override fun save(fileAsset: FileAsset) { saved += fileAsset }
+        override fun findById(tenantId: Identifier, fileAssetId: Identifier): FileAsset? =
+            current?.takeIf { it.tenantId == tenantId && it.id == fileAssetId }
+        override fun save(fileAsset: FileAsset) {
+            current = fileAsset
+            saved += fileAsset
+        }
     }
 
     private class RecordingAudits : AuditRecordRepository {
         val records = mutableListOf<AuditRecord>()
         override fun append(record: AuditRecord) { records += record }
+        override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
+    }
+
+    private class FailingAudits : AuditRecordRepository {
+        var attempted: AuditRecord? = null
+            private set
+        override fun append(record: AuditRecord): Nothing {
+            attempted = record
+            throw IllegalStateException("audit append failed")
+        }
         override fun findByResource(tenantId: Identifier, resourceType: String, resourceId: Identifier, limit: Int): List<AuditRecord> = emptyList()
     }
 
@@ -447,4 +889,39 @@ class DocumentDraftServiceTest {
     }
 
     private object DirectTransaction : ApplicationTransaction { override fun <T> execute(action: () -> T): T = action() }
+
+    private object ActiveTransaction : ApplicationTransaction, ApplicationTransactionState {
+        override fun <T> execute(action: () -> T): T = error("active transaction guard was bypassed")
+        override fun isTransactionActive(): Boolean = true
+    }
+
+    private enum class WriteOutcome { KNOWN_FAILURE, UNKNOWN_BEFORE_ACTION, UNKNOWN_AFTER_ACTION }
+
+    private class SimulatedTransaction(
+        private val writeCall: Int,
+        private val outcome: WriteOutcome,
+        private val reconciliationFailure: Throwable? = null,
+        private val afterActionBeforeFailure: (() -> Unit)? = null,
+    ) : ApplicationTransaction {
+        private var calls: Int = 0
+
+        override fun <T> execute(action: () -> T): T {
+            calls++
+            if (calls == writeCall) {
+                val writeFailure = IllegalStateException("persistence failed")
+                return when (outcome) {
+                    WriteOutcome.KNOWN_FAILURE -> throw writeFailure
+                    WriteOutcome.UNKNOWN_BEFORE_ACTION ->
+                        throw ApplicationTransactionOutcomeUnknownException(writeFailure)
+                    WriteOutcome.UNKNOWN_AFTER_ACTION -> {
+                        action()
+                        afterActionBeforeFailure?.invoke()
+                        throw ApplicationTransactionOutcomeUnknownException(writeFailure)
+                    }
+                }
+            }
+            if (calls == writeCall + 1 && reconciliationFailure != null) throw reconciliationFailure
+            return action()
+        }
+    }
 }
