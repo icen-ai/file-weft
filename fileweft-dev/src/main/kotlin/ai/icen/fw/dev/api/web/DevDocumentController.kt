@@ -12,6 +12,8 @@ import ai.icen.fw.application.document.DocumentDownloadService
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.dev.api.catalog.DevCatalogDocumentService
 import ai.icen.fw.dev.api.connector.DevPlatformMirrorService
+import ai.icen.fw.dev.api.security.DevRolePolicy
+import ai.icen.fw.dev.api.service.DevAccessService
 import ai.icen.fw.dev.api.service.DevDocumentDetail
 import ai.icen.fw.dev.api.service.DevDocumentLogEntry
 import ai.icen.fw.dev.api.service.DevDocumentQueryService
@@ -58,6 +60,7 @@ class DevDocumentController(
     private val catalogBindings: DocumentCatalogBindingService,
     private val reviews: DevReviewService,
     private val lifecycle: DocumentCatalogLifecycleService,
+    private val access: DevAccessService,
     private val queries: DevDocumentQueryService,
     private val retryDeliveries: RetryDocumentDeliveryService,
     private val agentSuggestions: ConfirmAgentSuggestionService,
@@ -175,6 +178,7 @@ class DevDocumentController(
 
     @GetMapping("/{documentId}/platform-mirror")
     fun platformMirror(@PathVariable documentId: String) = Identifier(documentId).let { identifier ->
+        access.requireDocumentAction(identifier, DevRolePolicy.DOCUMENT_DELIVERY_READ_ACTION)
         val detail = queries.detail(identifier)
         platformMirror.readDocument(identifier, detail.deliveries)
     }

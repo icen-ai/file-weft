@@ -14,7 +14,15 @@ import java.nio.charset.StandardCharsets
 data class DevPlatformMirrorRecord(
     val targetId: String,
     val deliveryStatus: String,
-    val platform: JsonNode?,
+    val platform: DevPlatformMirrorDocument?,
+)
+
+/** Explicit downstream allowlist returned by the development API. */
+data class DevPlatformMirrorDocument(
+    val fileName: String,
+    val downloadedBytes: Long,
+    val createdTime: Long,
+    val updatedTime: Long,
 )
 
 /**
@@ -51,7 +59,7 @@ class DevPlatformMirrorService(
         }
     }
 
-    private fun readTarget(tenantId: Identifier, documentId: Identifier, targetId: String): JsonNode? {
+    private fun readTarget(tenantId: Identifier, documentId: Identifier, targetId: String): DevPlatformMirrorDocument? {
         val path = "platform/v1/documents/${pathSegment(tenantId.value)}/${pathSegment(documentId.value)}"
         val connection = (baseUrl.resolve(path).toURL().openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -64,7 +72,7 @@ class DevPlatformMirrorService(
         try {
             return when (val status = connection.responseCode) {
                 HttpURLConnection.HTTP_NOT_FOUND -> null
-                in 200..299 -> connection.inputStream.use(objectMapper::readTree)
+                in 200..299 -> connection.inputStream.use { input -> objectMapper.readTree(input).toMirrorDocument() }
                 else -> throw IllegalStateException("Development platform mirror returned HTTP $status.")
             }
         } finally {
@@ -73,6 +81,37 @@ class DevPlatformMirrorService(
     }
 
     private fun pathSegment(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+
+    private fun JsonNode.toMirrorDocument(): DevPlatformMirrorDocument {
+        require(isObject) { "Development platform mirror response must be a JSON object." }
+        val createdTime = requiredNonNegativeLong("createdTime")
+        val updatedTime = requiredNonNegativeLong("updatedTime")
+        require(updatedTime >= createdTime) { "Development platform mirror update time precedes its creation time." }
+        return DevPlatformMirrorDocument(
+            fileName = requiredText("fileName"),
+            downloadedBytes = requiredNonNegativeLong("downloadedBytes"),
+            createdTime = createdTime,
+            updatedTime = updatedTime,
+        )
+    }
+
+    private fun JsonNode.requiredText(fieldName: String): String {
+        val field = get(fieldName)
+        require(field != null && field.isTextual && field.textValue().isNotBlank()) {
+            "Development platform mirror field $fieldName must be a non-blank string."
+        }
+        return field.textValue()
+    }
+
+    private fun JsonNode.requiredNonNegativeLong(fieldName: String): Long {
+        val field = get(fieldName)
+        require(field != null && field.isIntegralNumber && field.canConvertToLong()) {
+            "Development platform mirror field $fieldName must be an integer."
+        }
+        return field.longValue().also { value ->
+            require(value >= 0) { "Development platform mirror field $fieldName must not be negative." }
+        }
+    }
 
     private companion object {
         const val TARGET_HEADER = "X-FileWeft-Target"

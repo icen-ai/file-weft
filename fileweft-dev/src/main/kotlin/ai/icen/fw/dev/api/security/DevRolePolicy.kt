@@ -8,6 +8,8 @@ import ai.icen.fw.dev.api.config.DevRole
  * server still performs the authoritative authorization check for every call.
  */
 object DevRolePolicy {
+    const val DOCUMENT_DELIVERY_READ_ACTION = "document:delivery:read"
+
     private val editorActions = setOf(
         "document:read", "document:create", "document:edit", "document:rename", "document:version:add",
         "document:submit", "document:revise", "document:restore", "document:download", "file:upload", "document:doctor",
@@ -19,7 +21,8 @@ object DevRolePolicy {
         "document:revise", "document:restore", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
         "system:doctor:read",
-        "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm", "system:upload:cleanup", "file:upload:maintenance",
+        DOCUMENT_DELIVERY_READ_ACTION, "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm",
+        "system:upload:cleanup", "file:upload:maintenance",
     )
 
     fun allows(role: DevRole, action: String): Boolean = role == DevRole.ADMIN || action in actionsFor(role)
