@@ -40,19 +40,19 @@ gradlePlugin {
     plugins {
         register("fileweftJvm8Library") {
             id = "fileweft.jvm8-library"
-            implementationClass = "com.fileweft.buildlogic.Jvm8LibraryConventionPlugin"
+            implementationClass = "ai.icen.fw.buildlogic.Jvm8LibraryConventionPlugin"
         }
         register("fileweftJvm17Library") {
             id = "fileweft.jvm17-library"
-            implementationClass = "com.fileweft.buildlogic.Jvm17LibraryConventionPlugin"
+            implementationClass = "ai.icen.fw.buildlogic.Jvm17LibraryConventionPlugin"
         }
         register("fileweftArchitectureGuard") {
             id = "fileweft.architecture-guard"
-            implementationClass = "com.fileweft.buildlogic.ArchitectureGuardPlugin"
+            implementationClass = "ai.icen.fw.buildlogic.ArchitectureGuardPlugin"
         }
         register("fileweftSbomVerification") {
             id = "fileweft.sbom-verification"
-            implementationClass = "com.fileweft.buildlogic.SbomVerificationPlugin"
+            implementationClass = "ai.icen.fw.buildlogic.SbomVerificationPlugin"
         }
     }
 }

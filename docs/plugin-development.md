@@ -97,7 +97,7 @@ class ArchivePlugin : FileWeftPlugin {
 Spring Boot 应用可以将该插件直接注册为 `FileWeftPlugin` Bean。非 Spring 或独立插件 JAR 则在 JAR 中提供以下文件：
 
 ```text
-META-INF/services/com.fileweft.spi.plugin.FileWeftPlugin
+META-INF/services/ai.icen.fw.spi.plugin.FileWeftPlugin
 ```
 
 文件内容为实现类的完整类名。ServiceLoader 发现的插件与 Spring Bean 插件可以共存；同一实现同时以两种方式出现时以 Spring Bean 为准。不同实现不得使用相同插件 ID，插件连接器 ID 也不得和客户 Bean 或另一插件冲突，应用会在启动时给出明确错误。

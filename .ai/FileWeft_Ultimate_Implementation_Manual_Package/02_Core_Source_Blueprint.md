@@ -2,7 +2,7 @@
 # Core Source Blueprint
 
 Package:
-com.fileweft.core
+ai.icen.fw.core
 
 Contains:
 

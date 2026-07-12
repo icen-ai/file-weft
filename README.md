@@ -6,18 +6,30 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
 `.ai` 手册的基础能力对照、验证命令以及开源发布前仍需由项目所有者决定的事项见[实现对照与发布门槛](docs/implementation-status.md)。
 
-## 0.0.1 项目接入
+## 项目接入
 
-当前正式版本为 `0.0.1`。Spring Boot 3 项目通常同时引入运行时 Starter 和正式 HTTP Starter：
+FileWeft 的正式 Maven group 为 `ai.icen`，JVM 包名为 `ai.icen.fw`。SPI 依赖写法如下，将 `x.x.x` 替换为实际发布版本：
+
+```xml
+<dependency>
+    <groupId>ai.icen</groupId>
+    <artifactId>fileweft-spi</artifactId>
+    <version>x.x.x</version>
+</dependency>
+```
+
+Spring Boot 3 项目通常同时引入运行时 Starter 和正式 HTTP Starter：
 
 ```kotlin
 dependencies {
-    implementation("com.fileweft:fileweft-spring-boot3-starter:0.0.1")
-    implementation("com.fileweft:fileweft-web-spring-boot3-starter:0.0.1")
+    implementation("ai.icen:fileweft-spring-boot3-starter:x.x.x")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:x.x.x")
 }
 ```
 
-Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`；需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle`，完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。完整范围与边界见 [0.0.1 发布说明](docs/releases/0.0.1.md)。
+Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前开发版本为 `0.0.2-SNAPSHOT`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle`，完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。
+
+历史 `0.0.1` 使用过试发布坐标 `com.fileweft`，不再作为正式项目接入入口；对应 Git 记录与[历史发布说明](docs/releases/0.0.1.md)仅保留用于追溯。从 `0.0.2` 起源码与二进制统一使用新命名空间，这是一次明确的不兼容迁移。
 
 ## 构建要求
 

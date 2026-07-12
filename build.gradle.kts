@@ -1,5 +1,6 @@
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Delete
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
@@ -11,7 +12,7 @@ plugins {
     id("fileweft.sbom-verification")
 }
 
-group = "com.fileweft"
+group = "ai.icen"
 version = "0.0.2-SNAPSHOT"
 
 val publishableModuleNames = setOf(
@@ -77,6 +78,12 @@ val compatibilityCheck = tasks.register("compatibilityCheck") {
 val publishReleaseRepository = tasks.register("publishReleaseRepository") {
     group = "publishing"
     description = "Publishes every public FileWeft $releaseVersion module to build/repository."
+}
+
+val cleanReleaseRepository = tasks.register<Delete>("cleanReleaseRepository") {
+    group = "publishing"
+    description = "Removes stale coordinates before publishing the local release repository."
+    delete(releaseRepositoryDirectory)
 }
 
 val installReleaseToMavenLocal = tasks.register("installReleaseToMavenLocal") {
@@ -217,12 +224,16 @@ gradle.projectsEvaluated {
     }
 
     val publishedProjects = subprojects.filter { project -> project.name in publishableModuleNames }
+    val localReleasePublishTasks = publishedProjects.map { project ->
+        project.tasks.named("publishMavenJavaPublicationToFileWeftReleaseRepository")
+    }
+    localReleasePublishTasks.forEach { taskProvider ->
+        taskProvider.configure {
+            dependsOn(cleanReleaseRepository)
+        }
+    }
     publishReleaseRepository.configure {
-        dependsOn(
-            publishedProjects.map { project ->
-                project.tasks.named("publishMavenJavaPublicationToFileWeftReleaseRepository")
-            },
-        )
+        dependsOn(localReleasePublishTasks)
     }
     installReleaseToMavenLocal.configure {
         dependsOn(

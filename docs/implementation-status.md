@@ -30,7 +30,7 @@ $env:FILEWEFT_RUN_POSTGRES_TESTS='true'
 .\gradlew.bat :fileweft-persistence:test --no-daemon
 
 $env:FILEWEFT_RUN_DEV_E2E='true'
-.\gradlew.bat :fileweft-dev:test --tests 'com.fileweft.dev.e2e.DevAcceptanceIntegrationTest' --rerun-tasks --no-daemon
+.\gradlew.bat :fileweft-dev:test --tests 'ai.icen.fw.dev.e2e.DevAcceptanceIntegrationTest' --rerun-tasks --no-daemon
 ```
 
 Dev API E2E 由环境变量选择性启用；该环境变量不是 Gradle 任务输入，因此重复验收必须保留 `--rerun-tasks`，避免已有测试输出被误判为本次真实执行。

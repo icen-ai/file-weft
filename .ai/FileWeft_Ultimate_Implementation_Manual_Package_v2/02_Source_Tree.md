@@ -1,7 +1,7 @@
 
 # Source Tree Contract
 
-com.fileweft
+ai.icen.fw
 
 core
   id

@@ -44,7 +44,7 @@ services:
     image: fileweft-dev:local
     pull_policy: never
     container_name: fw-dev-platform
-    command: ["com.fileweft.dev.platform.DevPlatformApplicationKt", "--spring.profiles.active=platform"]
+    command: ["ai.icen.fw.dev.platform.DevPlatformApplicationKt", "--spring.profiles.active=platform"]
     environment:
       FILEWEFT_PLATFORM_DB_URL: jdbc:postgresql://postgres:5432/fileweft?currentSchema=fileweft_dev_platform
       FILEWEFT_PLATFORM_DB_USERNAME: fileweft
@@ -67,7 +67,7 @@ services:
     image: fileweft-dev:local
     pull_policy: never
     container_name: fw-dev-api
-    command: ["com.fileweft.dev.FileWeftDevApplicationKt"]
+    command: ["ai.icen.fw.dev.FileWeftDevApplicationKt"]
     environment:
       FILEWEFT_DEV_DB_URL: jdbc:postgresql://postgres:5432/fileweft?currentSchema=fileweft_dev
       FILEWEFT_DEV_DB_USERNAME: fileweft
@@ -100,7 +100,7 @@ services:
     image: fileweft-dev:local
     pull_policy: never
     container_name: fw-dev-worker
-    command: ["com.fileweft.dev.FileWeftDevApplicationKt", "--server.port=8082"]
+    command: ["ai.icen.fw.dev.FileWeftDevApplicationKt", "--server.port=8082"]
     environment:
       FILEWEFT_DEV_DB_URL: jdbc:postgresql://postgres:5432/fileweft?currentSchema=fileweft_dev
       FILEWEFT_DEV_DB_USERNAME: fileweft

@@ -4,7 +4,7 @@ plugins {
 }
 
 application {
-    mainClass.set("com.fileweft.dev.FileWeftDevApplicationKt")
+    mainClass.set("ai.icen.fw.dev.FileWeftDevApplicationKt")
 }
 
 dependencies {

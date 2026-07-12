@@ -15,7 +15,7 @@ subprojects {
     apply(plugin = "java-library")
     apply(plugin = "org.jetbrains.kotlin.jvm")
 
-    group = "com.fileweft.release.smoke"
+    group = "ai.icen.release.smoke"
     version = rootProject.version
 }
 
@@ -36,24 +36,25 @@ fun Project.targetJvm(javaVersion: JavaVersion, kotlinTarget: JvmTarget, release
 project(":boot2-consumer") {
     targetJvm(JavaVersion.VERSION_1_8, JvmTarget.JVM_1_8, 8)
     dependencies {
-        add("implementation", "com.fileweft:fileweft-spring-boot2-starter:${rootProject.version}")
-        add("implementation", "com.fileweft:fileweft-web-spring-boot2-starter:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-spring-boot2-starter:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-web-spring-boot2-starter:${rootProject.version}")
     }
 }
 
 project(":boot3-consumer") {
     targetJvm(JavaVersion.VERSION_17, JvmTarget.JVM_17, 17)
     dependencies {
-        add("implementation", "com.fileweft:fileweft-spring-boot3-starter:${rootProject.version}")
-        add("implementation", "com.fileweft:fileweft-web-spring-boot3-starter:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-spring-boot3-starter:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-web-spring-boot3-starter:${rootProject.version}")
     }
 }
 
 project(":library-consumer") {
     targetJvm(JavaVersion.VERSION_1_8, JvmTarget.JVM_1_8, 8)
     dependencies {
-        add("implementation", "com.fileweft:fileweft-agent:${rootProject.version}")
-        add("implementation", "com.fileweft:fileweft-persistence:${rootProject.version}")
-        add("implementation", "com.fileweft:fileweft-adapter-micrometer:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-spi:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-agent:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-persistence:${rootProject.version}")
+        add("implementation", "ai.icen:fileweft-adapter-micrometer:${rootProject.version}")
     }
 }

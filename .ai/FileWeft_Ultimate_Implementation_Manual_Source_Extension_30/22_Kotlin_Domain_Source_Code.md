@@ -5,7 +5,7 @@
 
 Package:
 
-com.fileweft.domain.document
+ai.icen.fw.domain.document
 
 
 Responsibilities:

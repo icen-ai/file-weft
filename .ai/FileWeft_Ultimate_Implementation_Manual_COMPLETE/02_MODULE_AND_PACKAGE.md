@@ -18,9 +18,9 @@ fileweft-testkit
 
 Packages:
 
-com.fileweft.core
-com.fileweft.spi
-com.fileweft.domain
-com.fileweft.application
-com.fileweft.adapter
+ai.icen.fw.core
+ai.icen.fw.spi
+ai.icen.fw.domain
+ai.icen.fw.application
+ai.icen.fw.adapter
 

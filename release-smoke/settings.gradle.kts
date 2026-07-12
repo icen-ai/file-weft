@@ -22,7 +22,7 @@ dependencyResolutionManagement {
                 }
             }
             filter {
-                includeGroup("com.fileweft")
+                includeGroup("ai.icen")
             }
         }
         mavenCentral()

@@ -1,0 +1,102 @@
+package ai.icen.fw.web.spring.boot2
+
+import ai.icen.fw.application.catalog.DocumentCatalogAccessService
+import ai.icen.fw.application.delivery.IdempotentDocumentCatalogDeliveryRecoveryService
+import ai.icen.fw.application.delivery.IdempotentDocumentDeliveryRecoveryService
+import ai.icen.fw.application.lifecycle.IdempotentDocumentCatalogLifecycleService
+import ai.icen.fw.application.lifecycle.IdempotentDocumentLifecycleService
+import ai.icen.fw.application.workflow.IdempotentDocumentCatalogReviewWorkflowService
+import ai.icen.fw.application.workflow.IdempotentDocumentReviewWorkflowService
+import ai.icen.fw.spi.observability.TraceContextProvider
+import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
+import ai.icen.fw.web.runtime.v1.document.DocumentLifecycleApiFacade
+import ai.icen.fw.web.runtime.v1.document.DocumentDeliveryRecoveryApiFacade
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.AutoConfigureAfter
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication
+import org.springframework.context.annotation.Bean
+import org.springframework.web.bind.annotation.RestController
+
+/**
+ * Boot 2 transport for formal lifecycle and review commands.
+ *
+ * The routes remain installed when an Application capability is absent so a
+ * partially configured catalog host receives a deterministic 503 instead of
+ * an unsafe flat fallback. Candidate enumeration deliberately ignores
+ * `@Primary`; ambiguity is rejected by [DocumentLifecycleApiFacade].
+ */
+@AutoConfiguration(afterName = ["ai.icen.fw.starter.boot2.FileWeftAutoConfiguration"])
+@AutoConfigureAfter(FileWeftWebBoot2AutoConfiguration::class)
+@ConditionalOnClass(RestController::class)
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+class FileWeftWebBoot2LifecycleAutoConfiguration {
+    @Bean
+    @ConditionalOnMissingBean(DocumentLifecycleApiFacade::class)
+    fun fileWeftV1DocumentLifecycleApiFacade(
+        catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
+        flatLifecycles: ObjectProvider<IdempotentDocumentLifecycleService>,
+        catalogLifecycles: ObjectProvider<IdempotentDocumentCatalogLifecycleService>,
+        flatReviews: ObjectProvider<IdempotentDocumentReviewWorkflowService>,
+        catalogReviews: ObjectProvider<IdempotentDocumentCatalogReviewWorkflowService>,
+    ): DocumentLifecycleApiFacade {
+        val catalogAccessCandidates = catalogAccesses.allCandidates()
+        return DocumentLifecycleApiFacade(
+            catalogAccessCount = catalogAccessCandidates.size,
+            flatLifecycles = flatLifecycles.allCandidates(),
+            catalogLifecycles = catalogLifecycles.allCandidates(),
+            flatReviews = flatReviews.allCandidates(),
+            catalogReviews = catalogReviews.allCandidates(),
+        )
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentDeliveryRecoveryApiFacade::class)
+    fun fileWeftV1DocumentDeliveryRecoveryApiFacade(
+        catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
+        flatRecoveries: ObjectProvider<IdempotentDocumentDeliveryRecoveryService>,
+        catalogRecoveries: ObjectProvider<IdempotentDocumentCatalogDeliveryRecoveryService>,
+    ): DocumentDeliveryRecoveryApiFacade = DocumentDeliveryRecoveryApiFacade(
+        catalogAccessCount = catalogAccesses.allCandidates().size,
+        flatRecoveries = flatRecoveries.allCandidates(),
+        catalogRecoveries = catalogRecoveries.allCandidates(),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(V1ApiResponseFactory::class)
+    fun fileWeftV1LifecycleApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentV1LifecycleController::class)
+    fun fileWeftV1DocumentLifecycleController(
+        documents: DocumentLifecycleApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContextProviders: ObjectProvider<TraceContextProvider>,
+    ): DocumentV1LifecycleController = DocumentV1LifecycleController(
+        documents = documents,
+        responses = responses,
+        traceContextProvider = traceContextProviders.uniqueOptional("trace context"),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(DocumentV1DeliveryRecoveryController::class)
+    fun fileWeftV1DocumentDeliveryRecoveryController(
+        recoveries: DocumentDeliveryRecoveryApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContextProviders: ObjectProvider<TraceContextProvider>,
+    ): DocumentV1DeliveryRecoveryController = DocumentV1DeliveryRecoveryController(
+        recoveries,
+        responses,
+        traceContextProviders.uniqueOptional("recovery trace context"),
+    )
+}
+
+private fun <T> ObjectProvider<T>.allCandidates(): List<T> = iterator().asSequence().toList()
+
+private fun <T> ObjectProvider<T>.uniqueOptional(label: String): T? {
+    val candidates = allCandidates()
+    require(candidates.size <= 1) { "Formal lifecycle API has multiple $label candidates." }
+    return candidates.singleOrNull()
+}

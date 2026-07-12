@@ -1,6 +1,6 @@
-com.fileweft.web.spring.boot3.FileWeftWebBoot3AutoConfiguration
-com.fileweft.web.spring.boot3.FileWeftWebBoot3WriteAutoConfiguration
-com.fileweft.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration
-com.fileweft.web.spring.boot3.FileWeftWebBoot3LifecycleAutoConfiguration
-com.fileweft.web.spring.boot3.FileWeftWebBoot3WorkflowAutoConfiguration
-com.fileweft.web.spring.boot3.FileWeftWebBoot3DoctorAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3AutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3WriteAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3LifecycleAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3WorkflowAutoConfiguration
+ai.icen.fw.web.spring.boot3.FileWeftWebBoot3DoctorAutoConfiguration
