@@ -306,6 +306,7 @@ async function login(username, password) {
     state.token = result.token;
     state.user = result;
     state.permissions = new Set(result.permissions || []);
+    removeLegacyTenantCheckpoint(result.tenantId);
     resetDoctorState();
     state.stalledResumableCompletions = null;
     syncPermissionSurface();
@@ -1112,13 +1113,34 @@ async function loadPlatform() {
   }
 }
 
+function resumableCheckpointKeySegment(value) {
+  const bytes = new TextEncoder().encode(String(value));
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
 function resumableCheckpointKey() {
-  return `${RESUMABLE_CHECKPOINT_PREFIX}.${state.user?.tenantId || "anonymous"}`;
+  const tenantId = state.user?.tenantId;
+  const userId = state.user?.userId;
+  if (typeof tenantId !== "string" || !tenantId || typeof userId !== "string" || !userId) return null;
+  return `${RESUMABLE_CHECKPOINT_PREFIX}.tenant.${resumableCheckpointKeySegment(tenantId)}.user.${resumableCheckpointKeySegment(userId)}`;
+}
+
+function removeLegacyTenantCheckpoint(tenantId) {
+  if (typeof tenantId !== "string" || !tenantId) return;
+  try {
+    localStorage.removeItem(`${RESUMABLE_CHECKPOINT_PREFIX}.${tenantId}`);
+  } catch {
+    // Storage may be unavailable in hardened browser profiles; login itself must still succeed.
+  }
 }
 
 function readResumableCheckpoint() {
   try {
-    const checkpoint = JSON.parse(localStorage.getItem(resumableCheckpointKey()) || "null");
+    const key = resumableCheckpointKey();
+    if (!key) return null;
+    const checkpoint = JSON.parse(localStorage.getItem(key) || "null");
     if (!checkpoint || checkpoint.version !== 1 || typeof checkpoint.idempotencyKey !== "string" ||
       typeof checkpoint.fileName !== "string" || !Number.isSafeInteger(checkpoint.contentLength) || checkpoint.contentLength <= 0 ||
       !Number.isSafeInteger(checkpoint.chunkSizeBytes) || checkpoint.chunkSizeBytes < MINIMUM_RESUMABLE_CHUNK_BYTES) return null;
@@ -1129,11 +1151,14 @@ function readResumableCheckpoint() {
 }
 
 function writeResumableCheckpoint(checkpoint) {
-  localStorage.setItem(resumableCheckpointKey(), JSON.stringify(checkpoint));
+  const key = resumableCheckpointKey();
+  if (!key) throw new Error("A stable authenticated user id is required for a resumable upload checkpoint.");
+  localStorage.setItem(key, JSON.stringify(checkpoint));
 }
 
 function clearResumableCheckpoint() {
-  localStorage.removeItem(resumableCheckpointKey());
+  const key = resumableCheckpointKey();
+  if (key) localStorage.removeItem(key);
 }
 
 function newResumableIdempotencyKey() {
