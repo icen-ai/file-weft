@@ -59,8 +59,10 @@ curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_123/publish
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Idempotency-Key: publish-doc_123-20250713" \
   -H "Content-Type: application/json" \
-  -d '{"comment": "Approved for release"}'
+  -d '{"deliveryProfileId": "regulated"}'
 ```
+
+The publication body is optional. When supplied, `deliveryProfileId` is its only supported field; publication does not accept a review `comment`.
 
 > [!WARNING]
 > Replay still re-runs authentication, action permission, and catalog visibility checks. An idempotency record is not an authorization cache.

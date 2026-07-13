@@ -39,6 +39,95 @@ The runner is verified with Spring Boot 2 managed Flyway 8.5.13, FileWeft's own 
 
 `fileweft.persistence.kingbase-flyway-compatibility-enabled` defaults to `true` (the YAML block above uses its nested form). It adapts only the DataSource Spring Boot selected for Flyway; the application's primary DataSource remains the real Kingbase DataSource. Disable it only when the host provides and verifies an equivalent Kingbase/Flyway integration. A Spring Boot 2 Kingbase host must configure an explicit `spring.flyway.locations` path and must not use the `{vendor}` placeholder, which Boot resolves from the original JDBC URL before the FileWeft customizer runs.
 
+## KingbaseES 0.0.2 quick start
+
+FileWeft `0.0.2` is available anonymously from the public CNB Maven repository. Keep Maven Central (or a controlled mirror of it) for the locked Kingbase JDBC driver, and choose exactly one Spring Boot line:
+
+> [!IMPORTANT]
+> A Spring Boot 2 host must also align Kotlin to `2.1.21` as shown in the [installation guide](../getting-started/installation.md); the Boot 2 BOM default `1.6.21` is not the FileWeft runtime contract.
+
+```kotlin
+repositories {
+    maven("https://maven.cnb.cool/china.ai/maven/-/packages/")
+    mavenCentral()
+}
+
+// Spring Boot 2 host
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot2-starter:0.0.2")
+    // implementation("ai.icen:fileweft-web-spring-boot2-starter:0.0.2") // formal HTTP API
+    runtimeOnly("cn.com.kingbase:kingbase8:8.6.1")
+}
+```
+
+```kotlin
+repositories {
+    maven("https://maven.cnb.cool/china.ai/maven/-/packages/")
+    mavenCentral()
+}
+
+// Spring Boot 3 host
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    // implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2") // formal HTTP API
+    runtimeOnly("cn.com.kingbase:kingbase8:8.6.1")
+}
+```
+
+The DBA must create the `fileweft` schema before either process starts. The Kingbase `currentSchema` URL property sets the connection search path; `fileweft.persistence.schema` is a strict assertion and must exactly equal `SELECT current_schema()`.
+
+Minimal Spring Boot 2 configuration:
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:kingbase8://${KINGBASE_HOST}:${KINGBASE_PORT:54321}/${KINGBASE_DATABASE}?currentSchema=fileweft
+    username: ${KINGBASE_USERNAME}
+    password: ${KINGBASE_PASSWORD}
+    driver-class-name: com.kingbase8.Driver
+  flyway:
+    enabled: false # only when the host has no separate migrations of its own
+
+fileweft:
+  persistence:
+    migration-mode: ${FILEWEFT_MIGRATION_MODE:validate}
+    schema: fileweft
+    create-schema: false
+    kingbase-flyway-compatibility-enabled: true
+```
+
+Minimal Spring Boot 3 configuration (the datasource contract is intentionally identical):
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:kingbase8://${KINGBASE_HOST}:${KINGBASE_PORT:54321}/${KINGBASE_DATABASE}?currentSchema=fileweft
+    username: ${KINGBASE_USERNAME}
+    password: ${KINGBASE_PASSWORD}
+    driver-class-name: com.kingbase8.Driver
+  flyway:
+    enabled: false # only when the host has no separate migrations of its own
+
+fileweft:
+  persistence:
+    migration-mode: ${FILEWEFT_MIGRATION_MODE:validate}
+    schema: fileweft
+    create-schema: false
+    kingbase-flyway-compatibility-enabled: true
+```
+
+Run a one-shot deployment process with `FILEWEFT_MIGRATION_MODE=migrate` and a restricted DDL account. After it succeeds and the host explicitly exits that process, start every API and Worker with a separate runtime account and `FILEWEFT_MIGRATION_MODE=validate`. Do not let rolling application nodes migrate independently. If the host has its own Flyway migrations, enable host Flyway and give it a host-only explicit location; never add FileWeft's migration path, and on Boot 2 never use `{vendor}`.
+
+Before opening traffic, verify all of the following:
+
+- the JDBC driver is `cn.com.kingbase:kingbase8:8.6.1` and the driver class is `com.kingbase8.Driver`;
+- the schema already exists and `SELECT current_schema()` returns exactly `fileweft` for both migration and runtime accounts;
+- `fileweft_schema_history` contains the successful V001–V028 chain, then runtime startup succeeds in `validate` mode;
+- migration and runtime privileges are separate; the runtime account has only the DML and validation reads it needs;
+- `KINGBASE_USERNAME` and `KINGBASE_PASSWORD` come from the deployment secret store. Never commit a database password to YAML, Gradle files, or the repository.
+
 ## Worker
 
 The worker processes Outbox events, scheduled tasks, and upload cleanup.

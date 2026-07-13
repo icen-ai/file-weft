@@ -59,8 +59,10 @@ curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_123/publish
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Idempotency-Key: publish-doc_123-20250713" \
   -H "Content-Type: application/json" \
-  -d '{"comment": "Approved for release"}'
+  -d '{"deliveryProfileId": "regulated"}'
 ```
+
+发布请求体可以省略；若提供，请求体唯一支持的字段是 `deliveryProfileId`，发布接口不接受审批 `comment`。
 
 > [!WARNING]
 > 重放时仍会重新执行认证、动作权限和目录可见性检查。幂等记录不是权限缓存。

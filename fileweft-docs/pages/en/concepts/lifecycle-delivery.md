@@ -68,8 +68,8 @@ A single document often needs to reach more than one downstream system: a compli
 
 | Target kind | Required? | Failure impact |
 |---|---|---|
-| Required | yes | Blocks `PUBLISHED`; document enters `SYNC_ERROR` and retries |
-| Optional | no | Document can still become `PUBLISHED`; failure is recorded and can be retried |
+| Required | yes | Blocks `PUBLISHED`; document enters `SYNC_ERROR`, automatic retries are bounded, then an exhausted target requires operator requeue |
+| Optional | no | Document can still become `PUBLISHED`; failure is recorded, retried to the same limit, then requires operator requeue |
 
 Rules that protect downstream reliability:
 
@@ -108,7 +108,7 @@ This gives three guarantees:
 
 - The state change and the event are atomic on the local database.
 - A connector crash cannot roll back the document state.
-- Every target is retried independently.
+- Every target is retried independently only up to the configured attempt limit.
 
 ## 06. Retry and removal
 
@@ -169,10 +169,10 @@ fileweft:
 ## FAQ
 
 **Q: Can I publish a document without any targets?**
-Yes, if the configured profile has no required targets and the host allows it. FileWeft still records the publish event and audit log.
+No. Every publishable profile must contain at least one target and at least one required target. FileWeft does not silently turn publication into a local-only success; register the required connector or choose another valid profile.
 
 **Q: What happens if a required target is permanently down?**
-The document stays in `SYNC_ERROR`. FileWeft continues to retry according to the task and outbox policy. The operator can also trigger a manual retry once the connector is healthy.
+The document stays in `SYNC_ERROR`. A permanent failure, or exhaustion of bounded automatic retries, moves the event and target to `FAILED` and stops automatic retry. After the connector is healthy, an operator with `document:delivery:retry` requeues that target through the delivery retry endpoint.
 
 **Q: Does archiving undo deliveries?**
 No. Archive writes removal requests, but it does not guarantee immediate removal. Each target's connector processes removal independently.

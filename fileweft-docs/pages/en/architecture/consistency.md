@@ -95,12 +95,12 @@ When a document is published, FileWeft fans out to every target in the active sy
 | Required target | Optional target | Final document state |
 | --- | --- | --- |
 | All succeed | Any outcome | `PUBLISHED` |
-| One fails and is retryable | Not decisive | `SYNC_ERROR`, worker keeps retrying |
-| One fails permanently | Not decisive | Transition fails, document stays in prior state |
-| Any outcome | One fails | Still `PUBLISHED`; failure is recorded for operator triage |
+| One fails and is retryable | Not decisive | `SYNC_ERROR`; retries are bounded, then the event/target becomes `FAILED` while the document remains `SYNC_ERROR` until operator requeue succeeds |
+| One fails permanently | Not decisive | Event/target becomes `FAILED`; document remains `SYNC_ERROR` until an operator repairs and requeues that delivery |
+| All required targets succeed | One optional target fails | Still `PUBLISHED`; the optional failure is recorded for operator triage |
 
 > **NOTE**
-> FileWeft never rolls back a connector that already succeeded. Delivery is append-only: successful targets stay published, failed targets are retried or reported.
+> FileWeft never rolls back a connector that already succeeded. Delivery is append-only: successful targets stay published; failed targets retry only to the configured limit and then require operator triage/requeue.
 
 ## Observing convergence
 

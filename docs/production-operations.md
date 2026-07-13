@@ -55,7 +55,105 @@ fileweft:
 
 MySQL `V001` 保持既有 pre-0.0.2 工作树中的资源字节与 Flyway checksum 不变，避免破坏已经试用 0.0.2-SNAPSHOT 的 schema history；0.0.1 正式标签尚未包含 MySQL 迁移，不能把这项兼容边界误写成 0.0.1 已发布契约，也不能把当前工作泛称为重写所有历史迁移。MySQL 专属修复从 V016 开始，修正旧链路中会让真实 MySQL 8 无法完整执行的语法和重复列定义。因此 0.0.2 是首个具备真实 MySQL 迁移与 JDBC repository 闭环证据的版本线。若旧库出现 checksum 不匹配或部分执行历史，必须先停写、备份并由 DBA 对比精确资源和 `fileweft_schema_history`；禁止无条件执行 `flyway repair`，也不能用 repair 掩盖无法解释的历史。
 
-`fileweft-persistence` 已通过 `runtimeOnly` 引入 KingbaseES JDBC 坐标 `cn.com.kingbase:kingbase8:8.6.1`，测试类路径也锁定同一驱动；宿主仍应从其受控制品仓库解析依赖并遵守厂商许可。KingbaseES 数据库镜像不得由 FileWeft 仓库、CNB 制品库或其他镜像仓库再次分发。开发机与 CI 必须使用 `.ci/scripts/prepare-kingbase-image.ps1` / `.sh` 从金仓官网公开地址下载 V8R6C9B14 tar，并依次核对官网 MD5、仓库锁定 SHA-256 和导入后的 Docker image ID；任何校验失败都必须终止。不得用来历不明的社区镜像替代。
+`fileweft-persistence` 已通过 `runtimeOnly` 引入 KingbaseES JDBC 坐标 `cn.com.kingbase:kingbase8:8.6.1`，测试类路径也锁定同一驱动；宿主仍应显式锁定同一版本，从其受控制品仓库解析依赖并遵守厂商许可。
+
+#### KingbaseES 0.0.2 生产接入操作手册
+
+FileWeft `0.0.2` 可从 CNB 公共 Maven 仓库匿名解析，不需要把 CNB token 写入构建。Kingbase 驱动来自 Maven Central 或企业批准的受控镜像。Spring Boot 2 与 3 只能选择对应的一条 Starter 线：
+
+Spring Boot 2 宿主还必须按[安装文档](../fileweft-docs/pages/zh/getting-started/installation.md)把 Kotlin 对齐到 `2.1.21`；其 BOM 默认的 `1.6.21` 不是 FileWeft 运行时合同。
+
+```kotlin
+repositories {
+    maven("https://maven.cnb.cool/china.ai/maven/-/packages/")
+    mavenCentral()
+}
+
+// Spring Boot 2
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot2-starter:0.0.2")
+    // implementation("ai.icen:fileweft-web-spring-boot2-starter:0.0.2") // 需要正式 HTTP API 时启用
+    runtimeOnly("cn.com.kingbase:kingbase8:8.6.1")
+}
+```
+
+```kotlin
+repositories {
+    maven("https://maven.cnb.cool/china.ai/maven/-/packages/")
+    mavenCentral()
+}
+
+// Spring Boot 3
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    // implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2") // 需要正式 HTTP API 时启用
+    runtimeOnly("cn.com.kingbase:kingbase8:8.6.1")
+}
+```
+
+DBA 必须先预建目标 schema；生产示例固定为 `fileweft`，并保持 `create-schema=false`。官方锁定驱动的 `currentSchema` URL 属性会设置连接 search path，因此 URL、账号与 FileWeft schema 的最小合同如下。Spring Boot 2：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:kingbase8://${KINGBASE_HOST}:${KINGBASE_PORT:54321}/${KINGBASE_DATABASE}?currentSchema=fileweft
+    username: ${KINGBASE_USERNAME}
+    password: ${KINGBASE_PASSWORD}
+    driver-class-name: com.kingbase8.Driver
+  flyway:
+    enabled: false # 仅当宿主没有自己的迁移时使用
+
+fileweft:
+  persistence:
+    migration-mode: ${FILEWEFT_MIGRATION_MODE:validate}
+    schema: fileweft
+    create-schema: false
+    kingbase-flyway-compatibility-enabled: true
+```
+
+Spring Boot 3 使用相同 DataSource 合同：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:kingbase8://${KINGBASE_HOST}:${KINGBASE_PORT:54321}/${KINGBASE_DATABASE}?currentSchema=fileweft
+    username: ${KINGBASE_USERNAME}
+    password: ${KINGBASE_PASSWORD}
+    driver-class-name: com.kingbase8.Driver
+  flyway:
+    enabled: false # 仅当宿主没有自己的迁移时使用
+
+fileweft:
+  persistence:
+    migration-mode: ${FILEWEFT_MIGRATION_MODE:validate}
+    schema: fileweft
+    create-schema: false
+    kingbase-flyway-compatibility-enabled: true
+```
+
+这里的 `fileweft.persistence.schema` 是严格断言，不是切换开关：迁移账号和运行账号经该 URL 取出的每条连接执行 `SELECT current_schema()` 都必须精确返回 `fileweft`。如果企业连接池不用 URL 属性，必须提供在**每条连接**上执行 `SET search_path TO fileweft` 的等价初始化，并再次验证 `current_schema()`；不能只在部署脚本的单个会话中执行一次。多 DataSource 宿主仍须显式把 FileWeft runner 绑定到这一 DataSource。
+
+上线顺序固定为：
+
+1. DBA 预建 `fileweft` schema，准备短期迁移账号与长期运行账号；两者都验证 URL、`currentSchema` 与 `fileweft.persistence.schema` 完全一致。
+2. 一次性 Migration Job 使用短期 DDL 账号和 `FILEWEFT_MIGRATION_MODE=migrate` 启动。成功后由宿主明确退出该进程；Starter 不会自动退出。
+3. 核对 `fileweft_schema_history` 的 V001–V028 全部成功且无 pending/checksum 差异，再回收 Migration Job 的 DDL 凭据。
+4. API 与 Worker 使用独立运行账号和 `FILEWEFT_MIGRATION_MODE=validate` 启动；只有全部节点校验通过后才开放流量。不要让滚动节点各自执行 `migrate`。
+5. 若宿主自己使用 Spring Flyway，保留独立的宿主 location/history，不得追加 FileWeft location；Boot 2 的 `spring.flyway.locations` 不得使用 `{vendor}`。宿主不使用 Flyway 时才设置 `spring.flyway.enabled=false`。
+
+上线检查清单：
+
+- [ ] 只引入与宿主匹配的 Boot 2 或 Boot 3 Starter，且 `cn.com.kingbase:kingbase8:8.6.1` 与 `com.kingbase8.Driver` 可解析。
+- [ ] schema 已由 DBA 预建；迁移账号和运行账号执行 `SELECT current_schema()` 都精确返回 `fileweft`。
+- [ ] `fileweft_schema_history` 的 V001–V028 已成功，运行节点随后以 `validate` 模式启动成功。
+- [ ] 迁移账号只在发布窗口下发；运行账号只拥有业务 DML、schema `USAGE`、FileWeft 业务读取及 migration history 校验所需权限。
+- [ ] `KINGBASE_USERNAME` 与 `KINGBASE_PASSWORD` 由部署 Secret/密钥系统注入；禁止把密码写入 `application*.yml`、Gradle 文件、Git、镜像或日志。
+- [ ] 宿主 Flyway 与 FileWeft location/history 分离，多个 DataSource 的 runner 绑定明确。
+- [ ] 迁移前完成可恢复备份，迁移失败时保留 history/日志证据并前进修复，禁止无条件 `repair` 或伪造成功记录。
+
+KingbaseES 数据库镜像不得由 FileWeft 仓库、CNB 制品库或其他镜像仓库再次分发。开发机与 CI 必须使用 `.ci/scripts/prepare-kingbase-image.ps1` / `.sh` 从金仓官网公开地址下载 V8R6C9B14 tar，并依次核对官网 MD5、仓库锁定 SHA-256 和导入后的 Docker image ID；任何校验失败都必须终止。不得用来历不明的社区镜像替代。
 
 MySQL 与 KingbaseES 使用独立 Compose profile，不会随普通 Dev 全栈启动。只有改动触及相应迁移、方言或 persistence 边界时，本地才运行根任务 `mysqlIntegrationCheck` 或 `kingbaseIntegrationCheck`；CNB 使用同样的路径规则按需调度，夜间和标签发布则运行两者。两个任务都要求显式 `FILEWEFT_RUN_*_TESTS=true` 和专属真实数据库，缺少环境时失败关闭而不是跳过。完整准备命令、环境变量和镜像许可边界见 `.ci/README.md`。
 

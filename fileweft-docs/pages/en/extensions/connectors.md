@@ -325,6 +325,7 @@ Before deploying a connector, verify:
 - [ ] Every network call has a timeout.
 - [ ] Both sync and removal forward `request.invocation.idempotencyKey` unchanged.
 - [ ] Retryable and permanent failures are classified correctly.
+- [ ] Alerts and an operator runbook cover exhausted delivery and removal retries.
 - [ ] Returned `externalId` is non-blank for successful deliveries.
 - [ ] Error messages are redacted.
 - [ ] `health()` is read-only and fast.
@@ -345,7 +346,7 @@ Persist the invocation result under `request.invocation.idempotencyKey` (with te
 No. FileWeft delivers through the outbox and async worker so a downstream outage cannot block or roll back the local transaction.
 
 **What happens when a required target fails?**  
-The document enters `SYNC_ERROR` and the worker keeps retrying. Optional target failures are recorded but do not block publication.
+The document enters `SYNC_ERROR`. A retryable failure is retried with backoff only up to the configured Outbox attempt limit (five attempts by default); a permanent failure or retry exhaustion moves the event and target to `FAILED`, and automatic retry stops. After fixing the cause, an operator with `document:delivery:retry` must requeue only that delivery with `POST /fileweft/v1/documents/{documentId}/deliveries/{deliveryId}/retry` (or use `/removal/retry` for a failed withdrawal). Optional target failures are recorded but do not block publication.
 
 ## Next steps
 

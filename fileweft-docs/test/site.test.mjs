@@ -50,6 +50,21 @@ const migrationBoundaryPages = [
   "../docs/production-operations.md",
   "../docs/releases/0.0.2.md",
 ];
+const kingbaseOnboardingPages = [
+  "pages/en/reference/configuration.md",
+  "pages/zh/reference/configuration.md",
+  "../docs/production-operations.md",
+];
+const connectorContractPages = [
+  "pages/en/extensions/connectors.md",
+  "pages/zh/extensions/connectors.md",
+];
+const deliveryConsistencyPages = [
+  "pages/en/architecture/consistency.md",
+  "pages/zh/architecture/consistency.md",
+  "pages/en/concepts/lifecycle-delivery.md",
+  "pages/zh/concepts/lifecycle-delivery.md",
+];
 
 const parseFrontmatter = (source) => {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -290,6 +305,88 @@ test("migration operations document the Flyway and Kingbase host boundary", asyn
       source,
       /fileweft\.persistence\.kingbase-flyway-compatibility-enabled/u,
       `${page} Kingbase Flyway wrapper switch`,
+    );
+  }
+});
+
+test("KingbaseES 0.0.2 onboarding is copyable and fail-closed", async () => {
+  const requiredTokens = [
+    "https://maven.cnb.cool/china.ai/maven/-/packages/",
+    "ai.icen:fileweft-spring-boot2-starter:0.0.2",
+    "ai.icen:fileweft-spring-boot3-starter:0.0.2",
+    "cn.com.kingbase:kingbase8:8.6.1",
+    "com.kingbase8.Driver",
+    "jdbc:kingbase8://",
+    "currentSchema=fileweft",
+    "fileweft.persistence.schema",
+    "SELECT current_schema()",
+    "fileweft_schema_history",
+    "FILEWEFT_MIGRATION_MODE=migrate",
+    "FILEWEFT_MIGRATION_MODE=validate",
+    "${KINGBASE_USERNAME}",
+    "${KINGBASE_PASSWORD}",
+    "2.1.21",
+    "1.6.21",
+  ];
+
+  for (const page of kingbaseOnboardingPages) {
+    const source = await read(page);
+    for (const token of requiredTokens) {
+      assert.ok(source.includes(token), `${page} must include ${token}`);
+    }
+    assert.match(
+      source,
+      /(?:pre-?create[^\n]{0,80}schema|create[^\n]{0,80}schema[^\n]{0,80}before|schema[^\n]{0,80}(?:pre-?created|created before)|预建[^\n]{0,40}schema)/iu,
+      `${page} must require DBA schema creation before startup`,
+    );
+    assert.match(
+      source,
+      /(?:Never commit[^\n]{0,100}(?:password|database password)|禁止[^\n]{0,100}(?:密码|口令)[^\n]{0,100}(?:版本库|Git|仓库))/iu,
+      `${page} must keep Kingbase credentials out of source control`,
+    );
+  }
+
+  const operations = await read("../docs/production-operations.md");
+  assert.match(operations, /SET search_path TO fileweft/u);
+  assert.match(operations, /V001–V028/u);
+});
+
+test("publish examples use the actual PublishDocumentRequest field", async () => {
+  for (const page of publicHttpApiPages) {
+    const source = await read(page);
+    const publishExample = source.match(/curl -X POST "[^"]+\/publish"[\s\S]*?```/u)?.[0];
+    assert.ok(publishExample, `${page} must contain the publication example`);
+    assert.match(publishExample, /"deliveryProfileId": "regulated"/u);
+    assert.doesNotMatch(publishExample, /"comment"/u, `${page} publish DTO has no comment field`);
+  }
+});
+
+test("connector docs stop automatic retries at exhaustion and require scoped requeue", async () => {
+  for (const page of connectorContractPages) {
+    const source = await read(page);
+    assert.doesNotMatch(source, /(?:keeps retrying|持续重试)/iu, `${page} must not promise endless retries`);
+    assert.match(source, /(?:attempt limit|尝试上限)/iu, `${page} retry limit`);
+    assert.match(source, /`FAILED`/u, `${page} exhausted target state`);
+    assert.match(source, /`document:delivery:retry`/u, `${page} recovery permission`);
+    assert.match(
+      source,
+      /POST \/fileweft\/v1\/documents\/\{documentId\}\/deliveries\/\{deliveryId\}\/retry/u,
+      `${page} scoped delivery recovery endpoint`,
+    );
+  }
+
+  for (const page of deliveryConsistencyPages) {
+    const source = await read(page);
+    assert.doesNotMatch(
+      source,
+      /(?:keeps retrying|continues to retry|持续重试|继续重试|继续按[^\n]{0,30}重试|转换失败，文档保持原状态)/iu,
+    );
+    assert.match(source, /`FAILED`/u);
+    assert.match(source, /`SYNC_ERROR`/u);
+    assert.doesNotMatch(
+      source,
+      /(?:profile has no required targets|当前 profile 没有必达目标)/iu,
+      `${page} must not advertise a profile rejected by the runtime contract`,
     );
   }
 });
