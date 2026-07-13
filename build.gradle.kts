@@ -585,15 +585,18 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
             val sourcesJar = versionDirectory.resolve("$artifactPrefix-sources.jar")
             val pomFile = versionDirectory.resolve("$artifactPrefix.pom")
             val moduleFile = versionDirectory.resolve("$artifactPrefix.module")
+            val expectedFiles = mutableSetOf<File>()
             listOf(binaryJar, sourcesJar, pomFile, moduleFile).forEach { artifact ->
                 require(artifact.isFile && artifact.length() > 0L) {
                     "Published artifact is missing or empty: ${artifact.absolutePath}"
                 }
-                mapOf("SHA-256" to "sha256", "SHA-512" to "sha512").forEach { (algorithm, suffix) ->
+                expectedFiles += artifact
+                mapOf("MD5" to "md5", "SHA-1" to "sha1", "SHA-256" to "sha256", "SHA-512" to "sha512").forEach { (algorithm, suffix) ->
                     val checksumFile = versionDirectory.resolve("${artifact.name}.$suffix")
                     require(checksumFile.isFile) {
                         "Published checksum is missing: ${checksumFile.absolutePath}"
                     }
+                    expectedFiles += checksumFile
                     val actualChecksum = MessageDigest.getInstance(algorithm)
                         .digest(artifact.readBytes())
                         .joinToString(separator = "") { byte ->
@@ -604,12 +607,39 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
                     }
                 }
             }
+            if (expectedVersion.endsWith("-SNAPSHOT")) {
+                val metadataFile = versionDirectory.resolve("maven-metadata.xml")
+                expectedFiles += metadataFile
+                expectedFiles += versionDirectory.resolve("${metadataFile.name}.md5")
+                expectedFiles += versionDirectory.resolve("${metadataFile.name}.sha1")
+                expectedFiles += versionDirectory.resolve("${metadataFile.name}.sha256")
+                expectedFiles += versionDirectory.resolve("${metadataFile.name}.sha512")
+            }
+            val actualFiles = versionDirectory.listFiles().orEmpty().filter { it.isFile }.toSet()
+            require(actualFiles == expectedFiles) {
+                "Published repository inventory for $moduleName differs from the expected contract; " +
+                    "unexpected=${(actualFiles - expectedFiles).map { it.name }}, " +
+                    "missing=${(expectedFiles - actualFiles).map { it.name }}."
+            }
 
             listOf(binaryJar, sourcesJar).forEach { archive ->
                 ZipFile(archive).use { jar ->
-                    val entries = jar.entries().asSequence()
+                    val fileEntries = jar.entries().asSequence()
                         .filterNot { entry -> entry.isDirectory }
-                        .associateBy { entry -> entry.name }
+                        .toList()
+                    val dangerousEntries = fileEntries.map { entry -> entry.name }.filter(::isDangerousJarEntry)
+                    require(dangerousEntries.isEmpty()) {
+                        "Published JAR contains dangerous entries: ${dangerousEntries.take(10)} in ${archive.name}"
+                    }
+                    val duplicateEntries = fileEntries
+                        .groupingBy { entry -> entry.name }
+                        .eachCount()
+                        .filterValues { count -> count > 1 }
+                        .keys
+                    require(duplicateEntries.isEmpty()) {
+                        "Published JAR contains duplicate entries: $duplicateEntries in ${archive.name}"
+                    }
+                    val entries = fileEntries.associateBy { entry -> entry.name }
                     val licenseEntry = entries["META-INF/LICENSE"]
                     val noticeEntry = entries["META-INF/NOTICE"]
                     require(licenseEntry != null && noticeEntry != null) {
@@ -1132,4 +1162,13 @@ gradle.projectsEvaluated {
             verifyReleaseCredentialHygiene,
         )
     }
+}
+
+fun isDangerousJarEntry(entryName: String): Boolean {
+    return entryName.startsWith("/") ||
+        entryName.startsWith("\\") ||
+        ".." in entryName ||
+        '\\' in entryName ||
+        entryName.contains(":") ||
+        entryName.isBlank()
 }

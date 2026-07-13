@@ -118,6 +118,62 @@ class GenerateReleaseSbomTaskTest {
         assertTrue(result.output.contains("DOCTYPE is disallowed") || result.output.contains("disallow-doctype-decl"))
     }
 
+    @Test
+    fun `rejects an aggregate bom with a SNAPSHOT component in a release`() = withTestProject { projectDir ->
+        writeBuild(projectDir)
+        writeAggregateSboms(projectDir)
+        mutateAggregateSboms(projectDir) { content ->
+            content.replace("\"version\":\"1.2.3\"", "\"version\":\"1.2.3-SNAPSHOT\"")
+                .replace("<version>1.2.3</version>", "<version>1.2.3-SNAPSHOT</version>")
+        }
+
+        val result = runner(projectDir, "generateReleaseSbom").buildAndFail()
+
+        assertTrue(result.output.contains("SNAPSHOT version in a non-SNAPSHOT release"))
+    }
+
+    @Test
+    fun `rejects an aggregate bom with a path-traversal component name`() = withTestProject { projectDir ->
+        writeBuild(projectDir)
+        writeAggregateSboms(projectDir)
+        mutateAggregateSboms(projectDir) { content ->
+            content.replace("\"name\":\"external-lib\"", "\"name\":\"../external-lib\"")
+                .replace("<name>external-lib</name>", "<name>../external-lib</name>")
+        }
+
+        val result = runner(projectDir, "generateReleaseSbom").buildAndFail()
+
+        assertTrue(result.output.contains("path-traversal-like name"))
+    }
+
+    @Test
+    fun `rejects an aggregate bom with duplicate component bom-refs`() = withTestProject { projectDir ->
+        writeBuild(projectDir)
+        writeAggregateSboms(projectDir)
+        mutateAggregateSboms(projectDir) { content ->
+            content.replace(
+                "\"bom-ref\":\"pkg:maven/org.example/dev-only-lib@9.9.9\"",
+                "\"bom-ref\":\"pkg:maven/org.example/external-lib@1.2.3\"",
+            ).replace(
+                "bom-ref=\"pkg:maven/org.example/dev-only-lib@9.9.9\"",
+                "bom-ref=\"pkg:maven/org.example/external-lib@1.2.3\"",
+            )
+        }
+
+        val result = runner(projectDir, "generateReleaseSbom").buildAndFail()
+
+        assertTrue(result.output.contains("duplicate component bom-ref"))
+    }
+
+    private fun mutateAggregateSboms(projectDir: File, mutation: (String) -> String) {
+        listOf(
+            projectDir.resolve("build/reports/cyclonedx/bom.json"),
+            projectDir.resolve("build/reports/cyclonedx/bom.xml"),
+        ).forEach { aggregate ->
+            aggregate.writeText(mutation(aggregate.readText(StandardCharsets.UTF_8)), StandardCharsets.UTF_8)
+        }
+    }
+
     private fun writeBuild(projectDir: File) {
         writeFile(projectDir, "settings.gradle.kts", "rootProject.name = \"release-sbom-fixture\"")
         writeFile(
