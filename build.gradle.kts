@@ -22,7 +22,7 @@ plugins {
 }
 
 group = "ai.icen"
-version = "0.0.1"
+version = "0.0.2-SNAPSHOT"
 
 val publishableModuleNames = setOf(
     "fileweft-core",
