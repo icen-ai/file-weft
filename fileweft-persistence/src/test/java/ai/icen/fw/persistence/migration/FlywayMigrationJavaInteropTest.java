@@ -16,7 +16,10 @@ class FlywayMigrationJavaInteropTest {
         new FlywayMigrationRunner(dataSource, "public");
         new FlywayMigrationRunner(dataSource, "public", false);
 
-        assertEquals("classpath:ai/icen/fw/db/migration", FlywayMigrationRunner.MIGRATION_LOCATION);
+        assertEquals(
+            "classpath:ai/icen/fw/db/migration/postgres",
+            FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL)
+        );
         assertEquals("fileweft_schema_history", FlywayMigrationRunner.HISTORY_TABLE);
         assertEquals(FileWeftMigrationMode.DISABLED, FileWeftMigrationMode.valueOf("DISABLED"));
         assertEquals(FileWeftMigrationMode.VALIDATE, FileWeftMigrationMode.valueOf("VALIDATE"));

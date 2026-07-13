@@ -14,12 +14,18 @@ dependencies {
     implementation(libs.flyway.core)
     api(libs.jackson.databind)
     runtimeOnly(libs.postgresql)
+    runtimeOnly(libs.mysql.connector.j)
     testImplementation(platform(libs.junit.bom))
     testImplementation(project(":fileweft-agent"))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.postgresql)
+    testImplementation(libs.mysql.connector.j)
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    // Kingbase ES JDBC driver is not published to Maven Central. Consumers must
+    // provide it through their own repository or local file dependency. The
+    // integration test below skips itself when the driver is not on the classpath.
 }
 
 // Runtime suites rebuild the same PostgreSQL public schema when integration tests

@@ -334,6 +334,7 @@ val verifyDocsSite = tasks.register<Exec>("verifyDocsSite") {
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
+val fileWeftMigrationDialects = listOf("postgres", "mysql", "kingbase")
 val expectedFileWeftMigrationResources = listOf(
     "V001__create_file_document_outbox.sql",
     "V002__harden_outbox_processing.sql",
@@ -361,17 +362,19 @@ val expectedFileWeftMigrationResources = listOf(
     "V024__bind_resumable_upload_session_owner.sql",
     "V025__index_document_audit_log_queries.sql",
     "V026__persist_workflow_decision_evidence.sql",
-).map { migration -> "ai/icen/fw/db/migration/$migration" }
+).flatMap { migration ->
+    fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
+}
 val fileWeftMigrationSourceDirectory = layout.projectDirectory.dir(
     "fileweft-persistence/src/main/resources/ai/icen/fw/db/migration",
 )
 val expectedFileWeftMigrationSourceFiles = expectedFileWeftMigrationResources.map { resource ->
-    fileWeftMigrationSourceDirectory.file(resource.substringAfterLast('/'))
+    fileWeftMigrationSourceDirectory.file(resource)
 }
 
 val verifyFileWeftMigrationResources = tasks.register("verifyFileWeftMigrationResources") {
     group = "verification"
-    description = "Verifies that the persistence JAR contains the exact, byte-identical namespaced FileWeft migrations."
+    description = "Verifies that the persistence JAR contains the exact, byte-identical namespaced FileWeft migrations for PostgreSQL, MySQL, and Kingbase."
     inputs.property("expectedFileWeftMigrationResources", expectedFileWeftMigrationResources)
     inputs.dir(fileWeftMigrationSourceDirectory)
         .withPropertyName("fileWeftMigrationSourceDirectory")
@@ -379,6 +382,7 @@ val verifyFileWeftMigrationResources = tasks.register("verifyFileWeftMigrationRe
     inputs.files(expectedFileWeftMigrationSourceFiles)
         .withPropertyName("fileWeftMigrationSourceFiles")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property("fileWeftMigrationSourceDirectoryPath", fileWeftMigrationSourceDirectory.asFile.absolutePath)
 }
 
 val publishCnbArtifacts = tasks.register("publishCnbArtifacts") {
@@ -1027,20 +1031,16 @@ gradle.projectsEvaluated {
                 val expected = (inputs.properties["expectedFileWeftMigrationResources"] as List<*>)
                     .map { resource -> resource as String }
                     .toSet()
-                val expectedSourceNames = expected.map { resource -> resource.substringAfterLast('/') }.toSet()
-                require(expectedSourceNames.size == expected.size) {
-                    "FileWeft migration resources must have unique source file names: $expected"
-                }
-                val sourceGroups = inputFiles
+                val sourceDirectoryPath = inputs.properties["fileWeftMigrationSourceDirectoryPath"] as String
+                val sourceDirectory = File(sourceDirectoryPath)
+                val sourceFiles = inputFiles
                     .filter { file -> file.isFile && file.extension.equals("sql", ignoreCase = true) }
-                    .groupBy { file -> file.name }
-                val duplicateSources = sourceGroups.filterValues { files -> files.size > 1 }.keys
-                require(duplicateSources.isEmpty()) {
-                    "FileWeft migration source inputs contain duplicate file names: $duplicateSources"
-                }
-                val sourceFiles = sourceGroups.mapValues { (_, files) -> files.single() }
-                val missingSources = expectedSourceNames - sourceFiles.keys
-                val unexpectedSources = sourceFiles.keys - expectedSourceNames
+                    .associateBy { file ->
+                        "ai/icen/fw/db/migration/" +
+                            file.toRelativeString(sourceDirectory).replace("\\", "/")
+                    }
+                val missingSources = expected - sourceFiles.keys
+                val unexpectedSources = sourceFiles.keys - expected
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
                     "FileWeft migration source inputs differ from the reviewed V001-V026 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
@@ -1071,7 +1071,7 @@ gradle.projectsEvaluated {
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }
                     require(empty.isEmpty()) { "FileWeft persistence JAR contains empty migration resources: $empty" }
                     val contentMismatches = expected.filter { resource ->
-                        val source = sourceFiles.getValue(resource.substringAfterLast('/')).readBytes()
+                        val source = sourceFiles.getValue(resource).readBytes()
                         val packaged = jar.getInputStream(fileEntries.getValue(resource)).use { stream -> stream.readBytes() }
                         !source.contentEquals(packaged)
                     }
