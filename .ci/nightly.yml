@@ -1,0 +1,109 @@
+.fileweft-nightly-jvm: &fileweft-nightly-jvm
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  env: !reference [.fileweft-ci-env]
+
+.fileweft-nightly-service: &fileweft-nightly-service
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  services:
+    - docker
+
+main:
+  "crontab: 30 2 * * *":
+    quality:
+      <<: *fileweft-nightly-jvm
+      name: Nightly release quality
+      stages:
+        - name: release-quality
+          script: bash ./gradlew releaseQualityCheck --no-daemon --stacktrace
+
+    artifacts:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-jvm-docker]
+      env: !reference [.fileweft-ci-env]
+      name: Nightly release artifacts
+      stages:
+        - name: release-artifacts
+          script: bash ./gradlew releaseArtifactCheck --no-daemon --no-configuration-cache --stacktrace
+
+    java8:
+      <<: *fileweft-nightly-jvm
+      name: Nightly Java 8 compatibility
+      stages:
+        - name: java-8-compatibility
+          script: bash ./gradlew compatibilityJava8Check --no-daemon --stacktrace
+
+    java11:
+      <<: *fileweft-nightly-jvm
+      name: Nightly Java 11 compatibility
+      stages:
+        - name: java-11-compatibility
+          script: bash ./gradlew compatibilityJava11Check --no-daemon --stacktrace
+
+    java17:
+      <<: *fileweft-nightly-jvm
+      name: Nightly Java 17 compatibility
+      stages:
+        - name: java-17-compatibility
+          script: bash ./gradlew compatibilityJava17Check --no-daemon --stacktrace
+
+    java21:
+      <<: *fileweft-nightly-jvm
+      name: Nightly Java 21 compatibility
+      stages:
+        - name: java-21-compatibility
+          script: bash ./gradlew compatibilityJava21Check --no-daemon --stacktrace
+
+    java25:
+      <<: *fileweft-nightly-jvm
+      name: Nightly Java 25 compatibility
+      stages:
+        - name: java-25-compatibility
+          script: bash ./gradlew compatibilityJava25Check --no-daemon --stacktrace
+
+    postgres:
+      <<: *fileweft-nightly-service
+      name: Nightly PostgreSQL integration
+      env: !reference [.fileweft-postgres-env]
+      stages:
+        - name: start-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait postgres
+        - name: postgres-integration
+          script: bash ./gradlew postgresIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    rustfs:
+      <<: *fileweft-nightly-service
+      name: Nightly RustFS integration
+      env: !reference [.fileweft-rustfs-env]
+      stages:
+        - name: start-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait rustfs
+        - name: rustfs-integration
+          script: bash ./gradlew rustFsIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    acceptance:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-e2e-docker]
+      services:
+        - docker
+      env: !reference [.fileweft-e2e-env]
+      name: Nightly API and browser acceptance
+      stages:
+        - name: install-browser-tests
+          script: npm ci --prefix fileweft-dev/web
+        - name: start-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --build --wait
+        - name: api-then-browser-acceptance
+          script: bash ./gradlew devAcceptanceCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: collect-compose-state
+          script: docker compose -f .docker/docker-compose.dev.yaml ps || true
+        - name: stop-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true

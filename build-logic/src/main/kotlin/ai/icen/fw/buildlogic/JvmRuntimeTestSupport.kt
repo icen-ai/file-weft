@@ -8,6 +8,13 @@ import org.gradle.api.tasks.testing.Test
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 
+internal const val EXTERNAL_INTEGRATION_TEST_PATTERN = "**/*IntegrationTest.class"
+
+/** Keeps external-system suites out of ordinary and cross-JDK unit-test tasks. */
+internal fun Test.excludeExternalIntegrationTests() {
+    exclude(EXTERNAL_INTEGRATION_TEST_PATTERN)
+}
+
 /** Registers the normal test source set against one explicit Java runtime. */
 internal fun Project.registerJvmRuntimeTest(
     taskName: String,
@@ -26,6 +33,7 @@ internal fun Project.registerJvmRuntimeTest(
         classpath = testSourceSet.runtimeClasspath
         javaLauncher.set(launcher)
         useJUnitPlatform()
+        excludeExternalIntegrationTests()
         shouldRunAfter(tasks.named("test"))
     }
 }

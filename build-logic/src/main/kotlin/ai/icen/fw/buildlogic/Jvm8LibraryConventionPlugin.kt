@@ -25,6 +25,9 @@ class Jvm8LibraryConventionPlugin : Plugin<Project> {
         tasks.withType(Test::class.java).configureEach {
             useJUnitPlatform()
         }
+        tasks.named("test", Test::class.java) {
+            excludeExternalIntegrationTests()
+        }
 
         val java8Test = registerJvmRuntimeTest(
             "java8Test", 8, "Runs this Java 8 baseline module's test suite on a Java 8 runtime.",

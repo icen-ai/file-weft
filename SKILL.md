@@ -162,12 +162,12 @@ Test the host with at least two tenants and both allowed and denied users. Cover
 Run the host test suite, then run these commands when changing the FileWeft repository itself:
 
 ```powershell
-.\gradlew.bat check
-.\gradlew.bat compatibilityCheck
-.\gradlew.bat verifySbom --no-configuration-cache
+.\gradlew.bat fastCheck
+.\gradlew.bat compatibilityJava8Check
+.\gradlew.bat compatibilityJava17Check
 ```
 
-Before a FileWeft release, start the complete `fw-dev` Compose topology, enable the PostgreSQL, RustFS, Dev API, and Playwright suites as documented in `README.md`, and run `releaseCheck --no-configuration-cache --no-parallel`. Do not weaken or skip a failed release gate.
+Use the narrowest dedicated task while iterating: `postgresIntegrationCheck`, `rustFsIntegrationCheck`, or `devAcceptanceCheck`. Ordinary `test` tasks deliberately exclude external `*IntegrationTest` classes. Before a FileWeft release, start the complete `fw-dev` Compose topology, enable the PostgreSQL, RustFS, Dev API, and Playwright suites as documented in `README.md`, and run `releaseCheck --no-configuration-cache`. Do not weaken or skip a failed release gate. The local/CNB task split, cache policy, tag identity checks, and remote consumer verification are documented in `.ci/README.md`.
 
 ## Preserve architecture
 

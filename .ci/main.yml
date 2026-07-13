@@ -1,0 +1,106 @@
+.fileweft-main-jvm: &fileweft-main-jvm
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  env: !reference [.fileweft-ci-env]
+  ifModify: !reference [.fileweft-code-paths]
+
+.fileweft-main-service: &fileweft-main-service
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  services:
+    - docker
+
+main:
+  push:
+    fast-check:
+      runner: !reference [.fileweft-runner-4]
+      docker: !reference [.fileweft-jvm-docker]
+      env: !reference [.fileweft-ci-env]
+      name: Main fast feedback
+      stages:
+        - name: fast-check
+          script: bash ./gradlew fastCheck --no-daemon --stacktrace
+
+    java8:
+      <<: *fileweft-main-jvm
+      name: Main Java 8 compatibility
+      stages:
+        - name: java-8-compatibility
+          script: bash ./gradlew compatibilityJava8Check --no-daemon --stacktrace
+
+    java11:
+      <<: *fileweft-main-jvm
+      name: Main Java 11 compatibility
+      stages:
+        - name: java-11-compatibility
+          script: bash ./gradlew compatibilityJava11Check --no-daemon --stacktrace
+
+    java17:
+      <<: *fileweft-main-jvm
+      name: Main Java 17 compatibility
+      stages:
+        - name: java-17-compatibility
+          script: bash ./gradlew compatibilityJava17Check --no-daemon --stacktrace
+
+    java21:
+      <<: *fileweft-main-jvm
+      name: Main Java 21 compatibility
+      stages:
+        - name: java-21-compatibility
+          script: bash ./gradlew compatibilityJava21Check --no-daemon --stacktrace
+
+    java25:
+      <<: *fileweft-main-jvm
+      name: Main Java 25 compatibility
+      stages:
+        - name: java-25-compatibility
+          script: bash ./gradlew compatibilityJava25Check --no-daemon --stacktrace
+
+    postgres:
+      <<: *fileweft-main-service
+      name: Main PostgreSQL integration
+      env: !reference [.fileweft-postgres-env]
+      ifModify: !reference [.fileweft-postgres-paths]
+      stages:
+        - name: start-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait postgres
+        - name: postgres-integration
+          script: bash ./gradlew postgresIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    rustfs:
+      <<: *fileweft-main-service
+      name: Main RustFS integration
+      env: !reference [.fileweft-rustfs-env]
+      ifModify: !reference [.fileweft-rustfs-paths]
+      stages:
+        - name: start-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait rustfs
+        - name: rustfs-integration
+          script: bash ./gradlew rustFsIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    acceptance:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-e2e-docker]
+      services:
+        - docker
+      env: !reference [.fileweft-e2e-env]
+      name: Main API and browser acceptance
+      ifModify: !reference [.fileweft-e2e-paths]
+      stages:
+        - name: install-browser-tests
+          script: npm ci --prefix fileweft-dev/web
+        - name: start-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --build --wait
+        - name: api-then-browser-acceptance
+          script: bash ./gradlew devAcceptanceCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: collect-compose-state
+          script: docker compose -f .docker/docker-compose.dev.yaml ps || true
+        - name: stop-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true

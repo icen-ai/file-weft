@@ -32,8 +32,25 @@ class Jvm8LibraryConventionPluginTest {
             plugins {
                 id("fileweft.jvm8-library")
             }
+
+            tasks.register("assertExternalTestsPartitioned") {
+                doLast {
+                    listOf("test", "java8Test", "java11Test", "java21Test", "java25Test").forEach { taskName ->
+                        val testTask = tasks.named<org.gradle.api.tasks.testing.Test>(taskName).get()
+                        check("**/*IntegrationTest.class" in testTask.excludes) {
+                            "External integration tests are not excluded from ${'$'}taskName"
+                        }
+                    }
+                }
+            }
             """.trimIndent(),
         )
+
+        GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("assertExternalTestsPartitioned")
+            .build()
 
         val normalCheck = GradleRunner.create()
             .withProjectDir(projectDir)

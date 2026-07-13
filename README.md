@@ -31,7 +31,9 @@ dependencies {
 }
 ```
 
-Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前稳定版本为 `0.0.1`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle --no-configuration-cache --no-parallel`；该任务会先执行完整发布门禁，并要求 `FILEWEFT_RUN_POSTGRES_TESTS`、`FILEWEFT_RUN_RUSTFS_TESTS`、`FILEWEFT_RUN_DEV_E2E`、`FILEWEFT_RUN_DEV_UI_E2E` 全部为 `true`，且 `fw-dev` 已使用同一 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 启动。启用这些外部套件时对应 Test 任务固定重新执行，不会复用一次未启用验收时的缓存结果。成功后完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。
+Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前稳定版本为 `0.0.1`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。
+
+完整本地发版入口是 `.\gradlew.bat releaseCheck --no-configuration-cache`；兼容入口 `releaseBundle` 保持相同的完整门禁语义。它们要求 `FILEWEFT_RUN_POSTGRES_TESTS`、`FILEWEFT_RUN_RUSTFS_TESTS`、`FILEWEFT_RUN_DEV_E2E`、`FILEWEFT_RUN_DEV_UI_E2E` 全部为 `true`，且 `fw-dev` 已使用同一 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 启动；成功后完整 Maven 仓库与发布压缩包分别位于 `build/repository/` 和 `build/release/`。仅 `releaseArtifactCheck` 会在不重复 JVM 和外部验收的情况下重建、验证制品，它只供同一提交已取得独立验证证据的流水线使用。CNB 在稳定标签事件中并行完成重型门禁，再由唯一发布流水线等待所有结果、发布并从远端冷缓存回读。任务分层和流水线维护方式见 [`.ci/README.md`](.ci/README.md)。
 
 早期试推曾使用 `com.fileweft:*:0.0.1`，这些坐标已撤回且不得接入；正式版使用完全不同的 `ai.icen:*:0.0.1`。源码与二进制包名统一为 `ai.icen.fw`，不会兼容或自动收养旧试推坐标写入的共享 Flyway history。迁移边界见[正式发布说明](docs/releases/0.0.1.md)。
 
@@ -72,12 +74,14 @@ fileweft:
 ## 验证
 
 ```powershell
-.\gradlew.bat check
-.\gradlew.bat compatibilityCheck
-.\gradlew.bat verifySbom
+.\gradlew.bat fastCheck
+.\gradlew.bat compatibilityJava8Check
+.\gradlew.bat compatibilityJava17Check
 ```
 
-`compatibilityCheck` 是发版前的 JVM 运行时门禁：Java 8 基线模块会在 Java 8、11、21、25 上运行测试；Java 17 模块会在 Java 17、21、25 上运行测试。Gradle 工具链会自动取得本机缺失的受支持 JDK，首次执行可能需要下载并花费较长时间；日常 `check` 仍只强制 Java 8 基线回归。
+`fastCheck` 是默认开发门禁：运行当前构建 JVM 上的单元、契约和 Context 测试及静态质量检查，不访问外部系统，也不展开跨 JDK 矩阵。根 `check` 作为兼容入口继续包含 Java 8 基线回归；本地需要完整矩阵时运行 `compatibilityCheck`。五条 `compatibilityJava8Check`、`compatibilityJava11Check`、`compatibilityJava17Check`、`compatibilityJava21Check`、`compatibilityJava25Check` 可独立执行并由 CNB 并行调度。Gradle 工具链会自动取得缺失 JDK，首次执行可能需要下载。
+
+普通测试不再按环境变量暗中启用外部集成测试。PostgreSQL、RustFS、Dev API 与 Playwright 各自有显式、失败关闭且不复用旧结果的任务；完整命令见 [`.ci/README.md`](.ci/README.md)。仓库默认最多并行运行 2 个 `Test` 任务，可通过 `-Pfileweft.test.maxParallelTasks=N` 调整，不再把全仓测试任务串成一条长链。
 
 依赖版本通过 `gradle/libs.versions.toml` 管理，所有配置启用依赖锁定。`verifySbom` 生成并校验全仓 CycloneDX JSON/XML 物料清单，适合在发版流水线中归档。
 
@@ -136,7 +140,7 @@ docker compose -f .docker\docker-compose.dev.yaml up -d --build --wait
 
 ```powershell
 $env:FILEWEFT_RUN_DEV_E2E='true'
-.\gradlew.bat :fileweft-dev:test
+.\gradlew.bat :fileweft-dev:devApiAcceptanceTest --no-configuration-cache
 ```
 
 该测试会创建唯一编号文档，验证编辑者上传和提交、单人审批与双人会签、管理员处理 Outbox、下游平台下载 RustFS 对象，并覆盖可选下游失败、必达下游人工恢复、Agent 结果仅在匹配任务成功后可见，以及正式 Doctor 的即时检查、幂等任务重放、Worker 报告、角色拒绝、双租户隔离和系统诊断脱敏。Agent 终态竞态用例会直接向 Compose PostgreSQL 写入隔离的验收夹具；默认连接本机 `5432`，非默认映射可通过 `FILEWEFT_DEV_E2E_DB_URL`、`FILEWEFT_DEV_E2E_DB_USERNAME` 和 `FILEWEFT_DEV_E2E_DB_PASSWORD` 覆盖。
@@ -158,7 +162,7 @@ Pop-Location
 
 ```powershell
 $env:FILEWEFT_RUN_DEV_UI_E2E='true'
-.\gradlew.bat :fileweft-dev:check --no-daemon
+.\gradlew.bat :fileweft-dev:devUiE2e --no-daemon --no-configuration-cache
 ```
 
 也可在 `fileweft-dev/web` 中直接运行 `npm run test:e2e`。需要测试其他本地地址时，设置 `FILEWEFT_DEV_UI_BASE_URL`；测试报告会输出到被 Git 忽略的 `playwright-report/`。
@@ -289,7 +293,7 @@ fileweft.storage.local-root=/var/lib/fileweft
 
 ```powershell
 $env:FILEWEFT_RUN_POSTGRES_TESTS='true'
-.\gradlew.bat :fileweft-persistence:test
+.\gradlew.bat postgresIntegrationCheck --no-configuration-cache
 ```
 
 > 集成测试会重置开发库的 `public` schema，只能连接专用开发/测试数据库，不能指向任何生产数据库。

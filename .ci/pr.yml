@@ -1,0 +1,96 @@
+.fileweft-pr-jvm: &fileweft-pr-jvm
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-pr-docker]
+  env: !reference [.fileweft-ci-env]
+  breakIfModify: true
+  lock:
+    key: pr-$CNB_PULL_REQUEST_IID-$CNB_PIPELINE_KEY
+    cancel-in-progress: true
+
+.fileweft-pr-service: &fileweft-pr-service
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-pr-docker]
+  services:
+    - docker
+  breakIfModify: true
+  lock:
+    key: pr-$CNB_PULL_REQUEST_IID-$CNB_PIPELINE_KEY
+    cancel-in-progress: true
+
+"**":
+  pull_request:
+    fast-check:
+      <<: *fileweft-pr-jvm
+      name: PR fast feedback
+      stages:
+        - name: fast-check
+          script: bash ./gradlew fastCheck --no-daemon --stacktrace
+
+    minimum-java8:
+      <<: *fileweft-pr-jvm
+      name: PR Java 8 minimum runtime
+      ifModify: !reference [.fileweft-code-paths]
+      stages:
+        - name: java-8-compatibility
+          script: bash ./gradlew compatibilityJava8Check --no-daemon --stacktrace
+
+    minimum-java17:
+      <<: *fileweft-pr-jvm
+      name: PR Java 17 minimum runtime
+      ifModify: !reference [.fileweft-code-paths]
+      stages:
+        - name: java-17-compatibility
+          script: bash ./gradlew compatibilityJava17Check --no-daemon --stacktrace
+
+    postgres:
+      <<: *fileweft-pr-service
+      name: PR PostgreSQL integration
+      env: !reference [.fileweft-postgres-env]
+      ifModify: !reference [.fileweft-postgres-paths]
+      stages:
+        - name: start-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait postgres
+        - name: postgres-integration
+          script: bash ./gradlew postgresIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    rustfs:
+      <<: *fileweft-pr-service
+      name: PR RustFS integration
+      env: !reference [.fileweft-rustfs-env]
+      ifModify: !reference [.fileweft-rustfs-paths]
+      stages:
+        - name: start-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait rustfs
+        - name: rustfs-integration
+          script: bash ./gradlew rustFsIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    acceptance:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-e2e-pr-docker]
+      services:
+        - docker
+      env: !reference [.fileweft-e2e-env]
+      breakIfModify: true
+      lock:
+        key: pr-$CNB_PULL_REQUEST_IID-$CNB_PIPELINE_KEY
+        cancel-in-progress: true
+      name: PR API and browser acceptance
+      ifModify: !reference [.fileweft-e2e-paths]
+      stages:
+        - name: install-browser-tests
+          script: npm ci --prefix fileweft-dev/web
+        - name: start-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --build --wait
+        - name: api-then-browser-acceptance
+          script: bash ./gradlew devAcceptanceCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: collect-compose-state
+          script: docker compose -f .docker/docker-compose.dev.yaml ps || true
+        - name: stop-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true

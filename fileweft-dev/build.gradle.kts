@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 
 plugins {
     id("fileweft.jvm17-library")
@@ -35,12 +36,30 @@ val runDevUiE2e = providers.environmentVariable("FILEWEFT_RUN_DEV_UI_E2E")
 val runDevApiE2e = providers.environmentVariable("FILEWEFT_RUN_DEV_E2E")
     .map { it == "true" }
     .orElse(false)
+val testSourceSet = sourceSets.named("test")
+val acceptanceJavaLauncher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(21))
+}
 
-tasks.withType<Test>().configureEach {
+val devApiAcceptanceTest = tasks.register<Test>("devApiAcceptanceTest") {
+    group = "verification"
+    description = "Runs the Dev API acceptance suite exactly once against the Compose stack."
+    testClassesDirs = testSourceSet.get().output.classesDirs
+    classpath = testSourceSet.get().runtimeClasspath
+    useJUnitPlatform()
+    javaLauncher.set(acceptanceJavaLauncher)
+    include("**/DevAcceptanceIntegrationTest.class")
+    maxParallelForks = 1
     inputs.property("fileWeftRunDevApiE2e", runDevApiE2e)
-    if (runDevApiE2e.get()) {
-        doNotTrackState("The enabled Dev API acceptance suite must execute against the current Compose stack.")
-    }
+    doNotTrackState("The Dev API acceptance suite must execute against the current Compose stack.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("fileWeftRunDevApiE2e") == true) {
+                "Set FILEWEFT_RUN_DEV_E2E=true after starting the complete FileWeft development Compose stack."
+            }
+        },
+    )
+    shouldRunAfter(tasks.named("test"))
 }
 
 val devUiE2e = tasks.register<Exec>("devUiE2e") {
@@ -48,10 +67,14 @@ val devUiE2e = tasks.register<Exec>("devUiE2e") {
     description = "Runs the Playwright acceptance suite against the running FileWeft development Compose stack."
     workingDir(layout.projectDirectory.dir("web"))
     commandLine(if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "npm.cmd" else "npm", "run", "test:e2e")
-}
-
-if (runDevUiE2e.get()) {
-    tasks.named("check") {
-        dependsOn(devUiE2e)
-    }
+    inputs.property("fileWeftRunDevUiE2e", runDevUiE2e)
+    doNotTrackState("The Playwright acceptance suite must execute against the current Compose stack and browser state.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("fileWeftRunDevUiE2e") == true) {
+                "Set FILEWEFT_RUN_DEV_UI_E2E=true after installing the locked Playwright dependencies and starting Compose."
+            }
+        },
+    )
+    mustRunAfter(devApiAcceptanceTest)
 }

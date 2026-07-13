@@ -1,0 +1,270 @@
+.fileweft-release-jvm: &fileweft-release-jvm
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  env: !reference [.fileweft-ci-env]
+
+.fileweft-release-service: &fileweft-release-service
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  services:
+    - docker
+
+"$":
+  tag_push:
+    quality:
+      <<: *fileweft-release-jvm
+      name: Release quality
+      stages:
+        - name: release-quality
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew releaseQualityCheck "-PfileweftVersion=$VERSION" --no-daemon --stacktrace
+        - name: quality-complete
+          type: cnb:resolve
+          options:
+            key: release-quality
+            data: { commit: $CNB_COMMIT }
+
+    java8:
+      <<: *fileweft-release-jvm
+      name: Release Java 8 compatibility
+      stages:
+        - name: java-8-compatibility
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew compatibilityJava8Check "-PfileweftVersion=$VERSION" --no-daemon --stacktrace
+        - name: java-8-complete
+          type: cnb:resolve
+          options:
+            key: release-java8
+            data: { commit: $CNB_COMMIT }
+
+    java11:
+      <<: *fileweft-release-jvm
+      name: Release Java 11 compatibility
+      stages:
+        - name: java-11-compatibility
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew compatibilityJava11Check "-PfileweftVersion=$VERSION" --no-daemon --stacktrace
+        - name: java-11-complete
+          type: cnb:resolve
+          options:
+            key: release-java11
+            data: { commit: $CNB_COMMIT }
+
+    java17:
+      <<: *fileweft-release-jvm
+      name: Release Java 17 compatibility
+      stages:
+        - name: java-17-compatibility
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew compatibilityJava17Check "-PfileweftVersion=$VERSION" --no-daemon --stacktrace
+        - name: java-17-complete
+          type: cnb:resolve
+          options:
+            key: release-java17
+            data: { commit: $CNB_COMMIT }
+
+    java21:
+      <<: *fileweft-release-jvm
+      name: Release Java 21 compatibility
+      stages:
+        - name: java-21-compatibility
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew compatibilityJava21Check "-PfileweftVersion=$VERSION" --no-daemon --stacktrace
+        - name: java-21-complete
+          type: cnb:resolve
+          options:
+            key: release-java21
+            data: { commit: $CNB_COMMIT }
+
+    java25:
+      <<: *fileweft-release-jvm
+      name: Release Java 25 compatibility
+      stages:
+        - name: java-25-compatibility
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew compatibilityJava25Check "-PfileweftVersion=$VERSION" --no-daemon --stacktrace
+        - name: java-25-complete
+          type: cnb:resolve
+          options:
+            key: release-java25
+            data: { commit: $CNB_COMMIT }
+
+    postgres:
+      <<: *fileweft-release-service
+      name: Release PostgreSQL integration
+      env: !reference [.fileweft-postgres-env]
+      stages:
+        - name: start-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait postgres
+        - name: postgres-integration
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew postgresIntegrationCheck "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: postgres-complete
+          type: cnb:resolve
+          options:
+            key: release-postgres
+            data: { commit: $CNB_COMMIT }
+      endStages:
+        - name: stop-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    rustfs:
+      <<: *fileweft-release-service
+      name: Release RustFS integration
+      env: !reference [.fileweft-rustfs-env]
+      stages:
+        - name: start-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait rustfs
+        - name: rustfs-integration
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew rustFsIntegrationCheck "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: rustfs-complete
+          type: cnb:resolve
+          options:
+            key: release-rustfs
+            data: { commit: $CNB_COMMIT }
+      endStages:
+        - name: stop-rustfs
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    acceptance:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-e2e-docker]
+      services:
+        - docker
+      env: !reference [.fileweft-e2e-env]
+      name: Release API and browser acceptance
+      stages:
+        - name: install-browser-tests
+          script: npm ci --prefix fileweft-dev/web
+        - name: start-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --build --wait
+        - name: api-then-browser-acceptance
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew devAcceptanceCheck "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: acceptance-complete
+          type: cnb:resolve
+          options:
+            key: release-acceptance
+            data: { commit: $CNB_COMMIT }
+      endStages:
+        - name: collect-compose-state
+          script: docker compose -f .docker/docker-compose.dev.yaml ps || true
+        - name: stop-compose
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    publish:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-jvm-docker]
+      env:
+        CI: "true"
+        FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+      name: Publish verified Maven release
+      lock:
+        key: fileweft-maven-release
+        wait: true
+        timeout: 7200
+        expires: 7200
+      stages:
+        - name: await-release-verification
+          jobs:
+            quality:
+              type: cnb:await
+              options:
+                key: release-quality
+              exports:
+                commit: FILEWEFT_VERIFIED_QUALITY_COMMIT
+            java8:
+              type: cnb:await
+              options:
+                key: release-java8
+              exports:
+                commit: FILEWEFT_VERIFIED_JAVA8_COMMIT
+            java11:
+              type: cnb:await
+              options:
+                key: release-java11
+              exports:
+                commit: FILEWEFT_VERIFIED_JAVA11_COMMIT
+            java17:
+              type: cnb:await
+              options:
+                key: release-java17
+              exports:
+                commit: FILEWEFT_VERIFIED_JAVA17_COMMIT
+            java21:
+              type: cnb:await
+              options:
+                key: release-java21
+              exports:
+                commit: FILEWEFT_VERIFIED_JAVA21_COMMIT
+            java25:
+              type: cnb:await
+              options:
+                key: release-java25
+              exports:
+                commit: FILEWEFT_VERIFIED_JAVA25_COMMIT
+            postgres:
+              type: cnb:await
+              options:
+                key: release-postgres
+              exports:
+                commit: FILEWEFT_VERIFIED_POSTGRES_COMMIT
+            rustfs:
+              type: cnb:await
+              options:
+                key: release-rustfs
+              exports:
+                commit: FILEWEFT_VERIFIED_RUSTFS_COMMIT
+            acceptance:
+              type: cnb:await
+              options:
+                key: release-acceptance
+              exports:
+                commit: FILEWEFT_VERIFIED_ACCEPTANCE_COMMIT
+        - name: verify-resolved-commits
+          script: |
+            for verified_commit in \
+              "$FILEWEFT_VERIFIED_QUALITY_COMMIT" \
+              "$FILEWEFT_VERIFIED_JAVA8_COMMIT" \
+              "$FILEWEFT_VERIFIED_JAVA11_COMMIT" \
+              "$FILEWEFT_VERIFIED_JAVA17_COMMIT" \
+              "$FILEWEFT_VERIFIED_JAVA21_COMMIT" \
+              "$FILEWEFT_VERIFIED_JAVA25_COMMIT" \
+              "$FILEWEFT_VERIFIED_POSTGRES_COMMIT" \
+              "$FILEWEFT_VERIFIED_RUSTFS_COMMIT" \
+              "$FILEWEFT_VERIFIED_ACCEPTANCE_COMMIT"
+            do
+              if [ "$verified_commit" != "$CNB_COMMIT" ]; then
+                echo "Resolved release lane commit does not match CNB_COMMIT" >&2
+                exit 1
+              fi
+            done
+        - name: publish-verified-artifacts
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            export FILEWEFT_CI_VERIFIED_COMMIT="$FILEWEFT_VERIFIED_QUALITY_COMMIT"
+            bash ./gradlew publishVerifiedCnbArtifacts "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: destroy-publication-token
+          type: cnb:destroy-token
+        - name: cold-remote-consumer
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            for attempt in 1 2 3; do
+              if bash ./gradlew remoteCnbConsumerSmoke "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace; then
+                exit 0
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                exit 1
+              fi
+              sleep $((attempt * 10))
+            done

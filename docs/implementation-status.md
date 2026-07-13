@@ -19,12 +19,12 @@
 | Adapter | 本地存储、S3 兼容存储、连接器弹性包装、Micrometer 计数器与受限 Outbox Gauge | Adapter 与 TestKit 合约测试 |
 | Doctor | 权限、生命周期、工作流一致性、存储、连接器、交付档案与连接器映射、宿主目录绑定与 Agent 的诊断；即时/异步/系统正式 v1、持久化历史与租约围栏投影 | 单元、Boot 2/3 MVC、PostgreSQL 与 Dev 验收测试 |
 | Agent | 可恢复任务、建议确认、审计和操作记录 | 单元与 Dev 验收测试 |
-| Hardening | 多租户与续传会话所有者隔离、宿主用户 ID 256 UTF-16 code unit 与固定安全字符契约、单调 `QUARANTINED` 围栏、Storage 写入口顶层事务边界、Outbox、重试、事务提交未知结果对账、固定状态的持久化 Outbox 积压/最老可执行年龄/读取失败 Gauge、零队列异步观测、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、Flyway 宿主命名空间隔离、旧 Kotlin ABI 运行夹具、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | 全仓检查、`compatibilityCheck`、`verifySbom`、迁移资源门禁与 Compose 验收 |
+| Hardening | 多租户与续传会话所有者隔离、宿主用户 ID 256 UTF-16 code unit 与固定安全字符契约、单调 `QUARANTINED` 围栏、Storage 写入口顶层事务边界、Outbox、重试、事务提交未知结果对账、固定状态的持久化 Outbox 积压/最老可执行年龄/读取失败 Gauge、零队列异步观测、连接器并发隔离与熔断、Trace、完整性校验、断点续传、下游撤回、交付/撤回指标、有界连接器诊断、Flyway 宿主命名空间隔离、旧 Kotlin ABI 运行夹具、依赖锁定/校验、JDK 运行时矩阵与 CycloneDX SBOM | `fastCheck`、五条独立 JDK 线、显式外部验收、制品/SBOM/迁移门禁与 CNB 远端消费者回读 |
 
 目前的关键验收命令：
 
 ```powershell
-.\gradlew.bat check --no-daemon
+.\gradlew.bat fastCheck --no-daemon
 
 .\gradlew.bat compatibilityCheck --no-daemon
 
@@ -33,25 +33,25 @@
 .\gradlew.bat verifyFileWeftMigrationResources --no-daemon
 
 $env:FILEWEFT_RUN_POSTGRES_TESTS='true'
-.\gradlew.bat :fileweft-persistence:test --no-daemon
+.\gradlew.bat postgresIntegrationCheck --no-daemon --no-configuration-cache
 
 $env:FILEWEFT_RUN_MYSQL_TESTS='true'
-.\gradlew.bat :fileweft-persistence:test --tests '*MySQLFlywayMigrationRunnerIntegrationTest' --no-daemon
+.\gradlew.bat :fileweft-persistence:mysqlIntegrationTest --no-daemon --no-configuration-cache
 
 $env:FILEWEFT_RUN_KINGBASE_TESTS='true'
-.\gradlew.bat :fileweft-persistence:test --tests '*KingbaseFlywayMigrationRunnerIntegrationTest' --no-daemon
+.\gradlew.bat :fileweft-persistence:kingbaseIntegrationTest --no-daemon --no-configuration-cache
 
 $env:FILEWEFT_RUN_DEV_E2E='true'
-.\gradlew.bat :fileweft-dev:test --tests 'ai.icen.fw.dev.e2e.DevAcceptanceIntegrationTest' --rerun-tasks --no-daemon
+.\gradlew.bat :fileweft-dev:devApiAcceptanceTest --no-daemon --no-configuration-cache
 ```
 
-`verifyFileWeftMigrationResources` 会打开实际生成的 `fileweft-persistence` JAR，要求 V001–V026 只完整存在于 `ai/icen/fw/db/migration`，拒绝重复 ZIP entry 与任何遗留 `db/migration/**`，并把每个 JAR entry 与声明为任务输入的源 SQL 逐字节比较。它已纳入 `releaseBundle` 与 `releaseCheck`。Dev API E2E 由环境变量选择性启用；该环境变量不是 Gradle 任务输入，因此重复验收必须保留 `--rerun-tasks`，避免已有测试输出被误判为本次真实执行。
+`verifyFileWeftMigrationResources` 会打开实际生成的 `fileweft-persistence` JAR，要求 V001–V026 只完整存在于 `ai/icen/fw/db/migration`，拒绝重复 ZIP entry 与任何遗留 `db/migration/**`，并把每个 JAR entry 与声明为任务输入的源 SQL 逐字节比较。它已纳入 `releaseBundle` 与 `releaseCheck`。外部测试现在使用显式任务并失败关闭：环境开关不正确时直接报错，任务禁用结果复用，普通 `test` 和 JVM 矩阵都不会再重复执行这些套件。
 
-根 `check` 还会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。日常 `check` 会继续执行所有 Java 8 基线模块的独立 `java8Test`；发版门禁 `compatibilityCheck` 通过 Gradle 工具链在 Java 8、11、21、25 上执行所有 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。该矩阵已在实际工具链运行通过，而不是只依赖字节码目标声明。
+`fastCheck` 会运行 included `build-logic` 的 TestKit 测试：它验证 Core/SPI/Application 的分层导入白名单、基础模块禁用 Kotlin-only API 语法、Java 8/17 约定插件的回归，以及 Gradle 配置缓存下的反向拦截行为。根 `check` 作为兼容入口继续执行 Java 8 基线模块的 `java8Test`；日常优先使用不展开跨运行时的 `fastCheck`。发版门禁 `compatibilityCheck` 汇总五条可独立运行的根任务，在 Java 8、11、21、25 上执行 Java 8 基线模块测试，并在 Java 17、21、25 上执行 Boot 3 Starter 与开发验收应用测试。CNB 将五条线放到独立节点并行，而单个 Gradle 构建通过共享并发上限避免测试 JVM 争抢资源。
 
 Dev 编排验证真实 PostgreSQL、RustFS、S3 预签名下载和独立下游平台；覆盖双租户、同租户跨用户续传隔离、角色授权、上传、版本、单人审批、双人会签、多下游投递、失败重试、下线撤回、受控新版本再发布、Doctor、Agent 与审计。开发主应用关闭 Spring Boot 默认 Flyway，显式以 FileWeft `migrate` 模式和专属 history 管理 `fileweft_dev`；平台 profile 显式清空 FileWeft schema、关闭 schema 创建并覆盖为 `migration-mode=disabled`，仍由自己的 runner 管理 `fileweft_dev_platform`。`fileweft-dev` 已真实装配正式 Boot 3 Web Starter，控制台 Nginx 已代理 `/fileweft/`；UI 的断点创建/检查/分片/完成/放弃、文档读写/下载、审批待办与身份脱敏历史、仅向具备审计权限的角色展示的决策者证据、生命周期/审批动作、当前代次同步状态、失败目标重排、审计日志、插件清单、进程 liveness，以及即时/异步/系统 Doctor 均走正式 v1。续传卡滞检查仍明确留在 `/api/resumable-uploads/maintenance` Dev/运维验收边界，不冒充公共资源。Doctor 与运维面板只展示允许列表内的安全卡片；通用 Dev 文档详情不再返回原始 Audit/Operation details，旧 Dev 日志与 Doctor 路由固定不可用。
 
-浏览器回归包含独立的 formal-v1 与 Doctor 验收，并继续覆盖中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、双决策者身份快照、无审计权限用户不请求受权证据、遗留任务未知状态、驳回修订、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离。续传场景断言浏览器只对 `/fileweft/v1/uploads` 发起创建、两个流式 PUT 和完成请求，创建 key 只在 Header，body 不含 owner/tenant/assetType/idempotencyKey；本地检查点按可信租户和稳定用户隔离，跨用户不会检查或操作另一用户的 upload ID。Doctor 场景额外验证即时、异步、系统三条正式路由、管理员权限、跨租户 404、响应全树与 DOM 脱敏，以及浏览器不调用 `/api/**` Doctor。设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后可由 `:fileweft-dev:check` 调用。每次发布必须以本次命令生成的 PostgreSQL/Dev 测试 XML、Playwright 报告和 `releaseCheck` 最终输出为证据；任务和测试总数会随门禁演进，本文不再固化旧运行的数量，避免把历史成功输出误认为当前提交已通过。
+浏览器回归包含独立的 formal-v1 与 Doctor 验收，并继续覆盖中英文切换、按角色隐藏操作控件、真实样例与普通表单上传、重命名、版本、授权下载、目录移动、单人与双人审批、双决策者身份快照、无审计权限用户不请求受权证据、遗留任务未知状态、驳回修订、任务处理、下游镜像、断点续传与 Alpha/Beta 前端可见性隔离。续传场景断言浏览器只对 `/fileweft/v1/uploads` 发起创建、两个流式 PUT 和完成请求，创建 key 只在 Header，body 不含 owner/tenant/assetType/idempotencyKey；本地检查点按可信租户和稳定用户隔离，跨用户不会检查或操作另一用户的 upload ID。Doctor 场景额外验证即时、异步、系统三条正式路由、管理员权限、跨租户 404、响应全树与 DOM 脱敏，以及浏览器不调用 `/api/**` Doctor。设置 `FILEWEFT_RUN_DEV_UI_E2E=true` 后由 `:fileweft-dev:devUiE2e` 调用；同时设置 API 开关时用根 `devAcceptanceCheck` 保证 API 先于浏览器执行。每次发布必须以本次命令生成的 PostgreSQL/Dev 测试 XML、Playwright 报告和 `releaseCheck` 最终输出为证据；任务和测试总数会随门禁演进，本文不再固化旧运行的数量，避免把历史成功输出误认为当前提交已通过。
 
 ## 本轮核对后仍未闭环的手册项
 

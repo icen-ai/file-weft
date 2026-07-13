@@ -8,11 +8,13 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        val fileWeftRepositoryUrl = providers.gradleProperty("fileweftRepositoryUrl")
+            .orElse(rootDir.resolve("../build/repository").toURI().toString())
         exclusiveContent {
             forRepository {
                 maven {
                     name = "fileWeftReleasePomOnly"
-                    url = uri(rootDir.resolve("../build/repository"))
+                    url = uri(fileWeftRepositoryUrl.get())
                     metadataSources {
                         // The smoke build deliberately ignores Gradle module metadata.
                         // Maven consumers only receive the scopes declared in the POM.

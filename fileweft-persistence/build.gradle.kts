@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 
 plugins {
     id("fileweft.jvm8-library")
@@ -28,26 +29,80 @@ dependencies {
     // integration test below skips itself when the driver is not on the classpath.
 }
 
-// Runtime suites rebuild the same PostgreSQL public schema when integration tests
-// are enabled. Order only those suites; compilation and unrelated checks stay parallel.
-// Keep the runtime order aligned with the root build's globally sorted matrix
-// (java11, java21, java25, java8) to avoid contradictory ordering constraints.
-val postgresRuntimeTestTasks = listOf("test", "java11Test", "java21Test", "java25Test", "java8Test")
 val runPostgresIntegration = providers.environmentVariable("FILEWEFT_RUN_POSTGRES_TESTS")
     .map { value -> value == "true" }
     .orElse(false)
-
-tasks.withType<Test>().configureEach {
-    inputs.property("fileWeftRunPostgresTests", runPostgresIntegration)
-    if (runPostgresIntegration.get()) {
-        doNotTrackState("The enabled PostgreSQL integration suite must execute against the current database state.")
-    }
+val runMySqlIntegration = providers.environmentVariable("FILEWEFT_RUN_MYSQL_TESTS")
+    .map { value -> value == "true" }
+    .orElse(false)
+val runKingbaseIntegration = providers.environmentVariable("FILEWEFT_RUN_KINGBASE_TESTS")
+    .map { value -> value == "true" }
+    .orElse(false)
+val testSourceSet = sourceSets.named("test")
+val integrationJavaLauncher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(21))
 }
 
-postgresRuntimeTestTasks.drop(1).forEachIndexed { index, taskName ->
-    tasks.named(taskName) {
-        postgresRuntimeTestTasks.take(index + 1).forEach { previousTaskName ->
-            mustRunAfter(tasks.named(previousTaskName))
-        }
-    }
+val postgresIntegrationTest = tasks.register<Test>("postgresIntegrationTest") {
+    group = "verification"
+    description = "Runs the PostgreSQL persistence integration suite exactly once outside the JVM matrix."
+    testClassesDirs = testSourceSet.get().output.classesDirs
+    classpath = testSourceSet.get().runtimeClasspath
+    useJUnitPlatform()
+    javaLauncher.set(integrationJavaLauncher)
+    include("**/*IntegrationTest.class")
+    exclude("**/*MySQL*IntegrationTest.class", "**/*Kingbase*IntegrationTest.class")
+    maxParallelForks = 1
+    inputs.property("fileWeftRunPostgresTests", runPostgresIntegration)
+    doNotTrackState("The PostgreSQL integration suite must execute against the current database state.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("fileWeftRunPostgresTests") == true) {
+                "Set FILEWEFT_RUN_POSTGRES_TESTS=true and start the dedicated PostgreSQL test service."
+            }
+        },
+    )
+    shouldRunAfter(tasks.named("test"))
+}
+
+val mysqlIntegrationTest = tasks.register<Test>("mysqlIntegrationTest") {
+    group = "verification"
+    description = "Runs the optional MySQL persistence integration suite exactly once."
+    testClassesDirs = testSourceSet.get().output.classesDirs
+    classpath = testSourceSet.get().runtimeClasspath
+    useJUnitPlatform()
+    javaLauncher.set(integrationJavaLauncher)
+    include("**/*MySQL*IntegrationTest.class")
+    maxParallelForks = 1
+    inputs.property("fileWeftRunMySqlTests", runMySqlIntegration)
+    doNotTrackState("The MySQL integration suite must execute against the current database state.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("fileWeftRunMySqlTests") == true) {
+                "Set FILEWEFT_RUN_MYSQL_TESTS=true and start the dedicated MySQL test service."
+            }
+        },
+    )
+    shouldRunAfter(tasks.named("test"))
+}
+
+val kingbaseIntegrationTest = tasks.register<Test>("kingbaseIntegrationTest") {
+    group = "verification"
+    description = "Runs the optional Kingbase persistence integration suite exactly once."
+    testClassesDirs = testSourceSet.get().output.classesDirs
+    classpath = testSourceSet.get().runtimeClasspath
+    useJUnitPlatform()
+    javaLauncher.set(integrationJavaLauncher)
+    include("**/*Kingbase*IntegrationTest.class")
+    maxParallelForks = 1
+    inputs.property("fileWeftRunKingbaseTests", runKingbaseIntegration)
+    doNotTrackState("The Kingbase integration suite must execute against the current database state.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("fileWeftRunKingbaseTests") == true) {
+                "Set FILEWEFT_RUN_KINGBASE_TESTS=true and provide the Kingbase JDBC driver and dedicated test service."
+            }
+        },
+    )
+    shouldRunAfter(tasks.named("test"))
 }

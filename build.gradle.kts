@@ -9,6 +9,7 @@ import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.api.tasks.bundling.Zip
 import ai.icen.fw.buildlogic.ReleaseSbomExtension
+import ai.icen.fw.buildlogic.TestTaskConcurrencyService
 import java.util.Locale
 import java.util.zip.ZipFile
 import org.cyclonedx.gradle.CyclonedxDirectTask
@@ -20,7 +21,7 @@ plugins {
 }
 
 group = "ai.icen"
-version = "0.0.2-SNAPSHOT"
+version = providers.gradleProperty("fileweftVersion").orElse("0.0.2-SNAPSHOT").get()
 
 val publishableModuleNames = setOf(
     "fileweft-core",
@@ -61,11 +62,18 @@ val releaseNotesFile = layout.projectDirectory.file(
 )
 val cnbArtifactsPassword = providers.environmentVariable("CNB_TOKEN")
     .orElse(providers.gradleProperty("cnbArtifactsGradlePassword"))
+val verifiedCnbPublishingRequested = gradle.startParameter.taskNames.any { requestedTask ->
+    requestedTask.substringAfterLast(':') == "publishVerifiedCnbArtifacts"
+}
 val cnbPublishingRequested = gradle.startParameter.taskNames.any { requestedTask ->
     val taskName = requestedTask.substringAfterLast(':')
     taskName == "publishCnbArtifacts" ||
+        taskName == "publishVerifiedCnbArtifacts" ||
         taskName.endsWith("CnbArtifactsRepository")
 }
+val fullReleaseVerificationRequested = gradle.startParameter.taskNames.any { requestedTask ->
+    requestedTask.substringAfterLast(':') in setOf("releaseCheck", "releaseVerification")
+} || (cnbPublishingRequested && !verifiedCnbPublishingRequested)
 @Suppress("DEPRECATION")
 val configurationCacheRequested = gradle.startParameter.isConfigurationCacheRequested
 
@@ -86,6 +94,20 @@ allprojects {
         isPreserveFileTimestamps = false
         isReproducibleFileOrder = true
     }
+}
+
+val maxParallelTestTasks = providers.gradleProperty("fileweft.test.maxParallelTasks")
+    .orElse(providers.environmentVariable("FILEWEFT_TEST_MAX_PARALLEL_TASKS"))
+    .map { rawValue ->
+        rawValue.toIntOrNull()?.takeIf { value -> value > 0 }
+            ?: throw GradleException("fileweft.test.maxParallelTasks must be a positive integer, but was '$rawValue'.")
+    }
+    .orElse(2)
+val testTaskConcurrencyService = gradle.sharedServices.registerIfAbsent(
+    "fileweftTestTaskConcurrency",
+    TestTaskConcurrencyService::class.java,
+) {
+    maxParallelUsages.set(maxParallelTestTasks)
 }
 
 tasks.cyclonedxBom {
@@ -118,9 +140,26 @@ val verifyFileWeftBuildLogic = tasks.register("verifyFileWeftBuildLogic") {
     dependsOn(gradle.includedBuild("build-logic").task(":check"))
 }
 
+fun registerCompatibilityLane(javaVersion: Int) = tasks.register("compatibilityJava${javaVersion}Check") {
+    group = "verification"
+    description = "Runs FileWeft module tests assigned to the Java $javaVersion compatibility lane."
+}
+
+val compatibilityJava8Check = registerCompatibilityLane(8)
+val compatibilityJava11Check = registerCompatibilityLane(11)
+val compatibilityJava17Check = registerCompatibilityLane(17)
+val compatibilityJava21Check = registerCompatibilityLane(21)
+val compatibilityJava25Check = registerCompatibilityLane(25)
 val compatibilityCheck = tasks.register("compatibilityCheck") {
     group = "verification"
     description = "Runs the supported Java runtime matrices for all FileWeft modules."
+    dependsOn(
+        compatibilityJava8Check,
+        compatibilityJava11Check,
+        compatibilityJava17Check,
+        compatibilityJava21Check,
+        compatibilityJava25Check,
+    )
 }
 
 val publishReleaseRepository = tasks.register("publishReleaseRepository") {
@@ -294,27 +333,27 @@ val installReleaseToMavenLocal = tasks.register("installReleaseToMavenLocal") {
     description = "Installs every public FileWeft $releaseVersion module into Maven local."
 }
 
+val nestedGradleWrapperCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+    listOf(rootProject.file("gradlew.bat").absolutePath)
+} else {
+    listOf("bash", rootProject.file("gradlew").absolutePath)
+}
+
 val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
     group = "verification"
     description = "Compiles independent Java and Kotlin consumers from the generated Maven POMs."
     dependsOn(publishReleaseRepository)
     workingDir(rootProject.projectDir)
-    val wrapper = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-        rootProject.file("gradlew.bat").absolutePath
-    } else {
-        rootProject.file("gradlew").absolutePath
-    }
-    commandLine(
-        wrapper,
+    commandLine(nestedGradleWrapperCommand + listOf(
         "-p",
         rootProject.file("release-smoke").absolutePath,
         "clean",
-        "build",
+        "releaseSmoke",
         "-PfileweftVersion=$releaseVersion",
         "--no-daemon",
         "--no-configuration-cache",
         "--refresh-dependencies",
-    )
+    ))
 }
 
 val verifyDocsSite = tasks.register<Exec>("verifyDocsSite") {
@@ -391,25 +430,133 @@ val publishCnbArtifacts = tasks.register("publishCnbArtifacts") {
     }
 }
 
+val publishVerifiedCnbArtifacts = tasks.register("publishVerifiedCnbArtifacts") {
+    group = "publishing"
+    description = "Publishes FileWeft from a CNB Tag pipeline after all same-commit verification lanes succeed."
+    doFirst {
+        require(cnbArtifactsPassword.isPresent) {
+            "CNB_TOKEN must be available to the verified CNB Tag publication pipeline."
+        }
+    }
+}
+
 val verifyReleaseCredentialHygiene = tasks.register("verifyReleaseCredentialHygiene") {
     group = "verification"
     description = "Rejects CNB credentials from the repository-level Gradle properties file."
-    notCompatibleWithConfigurationCache("Release credential hygiene inspects repository policy files at execution time.")
     val repositoryGradleProperties = layout.projectDirectory.file("gradle.properties")
     inputs.file(repositoryGradleProperties)
         .withPropertyName("repositoryGradleProperties")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 
+    doLast(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            val credentialAssignment = Regex(
+                pattern = "(?m)^\\s*(?:cnbArtifactsGradlePassword|CNB_TOKEN)\\s*[:=]",
+                option = RegexOption.IGNORE_CASE,
+            )
+            val policyFile = inputs.files.singleFile
+            require(!credentialAssignment.containsMatchIn(policyFile.readText(Charsets.UTF_8))) {
+                "CNB credentials must not be stored in the tracked repository gradle.properties; " +
+                    "use the user-level Gradle properties file or the process environment."
+            }
+        },
+    )
+}
+
+val verifyCnbReleaseIdentity = tasks.register("verifyCnbReleaseIdentity") {
+    group = "verification"
+    description = "Verifies that the CNB Tag, commit, and Gradle release version identify the same immutable release."
+    notCompatibleWithConfigurationCache("CNB release identity verification reads the checked-out Git commit at execution time.")
+    inputs.property("cnbEvent", providers.environmentVariable("CNB_EVENT").orElse(""))
+    inputs.property("cnbTag", providers.environmentVariable("CNB_BRANCH").orElse(""))
+    inputs.property("cnbCommit", providers.environmentVariable("CNB_COMMIT").orElse(""))
+    inputs.property(
+        "verifiedCommit",
+        providers.environmentVariable("FILEWEFT_CI_VERIFIED_COMMIT").orElse(""),
+    )
+    inputs.property("expectedTag", releaseScmTag)
+    inputs.property("releaseVersion", releaseVersion)
+
     doLast {
-        val credentialAssignment = Regex(
-            pattern = "(?m)^\\s*(?:cnbArtifactsGradlePassword|CNB_TOKEN)\\s*[:=]",
-            option = RegexOption.IGNORE_CASE,
-        )
-        require(!credentialAssignment.containsMatchIn(repositoryGradleProperties.asFile.readText(Charsets.UTF_8))) {
-            "CNB credentials must not be stored in the tracked repository gradle.properties; " +
-                "use the user-level Gradle properties file or the process environment."
+        val event = inputs.properties.getValue("cnbEvent").toString()
+        val tag = inputs.properties.getValue("cnbTag").toString()
+        val cnbCommit = inputs.properties.getValue("cnbCommit").toString()
+        val verifiedCommit = inputs.properties.getValue("verifiedCommit").toString()
+        val expectedTag = inputs.properties.getValue("expectedTag").toString()
+        val expectedVersion = inputs.properties.getValue("releaseVersion").toString()
+
+        require(!expectedVersion.endsWith("-SNAPSHOT")) {
+            "Verified CNB publication requires a stable version, but was $expectedVersion."
+        }
+        require(event == "tag_push") {
+            "Verified CNB publication is only permitted for tag_push, but CNB_EVENT was '$event'."
+        }
+        require(tag == expectedTag) {
+            "CNB tag '$tag' must exactly match the Gradle release tag '$expectedTag'."
+        }
+        require(cnbCommit.matches(Regex("[0-9a-fA-F]{40}"))) {
+            "CNB_COMMIT must be a full 40-character Git commit SHA."
+        }
+        require(verifiedCommit == cnbCommit) {
+            "FILEWEFT_CI_VERIFIED_COMMIT must match CNB_COMMIT exactly."
+        }
+
+        val gitProcess = ProcessBuilder("git", "rev-parse", "HEAD")
+            .directory(rootProject.projectDir)
+            .redirectErrorStream(true)
+            .start()
+        val checkedOutCommit = gitProcess.inputStream.bufferedReader(Charsets.UTF_8).use { reader -> reader.readText().trim() }
+        require(gitProcess.waitFor() == 0) {
+            "Could not resolve the checked-out Git commit: $checkedOutCommit"
+        }
+        require(checkedOutCommit == cnbCommit) {
+            "Checked-out commit '$checkedOutCommit' does not match CNB_COMMIT '$cnbCommit'."
         }
     }
+}
+
+val externalIntegrationTestFiles = fileTree(layout.projectDirectory) {
+    include("*/src/test/**/*IntegrationTest.kt", "*/src/test/**/*IntegrationTest.java")
+    exclude("**/build/**")
+}
+val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") {
+    group = "verification"
+    description = "Fails when an external IntegrationTest is not assigned to an explicit service lane."
+    inputs.files(externalIntegrationTestFiles)
+        .withPropertyName("externalIntegrationTests")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property("repositoryRootPath", layout.projectDirectory.asFile.absolutePath)
+
+    doLast(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            val repositoryRoot = java.io.File(inputs.properties.getValue("repositoryRootPath").toString())
+            val unexpected = mutableListOf<String>()
+            inputs.files.files.sortedBy { sourceFile -> sourceFile.absolutePath }.forEach { sourceFile ->
+                val relativePath = sourceFile.relativeTo(repositoryRoot).invariantSeparatorsPath
+                val requiredFlag = when {
+                    relativePath.startsWith("fileweft-persistence/src/test/") && "MySQL" in sourceFile.name ->
+                        "FILEWEFT_RUN_MYSQL_TESTS"
+                    relativePath.startsWith("fileweft-persistence/src/test/") && "Kingbase" in sourceFile.name ->
+                        "FILEWEFT_RUN_KINGBASE_TESTS"
+                    relativePath.startsWith("fileweft-persistence/src/test/") ->
+                        "FILEWEFT_RUN_POSTGRES_TESTS"
+                    relativePath ==
+                        "fileweft-adapter-s3/src/test/kotlin/ai/icen/fw/adapter/s3/S3StorageAdapterRustFsIntegrationTest.kt" ->
+                        "FILEWEFT_RUN_RUSTFS_TESTS"
+                    relativePath ==
+                        "fileweft-dev/src/test/kotlin/ai/icen/fw/dev/e2e/DevAcceptanceIntegrationTest.kt" ->
+                        "FILEWEFT_RUN_DEV_E2E"
+                    else -> null
+                }
+                if (requiredFlag == null || !sourceFile.readText(Charsets.UTF_8).contains(requiredFlag)) {
+                    unexpected += relativePath
+                }
+            }
+            require(unexpected.isEmpty()) {
+                "External integration tests are missing an explicit service-lane assignment or fail-closed flag: $unexpected"
+            }
+        },
+    )
 }
 
 val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRepository") {
@@ -455,21 +602,35 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
 }
 
 subprojects {
-    val moduleCompatibilityTaskPath = "$path:compatibilityTest"
     dependencyLocking {
         lockAllConfigurations()
+    }
+
+    tasks.withType<Test>().configureEach {
+        usesService(testTaskConcurrencyService)
     }
 
     tasks.matching { task -> task.name == "check" }.configureEach {
         dependsOn(rootProject.tasks.named("verifyFileWeftBuildLogic"))
     }
 
-    listOf("fileweft.jvm8-library", "fileweft.jvm17-library").forEach { conventionPluginId ->
-        pluginManager.withPlugin(conventionPluginId) {
-            rootProject.tasks.named("compatibilityCheck").configure {
-                dependsOn(moduleCompatibilityTaskPath)
-            }
-        }
+    pluginManager.withPlugin("fileweft.jvm8-library") {
+        val java8Test = tasks.named("java8Test")
+        val java11Test = tasks.named("java11Test")
+        val java21Test = tasks.named("java21Test")
+        val java25Test = tasks.named("java25Test")
+        compatibilityJava8Check.configure { dependsOn(java8Test) }
+        compatibilityJava11Check.configure { dependsOn(java11Test) }
+        compatibilityJava21Check.configure { dependsOn(java21Test) }
+        compatibilityJava25Check.configure { dependsOn(java25Test) }
+    }
+    pluginManager.withPlugin("fileweft.jvm17-library") {
+        val java17Test = tasks.named("java17Test")
+        val java21Test = tasks.named("java21Test")
+        val java25Test = tasks.named("java25Test")
+        compatibilityJava17Check.configure { dependsOn(java17Test) }
+        compatibilityJava21Check.configure { dependsOn(java21Test) }
+        compatibilityJava25Check.configure { dependsOn(java25Test) }
     }
 
     if (name in publishableModuleNames) {
@@ -479,6 +640,14 @@ subprojects {
                 publications.create<MavenPublication>("mavenJava") {
                     from(components["java"])
                     artifactId = project.name
+                    versionMapping {
+                        usage("java-api") {
+                            fromResolutionOf("runtimeClasspath")
+                        }
+                        usage("java-runtime") {
+                            fromResolutionResult()
+                        }
+                    }
                     pom {
                         name.set(project.name)
                         description.set("FileWeft enterprise file infrastructure module ${project.name}.")
@@ -582,16 +751,114 @@ val releaseTestEnvironment = tasks.register("verifyReleaseTestEnvironment") {
     )
 }
 
-val releaseVerification = tasks.register("releaseVerification") {
+val cleanRemoteCnbConsumerGradleHome = tasks.register<Delete>("cleanRemoteCnbConsumerGradleHome") {
     group = "verification"
-    description = "Runs every verification gate required before assembling a FileWeft $releaseVersion release bundle."
+    description = "Removes the isolated Gradle home used by the remote CNB consumer smoke test."
+    delete(layout.buildDirectory.dir("remote-cnb-consumer-gradle-home"))
+}
+
+val remoteCnbConsumerSmoke = tasks.register<Exec>("remoteCnbConsumerSmoke") {
+    group = "verification"
+    description = "Cold-resolves all public modules from CNB Maven and compiles independent consumers."
+    dependsOn(cleanRemoteCnbConsumerGradleHome)
+    workingDir(rootProject.projectDir)
+    environment(
+        "GRADLE_USER_HOME",
+        layout.buildDirectory.dir("remote-cnb-consumer-gradle-home").get().asFile.absolutePath,
+    )
+    commandLine(nestedGradleWrapperCommand + listOf(
+        "-p",
+        rootProject.file("release-smoke").absolutePath,
+        "clean",
+        "releaseSmoke",
+        "-PfileweftVersion=$releaseVersion",
+        "-PfileweftRepositoryUrl=https://maven.cnb.cool/china.ai/maven/-/packages/",
+        "--no-daemon",
+        "--no-configuration-cache",
+        "--refresh-dependencies",
+    ))
+    doFirst {
+        require(!releaseVersion.endsWith("-SNAPSHOT")) {
+            "Remote CNB consumer smoke requires a stable release version, but was $releaseVersion."
+        }
+    }
+}
+
+val postgresIntegrationCheck = tasks.register("postgresIntegrationCheck") {
+    group = "verification"
+    description = "Runs the dedicated PostgreSQL persistence integration lane."
+    dependsOn(":fileweft-persistence:postgresIntegrationTest")
+}
+
+val rustFsIntegrationCheck = tasks.register("rustFsIntegrationCheck") {
+    group = "verification"
+    description = "Runs the dedicated RustFS storage-adapter integration lane."
+    dependsOn(":fileweft-adapter-s3:rustFsIntegrationTest")
+}
+
+val devAcceptanceCheck = tasks.register("devAcceptanceCheck") {
+    group = "verification"
+    description = "Runs Dev API and Playwright acceptance sequentially against one Compose stack."
+    dependsOn(
+        ":fileweft-dev:devApiAcceptanceTest",
+        ":fileweft-dev:devUiE2e",
+    )
+}
+
+val externalAcceptanceCheck = tasks.register("externalAcceptanceCheck") {
+    group = "verification"
+    description = "Runs every external-system suite required for a FileWeft release exactly once."
     dependsOn(
         releaseTestEnvironment,
+        postgresIntegrationCheck,
+        rustFsIntegrationCheck,
+        devAcceptanceCheck,
+    )
+}
+
+val releaseQualityCheck = tasks.register("releaseQualityCheck") {
+    group = "verification"
+    description = "Runs fast architecture, build-logic, documentation, migration, partition, and credential checks."
+    dependsOn(
+        verifyFileWeftBuildLogic,
+        "verifyFileWeftArchitecture",
+        "verifyFileWeftWebApiDependencies",
+        verifyDocsSite,
+        verifyFileWeftMigrationResources,
+        verifyExternalTestPartition,
+        verifyReleaseCredentialHygiene,
+    )
+}
+
+val fastCheck = tasks.register("fastCheck") {
+    group = "verification"
+    description = "Runs the local fast feedback gate without cross-JDK or external-system suites."
+    dependsOn(releaseQualityCheck)
+}
+
+val releaseVerification = tasks.register("releaseVerification") {
+    group = "verification"
+    description = "Runs release quality, JVM compatibility, and external acceptance gates without publishing artifacts."
+    dependsOn(
+        releaseTestEnvironment,
+        releaseQualityCheck,
         compatibilityCheck,
+        externalAcceptanceCheck,
+    )
+}
+
+val releaseArtifactVerification = tasks.register("releaseArtifactVerification") {
+    group = "verification"
+    description = "Verifies local Maven artifacts, metadata, SBOM, documentation, migrations, and cold consumers."
+    dependsOn(
+        publishReleaseRepository,
+        verifyPublishedReleaseRepository,
+        verifyPublishedStarterConfigurationMetadata,
         "verifySbom",
         verifyDocsSite,
-        releaseConsumerSmoke,
         verifyFileWeftMigrationResources,
+        verifyReleaseCredentialHygiene,
+        releaseConsumerSmoke,
     )
 }
 
@@ -601,15 +868,11 @@ val cleanReleaseDirectory = tasks.register<Delete>("cleanReleaseDirectory") {
     delete(layout.buildDirectory.dir("release"))
 }
 
-val releaseBundle = tasks.register<Zip>("releaseBundle") {
+val assembleReleaseBundle = tasks.register<Zip>("assembleReleaseBundle") {
     group = "distribution"
-    description = "Runs all release gates, then builds the shareable FileWeft $releaseVersion Maven repository and SBOM bundle."
+    description = "Builds the artifact-verified FileWeft $releaseVersion Maven repository and SBOM bundle."
     dependsOn(
-        releaseVerification,
-        publishReleaseRepository,
-        verifyPublishedStarterConfigurationMetadata,
-        verifyFileWeftMigrationResources,
-        "verifySbom",
+        releaseArtifactVerification,
         cleanReleaseDirectory,
     )
     archiveBaseName.set("fileweft")
@@ -646,8 +909,8 @@ val verifyReleaseBundleContents = tasks.register("verifyReleaseBundleContents") 
     group = "verification"
     description = "Verifies the legal, security, Maven repository, and SBOM contents of the release ZIP."
     notCompatibleWithConfigurationCache("Release bundle verification inspects the final ZIP at execution time.")
-    dependsOn(releaseBundle)
-    val archiveFile = releaseBundle.flatMap { task -> task.archiveFile }
+    dependsOn(assembleReleaseBundle)
+    val archiveFile = assembleReleaseBundle.flatMap { task -> task.archiveFile }
     inputs.file(archiveFile)
         .withPropertyName("releaseBundle")
         .withPathSensitivity(PathSensitivity.RELATIVE)
@@ -724,16 +987,27 @@ val verifyReleaseBundleContents = tasks.register("verifyReleaseBundleContents") 
     }
 }
 
-val releaseCheck = tasks.register("releaseCheck") {
+val releaseArtifactCheck = tasks.register("releaseArtifactCheck") {
     group = "verification"
-    description = "Verifies FileWeft $releaseVersion and creates the gated shareable release bundle."
+    description = "Builds and verifies the complete local release repository, SBOM, consumers, and release ZIP."
     dependsOn(verifyReleaseBundleContents)
 }
 
-// A runtime matrix can otherwise start dozens of separate JVMs at once when
-// Gradle parallel execution is enabled. Keep these heavyweight cross-JDK test
-// processes globally ordered so `compatibilityCheck` remains reliable on a
-// developer machine that is also running the Dev Compose stack.
+val releaseCheck = tasks.register("releaseCheck") {
+    group = "verification"
+    description = "Runs every FileWeft $releaseVersion quality, compatibility, acceptance, and artifact release gate."
+    dependsOn(
+        releaseVerification,
+        releaseArtifactCheck,
+    )
+}
+
+tasks.register("releaseBundle") {
+    group = "distribution"
+    description = "Compatibility release entry point: runs every release gate and produces the verified bundle."
+    dependsOn(releaseCheck)
+}
+
 gradle.projectsEvaluated {
     val runtimeMatrixTasks = allprojects
         .flatMap { project ->
@@ -742,8 +1016,19 @@ gradle.projectsEvaluated {
                 .toList()
         }
         .sortedBy { task -> "${task.project.path}:${task.name}" }
-    runtimeMatrixTasks.zipWithNext().forEach { (previous, next) ->
-        next.mustRunAfter(previous)
+
+    if (fullReleaseVerificationRequested) {
+        runtimeMatrixTasks.forEach { matrixTask ->
+            matrixTask.dependsOn(releaseTestEnvironment)
+        }
+        listOf(
+            project(":fileweft-persistence").tasks.named("postgresIntegrationTest"),
+            project(":fileweft-adapter-s3").tasks.named("rustFsIntegrationTest"),
+            project(":fileweft-dev").tasks.named("devApiAcceptanceTest"),
+            project(":fileweft-dev").tasks.named("devUiE2e"),
+        ).forEach { externalTask ->
+            externalTask.configure { dependsOn(releaseTestEnvironment) }
+        }
     }
 
     val publishedProjects = subprojects.filter { project -> project.name in publishableModuleNames }
@@ -838,6 +1123,9 @@ gradle.projectsEvaluated {
             },
         )
     }
+    fastCheck.configure {
+        dependsOn(subprojects.map { project -> project.tasks.named("test") })
+    }
     if (cnbPublishingRequested && cnbArtifactsPassword.isPresent) {
         val cnbPublishTasks = publishedProjects.sortedBy { project -> project.name }.map { project ->
             project.tasks.named("publishMavenJavaPublicationToCnbArtifactsRepository")
@@ -849,21 +1137,25 @@ gradle.projectsEvaluated {
         }
         cnbPublishTasks.forEach { taskProvider ->
             taskProvider.configure {
-                dependsOn(releaseCheck)
+                if (verifiedCnbPublishingRequested) {
+                    dependsOn(releaseArtifactCheck, verifyCnbReleaseIdentity)
+                } else {
+                    dependsOn(releaseCheck)
+                }
                 notCompatibleWithConfigurationCache("CNB credentials must never be stored in the configuration cache.")
             }
         }
-        publishCnbArtifacts.configure {
-            dependsOn(cnbPublishTasks)
-            notCompatibleWithConfigurationCache("CNB credentials must never be stored in the configuration cache.")
+        if (verifiedCnbPublishingRequested) {
+            publishVerifiedCnbArtifacts.configure {
+                dependsOn(cnbPublishTasks, releaseArtifactCheck, verifyCnbReleaseIdentity)
+                notCompatibleWithConfigurationCache("CNB credentials must never be stored in the configuration cache.")
+            }
+        } else {
+            publishCnbArtifacts.configure {
+                dependsOn(cnbPublishTasks)
+                notCompatibleWithConfigurationCache("CNB credentials must never be stored in the configuration cache.")
+            }
         }
-    }
-    releaseVerification.configure {
-        dependsOn(
-            subprojects.map { project -> project.tasks.named("check") },
-            verifyPublishedReleaseRepository,
-            verifyReleaseCredentialHygiene,
-        )
     }
 }
 

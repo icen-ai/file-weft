@@ -1,0 +1,6 @@
+include:
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml

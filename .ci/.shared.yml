@@ -1,0 +1,131 @@
+.fileweft-runner-4:
+  tags: cnb:arch:amd64
+  cpus: 4
+
+.fileweft-runner-8:
+  tags: cnb:arch:amd64
+  cpus: 8
+
+.fileweft-jvm-pr-docker:
+  build:
+    dockerfile: .ci/Dockerfile.jvm
+    by:
+      - .ci/Dockerfile.jvm
+    versionBy:
+      - .ci/Dockerfile.jvm
+  volumes:
+    - main:/root/.gradle:copy-on-write-read-only
+
+.fileweft-jvm-docker:
+  build:
+    dockerfile: .ci/Dockerfile.jvm
+    by:
+      - .ci/Dockerfile.jvm
+    versionBy:
+      - .ci/Dockerfile.jvm
+  volumes:
+    - main:/root/.gradle:copy-on-write
+
+.fileweft-e2e-pr-docker:
+  build:
+    dockerfile: .ci/Dockerfile.e2e
+    by:
+      - .ci/Dockerfile.e2e
+    versionBy:
+      - fileweft-dev/web/package-lock.json
+  volumes:
+    - main:/root/.gradle:copy-on-write-read-only
+    - main:/root/.npm:copy-on-write-read-only
+
+.fileweft-e2e-docker:
+  build:
+    dockerfile: .ci/Dockerfile.e2e
+    by:
+      - .ci/Dockerfile.e2e
+    versionBy:
+      - fileweft-dev/web/package-lock.json
+  volumes:
+    - main:/root/.gradle:copy-on-write
+    - main:/root/.npm:copy-on-write
+
+.fileweft-ci-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+
+.fileweft-postgres-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+  FILEWEFT_RUN_POSTGRES_TESTS: "true"
+  FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
+
+.fileweft-rustfs-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+  FILEWEFT_RUN_RUSTFS_TESTS: "true"
+  FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
+
+.fileweft-e2e-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+  FILEWEFT_RUN_DEV_E2E: "true"
+  FILEWEFT_RUN_DEV_UI_E2E: "true"
+  FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
+
+.fileweft-code-paths:
+  - .cnb.yml
+  - .ci/**
+  - .docker/**
+  - build.gradle.kts
+  - settings.gradle.kts
+  - gradle.properties
+  - gradle/**
+  - build-logic/**
+  - "*/build.gradle.kts"
+  - fileweft-*/src/**
+  - release-smoke/**
+
+.fileweft-postgres-paths:
+  - .cnb.yml
+  - .ci/**
+  - .docker/docker-compose.dev.yaml
+  - build.gradle.kts
+  - settings.gradle.kts
+  - gradle/**
+  - build-logic/**
+  - fileweft-core/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-agent/**
+  - fileweft-persistence/**
+
+.fileweft-rustfs-paths:
+  - .cnb.yml
+  - .ci/**
+  - .docker/docker-compose.dev.yaml
+  - build.gradle.kts
+  - settings.gradle.kts
+  - gradle/**
+  - build-logic/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-testkit/**
+  - fileweft-adapter-s3/**
+
+.fileweft-e2e-paths:
+  - .cnb.yml
+  - .ci/**
+  - .docker/**
+  - build.gradle.kts
+  - settings.gradle.kts
+  - gradle/**
+  - build-logic/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-web-*/**
+  - fileweft-persistence/**
+  - fileweft-runtime/**
+  - fileweft-spring-boot*/**
+  - fileweft-adapter-s3/**
+  - fileweft-dev/**

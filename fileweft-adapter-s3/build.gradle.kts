@@ -1,4 +1,5 @@
 import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 
 plugins {
     id("fileweft.jvm8-library")
@@ -21,10 +22,28 @@ dependencies {
 val runRustFsIntegration = providers.environmentVariable("FILEWEFT_RUN_RUSTFS_TESTS")
     .map { value -> value == "true" }
     .orElse(false)
+val testSourceSet = sourceSets.named("test")
+val integrationJavaLauncher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(21))
+}
 
-tasks.withType<Test>().configureEach {
+val rustFsIntegrationTest = tasks.register<Test>("rustFsIntegrationTest") {
+    group = "verification"
+    description = "Runs the RustFS-backed S3 contract suite exactly once outside the JVM matrix."
+    testClassesDirs = testSourceSet.get().output.classesDirs
+    classpath = testSourceSet.get().runtimeClasspath
+    useJUnitPlatform()
+    javaLauncher.set(integrationJavaLauncher)
+    include("**/S3StorageAdapterRustFsIntegrationTest.class")
+    maxParallelForks = 1
     inputs.property("fileWeftRunRustFsTests", runRustFsIntegration)
-    if (runRustFsIntegration.get()) {
-        doNotTrackState("The enabled RustFS integration suite must execute against the current object-store state.")
-    }
+    doNotTrackState("The RustFS integration suite must execute against the current object-store state.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("fileWeftRunRustFsTests") == true) {
+                "Set FILEWEFT_RUN_RUSTFS_TESTS=true and start the dedicated RustFS test service."
+            }
+        },
+    )
+    shouldRunAfter(tasks.named("test"))
 }

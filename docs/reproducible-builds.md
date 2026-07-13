@@ -7,16 +7,25 @@ FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle depend
 日常验证：
 
 ```powershell
-.\gradlew.bat check --no-daemon
+.\gradlew.bat fastCheck --no-daemon
 ```
 
-发版前还应执行完整的 JVM 运行时矩阵：
+`fastCheck` 只运行当前构建 JVM 上的单元、契约、Context 与静态质量门禁；普通 `test` 明确排除外部 `*IntegrationTest`，因此不会因为本机恰好设置了数据库或对象存储变量而改变测试集合。需要单独复核最低运行时时可执行：
+
+```powershell
+.\gradlew.bat compatibilityJava8Check --no-daemon
+.\gradlew.bat compatibilityJava17Check --no-daemon
+```
+
+发版前应执行完整的 JVM 运行时矩阵：
 
 ```powershell
 .\gradlew.bat compatibilityCheck --no-daemon
 ```
 
 该门禁使用 Gradle 工具链，而不是依赖执行 Gradle 的 JVM：Java 8 基线模块在 Java 8、11、21、25 上运行测试；Java 17 模块在 Java 17、21、25 上运行测试。缺失的 JDK 由已配置的 Foojay 工具链解析器自动取得；首次运行的下载耗时应由发布流水线预留。
+
+五条根任务可以独立调度。仓库启用 Gradle parallel，但把 Gradle worker 固定为 4，并为 Gradle/Kotlin daemon 设置明确堆上限；所有 `Test` 还共享一个并发限制服务，默认最多同时运行 2 个。本地用 `-Pfileweft.test.maxParallelTasks=N`、CI 用 `FILEWEFT_TEST_MAX_PARALLEL_TASKS=N` 调整测试并发。这样能够并发不同模块，又不会让高核机器一次启动过多编译或测试 JVM。CNB 在不同构建节点上并行五条运行时线，细节见 [CNB CI/CD](../.ci/README.md)。
 
 有意识地升级依赖后，先审阅版本目录和构建脚本，再重新生成两类状态：
 
