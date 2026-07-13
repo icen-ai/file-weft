@@ -1,0 +1,13 @@
+{
+  "name": "fileweft-docs",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/site.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

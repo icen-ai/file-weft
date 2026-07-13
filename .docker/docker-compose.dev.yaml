@@ -149,6 +149,7 @@ services:
       - "8088:80"
     volumes:
       - ../fileweft-dev/web:/usr/share/nginx/html:ro
+      - ../fileweft-docs:/usr/share/nginx/html/docs:ro
       - ./nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
