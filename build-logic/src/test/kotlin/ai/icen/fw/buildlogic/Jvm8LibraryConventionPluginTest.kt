@@ -55,7 +55,9 @@ class Jvm8LibraryConventionPluginTest {
         val normalCheck = GradleRunner.create()
             .withProjectDir(projectDir)
             .withPluginClasspath()
-            .withArguments("--configuration-cache", "check", "--dry-run")
+            // This assertion inspects only the task graph. Configuration-cache serialization
+            // resolves the Java 8 launcher and would make the fixture depend on a host JDK 8.
+            .withArguments("check", "--dry-run")
             .build()
 
         assertTrue(normalCheck.output.contains(":java8Test SKIPPED"))
