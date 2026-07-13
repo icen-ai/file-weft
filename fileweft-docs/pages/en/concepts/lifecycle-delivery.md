@@ -30,7 +30,7 @@ The happy path is:
 DRAFT → PENDING_REVIEW → PUBLISHING → PUBLISHED
 ```
 
-Rework uses `REJECTED → revise → DRAFT`. A published document can be taken `OFFLINE` and then `restore`d back to `DRAFT`. Archive is explicit and moves the document to `HISTORY`.
+Rework uses `REJECTED → revise → DRAFT`. A published document can be taken `OFFLINE` and then restored to `DRAFT`. Archive is explicit and moves the document to `HISTORY`.
 
 ## 02. Lifecycle commands over HTTP
 

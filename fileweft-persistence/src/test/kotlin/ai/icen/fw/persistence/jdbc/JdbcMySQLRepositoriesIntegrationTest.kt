@@ -14,12 +14,14 @@ import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileObject
+import ai.icen.fw.domain.workflow.WorkflowInstance
+import ai.icen.fw.domain.workflow.WorkflowTask
 import ai.icen.fw.persistence.migration.FlywayMigrationRunner
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.sql.Connection
+import java.sql.SQLException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -32,7 +34,7 @@ import kotlin.test.assertTrue
 /**
  * MySQL 8 real-database integration test for the dialect-migrated JDBC repositories.
  *
- * The suite is disabled unless `FILEWEFT_RUN_MYSQL_TESTS=true` and a MySQL 8.0.13+
+ * The suite is disabled unless `FILEWEFT_RUN_MYSQL_TESTS=true` and a MySQL 8.0.17+
  * server is reachable via the environment variables below.
  */
 class JdbcMySQLRepositoriesIntegrationTest {
@@ -41,7 +43,9 @@ class JdbcMySQLRepositoriesIntegrationTest {
 
     @BeforeEach
     fun prepareDatabase() {
-        assumeTrue(System.getenv("FILEWEFT_RUN_MYSQL_TESTS") == "true")
+        check(System.getenv("FILEWEFT_RUN_MYSQL_TESTS") == "true") {
+            "MySQL integration tests must run only through the fail-closed Gradle task"
+        }
         val databaseName = System.getenv("FILEWEFT_MYSQL_DATABASE") ?: "fileweft"
         val adminDataSource = MysqlDataSource().apply {
             setURL(System.getenv("FILEWEFT_MYSQL_ADMIN_URL") ?: "jdbc:mysql://localhost:3306")
@@ -129,6 +133,117 @@ class JdbcMySQLRepositoriesIntegrationTest {
                 )
             }
         }
+
+        val primaryKeyDocument = Document(
+            id = Identifier("tenant_id"),
+            tenantId = original.tenantId,
+            assetId = Identifier("asset-primary-1"),
+            documentNumber = "DOC-PRIMARY-1",
+            title = "Primary key original",
+        )
+        transaction.execute { repository.save(primaryKeyDocument) }
+        assertFailsWith<SQLException> {
+            transaction.execute {
+                repository.save(
+                    Document(
+                        id = primaryKeyDocument.id,
+                        // A different tenant bypasses the repository's scoped
+                        // UPDATE and exercises the global PRIMARY-key conflict.
+                        tenantId = Identifier("tenant-primary-other"),
+                        assetId = Identifier("asset-primary-2"),
+                        documentNumber = "DOC-PRIMARY-2",
+                        title = "Primary key duplicate",
+                    ),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `keeps tenant spelling and opaque identifier spelling isolated`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcDocumentRepository(clock)
+        val tenantDocuments = listOf(
+            document("document-tenant-upper", "TenantA", "asset-tenant-upper", "DOC-SHARED", "upper"),
+            document("document-tenant-padded", "TenantA ", "asset-tenant-padded", "DOC-SHARED", "padded"),
+            document("document-tenant-lower", "tenanta", "asset-tenant-lower", "DOC-SHARED", "lower"),
+            document("document-tenant-plain", "TenantCafe", "asset-tenant-plain", "DOC-SHARED", "plain"),
+            document("document-tenant-accent", "TenantCafé", "asset-tenant-accent", "DOC-SHARED", "accent"),
+        )
+        val opaqueIdDocuments = listOf(
+            document("Opaque-ID", "tenant-opaque", "asset-opaque-upper", "DOC-OPAQUE-1", "opaque upper"),
+            document("opaque-id", "tenant-opaque", "asset-opaque-lower", "DOC-OPAQUE-2", "opaque lower"),
+            document("Opaque-ID ", "tenant-opaque", "asset-opaque-padded", "DOC-OPAQUE-3", "opaque padded"),
+        )
+
+        transaction.execute {
+            (tenantDocuments + opaqueIdDocuments).forEach(repository::save)
+        }
+
+        tenantDocuments.forEach { expected ->
+            val byId = transaction.execute { repository.findById(expected.tenantId, expected.id) }
+            val byNumber = transaction.execute {
+                repository.findByDocumentNumber(expected.tenantId, expected.documentNumber)
+            }
+            assertEquals(expected.id, byId?.id)
+            assertEquals(expected.id, byNumber?.id)
+            assertEquals(expected.title, byId?.title)
+        }
+        assertNull(
+            transaction.execute {
+                repository.findById(Identifier("tenanta"), Identifier("document-tenant-upper"))
+            },
+        )
+        assertNull(
+            transaction.execute {
+                repository.findById(Identifier("TenantA"), Identifier("document-tenant-padded"))
+            },
+        )
+        assertNull(
+            transaction.execute {
+                repository.findById(Identifier("TenantCafe"), Identifier("document-tenant-accent"))
+            },
+        )
+
+        opaqueIdDocuments.forEach { expected ->
+            val restored = transaction.execute { repository.findById(expected.tenantId, expected.id) }
+            assertEquals(expected.id, restored?.id)
+            assertEquals(expected.title, restored?.title)
+        }
+        assertNull(
+            transaction.execute {
+                repository.findById(Identifier("tenant-opaque"), Identifier("OPAQUE-ID"))
+            },
+        )
+        assertEquals(8, countRows("fw_document"))
+    }
+
+    @Test
+    fun `keeps pending workflow uniqueness keys binary through the repository`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcWorkflowInstanceRepository(clock)
+        val pending = listOf(
+            workflow("workflow-base", "TenantPending", "DocumentOpaque"),
+            workflow("workflow-tenant-case", "tenantpending", "DocumentOpaque"),
+            workflow("workflow-document-case", "TenantPending", "documentopaque"),
+        )
+
+        transaction.execute { pending.forEach(repository::save) }
+
+        pending.forEach { expected ->
+            val restored = transaction.execute {
+                repository.findActiveByDocument(expected.tenantId, expected.documentId)
+            }
+            assertEquals(expected.id, restored?.id)
+        }
+        val duplicate = assertFailsWith<SQLException> {
+            transaction.execute {
+                repository.save(workflow("workflow-duplicate", "TenantPending", "DocumentOpaque"))
+            }
+        }
+        assertEquals("23000", duplicate.sqlState)
+        assertEquals(1062, duplicate.errorCode)
+        assertEquals(3, countRows("fw_workflow_instance"))
     }
 
     @Test
@@ -260,6 +375,39 @@ class JdbcMySQLRepositoriesIntegrationTest {
         )
         document.transition(LifecycleCommand.SUBMIT)
         return document
+    }
+
+    private fun document(
+        id: String,
+        tenantId: String,
+        assetId: String,
+        documentNumber: String,
+        title: String,
+    ): Document = Document(
+        id = Identifier(id),
+        tenantId = Identifier(tenantId),
+        assetId = Identifier(assetId),
+        documentNumber = documentNumber,
+        title = title,
+    )
+
+    private fun workflow(id: String, tenantId: String, documentId: String): WorkflowInstance {
+        val workflowId = Identifier(id)
+        val tenant = Identifier(tenantId)
+        return WorkflowInstance(
+            id = workflowId,
+            tenantId = tenant,
+            documentId = Identifier(documentId),
+            workflowType = "DOCUMENT_REVIEW",
+            tasks = listOf(
+                WorkflowTask(
+                    id = Identifier("task-$id"),
+                    tenantId = tenant,
+                    workflowId = workflowId,
+                    assigneeId = Identifier("reviewer-$id"),
+                ),
+            ),
+        )
     }
 
     private fun countRows(table: String): Int = dataSource.connection.use { connection ->

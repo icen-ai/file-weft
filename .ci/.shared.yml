@@ -58,6 +58,29 @@
   FILEWEFT_RUN_POSTGRES_TESTS: "true"
   FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
 
+.fileweft-mysql-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+  FILEWEFT_RUN_MYSQL_TESTS: "true"
+  FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
+  FILEWEFT_MYSQL_DATABASE: fileweft
+  FILEWEFT_MYSQL_ADMIN_URL: "jdbc:mysql://127.0.0.1:3306?useSSL=false&allowPublicKeyRetrieval=true"
+  FILEWEFT_MYSQL_ADMIN_USER: root
+  FILEWEFT_MYSQL_ADMIN_PASSWORD: fileweft-dev
+  FILEWEFT_MYSQL_URL: "jdbc:mysql://127.0.0.1:3306/fileweft?useSSL=false&allowPublicKeyRetrieval=true"
+  FILEWEFT_MYSQL_USER: root
+  FILEWEFT_MYSQL_PASSWORD: fileweft-dev
+
+.fileweft-kingbase-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+  FILEWEFT_RUN_KINGBASE_TESTS: "true"
+  FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
+  FILEWEFT_KINGBASE_URL: "jdbc:kingbase8://127.0.0.1:54321/test"
+  FILEWEFT_KINGBASE_USER: system
+  FILEWEFT_KINGBASE_PASSWORD: kingbase
+  FILEWEFT_KINGBASE_SCHEMA: public
+
 .fileweft-rustfs-env:
   CI: "true"
   FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
@@ -71,61 +94,355 @@
   FILEWEFT_RUN_DEV_UI_E2E: "true"
   FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
 
-.fileweft-code-paths:
-  - .cnb.yml
-  - .ci/**
-  - .docker/**
-  - build.gradle.kts
-  - settings.gradle.kts
-  - gradle.properties
-  - gradle/**
-  - build-logic/**
-  - "*/build.gradle.kts"
-  - fileweft-*/src/**
-  - release-smoke/**
+.fileweft-docs-paths:
+  - .gitattributes
+  - "**/*.md"
+  - "*.md"
+  - fileweft-docs/**/*.html
+  - fileweft-docs/**/*.css
+  - fileweft-docs/**/*.js
+  - fileweft-docs/**/*.mjs
+  - fileweft-docs/**/*.json
 
-.fileweft-postgres-paths:
+.fileweft-fast-paths:
+  - .gitattributes
   - .cnb.yml
-  - .ci/**
-  - .docker/docker-compose.dev.yaml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - .ci/test/**
+  - .ci/scripts/**
+  - .ci/fixtures/**
   - build.gradle.kts
   - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
   - gradle/**
   - build-logic/**
   - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-persistence/**
+  - fileweft-runtime/**
+  - fileweft-spring-boot2-starter/**
+  - fileweft-spring-boot3-starter/**
+  - fileweft-adapter/**
+  - fileweft-adapter-micrometer/**
+  - fileweft-adapter-opentelemetry/**
+  - fileweft-adapter-s3/**
+  - fileweft-agent/**
+  - fileweft-testkit/**
+  - fileweft-sample-host/**
+  - fileweft-web-api/**
+  - fileweft-web-runtime/**
+  - fileweft-web-spring-boot2-starter/**
+  - fileweft-web-spring-boot3-starter/**
+  - fileweft-dev/**
+
+.fileweft-jvm8-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-persistence/**
+  - fileweft-runtime/**
+  - fileweft-spring-boot2-starter/**
+  - fileweft-adapter/**
+  - fileweft-adapter-micrometer/**
+  - fileweft-adapter-opentelemetry/**
+  - fileweft-adapter-s3/**
+  - fileweft-agent/**
+  - fileweft-testkit/**
+  - fileweft-sample-host/**
+  - fileweft-web-api/**
+  - fileweft-web-runtime/**
+  - fileweft-web-spring-boot2-starter/**
+
+.fileweft-jvm17-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-persistence/**
+  - fileweft-runtime/**
+  - fileweft-agent/**
+  - fileweft-adapter/**
+  - fileweft-adapter-micrometer/**
+  - fileweft-adapter-s3/**
+  - fileweft-spring-boot3-starter/**
+  - fileweft-web-api/**
+  - fileweft-web-runtime/**
+  - fileweft-web-spring-boot3-starter/**
+  - fileweft-dev/**
+
+.fileweft-jvm-all-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-persistence/**
+  - fileweft-runtime/**
+  - fileweft-spring-boot2-starter/**
+  - fileweft-spring-boot3-starter/**
+  - fileweft-adapter/**
+  - fileweft-adapter-micrometer/**
+  - fileweft-adapter-opentelemetry/**
+  - fileweft-adapter-s3/**
+  - fileweft-agent/**
+  - fileweft-testkit/**
+  - fileweft-sample-host/**
+  - fileweft-web-api/**
+  - fileweft-web-runtime/**
+  - fileweft-web-spring-boot2-starter/**
+  - fileweft-web-spring-boot3-starter/**
+  - fileweft-dev/**
+
+.fileweft-postgres-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - .ci/fixtures/**
+  - .docker/docker-compose.dev.yaml
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
   - fileweft-domain/**
   - fileweft-application/**
   - fileweft-agent/**
   - fileweft-persistence/**
 
-.fileweft-rustfs-paths:
+.fileweft-mysql-paths:
+  - .gitattributes
   - .cnb.yml
-  - .ci/**
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
   - .docker/docker-compose.dev.yaml
   - build.gradle.kts
   - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
   - gradle/**
-  - build-logic/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-agent/**
+  - fileweft-persistence/**
+
+.fileweft-kingbase-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - .ci/scripts/prepare-kingbase-image.*
+  - .docker/docker-compose.dev.yaml
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-domain/**
+  - fileweft-application/**
+  - fileweft-agent/**
+  - fileweft-persistence/**
+  - fileweft-spring-boot2-starter/build.gradle.kts
+  - fileweft-spring-boot2-starter/gradle.lockfile
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftKingbaseFlywayAutoConfiguration.kt
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftMigrationConfiguration.kt
+  - fileweft-spring-boot2-starter/src/main/resources/META-INF/spring.factories
+  - fileweft-spring-boot2-starter/src/test/kotlin/**/*Kingbase*Test.kt
+  - fileweft-spring-boot2-starter/src/test/resources/db/**
+  - fileweft-spring-boot3-starter/build.gradle.kts
+  - fileweft-spring-boot3-starter/gradle.lockfile
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FileWeftKingbaseFlywayAutoConfiguration.kt
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FileWeftMigrationConfiguration.kt
+  - fileweft-spring-boot3-starter/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+  - fileweft-spring-boot3-starter/src/test/kotlin/**/*Kingbase*Test.kt
+  - fileweft-spring-boot3-starter/src/test/resources/db/**
+
+.fileweft-rustfs-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - .docker/docker-compose.dev.yaml
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
   - fileweft-core/**
   - fileweft-spi/**
   - fileweft-testkit/**
   - fileweft-adapter-s3/**
 
 .fileweft-e2e-paths:
+  - .gitattributes
   - .cnb.yml
-  - .ci/**
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.e2e
+  - .dockerignore
   - .docker/**
   - build.gradle.kts
   - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
   - gradle/**
-  - build-logic/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
   - fileweft-core/**
   - fileweft-spi/**
   - fileweft-domain/**
   - fileweft-application/**
-  - fileweft-web-*/**
+  - fileweft-agent/**
+  - fileweft-adapter/**
+  - fileweft-adapter-micrometer/**
+  - fileweft-adapter-s3/**
   - fileweft-persistence/**
   - fileweft-runtime/**
-  - fileweft-spring-boot*/**
-  - fileweft-adapter-s3/**
+  - fileweft-spring-boot3-starter/build.gradle.kts
+  - fileweft-spring-boot3-starter/gradle.lockfile
+  - fileweft-spring-boot3-starter/src/main/**
+  - fileweft-web-api/**
+  - fileweft-web-runtime/**
+  - fileweft-web-spring-boot3-starter/**
   - fileweft-dev/**
+
+.fileweft-release-artifact-paths:
+  - .gitattributes
+  - .ci/Dockerfile.jvm
+  - .ci/fixtures/**
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-*/build.gradle.kts
+  - fileweft-*/gradle.lockfile
+  - release-smoke/**
+  - LICENSE
+  - NOTICE

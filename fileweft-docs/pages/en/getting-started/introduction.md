@@ -50,7 +50,7 @@ FileWeft is built around a few non-negotiable assumptions:
 
 ## Choose your entry point
 
-FileWeft offers three ways to plug in. Pick the one that matches your appetite for control:
+FileWeft offers three ways to plug in. Pick the one that matches how much control you need:
 
 | Entry point | Best for | What you add |
 | --- | --- | --- |
@@ -63,6 +63,6 @@ FileWeft offers three ways to plug in. Pick the one that matches your appetite f
 
 ## Next steps
 
-- [Install FileWeft 0.0.1](installation.md)
+- [Install FileWeft 0.0.2](installation.md)
 - [Wire a production host](first-integration.md)
 - [Run the 5-minute quickstart](quickstart.md)

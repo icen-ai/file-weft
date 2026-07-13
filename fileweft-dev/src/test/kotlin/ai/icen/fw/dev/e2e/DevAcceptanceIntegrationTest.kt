@@ -15,8 +15,6 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
-import java.sql.Connection
-import java.sql.DriverManager
 import java.time.Duration
 import java.util.UUID
 
@@ -31,10 +29,6 @@ class DevAcceptanceIntegrationTest {
     private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
     private val apiUrl = System.getenv("FILEWEFT_DEV_E2E_API_URL") ?: "http://127.0.0.1:8080"
     private val platformUrl = System.getenv("FILEWEFT_DEV_E2E_PLATFORM_URL") ?: "http://127.0.0.1:8081"
-    private val databaseUrl = System.getenv("FILEWEFT_DEV_E2E_DB_URL")
-        ?: "jdbc:postgresql://127.0.0.1:5432/fileweft?currentSchema=fileweft_dev"
-    private val databaseUsername = System.getenv("FILEWEFT_DEV_E2E_DB_USERNAME") ?: "fileweft"
-    private val databasePassword = System.getenv("FILEWEFT_DEV_E2E_DB_PASSWORD") ?: "fileweft-dev"
 
     @BeforeAll
     fun requireComposeStack() {
@@ -82,12 +76,10 @@ class DevAcceptanceIntegrationTest {
         assertTrue(editor.path("permissions").any { it.asText() == "document:doctor" })
         assertTrue(editor.path("permissions").none { it.asText() == "document:audit" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "document:audit" })
-        assertTrue(reviewer.path("permissions").any { it.asText() == "agent:suggestion:read" })
         assertTrue(reviewer.path("permissions").any { it.asText() == "document:doctor" })
         assertTrue(reviewer.path("permissions").none { it.asText() == "document:create" })
         assertEquals(listOf("document:read", "document:download"), viewer.path("permissions").map { it.asText() })
         assertTrue(admin.path("permissions").any { it.asText() == "system:outbox:process" })
-        assertTrue(admin.path("permissions").any { it.asText() == "agent:suggestion:confirm" })
         assertTrue(admin.path("permissions").any { it.asText() == "system:doctor:read" })
         assertTrue(admin.path("permissions").any { it.asText() == "system:plugins:read" })
         assertTrue(editor.path("permissions").none { it.asText() == "system:doctor:read" })
@@ -95,6 +87,9 @@ class DevAcceptanceIntegrationTest {
         assertTrue(editor.path("permissions").none { it.asText() == "system:plugins:read" })
         assertTrue(reviewer.path("permissions").none { it.asText() == "system:plugins:read" })
         assertTrue(viewer.path("permissions").none { it.asText() == "system:plugins:read" })
+        listOf(editor, reviewer, viewer, admin).forEach { identity ->
+            assertTrue(identity.path("permissions").none { permission -> permission.asText().startsWith("agent:") })
+        }
     }
 
     @Test
@@ -1327,70 +1322,6 @@ class DevAcceptanceIntegrationTest {
         assertV1FailureEnvelope(mapper.readTree(forbiddenSystem.body()), "FORBIDDEN", "Access denied.")
     }
 
-    @Test
-    fun `serializes an Agent result only after its matching Agent task reaches success`() {
-        val editor = login("editor@alpha", "dev-editor")
-        val reviewer = login("reviewer@alpha", "dev-reviewer")
-        val documentId = createDraft(editor, "E2E-AGENT-PROJECTION-${UUID.randomUUID().toString().take(8)}")
-            .path("document").path("id").asText()
-        val pendingAgentTaskId = UUID.randomUUID().toString()
-        val wrongTypeTaskId = UUID.randomUUID().toString()
-
-        DriverManager.getConnection(databaseUrl, databaseUsername, databasePassword).use { connection ->
-            try {
-                insertAgentProjection(connection, documentId, pendingAgentTaskId, "agent.execute", "PENDING", "pending-hidden")
-                insertAgentProjection(connection, documentId, wrongTypeTaskId, "document.doctor", "SUCCESS", "wrong-type-hidden")
-
-                val hidden = getJson("$apiUrl/api/documents/$documentId", reviewer).path("agentResults")
-                assertEquals(0, hidden.size(), "Pending or non-Agent task projections must not be serialized.")
-
-                connection.prepareStatement(
-                    "UPDATE fw_task SET task_status = 'SUCCESS', updated_time = ? WHERE tenant_id = 'alpha' AND id = ?",
-                ).use { statement ->
-                    statement.setLong(1, System.currentTimeMillis())
-                    statement.setString(2, pendingAgentTaskId)
-                    assertEquals(1, statement.executeUpdate())
-                }
-
-                val visible = getJson("$apiUrl/api/documents/$documentId", reviewer).path("agentResults")
-                assertEquals(listOf(pendingAgentTaskId), visible.map { result -> result.path("taskId").asText() })
-                assertTrue(visible.none { result -> result.path("taskId").asText() == wrongTypeTaskId })
-            } finally {
-                deleteAgentProjections(connection, pendingAgentTaskId, wrongTypeTaskId)
-            }
-        }
-    }
-
-    @Test
-    fun `fans out a published event to a durable agent task and requires explicit suggestion confirmation`() {
-        val editor = login("editor@alpha", "dev-editor")
-        val documentId = createDraft(editor, "E2E-AGENT-${UUID.randomUUID().toString().take(12)}").path("document").path("id").asText()
-        val workflow = postJson("$apiUrl/api/documents/$documentId/submit", """{"reviewerId":"alpha-reviewer"}""", editor)
-        val reviewer = login("reviewer@alpha", "dev-reviewer")
-        postJson(
-            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
-            """{"comment":"Agent acceptance","deliveryProfileId":"internal"}""", reviewer,
-        )
-        val admin = login("admin@alpha", "dev-admin")
-        post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
-        post("$apiUrl/api/tasks/process?limit=20", null, admin, "application/json")
-
-        val result = awaitAgentResult(documentId, admin)
-        val taskId = result.path("taskId").asText()
-        val suggestionId = mapper.readTree(result.path("result").asText()).path("suggestions").first().path("id").asText()
-        assertEquals("CLASSIFICATION", result.path("capability").asText())
-        assertEquals("SUCCEEDED", result.path("status").asText())
-
-        post("$apiUrl/api/documents/agent-results/$taskId/suggestions/$suggestionId/confirm", null, admin, "application/json")
-        assertTrue(awaitAgentResult(documentId, admin).path("confirmations").any { it.path("suggestionId").asText() == suggestionId })
-
-        val reviewerDetail = getJson("$apiUrl/api/documents/$documentId", reviewer)
-        val viewer = login("viewer@alpha", "dev-viewer")
-        val viewerDetail = getJson("$apiUrl/api/documents/$documentId", viewer)
-        assertTrue(reviewerDetail.path("agentResults").size() > 0)
-        assertEquals(0, viewerDetail.path("agentResults").size())
-    }
-
     private fun login(username: String, password: String): String = loginResponse(username, password).path("token").asText()
 
     private fun loginResponse(username: String, password: String): JsonNode = postJson(
@@ -1452,66 +1383,6 @@ class DevAcceptanceIntegrationTest {
             request.build(),
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
         )
-    }
-
-    private fun insertAgentProjection(
-        connection: Connection,
-        documentId: String,
-        taskId: String,
-        taskType: String,
-        taskStatus: String,
-        label: String,
-    ) {
-        val now = System.currentTimeMillis()
-        connection.prepareStatement(
-            """
-            INSERT INTO fw_task(
-                id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status,
-                retry_count, next_attempt_time, lease_expire_time, created_time, updated_time
-            ) VALUES (?, 'alpha', ?, ?, '{}'::jsonb, ?, ?, 0, ?, 0, ?, ?)
-            """.trimIndent(),
-        ).use { statement ->
-            statement.setString(1, taskId)
-            statement.setString(2, taskType)
-            statement.setString(3, documentId)
-            statement.setString(4, "e2e-agent-projection:$taskId")
-            statement.setString(5, taskStatus)
-            statement.setLong(6, now + 86_400_000L)
-            statement.setLong(7, now)
-            statement.setLong(8, now)
-            assertEquals(1, statement.executeUpdate())
-        }
-        val suggestionId = UUID.randomUUID().toString()
-        val resultJson =
-            """{"suggestions":[{"id":"$suggestionId","type":"CLASSIFICATION","payload":{"label":"$label"}}]}"""
-        connection.prepareStatement(
-            """
-            INSERT INTO fw_agent_result(
-                id, tenant_id, task_id, capability, source_event_id, source_event_type,
-                result_status, result_json, created_time, updated_time
-            ) VALUES (?, 'alpha', ?, 'CLASSIFICATION', ?, 'document.published', 'SUCCEEDED', CAST(? AS jsonb), ?, ?)
-            """.trimIndent(),
-        ).use { statement ->
-            statement.setString(1, UUID.randomUUID().toString())
-            statement.setString(2, taskId)
-            statement.setString(3, UUID.randomUUID().toString())
-            statement.setString(4, resultJson)
-            statement.setLong(5, now)
-            statement.setLong(6, now)
-            assertEquals(1, statement.executeUpdate())
-        }
-    }
-
-    private fun deleteAgentProjections(connection: Connection, vararg taskIds: String) {
-        val placeholders = taskIds.joinToString(",") { "?" }
-        connection.prepareStatement("DELETE FROM fw_agent_result WHERE tenant_id = 'alpha' AND task_id IN ($placeholders)").use { statement ->
-            taskIds.forEachIndexed { index, taskId -> statement.setString(index + 1, taskId) }
-            statement.executeUpdate()
-        }
-        connection.prepareStatement("DELETE FROM fw_task WHERE tenant_id = 'alpha' AND id IN ($placeholders)").use { statement ->
-            taskIds.forEachIndexed { index, taskId -> statement.setString(index + 1, taskId) }
-            statement.executeUpdate()
-        }
     }
 
     private fun awaitPublished(documentId: String, token: String): JsonNode {
@@ -1589,15 +1460,6 @@ class DevAcceptanceIntegrationTest {
             Thread.sleep(200)
         }
         throw AssertionError("Document $documentId did not complete downstream withdrawal within the expected window.")
-    }
-
-    private fun awaitAgentResult(documentId: String, token: String): JsonNode {
-        repeat(50) {
-            val result = getJson("$apiUrl/api/documents/$documentId", token).path("agentResults").firstOrNull()
-            if (result != null) return result
-            Thread.sleep(200)
-        }
-        throw AssertionError("Document $documentId did not receive an agent result within the expected window.")
     }
 
     private fun assertAuditActor(documentId: String, token: String, action: String, operatorId: String?, operatorName: String) {

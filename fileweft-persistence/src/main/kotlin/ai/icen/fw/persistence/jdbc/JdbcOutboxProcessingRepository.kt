@@ -50,7 +50,8 @@ class JdbcOutboxProcessingRepository(
         val connection = JdbcConnectionContext.requireCurrent()
 
         val candidateIds = connection.prepareStatement(
-            "$CANDIDATE_SELECT_SQL ${dialect.limitClause()} ${dialect.forUpdateSkipLocked()}",
+            "${candidateSelectSql(dialect.claimCandidateTable(OUTBOX_TABLE, CLAIM_ORDER_INDEX))} " +
+                "${dialect.limitClause()} ${dialect.forUpdateSkipLocked()}",
         ).use { statement ->
             statement.setLong(1, now)
             statement.setLong(2, now)
@@ -196,16 +197,19 @@ class JdbcOutboxProcessingRepository(
         const val LEGACY_RUNNING_GRACE_MILLIS = 300_000L
 
         const val SELECT_COLUMNS = "SELECT id, tenant_id, event_type, payload_json, trace_id, retry_count, created_time, lease_owner, lease_token"
-        const val CANDIDATE_SELECT_SQL = """
+        const val OUTBOX_TABLE = "fw_outbox_event"
+        const val CLAIM_ORDER_INDEX = "idx_fw_outbox_claim_order"
+
+        fun candidateSelectSql(tableExpression: String): String = """
             SELECT id
-            FROM fw_outbox_event
+            FROM $tableExpression
             WHERE (event_status IN ('PENDING', 'RETRY') AND next_attempt_time <= ?)
                OR (event_status = 'RUNNING' AND (
                     (lease_token IS NOT NULL AND lease_expire_time <= ?)
                     OR (lease_token IS NULL AND updated_time <= ?)
                ))
             ORDER BY created_time, id
-        """
+        """.trimIndent()
 
         const val FIND_FOR_MUTATION_SQL = """
             SELECT id, tenant_id, event_type, event_status, lease_owner, lease_token

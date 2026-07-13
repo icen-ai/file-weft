@@ -11,7 +11,7 @@ format: "markdown"
 
 ## 这页解决什么问题
 
-生产环境的 FileWeft 不是把全部能力一把打开的单一 jar。本页说明如何把同一个 `ai.icen:*:0.0.1` 制品拆分为不同运行角色：共享数据库与对象存储，但绝不共享不必要的权限。
+生产环境的 FileWeft 不是把全部能力一把打开的单一 jar。本页说明如何把同一个已完成远端验证的 `ai.icen:*:0.0.2` 制品拆分为不同运行角色：共享数据库与对象存储，但绝不共享不必要的权限。
 
 ## 推荐拓扑
 
@@ -101,13 +101,16 @@ fileweft:
     enabled: false
 ```
 
-作为一次性任务运行，不要作为长期服务：
+FileWeft 的启动初始化器会执行迁移，但不会在成功后自动终止 Spring 进程。因此，给普通长期运行的 Web 宿主追加上述参数，并不会让它变成一次性迁移 Job。请由宿主提供一个非 Web 的迁移可执行程序或专用 profile，在初始化成功后显式关闭 Spring 上下文并以 0 退出，例如：
 
 ```bash
-java -jar fileweft-host-0.0.1.jar \
+java -jar fileweft-migration-job-0.0.2.jar \
+  --spring.main.web-application-type=none \
   --fileweft.persistence.migration-mode=migrate \
   --fileweft.worker.enabled=false
 ```
+
+这里的 `fileweft-migration-job-0.0.2.jar` 是宿主自行打包的可执行程序名，并不是 FileWeft 发布的独立应用。只有宿主实现了迁移完成后的显式退出，上述命令才是一项真正的一次性 Job。
 
 ## 健康与就绪检查
 
@@ -120,7 +123,7 @@ curl -sf http://api:8080/fileweft/v1/health
 # 文档级 Doctor（需先完成认证）
 curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 ## 凭据边界

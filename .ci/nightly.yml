@@ -75,6 +75,34 @@ main:
         - name: stop-postgres
           script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
 
+    mysql:
+      <<: *fileweft-nightly-service
+      name: Nightly MySQL 8 integration
+      env: !reference [.fileweft-mysql-env]
+      stages:
+        - name: start-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait mysql
+        - name: mysql-integration
+          script: bash ./gradlew mysqlIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    kingbase:
+      <<: *fileweft-nightly-service
+      name: Nightly KingbaseES V8 integration
+      env: !reference [.fileweft-kingbase-env]
+      stages:
+        - name: load-verified-kingbase-image
+          script: bash .ci/scripts/prepare-kingbase-image.sh
+        - name: start-kingbase
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait kingbase
+        - name: kingbase-integration
+          script: bash ./gradlew kingbaseIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-kingbase
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
     rustfs:
       <<: *fileweft-nightly-service
       name: Nightly RustFS integration

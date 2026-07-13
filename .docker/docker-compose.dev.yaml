@@ -18,6 +18,56 @@ services:
       timeout: 3s
       retries: 12
 
+  mysql:
+    image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+    profiles: ["mysql"]
+    container_name: fw-dev-mysql
+    environment:
+      MYSQL_DATABASE: fileweft
+      MYSQL_ROOT_PASSWORD: fileweft-dev
+      MYSQL_USER: fileweft
+      MYSQL_PASSWORD: fileweft-dev
+    ports:
+      - "3306:3306"
+    volumes:
+      - fw-dev-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  kingbase:
+    # Loaded and identity-checked by .ci/scripts/prepare-kingbase-image.sh.
+    # The commercial database image remains vendor-hosted and is never
+    # redistributed as part of FileWeft.
+    image: kingbase_v008r006c009b0014_single_x86:v1
+    pull_policy: never
+    profiles: ["kingbase"]
+    container_name: fw-dev-kingbase
+    environment:
+      NEED_START: "yes"
+      DB_USER: system
+      DB_PASSWORD: kingbase
+      DB_MODE: pg
+      ENABLE_CI: "no"
+    ports:
+      - "54321:54321"
+    volumes:
+      - fw-dev-kingbase:/home/kingbase/userdata
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD=$$DB_PASSWORD
+          /home/kingbase/install/kingbase/bin/ksql
+          -U $$DB_USER -d test -Atqc 'SELECT 1' | grep -qx 1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
   rustfs:
     image: rustfs/rustfs@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
     container_name: fw-dev-rustfs
@@ -159,4 +209,6 @@ services:
 
 volumes:
   fw-dev-postgres:
+  fw-dev-mysql:
+  fw-dev-kingbase:
   fw-dev-rustfs:

@@ -21,14 +21,27 @@ import java.util.ServiceLoader
  * Deterministic plugin registry. Spring contributions take precedence over a
  * ServiceLoader copy of the same implementation, while conflicting plugin ids
  * and connector ids fail fast with a startup diagnostic. Every accepted
- * plugin is queried exactly once during construction; all consumers then read
- * immutable contribution snapshots containing the original instances.
+ * plugin contribution enabled for the current compatibility surface is queried
+ * exactly once during construction; all consumers then read immutable
+ * contribution snapshots containing the original instances.
  */
-class FileWeftPluginRegistry @JvmOverloads constructor(
-    springPlugins: List<FileWeftPlugin> = emptyList(),
-    classLoader: ClassLoader = contextClassLoader(),
+class FileWeftPluginRegistry private constructor(
+    springPlugins: List<FileWeftPlugin>,
+    classLoader: ClassLoader,
+    legacyAgentCompatibilityEnabled: Boolean,
 ) : PluginInventoryProvider {
-    private val snapshotsById: Map<String, PluginSnapshot> = collectPlugins(springPlugins, classLoader)
+    /**
+     * Creates the supported registry surface. Deferred Agent contributions are
+     * deliberately neither queried nor exposed by this constructor.
+     */
+    @JvmOverloads
+    constructor(
+        springPlugins: List<FileWeftPlugin> = emptyList(),
+        classLoader: ClassLoader = contextClassLoader(),
+    ) : this(springPlugins, classLoader, false)
+
+    private val snapshotsById: Map<String, PluginSnapshot> =
+        collectPlugins(springPlugins, classLoader, legacyAgentCompatibilityEnabled)
     private val inventorySnapshot: List<PluginInventoryDescriptor> = immutableList(
         snapshotsById.values.map(::inventoryDescriptor),
     )
@@ -83,8 +96,14 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
         return Collections.unmodifiableList(merged)
     }
 
-    private companion object {
-        fun collectPlugins(springPlugins: List<FileWeftPlugin>, classLoader: ClassLoader): Map<String, PluginSnapshot> {
+    companion object {
+        private const val LEGACY_AGENT_DOCTOR_CHECKER_NAME = "agent"
+
+        private fun collectPlugins(
+            springPlugins: List<FileWeftPlugin>,
+            classLoader: ClassLoader,
+            legacyAgentCompatibilityEnabled: Boolean,
+        ): Map<String, PluginSnapshot> {
             val discovered = LinkedHashMap<String, DiscoveredPlugin>()
             springPlugins.forEach { plugin -> register(discovered, discover(plugin, PluginOrigin.SPRING)) }
             ServiceLoader.load(FileWeftPlugin::class.java, classLoader).forEach { plugin ->
@@ -99,33 +118,53 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
                 }
             }
             val snapshots = LinkedHashMap<String, PluginSnapshot>()
-            discovered.forEach { (id, plugin) -> snapshots[id] = snapshot(plugin) }
+            discovered.forEach { (id, plugin) ->
+                snapshots[id] = snapshot(plugin, legacyAgentCompatibilityEnabled)
+            }
             return Collections.unmodifiableMap(snapshots)
         }
 
-        fun discover(plugin: FileWeftPlugin, origin: PluginOrigin): DiscoveredPlugin {
+        private fun discover(plugin: FileWeftPlugin, origin: PluginOrigin): DiscoveredPlugin {
             val id = plugin.id()
             require(id.isNotBlank()) { "${origin.label} FileWeftPlugin id must not be blank." }
             return DiscoveredPlugin(id, plugin, origin)
         }
 
-        fun register(target: MutableMap<String, DiscoveredPlugin>, discovered: DiscoveredPlugin) {
+        private fun register(target: MutableMap<String, DiscoveredPlugin>, discovered: DiscoveredPlugin) {
             require(target.putIfAbsent(discovered.id, discovered) == null) {
                 "${discovered.origin.label} FileWeftPlugin id ${discovered.id} is registered more than once."
             }
         }
 
-        fun snapshot(discovered: DiscoveredPlugin): PluginSnapshot = try {
+        private fun snapshot(
+            discovered: DiscoveredPlugin,
+            legacyAgentCompatibilityEnabled: Boolean,
+        ): PluginSnapshot = try {
             val plugin = discovered.plugin
+            val doctorCheckers = immutableList(plugin.doctorCheckers()).let { contributions ->
+                if (legacyAgentCompatibilityEnabled) {
+                    contributions
+                } else {
+                    immutableList(
+                        contributions.filterNot { checker ->
+                            checker.name() == LEGACY_AGENT_DOCTOR_CHECKER_NAME
+                        },
+                    )
+                }
+            }
             PluginSnapshot(
                 id = discovered.id,
                 plugin = plugin,
                 origin = discovered.origin,
                 storageAdapters = immutableList(plugin.storageAdapters()),
                 connectors = immutableMap(plugin.connectors()),
-                doctorCheckers = immutableList(plugin.doctorCheckers()),
-                agents = immutableList(plugin.agents()),
-                agentTaskTriggers = immutableList(plugin.agentTaskTriggers()),
+                doctorCheckers = doctorCheckers,
+                agents = if (legacyAgentCompatibilityEnabled) immutableList(plugin.agents()) else emptyList(),
+                agentTaskTriggers = if (legacyAgentCompatibilityEnabled) {
+                    immutableList(plugin.agentTaskTriggers())
+                } else {
+                    emptyList()
+                },
                 outboxEventHandlers = immutableList(plugin.outboxEventHandlers()),
                 taskHandlers = immutableList(plugin.taskHandlers()),
                 reviewRouteProviders = immutableList(plugin.reviewRouteProviders()),
@@ -137,7 +176,7 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
             )
         }
 
-        fun snapshotConnectors(snapshots: Collection<PluginSnapshot>): ConnectorSnapshot {
+        private fun snapshotConnectors(snapshots: Collection<PluginSnapshot>): ConnectorSnapshot {
             val connectors = LinkedHashMap<String, FileConnector>()
             val pluginIds = LinkedHashMap<String, String>()
             snapshots.forEach { snapshot ->
@@ -152,7 +191,7 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
             return ConnectorSnapshot(immutableMap(connectors), immutableMap(pluginIds))
         }
 
-        fun inventoryDescriptor(snapshot: PluginSnapshot): PluginInventoryDescriptor {
+        private fun inventoryDescriptor(snapshot: PluginSnapshot): PluginInventoryDescriptor {
             val capabilities = ArrayList<PluginCapabilityDescriptor>()
             capabilities.addIfPresent(PluginCapabilityType.STORAGE_ADAPTER, snapshot.storageAdapters.size)
             capabilities.addIfPresent(PluginCapabilityType.CONNECTOR, snapshot.connectors.size)
@@ -168,18 +207,33 @@ class FileWeftPluginRegistry @JvmOverloads constructor(
             )
         }
 
-        fun MutableList<PluginCapabilityDescriptor>.addIfPresent(type: PluginCapabilityType, count: Int) {
+        private fun MutableList<PluginCapabilityDescriptor>.addIfPresent(type: PluginCapabilityType, count: Int) {
             if (count > 0) add(PluginCapabilityDescriptor(type, count))
         }
 
-        fun contextClassLoader(): ClassLoader = Thread.currentThread().contextClassLoader
+        private fun contextClassLoader(): ClassLoader = Thread.currentThread().contextClassLoader
             ?: FileWeftPluginRegistry::class.java.classLoader
 
-        fun <T> immutableList(source: Collection<T>): List<T> =
+        private fun <T> immutableList(source: Collection<T>): List<T> =
             Collections.unmodifiableList(ArrayList(source))
 
-        fun <K, V> immutableMap(source: Map<K, V>): Map<K, V> =
+        private fun <K, V> immutableMap(source: Map<K, V>): Map<K, V> =
             Collections.unmodifiableMap(LinkedHashMap(source))
+
+        /**
+         * Compatibility-only registry used by the legacy Agent starter bridge.
+         * New integrations must use the default constructor.
+         */
+        @JvmStatic
+        @JvmOverloads
+        fun withLegacyAgentCompatibility(
+            springPlugins: List<FileWeftPlugin> = emptyList(),
+            classLoader: ClassLoader = contextClassLoader(),
+        ): FileWeftPluginRegistry = FileWeftPluginRegistry(
+            springPlugins,
+            classLoader,
+            true,
+        )
     }
 
     private class DiscoveredPlugin(

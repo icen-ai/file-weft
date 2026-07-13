@@ -23,7 +23,7 @@ All endpoints share the prefix `/fileweft/v1`. The response envelope is consiste
 }
 ```
 
-When `code` is not `OK`, `error` contains a structured object with `code`, `message`, and optional `details`. See [Error codes](./error-codes.md) for the stable error code catalog.
+When `code` is not `OK`, `error` contains exactly the same stable `code` and safe `message` as the outer envelope; it has no arbitrary detail attributes. See [Error codes](./error-codes.md) for the stable error code catalog.
 
 > [!NOTE]
 > FileWeft does not expose storage URLs through the public protocol. Downloads return binary streams with `attachment`, `nosniff`, and `private, no-store` headers. Range, HEAD, ETag, and Content-Range are not supported.
@@ -40,9 +40,19 @@ When `code` is not `OK`, `error` contains a structured object with `code`, `mess
 | Doctor | `GET /documents/{documentId}/doctor`<br>`POST /documents/{documentId}/doctor/tasks`<br>`GET /documents/{documentId}/doctor/tasks/{taskId}`<br>`GET /doctor` | Document and system diagnostics |
 | System | `GET /plugins`<br>`GET /health` | Plugin inventory and liveness |
 
-## Idempotent commands
+## Command-specific idempotency
 
-State-changing commands require exactly one `Idempotency-Key` header. The server stores a tenant-scoped SHA-256 digest bound to the trusted operator, action, resource, and command fingerprint.
+Idempotency requirements are part of each command contract; they are not inferred merely because an HTTP method changes state. For the upload resource, the requirements are exact:
+
+| Command | Required request contract |
+| --- | --- |
+| `POST /uploads` | Exactly one `Idempotency-Key`; JSON body with `fileName`, `contentLength`, optional `contentType`, and optional `contentHash` only |
+| `GET /uploads/{uploadId}` | No idempotency key; returns the authoritative checkpoint and, once complete, the completion receipt |
+| `PUT /uploads/{uploadId}/parts/{partNumber}` | `Content-Type: application/octet-stream`, exactly one `X-FileWeft-Part-Length`, and raw non-empty bytes; no idempotency key |
+| `POST /uploads/{uploadId}/complete` | No body and no idempotency key |
+| `DELETE /uploads/{uploadId}` | No body and no idempotency key |
+
+Other commands declare their own requirements. For example, document publication uses an `Idempotency-Key`:
 
 ```bash
 curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_123/publish" \
@@ -55,20 +65,24 @@ curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_123/publish
 > [!WARNING]
 > Replay still re-runs authentication, action permission, and catalog visibility checks. An idempotency record is not an authorization cache.
 
-## Complete example: upload and publish
-
-The JSON bodies below use representative field names to show the command shape. Exact request schemas are owned by the v1 contract and may be stricter than shown.
+## Complete resumable-upload example
 
 ### 1. Create an upload session
 
 ```bash
 curl -X POST "https://fileweft.example.com/fileweft/v1/uploads" \
   -H "Authorization: Bearer ${TOKEN}" \
+  -H "Idempotency-Key: annual-report-upload-2025" \
   -H "Content-Type: application/json" \
   -d '{
-    "...": "file metadata and multipart plan"
+    "fileName": "annual-report-2025.pdf",
+    "contentLength": 104857600,
+    "contentType": "application/pdf",
+    "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }'
 ```
+
+Use a key that is unique to this logical upload creation. The JSON object cannot select a tenant, owner, asset type, storage key, storage upload ID, ETag, or arbitrary metadata.
 
 Response:
 
@@ -78,7 +92,16 @@ Response:
   "message": "OK",
   "data": {
     "uploadId": "upl_7a8b9c",
-    "...": "session details"
+    "fileName": "annual-report-2025.pdf",
+    "contentLength": 104857600,
+    "contentType": "application/pdf",
+    "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "status": "UPLOADING",
+    "expiresAt": 1752393600000,
+    "createdTime": 1752307200000,
+    "updatedTime": 1752307200000,
+    "uploadedParts": [],
+    "completion": null
   },
   "error": null,
   "traceId": "trace-abc-123"
@@ -88,44 +111,60 @@ Response:
 ### 2. Upload each part
 
 ```bash
-for part in {1..5}; do
-  curl -X PUT "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c/parts/${part}" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/octet-stream" \
-    --data-binary @part-${part}.bin
-done
+PART_FILE="part-1.bin"
+PART_LENGTH="$(wc -c < "${PART_FILE}" | tr -d ' ')"
+
+curl -X PUT "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c/parts/1" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/octet-stream" \
+  -H "X-FileWeft-Part-Length: ${PART_LENGTH}" \
+  --data-binary @"${PART_FILE}"
 ```
 
-### 3. Complete the upload and create a document
+Repeat with the next positive `partNumber`. `X-FileWeft-Part-Length` must appear exactly once and must equal the bytes sent for that part.
+
+### 3. Resume from the authoritative checkpoint
+
+```bash
+curl "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c" \
+  -H "Authorization: Bearer ${TOKEN}"
+```
+
+Read `data.uploadedParts` before resuming after a disconnect. The same `uploadId` remains the query key after completion, when `status` becomes `COMPLETED` and `data.completion` contains the stable receipt.
+
+### 4. Complete the upload
 
 ```bash
 curl -X POST "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c/complete" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "...": "completion and document metadata"
-  }'
+  -H "Authorization: Bearer ${TOKEN}"
 ```
 
-### 4. Submit for review
+The completion command has no request body. It completes the upload synchronously and returns an opaque receipt:
+
+```json
+{
+  "code": "OK",
+  "message": "OK",
+  "data": {
+    "uploadId": "upl_7a8b9c",
+    "fileObjectId": "file_123",
+    "fileAssetId": "asset_456"
+  },
+  "error": null,
+  "traceId": "trace-abc-123"
+}
+```
+
+It does not create a document. Creating a document or version from the completed asset is a separate, host-owned application command. The current formal `POST /fileweft/v1/documents` and `POST /fileweft/v1/documents/{documentId}/versions` endpoints accept multipart content, not `fileAssetId`. This deliberate boundary is not a defect or a 0.0.2 blocker for the resumable-upload resource.
+
+### 5. Query the completed upload again
 
 ```bash
-curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_456/submit" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Idempotency-Key: submit-doc_456-20250713" \
-  -H "Content-Type: application/json" \
-  -d '{"...": "review route selection"}'
+curl "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c" \
+  -H "Authorization: Bearer ${TOKEN}"
 ```
 
-### 5. Approve and publish
-
-```bash
-curl -X POST "https://fileweft.example.com/fileweft/v1/workflows/wf_789/tasks/task_111/approve" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Idempotency-Key: approve-task_111-20250713" \
-  -H "Content-Type: application/json" \
-  -d '{"...": "approval payload"}'
-```
+The inspection response now carries the same three IDs under `data.completion`, so a lost completion response can be recovered without completing the upload again.
 
 ## Binary downloads
 
@@ -149,11 +188,11 @@ Cache-Control: private, no-store
 **Are internal development routes part of the public protocol?**
 No. Routes under `/api/**` are development or internal endpoints and may change without notice. Build integrations against `/fileweft/v1` only.
 
-**Do I need an idempotency key for GET requests?**
-No. Only state-changing commands such as publish, approve, retry, and Doctor task scheduling require one.
+**Does every write request need an idempotency key?**
+No. Follow the individual endpoint contract. Upload creation requires exactly one; upload-part, complete and abort do not. GET never requires one.
 
 **Can I use the same idempotency key for different actions?**
-No. The key is bound to the operator, action, resource, and command fingerprint. Reusing it for a different action creates a new record.
+Do not do so. For a command that accepts the header, use a key unique to the intended logical command; the server binds its digest to the trusted context and command fingerprint.
 
 ## Next steps
 

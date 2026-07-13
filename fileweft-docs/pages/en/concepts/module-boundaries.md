@@ -23,7 +23,7 @@ adapter → spi
 - `spi` defines contracts: tenant, identity, authorization, storage, connectors, workflow, AI and tasks. It has no implementation.
 - `domain` contains the business rules: `Document`, `FileAsset`, lifecycle and versioning. It depends on `core` and `spi` only.
 - `application` orchestrates use cases such as upload, publish, offline and Doctor. It calls domain objects and persists through repositories, but it never talks to MinIO or Dify directly.
-- `adapter` holds external implementations: MinIO, OSS, S3, Dify, ESE, AppBuilder. Adapters depend on `spi`.
+- `adapter` is where host or plugin external implementations belong. Named OSS, Dify, ESE and AppBuilder official adapters remain future roadmap work; adapters depend on `spi`.
 - `persistence` implements repositories and Flyway migrations.
 - `runtime` and `starter` package the web layer and Spring Boot auto-configuration.
 
@@ -38,7 +38,7 @@ adapter → spi
 | `fileweft-spi` | contracts for storage, identity, tenant, authorization, connectors, tasks, doctor | implementations, vendor types |
 | `fileweft-domain` | `Document`, `FileAsset`, lifecycle, version, audit rules | database queries, HTTP, SDK calls |
 | `fileweft-application` | upload, publish, offline, Doctor, synchronization use cases | direct storage/connector access |
-| `fileweft-adapter-*` | external system integrations (S3, MinIO, Dify, ESE, AppBuilder) | business rules |
+| `fileweft-adapter-*` | External-system adapter boundary; current support claims are limited to implementations backed by repository evidence | Business rules |
 | `fileweft-persistence` | repository implementations, Flyway migrations, tenant-scoped SQL | business logic |
 | `fileweft-web-runtime` / `fileweft-spring-boot3-starter` | HTTP controllers, DTO conversion, auto-configuration | repository/storage/connector calls |
 
@@ -51,7 +51,7 @@ If your organization stores files on a proprietary object store, create a new ad
 ```kotlin
 // fileweft-adapter-acme/build.gradle.kts
 dependencies {
-    implementation("ai.icen:fileweft-spi:0.0.1")
+    implementation("ai.icen:fileweft-spi:0.0.2")
 }
 ```
 

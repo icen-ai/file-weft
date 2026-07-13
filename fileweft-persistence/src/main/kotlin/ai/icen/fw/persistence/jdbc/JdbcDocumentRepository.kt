@@ -57,10 +57,7 @@ class JdbcDocumentRepository(
                     statement.executeUpdate()
                 }
             } catch (failure: java.sql.SQLException) {
-                if (
-                    failure.sqlState == UNIQUE_VIOLATION_SQL_STATE &&
-                    failure.message?.contains(DOCUMENT_NUMBER_UNIQUE_CONSTRAINT) == true
-                ) {
+                if (failure.isDocumentNumberUniqueViolation()) {
                     throw DocumentNumberAlreadyExistsException(document.documentNumber)
                 }
                 throw failure
@@ -159,8 +156,38 @@ class JdbcDocumentRepository(
         fileObjectId = Identifier(result.getString("file_id")),
     )
 
+    private fun java.sql.SQLException.isDocumentNumberUniqueViolation(): Boolean {
+        val constraintName = when (sqlState) {
+            POSTGRESQL_UNIQUE_VIOLATION_SQL_STATE -> POSTGRESQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT
+            MYSQL_INTEGRITY_CONSTRAINT_SQL_STATE -> {
+                if (errorCode != MYSQL_DUPLICATE_ENTRY_ERROR_CODE) return false
+                MYSQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT
+            }
+            else -> return false
+        }
+        val failureMessage = message ?: return false
+        return when (sqlState) {
+            POSTGRESQL_UNIQUE_VIOLATION_SQL_STATE ->
+                failureMessage.contains(constraintName, ignoreCase = true)
+            MYSQL_INTEGRITY_CONSTRAINT_SQL_STATE ->
+                MYSQL_DOCUMENT_NUMBER_DUPLICATE_KEY.containsMatchIn(failureMessage)
+            else -> false
+        }
+    }
+
     private companion object {
-        const val UNIQUE_VIOLATION_SQL_STATE = "23505"
-        const val DOCUMENT_NUMBER_UNIQUE_CONSTRAINT = "fw_document_tenant_id_doc_no_key"
+        const val POSTGRESQL_UNIQUE_VIOLATION_SQL_STATE = "23505"
+        const val POSTGRESQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT = "fw_document_tenant_id_doc_no_key"
+        const val MYSQL_INTEGRITY_CONSTRAINT_SQL_STATE = "23000"
+        const val MYSQL_DUPLICATE_ENTRY_ERROR_CODE = 1062
+        // V001 intentionally keeps MySQL's original unnamed UNIQUE key so its
+        // released Flyway checksum stays stable. MySQL names that key after
+        // its first column and reports it as either `tenant_id` or
+        // `<table>.tenant_id` in duplicate-entry errors.
+        const val MYSQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT = "tenant_id"
+        val MYSQL_DOCUMENT_NUMBER_DUPLICATE_KEY = Regex(
+            """\bfor\s+key\s+['`](?:[^'`]+\.)?${MYSQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT}['`]""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 }

@@ -1,6 +1,6 @@
 ---
 name: integrate-fileweft
-description: Integrate and operate FileWeft 0.0.1 in a Kotlin, Java, Spring Boot 2, or Spring Boot 3 host application. Use when an AI must add FileWeft dependencies, implement tenant, identity, authorization, storage, catalog, workflow, or connector SPIs, expose the formal v1 HTTP API, configure PostgreSQL migrations and Outbox workers safely, or add FileWeft contract and integration tests.
+description: Integrate and operate FileWeft 0.0.2 in a Kotlin, Java, Spring Boot 2, or Spring Boot 3 host application. Use when an AI must add FileWeft dependencies, implement tenant, identity, authorization, storage, catalog, workflow, or connector SPIs, expose the formal v1 HTTP API, configure supported database migrations and Outbox workers safely, or add FileWeft contract and integration tests.
 ---
 
 # Integrate FileWeft
@@ -12,7 +12,7 @@ Use FileWeft as infrastructure owned by the host application. Keep host authenti
 Before changing an integration, read:
 
 - `README.md` for the current release, deployment, and migration guidance.
-- `docs/releases/0.0.1.md` for release boundaries and known limitations.
+- `docs/releases/0.0.2.md` for the current release boundary and `docs/releases/0.0.1.md` for historical upgrade constraints.
 - `docs/plugin-development.md` for SPI, catalog, connector, and TestKit rules.
 - `docs/production-operations.md` before database, worker, retry, or rollout changes.
 - The exact interface under `fileweft-spi/src/main/kotlin/ai/icen/fw/spi/` before implementing it.
@@ -21,7 +21,7 @@ Do not copy types or behavior from `fileweft-dev` into production. Use it only a
 
 ## Select modules
 
-Use version `0.0.1` and Maven group `ai.icen`. Never use the withdrawn `com.fileweft` coordinates.
+Use version `0.0.2` and Maven group `ai.icen` only after the protected `v0.0.2` tag pipeline and anonymous remote cold-cache resolution succeed. Never use the withdrawn `com.fileweft` coordinates or substitute an unverified SNAPSHOT.
 
 For Spring Boot 3:
 
@@ -33,8 +33,8 @@ repositories {
 }
 
 dependencies {
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.1")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
 }
 ```
 
@@ -84,7 +84,7 @@ Do not call a downstream from a controller or inside a database transaction. Pub
 
 ## Configure PostgreSQL migrations safely
 
-PostgreSQL is the only persistence target validated by the 0.0.1 release. FileWeft migrations use only `classpath:ai/icen/fw/db/migration` and the dedicated `fileweft_schema_history` table. Do not add that path to the host Flyway configuration.
+The 0.0.2 release contract validates PostgreSQL, native MySQL 8.x from 8.0.17, and KingbaseES V8 in independent real-database lanes; evidence for one dialect never substitutes for another. FileWeft migrations use only `classpath:ai/icen/fw/db/migration` and the dedicated `fileweft_schema_history` table. Do not add that path to the host Flyway configuration.
 
 Pre-create the production schema and make the JDBC current schema match the FileWeft assertion:
 
@@ -146,7 +146,7 @@ Add the TestKit:
 
 ```kotlin
 dependencies {
-    testImplementation("ai.icen:fileweft-testkit:0.0.1")
+    testImplementation("ai.icen:fileweft-testkit:0.0.2")
 }
 ```
 

@@ -44,8 +44,8 @@ class SecurityTenantProvider : TenantProvider {
 
 这意味着：
 
-1. 缺少 `TenantProvider` 会让操作失败关闭，而不是回退到共享租户。
-2. 相同文档编号在不同租户下不会互相看到对方的草稿。
+1. 缺少 `TenantProvider` 会让操作故障关闭，而不是回退到共享租户。
+2. 文档编号相同的不同租户，也看不到彼此的草稿。
 3. 审计日志、工作流任务和 Outbox 事件全部按租户隔离。
 
 ## 3. 存储路径隔离
@@ -72,7 +72,7 @@ s3://bucket/{tenantId}/documents/{objectName}
 
 | 关注点 | 隔离机制 |
 | --- | --- |
-| Outbox 事件 | 每个事件携带 `tenantId`；Worker 只处理解析租户的事件。 |
+| Outbox 事件 | 每个事件携带 `tenantId`；Worker 只处理已解析租户对应的事件。 |
 | 后台任务 | `fw_task` 行包含 `tenant_id`；Handler 通过 `TaskExecution.tenantId` 接收。 |
 | 审计日志 | 查询端点按当前租户上下文过滤。 |
 | 缓存 | 缓存键必须包含租户 ID。FileWeft 不提供跨租户共享缓存。 |

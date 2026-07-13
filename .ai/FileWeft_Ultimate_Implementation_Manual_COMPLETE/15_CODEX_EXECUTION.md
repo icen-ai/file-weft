@@ -1,6 +1,11 @@
 
 # Codex Execution Plan
 
+> **Superseding execution rule:** Phase 9 is historical and must not be
+> executed. `0.0.2` has no Agent product capability. Agent redesign is deferred
+> indefinitely and can only be reassessed after `1.0.0` is released, without a
+> committed delivery version.
+
 
 Phase 1:
 Core
@@ -35,7 +40,7 @@ Doctor
 
 
 Phase 9:
-Agent
+Agent (historical plan; superseded and deferred)
 
 
 Phase 10:

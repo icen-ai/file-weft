@@ -134,13 +134,13 @@ export const pages = {
     "order": 2,
     "en": {
       "nav": "Installation",
-      "title": "Install the 0.0.1 line",
+      "title": "Install the 0.0.2 line",
       "lead": "Add FileWeft to your build, align Spring Boot generations, and verify the dependency tree.",
       "file": "pages/en/getting-started/installation.md"
     },
     "zh": {
       "nav": "安装",
-      "title": "安装 0.0.1 正式版",
+      "title": "安装 0.0.2 正式版",
       "lead": "将 FileWeft 加入构建，对齐 Spring Boot 代际，并验证依赖树。",
       "file": "pages/zh/getting-started/installation.md"
     }
@@ -151,12 +151,12 @@ export const pages = {
     "en": {
       "nav": "First integration",
       "title": "Wire a trustworthy host",
-      "lead": "Move from a dependency declaration to a production host by providing trusted identity context, shared storage, PostgreSQL schema ownership, and separated runtime roles.",
+      "lead": "Move from a dependency declaration to a production host by providing trusted identity context, shared storage, PostgreSQL schema ownership, and separate runtime roles.",
       "file": "pages/en/getting-started/first-integration.md"
     },
     "zh": {
       "nav": "首次接入",
-      "title": "装配可信宿主",
+      "title": "接入可信宿主",
       "lead": "从依赖声明走向生产宿主：提供可信身份上下文、共享存储、PostgreSQL schema 归属，并拆分运行时角色。",
       "file": "pages/zh/getting-started/first-integration.md"
     }
@@ -236,8 +236,8 @@ export const pages = {
     },
     "zh": {
       "nav": "安全模型",
-      "title": "失败关闭的安全模型",
-      "lead": "FileWeft 不会猜测调用者是谁、能做什么。它把身份、租户和授权委托给宿主，并把缺失或歧义的安全边界视为拒绝。本页说明三个提供者契约、失败关闭规则，以及公共响应中不会暴露什么。",
+      "title": "故障关闭安全模型",
+      "lead": "FileWeft 不会猜测调用者是谁、能做什么。它把身份、租户和授权委托给宿主，并把缺失或歧义的安全边界视为拒绝。本页说明三个提供者契约、故障关闭规则，以及公共响应中不会暴露什么。",
       "file": "pages/zh/concepts/security-model.md"
     }
   },
@@ -253,7 +253,7 @@ export const pages = {
     "zh": {
       "nav": "Outbox 与 Worker",
       "title": "Outbox：永远不要在事务里调用下游",
-      "lead": "最快速度搞砸一致性的方法，就是在数据库提交里发送 HTTP 请求。FileWeft 在同一个业务事务里把事件写入 Outbox 表，再由 Worker 异步交付。本页说明该模式、Worker 配置以及如何观察积压。",
+      "lead": "毁掉一致性最快的方式，是在数据库提交里发送 HTTP 请求。FileWeft 在同一个业务事务里把事件写入 Outbox 表，再由 Worker 异步交付。本页说明该模式、Worker 配置以及如何观察积压。",
       "file": "pages/zh/concepts/outbox.md"
     }
   },
@@ -278,14 +278,14 @@ export const pages = {
     "order": 2,
     "en": {
       "nav": "Workflow & uploads",
-      "title": "Approval, resumable uploads, and durable agents",
-      "lead": "Understand how FileWeft handles long-running work—document review, multipart uploads, and background AI tasks—without weakening transaction boundaries or leaking storage internals.",
+      "title": "Approval, resumable uploads, and durable tasks",
+      "lead": "Understand how FileWeft handles long-running work—document review, multipart uploads, and generic background tasks—without weakening transaction boundaries or leaking storage internals.",
       "file": "pages/en/guides/workflows-uploads.md"
     },
     "zh": {
       "nav": "工作流与上传",
-      "title": "审批、断点续传与持久化 Agent",
-      "lead": "理解 FileWeft 如何处理长周期工作——文档审批、分片上传和后台 AI 任务——同时不削弱事务边界，也不向外部泄漏存储内部细节。",
+      "title": "审批、断点续传与持久任务",
+      "lead": "理解 FileWeft 如何处理长周期工作——文档审批、分片上传和通用后台任务——同时不削弱事务边界，也不向外部泄漏存储内部细节。",
       "file": "pages/zh/guides/workflows-uploads.md"
     }
   },
@@ -295,13 +295,13 @@ export const pages = {
     "en": {
       "nav": "Catalog provider",
       "title": "Implement a catalog provider",
-      "lead": "Bind your host folder tree to FileWeft documents without surrendering control of directory paths, ACLs, or display names.",
+      "lead": "Bind FileWeft documents to your host folder tree while keeping control of directory paths, ACLs, and display names.",
       "file": "pages/en/guides/catalog-provider.md"
     },
     "zh": {
       "nav": "目录 Provider",
       "title": "实现目录 Provider",
-      "lead": "把宿主目录树绑定到 FileWeft 文档，同时不放弃对目录路径、ACL 和显示名称的控制权。",
+      "lead": "将 FileWeft 文档绑定到宿主目录树，同时保留对目录路径、ACL 和显示名称的控制。",
       "file": "pages/zh/guides/catalog-provider.md"
     }
   },
@@ -325,15 +325,15 @@ export const pages = {
     "group": "guides",
     "order": 5,
     "en": {
-      "nav": "Agent handler",
+      "nav": "Task handler",
       "title": "Implement a durable task handler",
-      "lead": "Add background work such as OCR, virus scanning, or AI extraction by implementing FileWeftTaskHandler. Workers use leases and idempotent task IDs.",
+      "lead": "Add background work such as OCR, virus scanning, or host-owned extraction by implementing FileWeftTaskHandler. Workers use leases and idempotent task IDs.",
       "file": "pages/en/guides/agent-handler.md"
     },
     "zh": {
-      "nav": "Agent Handler",
+      "nav": "任务 Handler",
       "title": "实现持久任务 Handler",
-      "lead": "通过实现 FileWeftTaskHandler 添加 OCR、病毒扫描、AI 抽取等后台工作。Worker 使用租约和幂等任务 ID。",
+      "lead": "通过实现 FileWeftTaskHandler 添加 OCR、病毒扫描或宿主自有抽取等后台工作。Worker 使用租约和幂等任务 ID。",
       "file": "pages/zh/guides/agent-handler.md"
     }
   },
@@ -364,7 +364,7 @@ export const pages = {
     },
     "zh": {
       "nav": "一致性模型",
-      "title": "本地原子，显式收敛",
+      "title": "本地事务原子，远程状态显式收敛",
       "lead": "FileWeft 不承诺跨 PostgreSQL、对象存储和多个下游系统的分布式事务。它保证每一次本地状态变更的原子性，并让远端收敛过程可观测、可重试且易于推理。",
       "file": "pages/zh/architecture/consistency.md"
     }
@@ -380,7 +380,7 @@ export const pages = {
     },
     "zh": {
       "nav": "安全架构",
-      "title": "所有边界都失败关闭",
+      "title": "所有边界默认拒绝",
       "lead": "FileWeft 只在完整安全边界存在时才装配能力。上下文缺失、Provider 歧义或未经验证的自定义持久化都会让操作不可用，而不是静默扩大访问范围。",
       "file": "pages/zh/architecture/security.md"
     }
@@ -550,13 +550,13 @@ export const pages = {
     "order": 2,
     "en": {
       "nav": "Connector engineering",
-      "title": "Engineer resilient connectors",
+      "title": "Build resilient connectors",
       "lead": "Learn how to implement a FileConnector that publishes documents to downstream systems safely using bounded timeouts, retries, idempotency, removal, and health checks.",
       "file": "pages/en/extensions/connectors.md"
     },
     "zh": {
       "nav": "连接器工程",
-      "title": "构建高可用连接器",
+      "title": "构建弹性连接器",
       "lead": "学习如何实现 FileConnector，通过有界超时、重试、幂等、撤回和健康检查，安全地将文档发布到下游系统。",
       "file": "pages/zh/extensions/connectors.md"
     }
@@ -613,15 +613,15 @@ export const pages = {
     "group": "project",
     "order": 4,
     "en": {
-      "nav": "0.0.2 development",
-      "title": "0.0.2 development line",
-      "lead": "This page tracks the 0.0.2-SNAPSHOT development line, the migration work it introduces, and what you must verify before treating any 0.0.2 artifact as stable.",
+      "nav": "Release 0.0.2",
+      "title": "Release 0.0.2",
+      "lead": "This page records the exact 0.0.2 release contract and the protected-tag plus anonymous remote-resolution evidence required before its Maven coordinates are consumable.",
       "file": "pages/en/project/release-0-0-2-development.md"
     },
     "zh": {
-      "nav": "0.0.2 开发中",
-      "title": "0.0.2 开发线",
-      "lead": "本页跟踪 0.0.2-SNAPSHOT 开发线、它引入的迁移工作，以及你在把任何 0.0.2 制品视为稳定前必须验证的内容。",
+      "nav": "0.0.2 发布说明",
+      "title": "0.0.2 正式版",
+      "lead": "本页记录 0.0.2 的精确发布合同，以及 Maven 坐标可消费前必须具备的受保护标签与远端匿名解析证据。",
       "file": "pages/zh/project/release-0-0-2-development.md"
     }
   },
@@ -685,7 +685,7 @@ export const pages = {
     "zh": {
       "nav": "审计日志",
       "title": "读取文档审计日志",
-      "lead": "通过正式 v1 审计端点，追踪文档被谁修改、何时发布、以及下游交付是否成功。",
+      "lead": "通过正式 v1 审计端点，追踪文档修改人、发布时间以及下游交付是否成功。",
       "file": "pages/zh/guides/audit-log.md"
     }
   },

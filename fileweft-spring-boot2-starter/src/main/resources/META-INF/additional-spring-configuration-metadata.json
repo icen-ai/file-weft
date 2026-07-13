@@ -38,6 +38,18 @@
       "type": "java.lang.Boolean",
       "description": "Allows MIGRATE to create the explicitly configured FileWeft schema. A true value is rejected in DISABLED and VALIDATE modes without database access; leave false when schema ownership belongs to the database operator.",
       "defaultValue": false
+    },
+    {
+      "name": "fileweft.persistence.kingbase-flyway-compatibility-enabled",
+      "type": "java.lang.Boolean",
+      "description": "Adapts only Spring Boot Flyway's selected KingbaseES DataSource to the PostgreSQL-compatible Flyway engine while leaving the application's main DataSource unchanged. Disable only when the host supplies an equivalent Kingbase Flyway integration.",
+      "defaultValue": true
+    },
+    {
+      "name": "fileweft.compatibility.legacy-agent-autoconfiguration-enabled",
+      "type": "java.lang.Boolean",
+      "description": "Compatibility-only bridge that restores the legacy Agent repository, task, confirmation, and Doctor auto-configuration. It is disabled by default and must not be used as a new Agent product-support contract.",
+      "defaultValue": false
     }
   ]
 }

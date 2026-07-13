@@ -48,6 +48,7 @@ extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {
 }
 val releaseRepositoryDirectory = layout.buildDirectory.dir("repository")
 val releaseVersion = version.toString()
+val stableReleaseVersionPattern = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")
 val releaseScmTag = if (releaseVersion == "0.0.1") "v0.0.1-ai.icen" else "v$releaseVersion"
 val projectHomepage = "https://cnb.cool/china.ai/file-weft"
 val projectScmConnection = "scm:git:https://cnb.cool/china.ai/file-weft.git"
@@ -85,6 +86,11 @@ if (
 }
 if (cnbPublishingRequested && releaseVersion.endsWith("-SNAPSHOT")) {
     throw GradleException("CNB release publishing requires a non-SNAPSHOT project version.")
+}
+if (cnbPublishingRequested && !stableReleaseVersionPattern.matches(releaseVersion)) {
+    throw GradleException(
+        "CNB release publishing requires a stable numeric X.Y.Z version, but was '$releaseVersion'.",
+    )
 }
 
 allprojects {
@@ -186,12 +192,14 @@ val verifyPublishedStarterConfigurationMetadata = tasks.register("verifyPublishe
             "fileweft.persistence.migration-mode" to "ai.icen.fw.persistence.migration.FileWeftMigrationMode",
             "fileweft.persistence.schema" to "java.lang.String",
             "fileweft.persistence.create-schema" to "java.lang.Boolean",
+            "fileweft.persistence.kingbase-flyway-compatibility-enabled" to "java.lang.Boolean",
         )
         val expectedDefaults = mapOf<String, Any>(
             "fileweft.default-tenant-enabled" to false,
             "fileweft.storage.local-enabled" to false,
             "fileweft.persistence.migration-mode" to "DISABLED",
             "fileweft.persistence.create-schema" to false,
+            "fileweft.persistence.kingbase-flyway-compatibility-enabled" to true,
         )
         val descriptionRequirements = mapOf(
             "fileweft.default-tenant-enabled" to listOf(
@@ -227,6 +235,11 @@ val verifyPublishedStarterConfigurationMetadata = tasks.register("verifyPublishe
                 "MIGRATE",
                 "DISABLED",
                 "VALIDATE",
+            ),
+            "fileweft.persistence.kingbase-flyway-compatibility-enabled" to listOf(
+                "Spring Boot Flyway",
+                "KingbaseES",
+                "main DataSource",
             ),
         )
         val starterModules = listOf(
@@ -341,7 +354,7 @@ val nestedGradleWrapperCommand = if (System.getProperty("os.name").startsWith("W
 
 val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
     group = "verification"
-    description = "Compiles independent Java and Kotlin consumers from the generated Maven POMs."
+    description = "Compiles independent consumers and starts Boot 2/3 hosts from the generated Maven POMs."
     dependsOn(publishReleaseRepository)
     workingDir(rootProject.projectDir)
     commandLine(nestedGradleWrapperCommand + listOf(
@@ -366,6 +379,18 @@ val verifyDocsSite = tasks.register<Exec>("verifyDocsSite") {
             include("**/*.html", "**/*.css", "**/*.js", "**/*.mjs", "**/*.json", "**/*.md")
         },
     ).withPropertyName("docsSiteSources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+val verifyCnbPathPolicy = tasks.register<Exec>("verifyCnbPathPolicy") {
+    group = "verification"
+    description = "Verifies representative changed paths select the intended CNB verification lanes."
+    workingDir(rootProject.projectDir)
+    commandLine("node", "--test", ".ci/test/path-policy.test.mjs")
+    inputs.files(
+        rootProject.file(".ci/.shared.yml"),
+        rootProject.file(".ci/test/path-policy.test.mjs"),
+    ).withPropertyName("cnbPathPolicySources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
@@ -397,6 +422,8 @@ val expectedFileWeftMigrationResources = listOf(
     "V024__bind_resumable_upload_session_owner.sql",
     "V025__index_document_audit_log_queries.sql",
     "V026__persist_workflow_decision_evidence.sql",
+    "V027__stabilize_worker_claim_order.sql",
+    "V028__enforce_binary_identifier_collation.sql",
 ).flatMap { migration ->
     fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
 }
@@ -405,6 +432,61 @@ val fileWeftMigrationSourceDirectory = layout.projectDirectory.dir(
 )
 val expectedFileWeftMigrationSourceFiles = expectedFileWeftMigrationResources.map { resource ->
     fileWeftMigrationSourceDirectory.file(resource)
+}
+
+val stablePostgresMigrationHashes = layout.projectDirectory.file(
+    ".ci/fixtures/postgres-v0.0.1-ai.icen.sha256",
+)
+val verifyStablePostgresMigrationHashes = tasks.register("verifyStablePostgresMigrationHashes") {
+    group = "verification"
+    description = "Prevents changes to PostgreSQL V001-V025 shipped by v0.0.1-ai.icen without requiring Git history."
+    inputs.file(stablePostgresMigrationHashes)
+        .withPropertyName("stablePostgresMigrationHashes")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files((1..25).map { version ->
+        val prefix = "V${version.toString().padStart(3, '0')}__"
+        fileWeftMigrationSourceDirectory.asFileTree.matching { include("postgres/${prefix}*.sql") }
+    })
+        .withPropertyName("stablePostgresMigrationSources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    doLast(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            val inputFiles = inputs.files.files
+            val fixtureFile = inputFiles.single { file -> file.extension == "sha256" }
+            val fixture = fixtureFile.readLines(Charsets.UTF_8)
+                .filterNot { line -> line.isBlank() || line.startsWith("#") }
+                .associate { line ->
+                    val parts = line.trim().split(Regex("\\s+"), limit = 2)
+                    require(parts.size == 2 && parts[0].matches(Regex("[0-9a-f]{64}"))) {
+                        "Invalid stable migration hash fixture line: $line"
+                    }
+                    parts[1] to parts[0]
+                }
+            val sources = inputFiles
+                .filter { file ->
+                    val version = Regex("^V(\\d{3})__.*\\.sql$").matchEntire(file.name)
+                        ?.groupValues?.get(1)?.toIntOrNull()
+                    file.isFile && version != null && version in 1..25
+                }
+                .associateBy { file -> file.name }
+            require(sources.keys == fixture.keys) {
+                "Stable PostgreSQL migration fixture differs from V001-V025 sources; " +
+                    "missing=${fixture.keys - sources.keys}, unexpected=${sources.keys - fixture.keys}."
+            }
+            val changed = sources.filter { (name, file) ->
+                val canonicalBytes = file.readText(Charsets.UTF_8)
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n")
+                    .toByteArray(Charsets.UTF_8)
+                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(canonicalBytes)
+                    .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
+                digest != fixture.getValue(name)
+            }.keys
+            require(changed.isEmpty()) {
+                "PostgreSQL migrations shipped by v0.0.1-ai.icen are immutable; changed=$changed"
+            }
+        },
+    )
 }
 
 val verifyFileWeftMigrationResources = tasks.register("verifyFileWeftMigrationResources") {
@@ -488,6 +570,9 @@ val verifyCnbReleaseIdentity = tasks.register("verifyCnbReleaseIdentity") {
         require(!expectedVersion.endsWith("-SNAPSHOT")) {
             "Verified CNB publication requires a stable version, but was $expectedVersion."
         }
+        require(stableReleaseVersionPattern.matches(expectedVersion)) {
+            "Verified CNB publication requires a stable numeric X.Y.Z version, but was $expectedVersion."
+        }
         require(event == "tag_push") {
             "Verified CNB publication is only permitted for tag_push, but CNB_EVENT was '$event'."
         }
@@ -525,6 +610,7 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
     inputs.files(externalIntegrationTestFiles)
         .withPropertyName("externalIntegrationTests")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    dependsOn(verifyStablePostgresMigrationHashes)
     inputs.property("repositoryRootPath", layout.projectDirectory.asFile.absolutePath)
 
     doLast(
@@ -537,6 +623,8 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
                     relativePath.startsWith("fileweft-persistence/src/test/") && "MySQL" in sourceFile.name ->
                         "FILEWEFT_RUN_MYSQL_TESTS"
                     relativePath.startsWith("fileweft-persistence/src/test/") && "Kingbase" in sourceFile.name ->
+                        "FILEWEFT_RUN_KINGBASE_TESTS"
+                    relativePath.startsWith("fileweft-spring-boot") && "Kingbase" in sourceFile.name ->
                         "FILEWEFT_RUN_KINGBASE_TESTS"
                     relativePath.startsWith("fileweft-persistence/src/test/") ->
                         "FILEWEFT_RUN_POSTGRES_TESTS"
@@ -716,6 +804,14 @@ val releaseTestEnvironment = tasks.register("verifyReleaseTestEnvironment") {
         providers.environmentVariable("FILEWEFT_RUN_POSTGRES_TESTS").map { value -> value == "true" }.orElse(false),
     )
     inputs.property(
+        "mysqlIntegrationEnabled",
+        providers.environmentVariable("FILEWEFT_RUN_MYSQL_TESTS").map { value -> value == "true" }.orElse(false),
+    )
+    inputs.property(
+        "kingbaseIntegrationEnabled",
+        providers.environmentVariable("FILEWEFT_RUN_KINGBASE_TESTS").map { value -> value == "true" }.orElse(false),
+    )
+    inputs.property(
         "rustFsIntegrationEnabled",
         providers.environmentVariable("FILEWEFT_RUN_RUSTFS_TESTS").map { value -> value == "true" }.orElse(false),
     )
@@ -735,6 +831,8 @@ val releaseTestEnvironment = tasks.register("verifyReleaseTestEnvironment") {
         org.gradle.api.Action<org.gradle.api.Task> {
             val requiredFlags = linkedMapOf(
                 "FILEWEFT_RUN_POSTGRES_TESTS" to inputs.properties["postgresIntegrationEnabled"],
+                "FILEWEFT_RUN_MYSQL_TESTS" to inputs.properties["mysqlIntegrationEnabled"],
+                "FILEWEFT_RUN_KINGBASE_TESTS" to inputs.properties["kingbaseIntegrationEnabled"],
                 "FILEWEFT_RUN_RUSTFS_TESTS" to inputs.properties["rustFsIntegrationEnabled"],
                 "FILEWEFT_RUN_DEV_E2E" to inputs.properties["devApiIntegrationEnabled"],
                 "FILEWEFT_RUN_DEV_UI_E2E" to inputs.properties["devUiIntegrationEnabled"],
@@ -786,8 +884,34 @@ val remoteCnbConsumerSmoke = tasks.register<Exec>("remoteCnbConsumerSmoke") {
 
 val postgresIntegrationCheck = tasks.register("postgresIntegrationCheck") {
     group = "verification"
-    description = "Runs the dedicated PostgreSQL persistence integration lane."
-    dependsOn(":fileweft-persistence:postgresIntegrationTest")
+    description = "Runs PostgreSQL persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    dependsOn(
+        ":fileweft-persistence:postgresIntegrationTest",
+        ":fileweft-persistence:postgresFlyway8CompatibilityTest",
+        ":fileweft-persistence:postgresFlyway11CompatibilityTest",
+    )
+}
+
+val mysqlIntegrationCheck = tasks.register("mysqlIntegrationCheck") {
+    group = "verification"
+    description = "Runs MySQL 8 persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    dependsOn(
+        ":fileweft-persistence:mysqlIntegrationTest",
+        ":fileweft-persistence:mysqlFlyway8CompatibilityTest",
+        ":fileweft-persistence:mysqlFlyway11CompatibilityTest",
+    )
+}
+
+val kingbaseIntegrationCheck = tasks.register("kingbaseIntegrationCheck") {
+    group = "verification"
+    description = "Runs KingbaseES V8 persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    dependsOn(
+        ":fileweft-persistence:kingbaseIntegrationTest",
+        ":fileweft-persistence:kingbaseFlyway8CompatibilityTest",
+        ":fileweft-persistence:kingbaseFlyway11CompatibilityTest",
+        ":fileweft-spring-boot2-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
+        ":fileweft-spring-boot3-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
+    )
 }
 
 val rustFsIntegrationCheck = tasks.register("rustFsIntegrationCheck") {
@@ -811,6 +935,8 @@ val externalAcceptanceCheck = tasks.register("externalAcceptanceCheck") {
     dependsOn(
         releaseTestEnvironment,
         postgresIntegrationCheck,
+        mysqlIntegrationCheck,
+        kingbaseIntegrationCheck,
         rustFsIntegrationCheck,
         devAcceptanceCheck,
     )
@@ -824,6 +950,7 @@ val releaseQualityCheck = tasks.register("releaseQualityCheck") {
         "verifyFileWeftArchitecture",
         "verifyFileWeftWebApiDependencies",
         verifyDocsSite,
+        verifyCnbPathPolicy,
         verifyFileWeftMigrationResources,
         verifyExternalTestPartition,
         verifyReleaseCredentialHygiene,
@@ -1060,7 +1187,7 @@ gradle.projectsEvaluated {
                 val missingSources = expected - sourceFiles.keys
                 val unexpectedSources = sourceFiles.keys - expected
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
-                    "FileWeft migration source inputs differ from the reviewed V001-V026 set; " +
+                    "FileWeft migration source inputs differ from the reviewed V001-V028 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
                 }
                 require(archive.isFile) { "FileWeft persistence JAR was not created: ${archive.absolutePath}" }
@@ -1083,7 +1210,7 @@ gradle.projectsEvaluated {
                     val missing = expected - actual
                     val unexpected = actual - expected
                     require(missing.isEmpty() && unexpected.isEmpty()) {
-                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V026 set; " +
+                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V028 set; " +
                             "missing=$missing, unexpected=$unexpected."
                     }
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }

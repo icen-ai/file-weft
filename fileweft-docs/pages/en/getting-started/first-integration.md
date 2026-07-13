@@ -5,7 +5,7 @@ order: 3
 locale: "en"
 nav: "First integration"
 title: "Wire a trustworthy host"
-lead: "Move from a dependency declaration to a production host by providing trusted identity context, shared storage, PostgreSQL schema ownership, and separated runtime roles."
+lead: "Move from a dependency declaration to a production host by providing trusted identity context, shared storage, PostgreSQL schema ownership, and separate runtime roles."
 format: "markdown"
 ---
 
@@ -82,11 +82,24 @@ A valid FileWeft user ID:
 - contains no ISO control or FileWeft-rejected format characters.
 
 > [!NOTE]
-> Do not trim, lowercase, or normalize IDs inside FileWeft. Do it once, consistently, in the host layer before converting to `Identifier`.
+> Do not trim, convert to lowercase, or normalize IDs inside FileWeft. Do it once, consistently, in the host layer before converting to `Identifier`.
 
 ## Step 3: Choose storage and database ownership
 
 Multi-node deployments need a shared, persistent `StorageAdapter`. Do not rely on the local filesystem fallback across pods or machines.
+
+FileWeft does not choose the host's connection pool. This is the minimal recommended dependency set for a Boot 3 host with one DataSource. If your host already owns another pool, replace the first dependency with an equivalent JDBC stack that creates one unambiguous `DataSource` bean.
+
+```kotlin
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    runtimeOnly("org.postgresql:postgresql")
+}
+```
+
+Boot 2 hosts keep `spring-boot-starter-jdbc` and switch the two FileWeft coordinates to their matching `boot2` variants. Boot 2.7's BOM manages Kotlin at 1.6.21, below FileWeft's 2.1.21, so even Java-only hosts must align it: set `extra["kotlin.version"] = "2.1.21"` with Spring Dependency Management, set `<kotlin.version>2.1.21</kotlin.version>` with Maven, or add `org.jetbrains.kotlin:kotlin-bom:2.1.21` (or an equivalent explicit resolution rule) with native Gradle platforms. An ordinary Kotlin BOM cannot override a Boot 2 `enforcedPlatform`; use `dependencyInsight` to confirm `kotlin-stdlib` is 2.1.21.
 
 For PostgreSQL, set the DataSource current schema and the FileWeft schema assertion to the same value:
 
@@ -113,7 +126,7 @@ fileweft:
 
 ## Step 4: Separate runtime roles
 
-FileWeft has two runtime personalities. Run them as separate process groups in production:
+FileWeft has two runtime roles. Run them as separate process groups in production:
 
 | Role | Handles | Typical config |
 | --- | --- | --- |

@@ -4,18 +4,25 @@ group: "guides"
 order: 2
 locale: "en"
 nav: "Workflow & uploads"
-title: "Approval, resumable uploads, and durable agents"
-lead: "Understand how FileWeft handles long-running work—document review, multipart uploads, and background AI tasks—without weakening transaction boundaries or leaking storage internals."
+title: "Approval, resumable uploads, and durable tasks"
+lead: "Understand how FileWeft handles long-running work—document review, multipart uploads, and generic background tasks—without weakening transaction boundaries or leaking storage internals."
 format: "markdown"
 ---
 
-Enterprise files rarely move in a single request. A document may need review, a 2 GB video may need resumable upload, and an AI model may need to process content asynchronously. FileWeft keeps each of these concerns explicit, persistent, and fenced.
+Enterprise files rarely move in a single request. A document may need review, a 2 GB video may need resumable upload, and OCR or scanning may need to process content asynchronously. FileWeft keeps each concern explicit, persistent, and isolated.
 
 ## 1. Approval routing
 
 The `DocumentReviewRouteProvider` SPI lets the host decide who must approve a document before it is published. Resolution happens outside the FileWeft database transaction, so your HR or BPM system can be queried safely.
 
 ```kotlin
+import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.workflow.DocumentReviewRoute
+import ai.icen.fw.spi.workflow.DocumentReviewRouteProvider
+import ai.icen.fw.spi.workflow.DocumentReviewRouteRequest
+import ai.icen.fw.spi.workflow.DocumentReviewRouteTask
+import org.springframework.stereotype.Component
+
 @Component
 class ComplianceRouteProvider : DocumentReviewRouteProvider {
 
@@ -25,11 +32,9 @@ class ComplianceRouteProvider : DocumentReviewRouteProvider {
         // Host decides approvers based on the document type, tenant, or other request properties.
         val approvers = listOf("compliance-lead", "legal-lead")
         return DocumentReviewRoute(
+            workflowType = "COMPLIANCE_REVIEW",
             tasks = approvers.map { userId ->
-                DocumentReviewTask(
-                    assignee = Identifier(userId),
-                    operation = "APPROVE",
-                )
+                DocumentReviewRouteTask(assigneeId = Identifier(userId))
             },
         )
     }
@@ -38,8 +43,8 @@ class ComplianceRouteProvider : DocumentReviewRouteProvider {
 
 Behavior:
 
-1. When `submit` is called, FileWeft asks every registered provider to resolve tasks.
-2. Parallel tasks run concurrently. All must approve for parallel sign-off.
+1. On `submit`, FileWeft selects exactly one provider: the request's `reviewRouteId`, or the route configured by `fileweft.workflow.default-review-route-id` when the request omits it.
+2. Parallel tasks run concurrently. All must approve.
 3. One rejection ends the workflow.
 4. The final transaction rechecks the document state before committing.
 
@@ -66,14 +71,17 @@ curl -i -X POST http://localhost:8080/fileweft/v1/uploads \
   }'
 ```
 
-After completion the returned `fileAssetId` can be passed to a business command such as `POST /documents` or `POST /documents/{id}/versions`.
+The completion receipt's `fileAssetId` identifies the persisted asset. The current formal `POST /fileweft/v1/documents` and `POST /fileweft/v1/documents/{id}/versions` endpoints still accept multipart file content; they do not accept this ID. Reusing the asset requires a host-owned application-layer binding. That binding is not currently part of the formal document HTTP resource.
 
 > [!TIP]
 > Always treat `uploadedParts` from the inspection response as the only authoritative checkpoint. Client-side state can be lost; server-side state cannot.
 
-## 3. Agent and background tasks
+## 3. Generic background tasks
 
-AI extraction, OCR, virus scanning, and custom diagnostics belong in durable `fw_task` handlers. They run outside the request thread and are retried with leases.
+OCR, virus scanning, host-owned extraction, and custom diagnostics belong in durable `fw_task` handlers. They run outside the request thread and are retried with leases.
+
+> [!CAUTION]
+> `FileWeftTaskHandler` is the generic durable-task capability in 0.0.2; it is not FileWeft Agent. The `fileweft-agent` artifact, Agent SPI/ABI and related migrations remain only for compatibility, and the default product surface does not register or expose Agent.
 
 ```kotlin
 @Component
@@ -105,7 +113,7 @@ A typical flow looks like this:
 
 1. User creates a resumable upload session and sends all parts.
 2. Completion returns a `fileAssetId`.
-3. Host calls `POST /documents` with the asset to create a draft document.
+3. A host-owned application integration binds that asset as a document or version; the current formal document HTTP resource does not perform this step.
 4. Host calls `POST /documents/{id}/submit` to start review.
 5. Review route provider returns assignees.
 6. After all approvals, FileWeft publishes and triggers delivery connectors.
@@ -119,7 +127,7 @@ At no point does a database transaction call an external system. All external ca
 ## FAQ
 
 **Q: Can I skip review for internal documents?**
-Yes. Register a route provider that returns an empty task list for the document types you consider pre-approved.
+Not by returning an empty route. `DocumentReviewRoute` requires a non-blank `workflowType`, at least one task, and no duplicate tasks; the current formal `submit` HTTP path also creates local review tasks. If the business permits bypassing local review, the host must define a separate authorized lifecycle path instead of returning an empty list from this provider.
 
 **Q: What happens if a worker dies mid-task?**
 The task lease expires, and another worker picks it up. Handlers must be idempotent for the task ID.
@@ -130,5 +138,5 @@ No. Storage upload IDs, ETags, and object keys are internal to the storage adapt
 ## Next steps
 
 - [Resumable upload protocol](resumable-upload.md) for complete byte-level semantics.
-- [Implement a durable task handler](agent-handler.md) to add OCR, scan, or AI agents.
+- [Implement a durable task handler](agent-handler.md) to add OCR, scanning, or other host background work.
 - [Lifecycle and delivery concepts](../concepts/lifecycle-delivery.md) for publish/offline/archive behavior.

@@ -65,8 +65,7 @@ interface SqlDialect {
 
     /**
      * Row-level locking clause.
-     * PostgreSQL/Kingbase support `FOR UPDATE SKIP LOCKED`; MySQL 8 only supports
-     * `FOR UPDATE` and throws on `SKIP LOCKED`.
+     * PostgreSQL, Kingbase, and MySQL 8 support `FOR UPDATE SKIP LOCKED`.
      */
     fun forUpdateSkipLocked(): String
 
@@ -74,6 +73,13 @@ interface SqlDialect {
      * Plain row-level locking clause.
      */
     fun forUpdate(): String
+
+    /**
+     * Table expression used by ordered worker claims. MySQL needs an explicit
+     * index hint so the optimizer cannot fall back to a filesort that locks
+     * every eligible row before `SKIP LOCKED` is applied.
+     */
+    fun claimCandidateTable(table: String, orderedIndex: String): String = table
 
     /**
      * SQL boolean expression for "column IS DISTINCT FROM parameter".

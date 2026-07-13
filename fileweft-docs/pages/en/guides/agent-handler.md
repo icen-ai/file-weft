@@ -3,13 +3,16 @@ route: "guides/agent-handler"
 group: "guides"
 order: 5
 locale: "en"
-nav: "Agent handler"
+nav: "Task handler"
 title: "Implement a durable task handler"
-lead: "Add background work such as OCR, virus scanning, or AI extraction by implementing FileWeftTaskHandler. Workers use leases and idempotent task IDs."
+lead: "Add background work such as OCR, virus scanning, or host-owned extraction by implementing FileWeftTaskHandler. Workers use leases and idempotent task IDs."
 format: "markdown"
 ---
 
 Not every file operation fits inside an HTTP request. OCR, machine-learning inference, virus scanning, and bulk synchronization can take seconds or minutes. FileWeft pushes this work into durable `fw_task` records handled by background workers.
+
+> [!CAUTION]
+> This page covers the generic `FileWeftTaskHandler`, not FileWeft Agent product capability. 0.0.2 does not register, advertise or expose Agent by default; do not use the compatibility-only Agent SPI/ABI for new integrations.
 
 ## 1. Task handler contract
 

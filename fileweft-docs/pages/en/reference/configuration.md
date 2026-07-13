@@ -26,6 +26,7 @@ fileweft:
     migration-mode: validate # migrate | validate | disabled
     schema: fileweft
     create-schema: false
+    kingbase-flyway-compatibility-enabled: true
 ```
 
 | Value | When to use |
@@ -33,6 +34,10 @@ fileweft:
 | `validate` | Production and CI. FileWeft checks that the schema matches the expected version but does not change it. |
 | `migrate` | Fresh installations or local development where the process may own schema creation. |
 | `disabled` | External schema management or blue/green deployments where migrations run out-of-band. |
+
+The runner is verified with Spring Boot 2 managed Flyway 8.5.13, FileWeft's own Flyway 9.22.3, and Spring Boot 3 managed Flyway 11.7.2. On Boot 3, `flyway-core`, `flyway-mysql` and `flyway-database-postgresql` must all resolve to 11.7.2.
+
+`fileweft.persistence.kingbase-flyway-compatibility-enabled` defaults to `true` (the YAML block above uses its nested form). It adapts only the DataSource Spring Boot selected for Flyway; the application's primary DataSource remains the real Kingbase DataSource. Disable it only when the host provides and verifies an equivalent Kingbase/Flyway integration. A Spring Boot 2 Kingbase host must configure an explicit `spring.flyway.locations` path and must not use the `{vendor}` placeholder, which Boot resolves from the original JDBC URL before the FileWeft customizer runs.
 
 ## Worker
 
@@ -110,9 +115,18 @@ fileweft:
 
 | Field | Meaning |
 |-------|---------|
+| `connector-name` | Connector ID used by the required target in the synthesized `default` profile when `profiles` is empty |
+| `default-profile-id` | Profile selected for publication; explicit non-sentinel values must match a configured profile |
 | `connector-id` | The Spring bean name of a `FileConnector` implementation |
 | `required` | If `true`, failure keeps the document in `SYNC_ERROR` and blocks `PUBLISHED` |
 | `owner-ref` | Free-form operational owner shown in sync status and Doctor output |
+
+Profile selection rules are deliberately fail-safe:
+
+1. With no custom `profiles`, the Starter synthesizes profile `default` with one **required** target. That target's connector ID is `fileweft.sync.connector-name` (also `default` unless configured), so publication depends on a matching `FileConnector`; it is not a local-only success path.
+2. With custom profiles, a non-sentinel `default-profile-id` must exactly match one configured profile ID or startup fails.
+3. For backward compatibility, the untouched sentinel value `default` selects the first custom profile when no custom profile is actually named `default`. New configurations should set an explicit matching ID instead of relying on ordering.
+4. Every target `connector-id` must exactly match a Spring `FileConnector` bean name or a plugin `connectors()` map key.
 
 ## Upload
 
@@ -147,6 +161,7 @@ fileweft:
     migration-mode: validate
     schema: fileweft
     create-schema: false
+    kingbase-flyway-compatibility-enabled: true
   worker:
     enabled: true
     process-outbox: true
@@ -183,7 +198,10 @@ Usually no. Run migrations during deployment with `validate` at runtime so the a
 Yes, but Outbox events and scheduled tasks will not progress. Disable only when an external worker process owns the same database.
 
 **What happens if no sync profile is configured?**
-Publication succeeds locally but no downstream delivery is attempted. Add at least one profile to integrate with external systems.
+The Starter synthesizes a `default` profile with one required target whose connector ID comes from `fileweft.sync.connector-name`. Register a matching `FileConnector` (or configure custom profiles); otherwise the required delivery cannot complete and publication does not become a local-only success.
+
+**What if `default-profile-id` does not match a configured profile?**
+Startup fails for any explicit non-sentinel value. The only compatibility exception is the untouched sentinel `default`: with custom profiles and no profile actually named `default`, FileWeft selects the first configured profile. Prefer an explicit matching ID.
 
 ## Next steps
 

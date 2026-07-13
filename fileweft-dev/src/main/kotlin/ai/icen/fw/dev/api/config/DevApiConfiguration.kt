@@ -12,8 +12,6 @@ import ai.icen.fw.application.upload.ResumableUploadService
 import ai.icen.fw.application.workflow.DocumentReviewWorkflowService
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.dev.api.catalog.DevCatalogDocumentService
-import ai.icen.fw.dev.api.agent.DevClassificationAgent
-import ai.icen.fw.dev.api.agent.DevPublishClassificationTrigger
 import ai.icen.fw.dev.api.catalog.DevCatalogQueryService
 import ai.icen.fw.dev.api.catalog.DevDocumentCatalogProvider
 import ai.icen.fw.dev.api.connector.DevPlatformConnector
@@ -30,8 +28,6 @@ import ai.icen.fw.dev.api.service.DevAuthService
 import ai.icen.fw.dev.api.service.DevOperationsService
 import ai.icen.fw.dev.api.service.DevReviewService
 import ai.icen.fw.spi.authorization.AuthorizationProvider
-import ai.icen.fw.spi.ai.AgentTaskTrigger
-import ai.icen.fw.spi.ai.FileWeftAgent
 import ai.icen.fw.spi.catalog.DocumentCatalogProvider
 import ai.icen.fw.spi.connector.FileConnector
 import ai.icen.fw.spi.delivery.DeliveryRequirement
@@ -54,12 +50,6 @@ import java.net.URI
 
 @Configuration(proxyBeanMethods = false)
 class DevApiConfiguration {
-    @Bean
-    fun devClassificationAgent(): FileWeftAgent = DevClassificationAgent()
-
-    @Bean
-    fun devPublishClassificationTrigger(): AgentTaskTrigger = DevPublishClassificationTrigger()
-
     @Bean
     fun devUserDirectory(properties: FileWeftDevProperties): DevUserDirectory = DevUserDirectory(properties)
 

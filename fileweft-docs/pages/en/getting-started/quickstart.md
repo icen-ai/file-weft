@@ -14,7 +14,7 @@ format: "markdown"
 This page walks you through a self-contained local setup:
 
 1. Start PostgreSQL in Docker.
-2. Add FileWeft 0.0.1 to a Spring Boot 3 project.
+2. Add the verified FileWeft 0.0.2 coordinates to a Spring Boot 3 project.
 3. Provide the three required SPI beans.
 4. Enable the development fallbacks.
 5. Upload your first file through the formal `/fileweft/v1/documents` endpoint.
@@ -54,14 +54,16 @@ plugins {
 }
 
 dependencies {
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")
-    implementation("ai.icen:fileweft-persistence:0.0.1")
+    // The host owns its DataSource and pool; this lets Boot create them from spring.datasource.*.
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```
 
 > [!NOTE]
-> Boot 2 hosts use `fileweft-web-spring-boot2-starter`. The Web API contract is identical.
+> FileWeft starters do not transitively choose a JDBC pool for the host. Boot 2 hosts keep `spring-boot-starter-jdbc` and use both `fileweft-spring-boot2-starter` and `fileweft-web-spring-boot2-starter`. The Web API contract is identical. Boot 2.7's BOM manages Kotlin at 1.6.21, below FileWeft's 2.1.21, so even Java-only hosts must align it: set `extra["kotlin.version"] = "2.1.21"` with Spring Dependency Management, set `<kotlin.version>2.1.21</kotlin.version>` with Maven, or add `org.jetbrains.kotlin:kotlin-bom:2.1.21` (or an equivalent explicit resolution rule) with native Gradle platforms. Do not expect an ordinary Kotlin BOM to override a Boot 2 `enforcedPlatform`; use `dependencyInsight` to confirm `kotlin-stdlib` is 2.1.21.
 
 ## Step 3: Provide trusted host context
 

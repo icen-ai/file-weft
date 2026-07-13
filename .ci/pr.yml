@@ -22,14 +22,37 @@
     fast-check:
       <<: *fileweft-pr-jvm
       name: PR fast feedback
+      ifModify: !reference [.fileweft-fast-paths]
       stages:
         - name: fast-check
           script: bash ./gradlew fastCheck --no-daemon --stacktrace
 
+    docs:
+      <<: *fileweft-pr-jvm
+      name: PR documentation contract
+      ifModify: !reference [.fileweft-docs-paths]
+      stages:
+        - name: docs-contract
+          script: node --test fileweft-docs/test/site.test.mjs
+
+    artifacts:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-jvm-pr-docker]
+      env: !reference [.fileweft-ci-env]
+      breakIfModify: true
+      lock:
+        key: pr-$CNB_PULL_REQUEST_IID-$CNB_PIPELINE_KEY
+        cancel-in-progress: true
+      name: PR release artifact contract
+      ifModify: !reference [.fileweft-release-artifact-paths]
+      stages:
+        - name: release-artifacts
+          script: bash ./gradlew releaseArtifactCheck --no-daemon --no-configuration-cache --stacktrace
+
     minimum-java8:
       <<: *fileweft-pr-jvm
       name: PR Java 8 minimum runtime
-      ifModify: !reference [.fileweft-code-paths]
+      ifModify: !reference [.fileweft-jvm8-paths]
       stages:
         - name: java-8-compatibility
           script: bash ./gradlew compatibilityJava8Check --no-daemon --stacktrace
@@ -37,7 +60,7 @@
     minimum-java17:
       <<: *fileweft-pr-jvm
       name: PR Java 17 minimum runtime
-      ifModify: !reference [.fileweft-code-paths]
+      ifModify: !reference [.fileweft-jvm17-paths]
       stages:
         - name: java-17-compatibility
           script: bash ./gradlew compatibilityJava17Check --no-daemon --stacktrace
@@ -54,6 +77,36 @@
           script: bash ./gradlew postgresIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
       endStages:
         - name: stop-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    mysql:
+      <<: *fileweft-pr-service
+      name: PR MySQL 8 integration
+      env: !reference [.fileweft-mysql-env]
+      ifModify: !reference [.fileweft-mysql-paths]
+      stages:
+        - name: start-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait mysql
+        - name: mysql-integration
+          script: bash ./gradlew mysqlIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    kingbase:
+      <<: *fileweft-pr-service
+      name: PR KingbaseES V8 integration
+      env: !reference [.fileweft-kingbase-env]
+      ifModify: !reference [.fileweft-kingbase-paths]
+      stages:
+        - name: load-verified-kingbase-image
+          script: bash .ci/scripts/prepare-kingbase-image.sh
+        - name: start-kingbase
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait kingbase
+        - name: kingbase-integration
+          script: bash ./gradlew kingbaseIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-kingbase
           script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
 
     rustfs:

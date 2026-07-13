@@ -31,7 +31,11 @@ Your host application implements the SPI, FileWeft calls your beans, and your ve
 | Workflow | `DocumentReviewRouteProvider` | Approval routes and task definitions |
 | Connector | `FileConnector` | Idempotent downstream sync, removal, and health |
 | Doctor | `DoctorChecker` | Bounded, side-effect-free diagnostics |
-| Task & agent | `FileWeftTaskHandler`, `FileWeftAgent`, `AgentTaskTrigger` | Durable handlers and AI contributions |
+| Task | `FileWeftTaskHandler` | Generic durable task handlers |
+| Legacy Agent ABI | `FileWeftAgent`, `AgentTaskTrigger` | Compatibility only; not registered or exposed by default in 0.0.2 |
+
+> [!CAUTION]
+> The presence of `fileweft-agent` and Agent SPI types does not mean that 0.0.2 provides Agent product capability. They exist only for source/binary compatibility. New integrations should use current generic SPIs such as `FileWeftTaskHandler` and `FileConnector`, not the legacy Agent ABI.
 
 ## Identity and tenant
 
@@ -62,7 +66,7 @@ class AclAuthorizationProvider(private val aclService: AclService) : Authorizati
             resource = request.resource,
             action = request.action,
         )
-        return aclService.toDecision(permitted)
+        return AuthorizationDecision(allowed = permitted)
     }
 }
 ```
@@ -100,7 +104,7 @@ class MinioStorageAdapter(private val minioClient: MinioClient) : StorageAdapter
         val response = minioClient.getObject(bucket, objectName)
         return StorageDownload(
             content = response,
-            contentLength = response.headers()["Content-Length"]?.toLong() ?: -1,
+            contentLength = response.headers()["Content-Length"]?.toLong(),
             contentType = response.headers()["Content-Type"],
         )
     }
@@ -133,20 +137,26 @@ Connectors deliver documents to downstream systems. They must be idempotent, ret
 class ComplianceConnector : FileConnector {
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
-        val externalId = archiveClient.submit(request.contentUrl, request.metadata)
-        return ConnectorSyncResult.success(externalId = externalId)
+        val externalId = archiveClient.submit(request.source.downloadUri, request.attributes)
+        return ConnectorSyncResult(
+            status = ConnectorSyncStatus.SUCCESS,
+            externalId = externalId,
+        )
     }
 
     override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
         archiveClient.delete(request.externalId)
-        return ConnectorSyncResult.success(externalId = request.externalId)
+        return ConnectorSyncResult(
+            status = ConnectorSyncStatus.SUCCESS,
+            externalId = request.externalId,
+        )
     }
 
     override fun health(): ConnectorHealth {
         return when (archiveClient.ping()) {
-            is PingResult.Ok -> ConnectorHealth.HEALTHY
-            is PingResult.Timeout -> ConnectorHealth.DEGRADED
-            else -> ConnectorHealth.UNHEALTHY
+            is PingResult.Ok -> ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+            is PingResult.Timeout -> ConnectorHealth(ConnectorHealthStatus.DEGRADED)
+            else -> ConnectorHealth(ConnectorHealthStatus.UNHEALTHY)
         }
     }
 }

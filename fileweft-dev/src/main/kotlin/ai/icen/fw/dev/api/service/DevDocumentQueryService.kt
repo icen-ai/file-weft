@@ -4,20 +4,6 @@ import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.LifecycleState
 import org.springframework.jdbc.core.JdbcTemplate
 
-/**
- * The task row is authoritative because a result can be written before the
- * fenced Worker success acknowledgement.
- */
-internal const val DEV_AGENT_RESULTS_SQL = """
-    SELECT result.id, result.task_id, result.capability, result.source_event_type, result.result_status,
-           result.result_json::text AS result_json, result.created_time
-    FROM fw_agent_result result
-    JOIN fw_task task ON task.id = result.task_id AND task.tenant_id = result.tenant_id
-    WHERE result.tenant_id = ? AND task.business_id = ?
-      AND task.task_type = 'agent.execute' AND task.task_status = 'SUCCESS'
-    ORDER BY result.created_time DESC, result.id DESC
-"""
-
 data class DevDocumentSummary(
     val id: String,
     val documentNumber: String,
@@ -141,24 +127,6 @@ data class DevBackgroundTaskView(
     val updatedTime: Long,
 )
 
-data class DevAgentConfirmationView(
-    val id: String,
-    val suggestionId: String,
-    val confirmedBy: String,
-    val confirmedTime: Long,
-)
-
-data class DevAgentResultView(
-    val id: String,
-    val taskId: String,
-    val capability: String,
-    val sourceEventType: String,
-    val status: String,
-    val result: String,
-    val createdTime: Long,
-    val confirmations: List<DevAgentConfirmationView>,
-)
-
 data class DevDocumentDetail(
     val document: DevDocumentSummary,
     val versions: List<DevDocumentVersionView>,
@@ -168,7 +136,6 @@ data class DevDocumentDetail(
     val operationLogs: List<Nothing>,
     val deliveries: List<DevDeliveryView>,
     val tasks: List<DevBackgroundTaskView>,
-    val agentResults: List<DevAgentResultView>,
     val syncRecords: List<DevSyncView>,
     val outboxEvents: List<DevOutboxView>,
 )
@@ -206,11 +173,6 @@ class DevDocumentQueryService(
             operationLogs = emptyList(),
             deliveries = jdbcTemplate.query(DELIVERIES_SQL, DELIVERY_MAPPER, tenantId, documentId.value),
             tasks = jdbcTemplate.query(TASKS_SQL, BACKGROUND_TASK_MAPPER, tenantId, documentId.value),
-            agentResults = if (access.allowsDocumentAction(documentId, AGENT_SUGGESTION_READ_ACTION)) {
-                loadAgentResults(tenantId, documentId.value)
-            } else {
-                emptyList()
-            },
             syncRecords = jdbcTemplate.query(SYNC_SQL, SYNC_MAPPER, tenantId, documentId.value),
             outboxEvents = jdbcTemplate.query(OUTBOX_SQL, OUTBOX_MAPPER, tenantId, documentId.value),
         )
@@ -266,19 +228,9 @@ class DevDocumentQueryService(
         )
     }
 
-    private fun loadAgentResults(tenantId: String, documentId: String): List<DevAgentResultView> = jdbcTemplate.query(
-        DEV_AGENT_RESULTS_SQL,
-        AGENT_RESULT_MAPPER,
-        tenantId,
-        documentId,
-    ).map { result ->
-        result.copy(confirmations = jdbcTemplate.query(AGENT_CONFIRMATIONS_SQL, AGENT_CONFIRMATION_MAPPER, tenantId, result.taskId))
-    }
-
     private data class AccessibleDocument(val tenantId: String, val document: DevDocumentSummary)
 
     private companion object {
-        const val AGENT_SUGGESTION_READ_ACTION = "agent:suggestion:read"
         const val MAX_SYNC_STATUS_ENTRIES = 100
         val SUMMARY_MAPPER = org.springframework.jdbc.core.RowMapper<DevDocumentSummary> { result, _ ->
             DevDocumentSummary(
@@ -345,19 +297,6 @@ class DevDocumentQueryService(
                 result.getLong("created_time"), result.getLong("updated_time"),
             )
         }
-        val AGENT_RESULT_MAPPER = org.springframework.jdbc.core.RowMapper<DevAgentResultView> { result, _ ->
-            DevAgentResultView(
-                result.getString("id"), result.getString("task_id"), result.getString("capability"),
-                result.getString("source_event_type"), result.getString("result_status"), result.getString("result_json"),
-                result.getLong("created_time"), emptyList(),
-            )
-        }
-        val AGENT_CONFIRMATION_MAPPER = org.springframework.jdbc.core.RowMapper<DevAgentConfirmationView> { result, _ ->
-            DevAgentConfirmationView(
-                result.getString("id"), result.getString("suggestion_id"), result.getString("confirmed_by"), result.getLong("confirmed_time"),
-            )
-        }
-
         const val PAGE_SQL = """
             SELECT document.id, document.doc_no, document.title, document.lifecycle_state, document.current_version_id,
                    COALESCE(asset.metadata_json ->> 'catalog.folder-id', 'inbox') AS folder_id,
@@ -433,12 +372,6 @@ class DevDocumentQueryService(
         const val TASKS_SQL = """
             SELECT id, task_type, task_status, retry_count, next_attempt_time, last_error, created_time, updated_time
             FROM fw_task WHERE tenant_id = ? AND business_id = ? ORDER BY created_time DESC, id DESC
-        """
-        const val AGENT_CONFIRMATIONS_SQL = """
-            SELECT id, suggestion_id, confirmed_by, confirmed_time
-            FROM fw_agent_suggestion_confirmation
-            WHERE tenant_id = ? AND task_id = ?
-            ORDER BY confirmed_time DESC, id DESC
         """
         const val OUTBOX_SQL = """
             SELECT id, event_type, event_status, retry_count, last_error, created_time, updated_time

@@ -32,7 +32,7 @@ Every contribution starts with the architecture, not with a new class file.
 | `application` | Upload, publish, offline, approve, sync orchestration use cases | Direct storage or connector calls inside transactions |
 | `persistence` | PostgreSQL mappings, repositories, Flyway migrations | Business logic |
 | `starter` | Boot 2/3 auto-configuration and conditional beans | Low-level adapter logic |
-| `adapter` | MinIO/OSS/S3/Dify/ESE/AppBuilder implementations | Core business rules |
+| `adapter` | Host/plugin external integrations; named official vendor adapters remain roadmap work | Core business rules |
 
 ## Test every layer you touch
 

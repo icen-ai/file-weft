@@ -1,6 +1,5 @@
 package ai.icen.fw.dev.api.web
 
-import ai.icen.fw.application.agent.ConfirmAgentSuggestionService
 import ai.icen.fw.application.catalog.DocumentCatalogBindingService
 import ai.icen.fw.application.catalog.DocumentCatalogLifecycleService
 import ai.icen.fw.application.catalog.DocumentCatalogMutationService
@@ -48,7 +47,6 @@ data class DevWorkflowResponse(
     val taskId: String,
     val taskIds: List<String>,
 )
-data class DevAgentSuggestionConfirmationResponse(val taskId: String, val suggestionId: String, val confirmedBy: String, val confirmedTime: Long)
 
 @RestController
 @RequestMapping("/api/documents")
@@ -62,7 +60,6 @@ class DevDocumentController(
     private val access: DevAccessService,
     private val queries: DevDocumentQueryService,
     private val retryDeliveries: RetryDocumentDeliveryService,
-    private val agentSuggestions: ConfirmAgentSuggestionService,
     private val platformMirror: DevPlatformMirrorService,
 ) {
     @PostMapping(consumes = ["multipart/form-data"])
@@ -200,17 +197,6 @@ class DevDocumentController(
     fun retryDelivery(@PathVariable deliveryId: String): DevDocumentDetail {
         val delivery = retryDeliveries.retry(Identifier(deliveryId))
         return queries.detail(delivery.documentId)
-    }
-
-    @PostMapping("/agent-results/{taskId}/suggestions/{suggestionId}/confirm")
-    fun confirmAgentSuggestion(
-        @PathVariable taskId: String,
-        @PathVariable suggestionId: String,
-    ): DevAgentSuggestionConfirmationResponse {
-        val confirmation = agentSuggestions.confirm(Identifier(taskId), Identifier(suggestionId))
-        return DevAgentSuggestionConfirmationResponse(
-            confirmation.taskId.value, confirmation.suggestionId.value, confirmation.confirmedBy.value, confirmation.confirmedAt,
-        )
     }
 
     private fun WorkflowInstance.toResponse(): DevWorkflowResponse = DevWorkflowResponse(

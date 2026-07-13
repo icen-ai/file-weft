@@ -82,7 +82,6 @@ class DevSecurityTest {
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains("document:audit"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:audit"))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:doctor"))
-        assertTrue(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("agent:suggestion:read"))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains("document:create"))
         assertEquals(listOf("document:read", "document:download"), DevRolePolicy.proofLabPermissions(DevRole.VIEWER))
         assertTrue(DevRolePolicy.proofLabPermissions(DevRole.ADMIN).contains("system:outbox:process"))
@@ -97,6 +96,9 @@ class DevSecurityTest {
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.EDITOR).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.REVIEWER).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
         assertFalse(DevRolePolicy.proofLabPermissions(DevRole.VIEWER).contains(DevRolePolicy.PLUGIN_INVENTORY_READ_ACTION))
+        DevRole.values().forEach { role ->
+            assertFalse(DevRolePolicy.proofLabPermissions(role).any { action -> action.startsWith("agent:") })
+        }
     }
 
     private fun request(tenantId: String, action: String) = AuthorizationRequest(

@@ -13,7 +13,7 @@ FileWeft 插件是若干现有 SPI 贡献的聚合包。它不会形成新的架
 
 ## 1. 插件与直接声明 Spring Bean 的对比
 
-你可以直接以 Spring Bean 形式贡献许多 FileWeft 能力，但插件更适合可复用、持有厂商 SDK 或需要进入公共清单的扩展。
+你可以直接以 Spring Bean 形式贡献许多 FileWeft 能力，但插件更适合可复用、封装厂商 SDK 或需要进入公共清单的扩展。
 
 | 方式 | 适用场景 | 权衡 |
 | --- | --- | --- |
@@ -29,13 +29,16 @@ FileWeft 插件是若干现有 SPI 贡献的聚合包。它不会形成新的架
 | `storageAdapters()` | 自定义对象存储 | MinIO、OSS、S3 或私有存储 |
 | `connectors()` | 下游交付 | 合规归档、检索索引、AI 平台 |
 | `doctorCheckers()` | 运行诊断 | 校验凭据、端点和权限 |
-| `agents()` / `agentTaskTriggers()` | AI 自动化 | 文档分类或抽取触发器 |
 | `outboxEventHandlers()` | 异步响应 | 在请求线程外响应生命周期事件 |
 | `taskHandlers()` | 后台任务 | 批量迁移、清理或导入任务 |
 | `reviewRouteProviders()` | 审批路由 | 租户特定的审批工作流 |
+| `agents()` / `agentTaskTriggers()` | 仅兼容保留 | 0.0.2 默认不注册或加入插件清单 |
+
+> [!CAUTION]
+> Agent getter 仍存在只是为了保持 `FileWeftPlugin` 的源码和二进制兼容。0.0.2 不提供 Agent 产品能力，也不应基于这些 getter 开发新插件。最早只能在 1.0.0 已发布后重新评估未来设计，且不承诺任何交付版本。
 
 > **NOTE**  
-> 贡献 getter 在注册表构造期间被调用。不要在其中执行网络调用、数据库写入或其他业务副作用。远程工作应放在 FileWeft 随后调用的连接器、处理器或 Doctor 方法中。
+> 贡献 getter 在注册表构造期间被调用。不要在其中执行网络调用、数据库写入或其他业务副作用。网络调用应放在 FileWeft 随后调用的连接器、Handler 或 Doctor 方法中。
 
 ## 3. 最小插件实现
 
@@ -44,7 +47,7 @@ FileWeft 插件是若干现有 SPI 贡献的聚合包。它不会形成新的架
 ```kotlin
 // build.gradle.kts
 dependencies {
-    compileOnly("ai.icen:fileweft-spi:0.0.1")
+    compileOnly("ai.icen:fileweft-spi:0.0.2")
 }
 ```
 
@@ -207,7 +210,7 @@ FileWeft 从两个来源发现插件：
 **插件能覆盖框架默认实现吗？**  
 可以。与框架默认实现 ID 相同的宿主 Bean 或插件 Bean 会优先生效。ID 冲突会立即失败，提醒运维人员。
 
-**我应该在 `connectors()` 或 `storageAdapters()` 里发起远程调用吗？**  
+**应该在 `connectors()` 或 `storageAdapters()` 里发起网络调用吗？**
 不应该。这些 getter 只在启动时调用一次，应保持轻量和确定性。网络操作应放在 `FileConnector.sync()`、`DoctorChecker.check()` 或事件处理器中。
 
 **插件可以拥有自己的配置属性吗？**  

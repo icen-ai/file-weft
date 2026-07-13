@@ -2,6 +2,7 @@
 # Manual edits can break the build and are not advised.
 # This file is expected to be part of source control.
 # To regenerate this file, run: ./gradlew :fileweft-runtime:dependencies --write-locks
+cn.com.kingbase:kingbase8:8.6.1=runtimeClasspath,testRuntimeClasspath
 com.fasterxml.jackson.core:jackson-annotations:2.17.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 com.fasterxml.jackson.core:jackson-core:2.17.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 com.fasterxml.jackson.core:jackson-databind:2.17.3=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
@@ -13,6 +14,7 @@ com.mysql:mysql-connector-j:8.0.33=runtimeClasspath,testRuntimeClasspath
 org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testImplementationDependenciesMetadata
 org.checkerframework:checker-qual:3.42.0=runtimeClasspath,testRuntimeClasspath
 org.flywaydb:flyway-core:9.22.3=runtimeClasspath,testRuntimeClasspath
+org.flywaydb:flyway-mysql:9.22.3=runtimeClasspath,testRuntimeClasspath
 org.jetbrains.intellij.deps:trove4j:1.0.20200330=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinKlibCommonizerClasspath
 org.jetbrains.kotlin:kotlin-build-tools-api:2.1.21=kotlinBuildToolsApiClasspath
 org.jetbrains.kotlin:kotlin-build-tools-impl:2.1.21=kotlinBuildToolsApiClasspath

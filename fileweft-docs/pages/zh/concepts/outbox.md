@@ -5,7 +5,7 @@ order: 5
 locale: "zh"
 nav: "Outbox 与 Worker"
 title: "Outbox：永远不要在事务里调用下游"
-lead: "最快速度搞砸一致性的方法，就是在数据库提交里发送 HTTP 请求。FileWeft 在同一个业务事务里把事件写入 Outbox 表，再由 Worker 异步交付。本页说明该模式、Worker 配置以及如何观察积压。"
+lead: "毁掉一致性最快的方式，是在数据库提交里发送 HTTP 请求。FileWeft 在同一个业务事务里把事件写入 Outbox 表，再由 Worker 异步交付。本页说明该模式、Worker 配置以及如何观察积压。"
 format: "markdown"
 ---
 
@@ -28,7 +28,7 @@ format: "markdown"
         Handler 交付给连接器
 ```
 
-规则很简单：**本地原子，显式收敛**。FileWeft 承诺本地数据库的原子性，不承诺跨 PostgreSQL、对象存储与下游系统的分布式事务。
+规则很简单：**本地事务原子，远程状态显式收敛**。FileWeft 承诺本地数据库的原子性，不承诺跨 PostgreSQL、对象存储与下游系统的分布式事务。
 
 ## 02. 事件生命周期
 
@@ -113,7 +113,7 @@ class ComplianceSyncHandler(
     }
 
     override fun onExhausted(event: OutboxEvent, message: String) {
-        // 只持久化本地状态或告警，不要在此处启动新的外部副作用。
+        // 只持久化本地状态或发出告警，不要在此处启动新的外部副作用。
         complianceClient.recordExhausted(event.id, message)
     }
 }
@@ -165,7 +165,7 @@ FileWeft 通过 Micrometer / Prometheus 暴露 Outbox 积压指标：
 > [!NOTE]
 > 指标标签绝不能包含 `tenantId`、文档 ID 或用户 ID。使用低基数、非敏感标签，如 `state` 或 `handler`。
 
-健康系统表现为 `ready` 接近零，`running` 受 Worker 数量约束。`failed` 持续增长说明 `onExhausted` 处理或运维需要介入。
+健康系统的表现是 `ready` 接近零、`running` 受 Worker 数量约束。`failed` 持续增长说明 `onExhausted` 处理或运维需要介入。
 
 ## 07. 该做与不该做
 

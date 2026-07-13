@@ -21,7 +21,7 @@ FileWeft solves this by moving every external side effect behind an Outbox and a
 
 ## The event flow
 
-A publish command does not call connectors. It writes events and lets the worker pool converge the world:
+A publish command does not call connectors. It writes events and lets workers converge downstream state:
 
 ```
 Business transaction
@@ -157,7 +157,12 @@ interface FileConnector {
 Connectors must also implement health checks so FileWeft can degrade gracefully:
 
 ```kotlin
-enum class ConnectorHealth { HEALTHY, DEGRADED, UNHEALTHY }
+enum class ConnectorHealthStatus { HEALTHY, DEGRADED, UNHEALTHY }
+
+data class ConnectorHealth(
+    val status: ConnectorHealthStatus,
+    val message: String? = null,
+)
 ```
 
 > **WARNING**

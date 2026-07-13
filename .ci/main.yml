@@ -2,7 +2,6 @@
   runner: !reference [.fileweft-runner-4]
   docker: !reference [.fileweft-jvm-docker]
   env: !reference [.fileweft-ci-env]
-  ifModify: !reference [.fileweft-code-paths]
 
 .fileweft-main-service: &fileweft-main-service
   runner: !reference [.fileweft-runner-4]
@@ -17,13 +16,35 @@ main:
       docker: !reference [.fileweft-jvm-docker]
       env: !reference [.fileweft-ci-env]
       name: Main fast feedback
+      ifModify: !reference [.fileweft-fast-paths]
       stages:
         - name: fast-check
           script: bash ./gradlew fastCheck --no-daemon --stacktrace
 
+    docs:
+      runner: !reference [.fileweft-runner-4]
+      docker: !reference [.fileweft-jvm-docker]
+      env: !reference [.fileweft-ci-env]
+      name: Main documentation contract
+      ifModify: !reference [.fileweft-docs-paths]
+      stages:
+        - name: docs-contract
+          script: node --test fileweft-docs/test/site.test.mjs
+
+    artifacts:
+      runner: !reference [.fileweft-runner-8]
+      docker: !reference [.fileweft-jvm-docker]
+      env: !reference [.fileweft-ci-env]
+      name: Main release artifact contract
+      ifModify: !reference [.fileweft-release-artifact-paths]
+      stages:
+        - name: release-artifacts
+          script: bash ./gradlew releaseArtifactCheck --no-daemon --no-configuration-cache --stacktrace
+
     java8:
       <<: *fileweft-main-jvm
       name: Main Java 8 compatibility
+      ifModify: !reference [.fileweft-jvm8-paths]
       stages:
         - name: java-8-compatibility
           script: bash ./gradlew compatibilityJava8Check --no-daemon --stacktrace
@@ -31,6 +52,7 @@ main:
     java11:
       <<: *fileweft-main-jvm
       name: Main Java 11 compatibility
+      ifModify: !reference [.fileweft-jvm8-paths]
       stages:
         - name: java-11-compatibility
           script: bash ./gradlew compatibilityJava11Check --no-daemon --stacktrace
@@ -38,6 +60,7 @@ main:
     java17:
       <<: *fileweft-main-jvm
       name: Main Java 17 compatibility
+      ifModify: !reference [.fileweft-jvm17-paths]
       stages:
         - name: java-17-compatibility
           script: bash ./gradlew compatibilityJava17Check --no-daemon --stacktrace
@@ -45,6 +68,7 @@ main:
     java21:
       <<: *fileweft-main-jvm
       name: Main Java 21 compatibility
+      ifModify: !reference [.fileweft-jvm-all-paths]
       stages:
         - name: java-21-compatibility
           script: bash ./gradlew compatibilityJava21Check --no-daemon --stacktrace
@@ -52,6 +76,7 @@ main:
     java25:
       <<: *fileweft-main-jvm
       name: Main Java 25 compatibility
+      ifModify: !reference [.fileweft-jvm-all-paths]
       stages:
         - name: java-25-compatibility
           script: bash ./gradlew compatibilityJava25Check --no-daemon --stacktrace
@@ -68,6 +93,36 @@ main:
           script: bash ./gradlew postgresIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
       endStages:
         - name: stop-postgres
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    mysql:
+      <<: *fileweft-main-service
+      name: Main MySQL 8 integration
+      env: !reference [.fileweft-mysql-env]
+      ifModify: !reference [.fileweft-mysql-paths]
+      stages:
+        - name: start-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait mysql
+        - name: mysql-integration
+          script: bash ./gradlew mysqlIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    kingbase:
+      <<: *fileweft-main-service
+      name: Main KingbaseES V8 integration
+      env: !reference [.fileweft-kingbase-env]
+      ifModify: !reference [.fileweft-kingbase-paths]
+      stages:
+        - name: load-verified-kingbase-image
+          script: bash .ci/scripts/prepare-kingbase-image.sh
+        - name: start-kingbase
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait kingbase
+        - name: kingbase-integration
+          script: bash ./gradlew kingbaseIntegrationCheck --no-daemon --no-configuration-cache --stacktrace
+      endStages:
+        - name: stop-kingbase
           script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
 
     rustfs:

@@ -1,6 +1,10 @@
 
 # Database Optimization Rules
 
+> **Agent schema boundary:** Agent records below refer only to retained
+> V012/V026 compatibility data. `0.0.2` has no Agent product capability, and
+> these records must not be used to infer an active Agent roadmap.
+
 
 ## Index Strategy
 
@@ -51,7 +55,7 @@ Never delete:
 Archive:
 
 - old sync records
-- agent history
+- agent history (historical compatibility data)
 
 
 ## JSON Usage

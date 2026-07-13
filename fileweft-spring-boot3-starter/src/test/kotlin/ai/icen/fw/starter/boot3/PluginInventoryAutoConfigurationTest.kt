@@ -3,6 +3,7 @@ package ai.icen.fw.starter.boot3
 import ai.icen.fw.adapter.storage.LocalStorageAdapter
 import ai.icen.fw.adapter.authorization.DefaultAuthorizationProvider
 import ai.icen.fw.adapter.identity.DefaultUserRealmProvider
+import ai.icen.fw.application.plugin.PluginCapabilityType
 import ai.icen.fw.application.plugin.PluginInventoryDescriptor
 import ai.icen.fw.application.plugin.PluginInventoryPageRequest
 import ai.icen.fw.application.plugin.PluginInventoryProvider
@@ -11,6 +12,8 @@ import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.runtime.plugin.FileWeftPluginRegistry
+import ai.icen.fw.spi.ai.AgentTaskTrigger
+import ai.icen.fw.spi.ai.FileWeftAgent
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -26,6 +29,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Primary
+import java.lang.reflect.Proxy
 import java.nio.file.Paths
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -67,6 +71,45 @@ class PluginInventoryAutoConfigurationTest {
                 assertEquals(PluginInventoryQueryService.PLUGIN_INVENTORY_ACTION, request.action.name)
                 assertEquals(Identifier("trusted-tenant"), request.resource.tenantId)
                 assertEquals(Identifier("trusted-user"), request.subject.id)
+            }
+    }
+
+    @Test
+    fun `hides deferred Agent plugin capabilities unless the legacy compatibility property is enabled`() {
+        contextRunner()
+            .withUserConfiguration(
+                TrustedBoundariesConfiguration::class.java,
+                CustomerStorageConfiguration::class.java,
+                LegacyAgentPluginConfiguration::class.java,
+            )
+            .run { context ->
+                assertNull(context.startupFailure)
+                val descriptor = context.getBean(PluginInventoryQueryService::class.java)
+                    .page(PluginInventoryPageRequest())
+                    .items
+                    .single { item -> item.id == "legacy-agent-plugin" }
+
+                assertTrue(descriptor.capabilities.isEmpty())
+            }
+
+        contextRunner()
+            .withUserConfiguration(
+                TrustedBoundariesConfiguration::class.java,
+                CustomerStorageConfiguration::class.java,
+                LegacyAgentPluginConfiguration::class.java,
+            )
+            .withPropertyValues("fileweft.compatibility.legacy-agent-autoconfiguration-enabled=true")
+            .run { context ->
+                assertNull(context.startupFailure)
+                val descriptor = context.getBean(PluginInventoryQueryService::class.java)
+                    .page(PluginInventoryPageRequest())
+                    .items
+                    .single { item -> item.id == "legacy-agent-plugin" }
+
+                assertEquals(
+                    listOf(PluginCapabilityType.AGENT, PluginCapabilityType.AGENT_TASK_TRIGGER),
+                    descriptor.capabilities.map { capability -> capability.type },
+                )
             }
     }
 
@@ -220,6 +263,12 @@ class PluginInventoryAutoConfigurationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
+    class LegacyAgentPluginConfiguration {
+        @Bean
+        fun legacyAgentPlugin(): FileWeftPlugin = agentPlugin()
+    }
+
+    @Configuration(proxyBeanMethods = false)
     class ExplicitProviderConfiguration {
         @Bean
         fun explicitPluginInventoryProvider(): PluginInventoryProvider = provider("explicit-provider")
@@ -329,5 +378,20 @@ class PluginInventoryAutoConfigurationTest {
         fun plugin(id: String): FileWeftPlugin = object : FileWeftPlugin {
             override fun id(): String = id
         }
+
+        fun agentPlugin(): FileWeftPlugin = object : FileWeftPlugin {
+            override fun id(): String = "legacy-agent-plugin"
+
+            override fun agents(): List<FileWeftAgent> = listOf(contribution(FileWeftAgent::class.java))
+
+            override fun agentTaskTriggers(): List<AgentTaskTrigger> =
+                listOf(contribution(AgentTaskTrigger::class.java))
+        }
+
+        private fun <T : Any> contribution(type: Class<T>): T = type.cast(
+            Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { _, method, _ ->
+                error("Deferred Agent contribution method ${method.name} must not be invoked by inventory discovery.")
+            },
+        )
     }
 }

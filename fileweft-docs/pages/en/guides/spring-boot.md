@@ -23,17 +23,22 @@ Install exactly one generation. The Web starter exposes `/fileweft/v1/**` contro
 ```kotlin
 // build.gradle.kts (Spring Boot 3 example)
 dependencies {
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.1")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")
+    // The host owns its DataSource and pool; an equivalent host JDBC stack may replace this.
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
 }
 ```
 
 > [!WARNING]
 > Do not install both Boot 2 and Boot 3 starters. Auto-configuration classes target specific Spring Framework versions and will conflict.
 
+> [!IMPORTANT]
+> Boot 2.7's BOM manages Kotlin at 1.6.21, below FileWeft's 2.1.21, so even Java-only hosts must align it: set `extra["kotlin.version"] = "2.1.21"` with Spring Dependency Management, set `<kotlin.version>2.1.21</kotlin.version>` with Maven, or add `org.jetbrains.kotlin:kotlin-bom:2.1.21` (or an equivalent explicit resolution rule) with native Gradle platforms. An ordinary Kotlin BOM cannot override a Boot 2 `enforcedPlatform`; use `dependencyInsight` to confirm `kotlin-stdlib` is 2.1.21.
+
 ## 2. Own the DataSource
 
-FileWeft expects a `javax.sql.DataSource` bean named `fileweftDataSource` (or a primary bean if only one exists). You create it, you tune the pool, and you own credentials rotation.
+FileWeft's default wiring requires Spring to resolve one unambiguous `javax.sql.DataSource` candidate. When the host has only one DataSource, its bean name is irrelevant. You create it, tune the pool, and own credential rotation. FileWeft starters deliberately do not transitively add `spring-boot-starter-jdbc` or HikariCP, so they cannot override an existing host's pool choice. The dependency above is the recommended Boot-managed JDBC combination; a host with another pool may instead expose an equivalent single `DataSource` bean.
 
 ```kotlin
 @Configuration
@@ -41,7 +46,7 @@ class FileWeftDataSourceConfig {
 
     @Bean
     @ConfigurationProperties("app.fileweft.datasource")
-    fun fileweftDataSource(): DataSource {
+    fun dataSource(): DataSource {
         return DataSourceBuilder.create().type(HikariDataSource::class.java).build()
     }
 }
@@ -56,6 +61,9 @@ app:
       password: ${FW_DB_PASSWORD}
       maximum-pool-size: 10
 ```
+
+> [!WARNING]
+> In a multi-DataSource host, naming one bean `fileweftDataSource` does not select it; the current starter does not qualify by bean name. Explicitly provide an `ApplicationTransaction` bound to the intended pool. When `migration-mode` is `validate` or `migrate`, also provide exactly one `FlywayMigrationRunner` for that same pool. The starter auto-creates the migration runner only when the context contains exactly one DataSource.
 
 ## 3. Provide identity and tenant SPIs
 
@@ -140,7 +148,7 @@ After starting the application, check the delivered health endpoint:
 curl http://localhost:8080/fileweft/v1/health
 ```
 
-You should also list plugins to confirm that your storage adapter, catalog provider, or connector beans were registered:
+List plugins to confirm that your storage adapter, catalog provider, or connector beans were registered:
 
 ```bash
 curl http://localhost:8080/fileweft/v1/plugins

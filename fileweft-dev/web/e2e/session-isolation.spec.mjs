@@ -63,7 +63,6 @@ function documentDetail(tenantId) {
       updatedTime: 1_700_000_000_000,
     }],
     tasks: [],
-    agentResults: [],
     syncRecords: [],
     outboxEvents: [],
   };

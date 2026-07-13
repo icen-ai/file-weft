@@ -24,7 +24,7 @@ format: "html"
 
 <aside class="callout warning" data-mark="!"><div><strong>Evidence is version-specific</strong><p>Do not copy a success from another database, Boot generation, vendor emulator or earlier release into a completion claim. If evidence cannot be reproduced, the item remains open.</p></div></aside>
 
-<h2>0.0.2 · close the current development line</h2>
+<h2>0.0.2 · release contract</h2>
 
 <p>The 0.0.2 line finishes what 0.0.1 started: a clean HTTP surface, trustworthy release metadata and reproducible verification.</p>
 
@@ -32,14 +32,25 @@ format: "html"
 <thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
 <tbody>
 <tr>
-<td>Runtime-closure SBOM; SNAPSHOT release verifier; formal resumable-upload, catalog and agent HTTP resources.</td>
-<td>The SBOM verifier derives every published module's actual runtime closure and rejects test, compiler and build-tool leakage; the release verifier proves SNAPSHOT/stable version rules; Boot 2 and Boot 3 contract, context and MVC tests plus browser E2E prove tenant, permission, cursor, error and redaction behavior for all three HTTP families.</td>
-<td>Do not publish 0.0.2 while the SBOM is only a dependency dump, while a verifier can accept the wrong release identity, or while any resource exists only as an internal service, dev-only route or one-Boot-generation controller.</td>
+<td>Runtime-closure SBOM; SNAPSHOT release verifier; formal five-operation resumable-upload HTTP resource.</td>
+<td>The SBOM verifier derives every published module's actual runtime closure and rejects test, compiler and build-tool leakage; the release verifier proves SNAPSHOT/stable version rules; Boot 2 and Boot 3 contract, context and MVC tests plus browser E2E prove tenant, permission, error, checkpoint and redaction behavior for the formal resumable-upload surface.</td>
+<td>Do not publish 0.0.2 while the SBOM is only a dependency dump, while a verifier can accept the wrong release identity, or while resumable upload exists only as an internal service, dev-only route or one-Boot-generation controller.</td>
+</tr>
+<tr>
+<td>0.0.2 persistence evidence for native MySQL 8.0.17+ within 8.x and KingbaseES, with an independent change-scoped gate for each database.</td>
+<td>MySQL 8.0.46 and official KingbaseES V008R006C009B0014 environments each pass the fresh 28-migration V001–V028 Flyway chain and JDBC repository suite; `mysqlIntegrationCheck` and `kingbaseIntegrationCheck` fail closed when their named real environment is absent, and CNB schedules them for relevant database changes, nightly full acceptance or release events.</td>
+<td>H2, SQL parsing, mocks, PostgreSQL-only success, or a result from the other database does not prove MySQL or KingbaseES. MariaDB and MySQL 9 are outside the native MySQL 8.x support boundary, and the named evidence must not be expanded into proof for every 8.x minor version, collation, deployment topology or vendor connector.</td>
 </tr>
 </tbody>
 </table>
 
-<aside class="callout" data-mark="IN PROGRESS"><div><strong>Current hand-off status</strong><p>Runtime-closure SBOM, metadata-driven timestamped SNAPSHOT verification, and the five-operation formal resumable-upload contract, runtime, mirrored Boot 2/3 MVC adapters, and formal browser-path acceptance are implemented. Still open: release/SNAPSHOT fixture tests and corrupt, duplicate, XXE, path-traversal and mixed-build negatives; exact repository inventory, artifact-level metadata/checksum and dangerous JAR-entry checks; formal catalog and agent HTTP resources with dual-Boot/browser acceptance; then the final clean release gate.</p></div></aside>
+<aside class="callout" data-mark="RELEASE EVIDENCE"><div><strong>0.0.2 consumption rule</strong><p>The release contract contains the runtime-closure SBOM, exact-inventory verification, five-operation formal resumable-upload contract, mirrored Boot 2/3 MVC and browser acceptance, all 28 V001–V028 database migrations, and real MySQL 8.0.46 and KingbaseES migration/repository evidence. Consume <code>ai.icen:*:0.0.2</code> only when the exact commit has every matching CNB lane, guarded tag publication and anonymous cold-cache resolution; this roadmap does not claim those remote steps succeeded.</p></div></aside>
+
+<aside class="callout warning" data-mark="OUT OF 0.0.2"><div><strong>Formal catalog-tree HTTP is not a 0.0.2 deliverable</strong><p>The host-owned catalog SPI and catalog-aware authorization guards remain supported integration boundaries. A separate formal catalog-tree HTTP resource has been removed from 0.0.2, has no committed target version, and must not be treated as an unchecked blocker for this release.</p></div></aside>
+
+<h2>Agent product-capability decision</h2>
+
+<aside class="callout warning" data-mark="DEFERRED"><div><strong>0.0.2 does not provide Agent product capability</strong><p>The <code>fileweft-agent</code> artifact, Agent SPI/public ABI, and the Agent-related tables, columns and constraints in V012/V026 remain only for source, binary and database compatibility. The default 0.0.2 runtime, Starters, Doctor inventory, plugin inventory, public HTTP API and <code>fileweft-dev</code> do not register, advertise or expose Agent. Any explicit legacy compatibility switch is likewise not a 0.0.2 feature.</p><p>Agent requires a future redesign and is deferred indefinitely. It may be reassessed only after 1.0.0 has been released, and that is not a commitment to 1.x, the next release or any other version.</p></div></aside>
 
 <h2>0.1.0 · production supply chain</h2>
 
@@ -56,17 +67,17 @@ format: "html"
 </tbody>
 </table>
 
-<h2>0.2.0 · databases and host integration</h2>
+<h2>0.2.0 · host integration and observability</h2>
 
-<p>0.2.0 widens the supported persistence layer and gives host authors reusable test kits.</p>
+<p>0.2.0 widens reusable host test kits and observability. The current real-database evidence for MySQL 8 and KingbaseES has moved into 0.0.2 instead of remaining a promise for this line.</p>
 
 <table class="comparison-table">
 <thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
 <tbody>
 <tr>
-<td>MySQL 8 support; wider reusable TestKit coverage for host SPIs; structured logging and OpenTelemetry integration.</td>
-<td>Fresh-install, supported-version upgrade, concurrency, tenant-isolation and rollback-safe migration suites pass against real MySQL 8 as well as PostgreSQL; external sample hosts run identity, authorization, tenant, catalog, workflow, storage, connector and agent contract kits; an OpenTelemetry Collector test asserts trace/metric/log correlation, redaction and bounded cardinality.</td>
-<td>H2 compatibility, SQL parsing, mocks, a single happy-path adapter test or visually inspected logs do not prove MySQL, SPI or observability support.</td>
+<td>Wider reusable TestKit coverage for host SPIs; structured logging and OpenTelemetry integration; future database-matrix expansion backed by equivalent real-environment evidence.</td>
+<td>External sample hosts run identity, authorization, tenant, catalog, workflow, storage, connector and generic-task contract kits; an OpenTelemetry Collector test asserts trace/metric/log correlation, redaction and bounded cardinality; each newly added database has its own real migration and repository gate.</td>
+<td>Mocks, one happy-path adapter test, visually inspected logs, or treating the compatibility-only Agent ABI as a host product contract do not prove SPI, observability or future database support.</td>
 </tr>
 </tbody>
 </table>
@@ -127,6 +138,6 @@ format: "html"
 <h2>Next steps</h2>
 
 <ul>
-<li>Read the <a href="#/project/release-0-0-2-development">0.0.2 development</a> page for the current hand-off status.</li>
+<li>Read the <a href="#/project/release-0-0-2-development">Release 0.0.2</a> page for the exact scope and remote-consumption rule.</li>
 <li>See <a href="#/project/contributing">Contributing</a> if you want to help close an open item.</li>
 </ul>

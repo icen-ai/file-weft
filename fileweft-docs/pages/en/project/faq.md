@@ -78,17 +78,17 @@ FileWeft does not expose presigned storage URLs through the public HTTP API. Aut
 
 ## Releases
 
-### What is the current stable version?
+### Which release contract is current?
 
-`ai.icen:*:0.0.1`. The `0.0.2-SNAPSHOT` line is under development and should not be treated as stable.
+The current release contract is `ai.icen:*:0.0.2`. Consume it only when the protected `v0.0.2` tag pipeline is successful and an anonymous cold-cache consumer can resolve the exact remote artifacts; otherwise use the most recent version with that completed evidence.
 
 ### Can I still use `com.fileweft:*` artifacts?
 
-No. Those trial artifacts have been withdrawn. Use `ai.icen:*:0.0.1` instead.
+No. Those trial artifacts have been withdrawn. Use the verified `ai.icen:*:0.0.2` coordinates instead.
 
-### When will 0.0.2 be released?
+### How do I know 0.0.2 is consumable?
 
-When every acceptance item in the [roadmap](project/roadmap) is reproducible from a clean environment and the remote artifacts have been verified.
+Require every matching lane for the exact commit, the protected tag publication, and anonymous resolution of the remote artifacts from a cold cache. A source checkout or tag name alone is insufficient.
 
 ## HTTP API
 

@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test
 import org.springframework.jdbc.core.JdbcTemplate
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
 
 class DevDocumentQueryServiceAccessTest {
     @Test
@@ -22,15 +21,6 @@ class DevDocumentQueryServiceAccessTest {
         }
 
         assertEquals("Test policy denied document:read.", failure.message)
-    }
-
-    @Test
-    fun `projects Agent results only through the matching successful Agent task`() {
-        val normalizedSql = DEV_AGENT_RESULTS_SQL.trimIndent().replace(Regex("\\s+"), " ")
-
-        assertTrue(normalizedSql.contains("JOIN fw_task task ON task.id = result.task_id AND task.tenant_id = result.tenant_id"))
-        assertTrue(normalizedSql.contains("result.tenant_id = ? AND task.business_id = ?"))
-        assertTrue(normalizedSql.contains("task.task_type = 'agent.execute' AND task.task_status = 'SUCCESS'"))
     }
 
     private fun deniedQueries(): DevDocumentQueryService {

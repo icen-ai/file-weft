@@ -72,7 +72,7 @@ const DOCTOR_REPORT_STATUSES = new Set(["HEALTHY", "WARNING", "ERROR", "SKIPPED"
 const DOCTOR_TASK_STATUSES = new Set(["PENDING", "RUNNING", "RETRY", "SUCCESS", "FAILED"]);
 const DOCTOR_TASK_TERMINAL_STATUSES = new Set(["SUCCESS", "FAILED"]);
 const DOCTOR_PUBLIC_CHECKERS = new Set([
-  "permission", "lifecycle", "workflow", "storage", "catalog", "delivery-profile", "connector", "agent",
+  "permission", "lifecycle", "workflow", "storage", "catalog", "delivery-profile", "connector",
   "task", "extensions",
 ]);
 let doctorPollSequence = 0;
@@ -270,7 +270,7 @@ function clearSensitiveDom() {
 
   [
     "#catalog-tree", "#document-list", "#workflow-task-list", "#role-route", "#fixture-grid", "#document-actions",
-    "#version-list", "#workflow-list", "#delivery-list", "#task-list", "#agent-result-list", "#sync-list",
+    "#version-list", "#workflow-list", "#delivery-list", "#task-list", "#sync-list",
     "#audit-list", "#resumable-maintenance-output", "#runtime-health-output", "#plugin-inventory-list",
   ].forEach((selector) => $(selector).replaceChildren());
   $("#platform-output").textContent = t("platform.empty");
@@ -292,7 +292,6 @@ function clearSensitiveDom() {
   $("#rename-form").reset();
   $("#version-form").classList.add("hidden");
   $("#version-form").reset();
-  $("#agent-results-section").classList.add("hidden");
 
   $("#resumable-upload-form").reset();
   $("#resumable-upload-status").className = "resumable-status";
@@ -985,22 +984,6 @@ function renderInspector() {
     `${localizedTaskStatus(task.status)} / ${task.type}`,
     `${formatTime(task.createdTime)}${task.retryCount ? ` · ${escapeHtml(interpolate("task.retries", { count: task.retryCount }))}` : ""}${task.lastError ? ` · ${escapeHtml(task.lastError)}` : ""}`,
   )).join("") || emptyEvidence("empty.tasks");
-  $("#agent-results-section").classList.toggle("hidden", !can("agent:suggestion:read"));
-  $("#agent-result-list").innerHTML = detail.agentResults.map((result) => {
-    const payload = safeJson(result.result);
-    const suggestions = (payload.suggestions || []).map((suggestion) => {
-      const confirmed = result.confirmations.some((confirmation) => confirmation.suggestionId === suggestion.id);
-      const button = !confirmed && can("agent:suggestion:confirm")
-        ? `<button class="delivery-retry" type="button" data-agent-confirm="${escapeHtml(result.taskId)}" data-agent-suggestion="${escapeHtml(suggestion.id)}">${escapeHtml(t("action.confirmAgent"))}</button>` : "";
-      return `<small>${escapeHtml(suggestion.type)} · ${escapeHtml(JSON.stringify(suggestion.payload || {}))}${confirmed ? ` · ${escapeHtml(t("agent.confirmed"))}` : ""}${button}</small>`;
-    }).join("<br />");
-    return evidenceItem(`${localized("agent.capability", result.capability)} / ${escapeHtml(result.status)}`, `${escapeHtml(result.sourceEventType)} · ${suggestions}`);
-  }).join("") || emptyEvidence("empty.agent");
-  $("#agent-result-list").querySelectorAll("[data-agent-confirm]").forEach((button) => button.addEventListener("click", async () => {
-    await api(`/api/documents/agent-results/${button.dataset.agentConfirm}/suggestions/${button.dataset.agentSuggestion}/confirm`, { method: "POST" });
-    notice(t("notice.agentConfirmed"));
-    await selectDocument(state.selectedId, false);
-  }));
   $("#sync-list").innerHTML = detail.syncRecords.map((sync) => evidenceItem(
     `${localizedState(sync.status)} / ${sync.connectorName}`,
     `${escapeHtml(sync.externalId || "—")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`,

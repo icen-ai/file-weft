@@ -57,7 +57,7 @@ class StorageDoctorChecker(private val storageAdapter: StorageAdapter) : DoctorC
 ```bash
 curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 Response envelope:
@@ -84,7 +84,7 @@ Response envelope:
 # Schedule
 curl -sf -X POST http://api:8080/fileweft/v1/documents/doc_123/doctor/tasks \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 
 # Poll
 TASK_ID="task_456"

@@ -3,6 +3,7 @@ package ai.icen.fw.starter.boot2
 import ai.icen.fw.persistence.migration.FileWeftMigrationMode
 import ai.icen.fw.persistence.migration.FlywayMigrationRunner
 import org.springframework.beans.factory.BeanFactoryUtils
+import org.springframework.beans.factory.ListableBeanFactory
 import org.springframework.boot.autoconfigure.condition.AnyNestedCondition
 import org.springframework.boot.autoconfigure.condition.ConditionOutcome
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -47,12 +48,7 @@ class FileWeftMigrationConfiguration {
                 false,
             ).distinct()
             if (runnerNames.isEmpty()) {
-                val dataSourceCount = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
-                    beanFactory,
-                    DataSource::class.java,
-                    false,
-                    false,
-                ).distinct().size
+                val dataSourceCount = fileWeftApplicationDataSourceBeanNames(beanFactory).size
                 error(
                     "FileWeft migration mode ${persistence.migrationMode} found $dataSourceCount DataSource beans " +
                         "but no unambiguous FlywayMigrationRunner. Register an explicit FlywayMigrationRunner bean " +
@@ -150,12 +146,7 @@ private class ExactlyOneDataSourceCondition : SpringBootCondition() {
     override fun getMatchOutcome(context: ConditionContext, metadata: AnnotatedTypeMetadata): ConditionOutcome {
         val beanFactory = context.beanFactory
             ?: return ConditionOutcome.noMatch("No BeanFactory is available to resolve a DataSource")
-        val candidates = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
-            beanFactory,
-            DataSource::class.java,
-            false,
-            false,
-        ).distinct()
+        val candidates = fileWeftApplicationDataSourceBeanNames(beanFactory)
         return if (candidates.size == 1) {
             ConditionOutcome.match("Exactly one DataSource bean is available")
         } else {
@@ -163,3 +154,11 @@ private class ExactlyOneDataSourceCondition : SpringBootCondition() {
         }
     }
 }
+
+internal fun fileWeftApplicationDataSourceBeanNames(beanFactory: ListableBeanFactory): List<String> =
+    BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+        beanFactory,
+        DataSource::class.java,
+        false,
+        false,
+    ).distinct()

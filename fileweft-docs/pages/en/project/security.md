@@ -44,7 +44,7 @@ A good report saves days of back-and-forth. Include as many of the following as 
 ```text
 Subject: [SECURITY] FileWeft - possible tenant isolation bypass in workflow decisions
 
-Affected version: ai.icen:fileweft-web-api:0.0.1
+Affected version: ai.icen:fileweft-web-api:0.0.2
 Module: fileweft-web-runtime
 Deployment: Spring Boot 3.2, PostgreSQL 16, MinIO
 

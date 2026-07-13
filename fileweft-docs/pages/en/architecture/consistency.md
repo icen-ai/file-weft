@@ -63,7 +63,7 @@ interface FileConnector {
 ```
 
 > **TIP**
-> A connector implementation should treat `ConnectorSyncRequest` as an idempotency key. Replaying the same request must produce the same logical outcome, even if the previous HTTP response was lost.
+> A connector implementation should treat the stable idempotency identity inside `ConnectorSyncRequest` as the key. Replaying the same request must produce the same logical outcome, even if the previous HTTP response was lost.
 
 ## Storage compensation
 

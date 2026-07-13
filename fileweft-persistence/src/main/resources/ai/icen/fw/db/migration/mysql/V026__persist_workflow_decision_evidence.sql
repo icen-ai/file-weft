@@ -5,7 +5,7 @@ ALTER TABLE fw_operation_log
     MODIFY COLUMN operator_id varchar(256);
 
 ALTER TABLE fw_agent_suggestion_confirmation
-    MODIFY COLUMN confirmed_by varchar(256);
+    MODIFY COLUMN confirmed_by varchar(256) NOT NULL;
 
 ALTER TABLE fw_workflow_task
     MODIFY COLUMN assignee_id varchar(256),

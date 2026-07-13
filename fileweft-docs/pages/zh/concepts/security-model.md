@@ -4,8 +4,8 @@ group: "concepts"
 order: 4
 locale: "zh"
 nav: "安全模型"
-title: "失败关闭的安全模型"
-lead: "FileWeft 不会猜测调用者是谁、能做什么。它把身份、租户和授权委托给宿主，并把缺失或歧义的安全边界视为拒绝。本页说明三个提供者契约、失败关闭规则，以及公共响应中不会暴露什么。"
+title: "故障关闭安全模型"
+lead: "FileWeft 不会猜测调用者是谁、能做什么。它把身份、租户和授权委托给宿主，并把缺失或歧义的安全边界视为拒绝。本页说明三个提供者契约、故障关闭规则，以及公共响应中不会暴露什么。"
 format: "markdown"
 ---
 
@@ -49,7 +49,7 @@ class HostUserRealmProvider(private val hostContext: HostContext) : UserRealmPro
 ```
 
 > [!NOTE]
-> 用户 ID 是不透明字符串。FileWeft 保留大小写、不 trim 空白、拒绝 ISO 控制字符。请在宿主侧完成用户 ID 归一化后再交给 FileWeft。
+> 用户 ID 是不透明字符串。FileWeft 保留大小写、不裁剪空白、拒绝 ISO 控制字符。请在宿主侧完成用户 ID 归一化后再交给 FileWeft。
 
 ## 03. 授权提供者
 
@@ -89,9 +89,9 @@ val request = AuthorizationRequest(
 )
 ```
 
-## 04. 失败关闭意味着默认拒绝
+## 04. 故障关闭意味着默认拒绝
 
-FileWeft 只在完整安全边界存在时才装配能力。上下文缺失或提供者歧义会让操作不可用，而不是静默扩大访问。
+FileWeft 只在完整安全边界存在时才执行操作。上下文缺失或提供者歧义会让操作不可用，而不是静默扩大访问。
 
 | 情况 | FileWeft 行为 |
 |---|---|
@@ -159,5 +159,5 @@ class ReviewPlugin : FileWeftPlugin {
 ## 下一步
 
 - [租户与目录隔离](./tenant-catalog.md)——租户上下文与目录授权如何协同。
-- [架构安全](../architecture/security.md)——每个边界的失败关闭设计。
+- [架构安全](../architecture/security.md)——每个边界的故障关闭设计。
 - [插件](../extensions/plugins.md)——用可信的进程内插件扩展 FileWeft。

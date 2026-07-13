@@ -30,7 +30,7 @@ format: "markdown"
 DRAFT → PENDING_REVIEW → PUBLISHING → PUBLISHED
 ```
 
-返工路径：`REJECTED → revise → DRAFT`。已发布文档可以先 `OFFLINE`，再 `restore` 回 `DRAFT`。归档是显式操作，会进入 `HISTORY`。
+返工路径：`REJECTED → revise → DRAFT`。已发布文档可以先 `OFFLINE`，再执行 `restore` 回到 `DRAFT`。归档是显式操作，会进入 `HISTORY`。
 
 ## 02. 通过 HTTP 发送生命周期命令
 
@@ -88,7 +88,7 @@ curl -X POST "https://api.example.com/fileweft/v1/documents/{documentId}/archive
             ↑ 代次 1 的迟到响应被丢弃
 ```
 
-代次围栏避免了紧挨着多次发布时出现的竞态条件。
+代次围栏避免了密集连续发布时出现的竞态条件。
 
 ## 05. Outbox 让事务保持本地
 

@@ -23,7 +23,7 @@ format: "markdown"
 }
 ```
 
-当 `code` 不是 `OK` 时，`error` 会包含 `code`、`message` 和可选 `details`。稳定错误码清单见 [错误码](./error-codes.md)。
+当 `code` 不是 `OK` 时，`error` 只包含与外层一致的稳定 `code` 和安全 `message`，不接受任意详情属性。稳定错误码清单见 [错误码](./error-codes.md)。
 
 > [!NOTE]
 > FileWeft 不会通过公共协议暴露存储 URL。下载返回二进制流，并携带 `attachment`、`nosniff` 和 `private, no-store` 头。不支持 Range、HEAD、ETag 和 Content-Range。
@@ -40,9 +40,19 @@ format: "markdown"
 | Doctor | `GET /documents/{documentId}/doctor`<br>`POST /documents/{documentId}/doctor/tasks`<br>`GET /documents/{documentId}/doctor/tasks/{taskId}`<br>`GET /doctor` | 文档与系统诊断 |
 | 系统 | `GET /plugins`<br>`GET /health` | 插件清单与存活检查 |
 
-## 幂等命令
+## 按命令定义幂等要求
 
-会改变状态的命令必须携带且仅携带一个 `Idempotency-Key` 头。服务端保存租户作用域的 SHA-256 摘要，并绑定可信操作者、动作、资源和命令指纹。
+幂等要求属于每个命令自己的契约，不能仅因 HTTP 方法会改变状态就推断必须携带幂等键。上传资源的要求如下：
+
+| 命令 | 必须满足的请求契约 |
+| --- | --- |
+| `POST /uploads` | 必须且只能有一个 `Idempotency-Key`；JSON 体只能包含 `fileName`、`contentLength`、可选 `contentType` 与可选 `contentHash` |
+| `GET /uploads/{uploadId}` | 不需要幂等键；返回权威断点，完成后还返回完成回执 |
+| `PUT /uploads/{uploadId}/parts/{partNumber}` | `Content-Type: application/octet-stream`、必须且只能有一个 `X-FileWeft-Part-Length`，并发送非空原始字节；不需要幂等键 |
+| `POST /uploads/{uploadId}/complete` | 无请求体，不需要幂等键 |
+| `DELETE /uploads/{uploadId}` | 无请求体，不需要幂等键 |
+
+其他命令各自声明要求。例如，发布文档需要 `Idempotency-Key`：
 
 ```bash
 curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_123/publish" \
@@ -55,20 +65,24 @@ curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_123/publish
 > [!WARNING]
 > 重放时仍会重新执行认证、动作权限和目录可见性检查。幂等记录不是权限缓存。
 
-## 完整示例：上传并发布
-
-下面的 JSON 请求体使用代表性字段名展示命令结构，精确请求模式以 v1 契约为准。
+## 完整断点续传示例
 
 ### 1. 创建上传会话
 
 ```bash
 curl -X POST "https://fileweft.example.com/fileweft/v1/uploads" \
   -H "Authorization: Bearer ${TOKEN}" \
+  -H "Idempotency-Key: annual-report-upload-2025" \
   -H "Content-Type: application/json" \
   -d '{
-    "...": "文件元数据与分片计划"
+    "fileName": "annual-report-2025.pdf",
+    "contentLength": 104857600,
+    "contentType": "application/pdf",
+    "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }'
 ```
+
+该幂等键应对本次逻辑上传创建保持唯一。JSON 对象不能指定租户、所有者、资产类型、存储键、存储 upload ID、ETag 或任意元数据。
 
 响应：
 
@@ -78,7 +92,16 @@ curl -X POST "https://fileweft.example.com/fileweft/v1/uploads" \
   "message": "OK",
   "data": {
     "uploadId": "upl_7a8b9c",
-    "...": "会话详情"
+    "fileName": "annual-report-2025.pdf",
+    "contentLength": 104857600,
+    "contentType": "application/pdf",
+    "contentHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "status": "UPLOADING",
+    "expiresAt": 1752393600000,
+    "createdTime": 1752307200000,
+    "updatedTime": 1752307200000,
+    "uploadedParts": [],
+    "completion": null
   },
   "error": null,
   "traceId": "trace-abc-123"
@@ -88,44 +111,60 @@ curl -X POST "https://fileweft.example.com/fileweft/v1/uploads" \
 ### 2. 上传每个分片
 
 ```bash
-for part in {1..5}; do
-  curl -X PUT "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c/parts/${part}" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/octet-stream" \
-    --data-binary @part-${part}.bin
-done
+PART_FILE="part-1.bin"
+PART_LENGTH="$(wc -c < "${PART_FILE}" | tr -d ' ')"
+
+curl -X PUT "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c/parts/1" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/octet-stream" \
+  -H "X-FileWeft-Part-Length: ${PART_LENGTH}" \
+  --data-binary @"${PART_FILE}"
 ```
 
-### 3. 完成上传并创建文档
+之后使用下一个正整数 `partNumber` 重复执行。`X-FileWeft-Part-Length` 必须且只能出现一次，并与该分片实际发送的字节数相同。
+
+### 3. 从权威断点恢复
+
+```bash
+curl "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c" \
+  -H "Authorization: Bearer ${TOKEN}"
+```
+
+断线恢复前读取 `data.uploadedParts`。完成后仍使用同一个 `uploadId` 查询，此时 `status` 为 `COMPLETED`，`data.completion` 包含稳定回执。
+
+### 4. 完成上传
 
 ```bash
 curl -X POST "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c/complete" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "...": "完成参数与文档元数据"
-  }'
+  -H "Authorization: Bearer ${TOKEN}"
 ```
 
-### 4. 提交审批
+完成命令没有请求体。它同步完成上传并返回不透明回执：
+
+```json
+{
+  "code": "OK",
+  "message": "OK",
+  "data": {
+    "uploadId": "upl_7a8b9c",
+    "fileObjectId": "file_123",
+    "fileAssetId": "asset_456"
+  },
+  "error": null,
+  "traceId": "trace-abc-123"
+}
+```
+
+它不会创建文档。把完成后的资产创建为文档或版本，是独立的宿主应用命令。当前正式 `POST /fileweft/v1/documents` 与 `POST /fileweft/v1/documents/{documentId}/versions` 接收 multipart 内容，不接收 `fileAssetId`。这是有意划分的 API 边界，不是断点续传资源缺陷，也不是 0.0.2 的阻断项。
+
+### 5. 再次查询已完成上传
 
 ```bash
-curl -X POST "https://fileweft.example.com/fileweft/v1/documents/doc_456/submit" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Idempotency-Key: submit-doc_456-20250713" \
-  -H "Content-Type: application/json" \
-  -d '{"...": "审批路由选择"}'
+curl "https://fileweft.example.com/fileweft/v1/uploads/upl_7a8b9c" \
+  -H "Authorization: Bearer ${TOKEN}"
 ```
 
-### 5. 审批并发布
-
-```bash
-curl -X POST "https://fileweft.example.com/fileweft/v1/workflows/wf_789/tasks/task_111/approve" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Idempotency-Key: approve-task_111-20250713" \
-  -H "Content-Type: application/json" \
-  -d '{"...": "审批载荷"}'
-```
+查询响应会在 `data.completion` 下返回相同三个 ID，因此即使完成响应丢失，也能恢复结果而无需再次完成上传。
 
 ## 二进制下载
 
@@ -149,11 +188,11 @@ Cache-Control: private, no-store
 **内部开发路由是公共协议的一部分吗？**
 不是。`/api/**` 下的路由是开发或内部端点，可能随时变更。集成请只使用 `/fileweft/v1`。
 
-**GET 请求需要幂等键吗？**
-不需要。只有发布、审批、重试、Doctor 排队等会改变状态的命令才需要。
+**所有写请求都需要幂等键吗？**
+不需要，应遵循各端点契约。上传创建必须且只能携带一个；上传分片、完成和放弃都不需要；GET 也不需要。
 
 **不同动作可以复用同一个幂等键吗？**
-不可以。幂等键与操作者、动作、资源和命令指纹绑定。用于不同动作会生成新记录。
+不要这样做。对于接受该头的命令，应使用对目标逻辑命令唯一的键；服务端会把摘要绑定到可信上下文与命令指纹。
 
 ## 下一步
 

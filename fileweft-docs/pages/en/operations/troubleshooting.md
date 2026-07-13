@@ -68,7 +68,7 @@ Response fields to read:
 curl -sf -X POST \
   http://api:8080/fileweft/v1/documents/doc_123/deliveries/dlv_456/retry \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 > [!NOTE]
@@ -97,7 +97,7 @@ Run document-level Doctor before guessing:
 ```bash
 curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 If a checker returns `UNHEALTHY`:

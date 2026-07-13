@@ -1,5 +1,16 @@
 # 生产部署与恢复
 
+> **Agent 兼容边界：** `0.0.2` 不提供 Agent 产品能力。默认运行时、
+> Doctor/插件清单、正式 HTTP 与 Dev 均不注册或暴露 Agent。现有
+> `fileweft-agent`、Agent SPI/公共 ABI 及 V012/V026 数据库形状仅为兼容
+> 保留。Agent 最早只能在 `1.0.0` 发布后重新评估，且没有承诺版本。本文
+> 后续 Agent 运行说明只适用于显式旧版兼容模式，不是默认部署建议。
+
+仅在受控维护既有 `0.0.1` 接入时，宿主才可显式设置
+`fileweft.compatibility.legacy-agent-autoconfiguration-enabled=true` 恢复旧仓储、
+任务、确认与 Doctor 自动装配。该开关默认 `false`，不得用于新部署或作为
+`0.0.2` 产品支持合同。
+
 ## FileWeft 迁移命名空间与旧库升级
 
 FileWeft 迁移资源只发布在 `classpath:ai/icen/fw/db/migration`，并使用专属 `fileweft_schema_history`。它不会向宿主常用的 `classpath:db/migration` 放置资源，也不能与宿主 `flyway_schema_history` 合并；这样宿主和 FileWeft 都可以拥有自己的 `V001`，而不会共享版本、checksum 或 repair 操作。
@@ -24,9 +35,11 @@ fileweft:
 
 `fileweft.persistence.schema` 是对 DataSource 的安全断言：它必须与同一连接执行 `SELECT current_schema()` 的结果完全一致，不能依赖 Flyway 在运行中替宿主切换 schema。Migration Job、Web 和所有 Worker 的 JDBC search path 与该配置必须相同。独立 schema 推荐使用 PostgreSQL JDBC `currentSchema=fileweft`；共享 `public` 时应使用 `currentSchema=public`（或其他能确定返回 `public` 的等价 search path）并配置 `schema: public`。仅当模式为 `migrate` 且 `create-schema=true` 时允许目标尚未创建；即便如此，JDBC search path 也必须预先指向该名称，使创建前 `current_schema()` 返回 `null`，而不能返回另一个可用 schema。宿主有多个 DataSource 时，Starter 即使发现 `@Primary` 也不会猜测，必须显式注册绑定正确 DataSource 的 `FlywayMigrationRunner`。
 
+MySQL 的 schema 就是 database，且无 database 的 JDBC URL 在 `CREATE DATABASE` 后建立的新连接仍不会自动选择该 database。为避免出现“DDL 已执行但应用仍失败”的半完成状态，FileWeft 不从这种 DataSource 自动建 MySQL database：先由 DBA 预建 database，在 JDBC URL 中明确选择它，并保持 `create-schema=false`。若当前 `SELECT DATABASE()` 为 `null`，即使配置 `create-schema=true`，runner 也会在任何 DDL 前失败关闭。
+
 ### MySQL 8 与人大金仓（Kingbase ES）
 
-`feature/mysql-kingbase-support` 分支已为 MySQL 8 和 Kingbase ES 提供独立的 V001–V026 迁移脚本与 `FlywayMigrationRunner` 方言路由：`FlywayMigrationRunner` 会根据 `DatabaseMetaData.getDatabaseProductName()` 自动选择 `classpath:ai/icen/fw/db/migration/postgres|mysql|kingbase`。MySQL 连接示例：
+当前主工作树已为 PostgreSQL、MySQL 和 KingbaseES 提供各自完整的 28 个 V001–V028 迁移脚本与 `FlywayMigrationRunner` 方言路由：runner 根据 `DatabaseMetaData.getDatabaseProductName()` 自动选择 `classpath:ai/icen/fw/db/migration/postgres|mysql|kingbase`。MySQL 支持边界仅是原生 MySQL 8.x 中的 8.0.17+，本轮真实证据固定为 MySQL 8.0.46；MariaDB 与 MySQL 9 均不在支持范围内。官方 KingbaseES V008R006C009B0014 也已通过全新迁移和 JDBC repository 实库套件。MySQL 路径覆盖对应 DML 方言、JSON 访问、`FOR UPDATE SKIP LOCKED` 任务领取、V017 单 PENDING 数据库约束、V028 NO PAD 精确文本比较和重复文档号错误转换；KingbaseES 以 PostgreSQL 兼容模式验证迁移与 repository 行为。MySQL 连接示例：
 
 ```yaml
 spring:
@@ -40,7 +53,17 @@ fileweft:
     create-schema: false
 ```
 
-Kingbase ES 驱动未发布到 Maven Central，宿主需通过自有仓库或本地依赖提供 JDBC 驱动；`fileweft-persistence` 的 `runtimeOnly` 与测试类路径均不再强制引入该驱动。MySQL 与 Kingbase 的迁移脚本已完成 DDL 层面的表、索引、约束与 JSON 列适配，但仓库 JDBC 实现（DML 中的 `ON CONFLICT`、`RETURNING`、`FOR UPDATE SKIP LOCKED`、`text[]`、`IS DISTINCT FROM` 等）仍以 PostgreSQL 方言为主；在这些数据库上运行业务功能前，需要进一步完成 JDBC 方言抽象与实库并发测试。本节后续关于 PostgreSQL 并发预建脚本、部分唯一索引、`pg_stat_progress_create_index` 等说明仅适用于 PostgreSQL。
+MySQL `V001` 保持既有 pre-0.0.2 工作树中的资源字节与 Flyway checksum 不变，避免破坏已经试用 0.0.2-SNAPSHOT 的 schema history；0.0.1 正式标签尚未包含 MySQL 迁移，不能把这项兼容边界误写成 0.0.1 已发布契约，也不能把当前工作泛称为重写所有历史迁移。MySQL 专属修复从 V016 开始，修正旧链路中会让真实 MySQL 8 无法完整执行的语法和重复列定义。因此 0.0.2 是首个具备真实 MySQL 迁移与 JDBC repository 闭环证据的版本线。若旧库出现 checksum 不匹配或部分执行历史，必须先停写、备份并由 DBA 对比精确资源和 `fileweft_schema_history`；禁止无条件执行 `flyway repair`，也不能用 repair 掩盖无法解释的历史。
+
+`fileweft-persistence` 已通过 `runtimeOnly` 引入 KingbaseES JDBC 坐标 `cn.com.kingbase:kingbase8:8.6.1`，测试类路径也锁定同一驱动；宿主仍应从其受控制品仓库解析依赖并遵守厂商许可。KingbaseES 数据库镜像不得由 FileWeft 仓库、CNB 制品库或其他镜像仓库再次分发。开发机与 CI 必须使用 `.ci/scripts/prepare-kingbase-image.ps1` / `.sh` 从金仓官网公开地址下载 V8R6C9B14 tar，并依次核对官网 MD5、仓库锁定 SHA-256 和导入后的 Docker image ID；任何校验失败都必须终止。不得用来历不明的社区镜像替代。
+
+MySQL 与 KingbaseES 使用独立 Compose profile，不会随普通 Dev 全栈启动。只有改动触及相应迁移、方言或 persistence 边界时，本地才运行根任务 `mysqlIntegrationCheck` 或 `kingbaseIntegrationCheck`；CNB 使用同样的路径规则按需调度，夜间和标签发布则运行两者。两个任务都要求显式 `FILEWEFT_RUN_*_TESTS=true` 和专属真实数据库，缺少环境时失败关闭而不是跳过。完整准备命令、环境变量和镜像许可边界见 `.ci/README.md`。
+
+这些实库结果证明当前锁定测试版本与已覆盖 repository 路径，不自动扩大为所有 MySQL/KingbaseES 小版本、字符排序规则、高可用拓扑或厂商支持合同。MySQL 的公开下限是 8.0.17，且只覆盖原生 MySQL 8.x；8.0.46 是本轮实证版本，不是“仅支持 8.0.46”，也不能外推到 MariaDB 或 MySQL 9。本节后续关于 PostgreSQL 并发预建脚本、部分唯一索引、`pg_stat_progress_create_index` 等说明仍仅适用于 PostgreSQL。
+
+Flyway 兼容矩阵必须按宿主实际解析结果理解：FileWeft persistence 自身声明并验证 Flyway 9.22.3；Spring Boot 2 宿主由其依赖管理把 runner 解析到 Flyway 8.5.13；Spring Boot 3 宿主解析到 Flyway 11.7.2。Boot 3 已拆分数据库模块，因此 `flyway-core`、`flyway-mysql`、`flyway-database-postgresql` 必须统一为 11.7.2；混用版本不属于受支持组合。升级 Spring Boot BOM 或覆盖 Flyway 版本后，必须重新运行对应宿主运行时和三种数据库迁移门禁，不能只验证编译。
+
+Kingbase Starter 默认注册的兼容 customizer 只包装 **Spring Boot 已选择给 Flyway 的 DataSource**：它仅在 Flyway 获取 Kingbase 连接时把数据库产品名投影为 PostgreSQL，真实 URL、驱动版本、SQL、连接生命周期和诊断保持不变。应用主 DataSource Bean 仍是 Kingbase DataSource，不会被替换或重新分类。`fileweft.persistence.kingbase-flyway-compatibility-enabled=false` 只允许宿主已提供并通过实库迁移验证的等价 Flyway/Kingbase 集成时关闭；它不是绕过不兼容的故障开关，也不改变 FileWeft 自有 runner 对 Kingbase 的适配。Spring Boot 2 宿主不要在 `spring.flyway.locations` 中使用 `{vendor}`：Boot 会在 FileWeft customizer 运行前按原始 `jdbc:kingbase8:` URL 解析该占位符，无法可靠映射为 PostgreSQL；请直接配置明确的宿主迁移路径。
 
 当目标 schema 已包含宿主对象但尚无 FileWeft 对象时，Flyway 默认会把“非空 schema”视为需要人工 baseline。FileWeft runner 不会启用 `baselineOnMigrate`：它先确认专属 history 不存在、默认 history 中没有任一已知 FileWeft 脚本、目标 schema 中没有任一已知 FileWeft 业务表，才通过 Flyway 公共 API 写入版本 `0` 的命名空间初始化标记，并继续执行全部 `V001` 及后续脚本。该标记只隔离两套 history，不代表收养既有 FileWeft 数据；任何旧、失败或无 history 的 FileWeft 痕迹都会在写入标记前失败关闭。
 
@@ -82,7 +105,7 @@ fileweft:
     resumable-cleanup-batch-size: 100
 ```
 
-若需要拆分资源池，可让下游同步节点只开启 `process-outbox`，让 Doctor/Agent 节点只开启 `process-tasks`，让存储维护节点只开启 `process-upload-cleanup`。所有节点可以水平扩展：Outbox 与后台任务均通过数据库租约/锁领取，重复投递由事件或任务的幂等键约束。
+若需要拆分资源池，可让下游同步节点只开启 `process-outbox`，让 Doctor 节点只开启 `process-tasks`，让存储维护节点只开启 `process-upload-cleanup`。所有节点可以水平扩展：Outbox 与后台任务均通过数据库租约/锁领取，重复投递由事件或任务的幂等键约束。不要为 `0.0.2` 默认部署规划 Agent 节点。
 
 Worker 每轮失败只记录日志，不会丢弃待处理记录；下一轮会继续领取符合重试时间或租约已过期的工作。生产报警应至少覆盖同步失败、任务失败、任务失租（`fileweft.task_lease_lost`）、Doctor 失败和持久化 Outbox 积压。
 
@@ -158,9 +181,9 @@ fileweft:
 
 后台任务语义是至少一次（at-least-once），不是恰好一次：`FileWeftTaskHandler` 必须把 `TaskExecution.id` 作为幂等依据；任务创建端的租户级 `idempotencyKey` 只负责折叠重复入队，不能替代处理器或外部系统的去重。租约 token 只保证陈旧 Worker 不能覆盖较新的持有者，不能阻止已发出的外部副作用重复执行。
 
-任务状态确认的 token 围栏并不自动保护处理器写入的其他业务表。默认 Doctor 与 Agent 处理器因此还实现 `LeasedTaskHandler`：外部检查/Agent 调用仍在数据库事务外，写入 `fw_doctor_record` 或 `fw_agent_result` 前才开启短事务，通过 `TaskMutationRepository.findForMutation` 锁定任务，并精确复核 tenant、task ID、type、business ID、`RUNNING`、owner 与 token。失租结果不会覆盖新领取者；无 token 的 legacy lease 在调用检查器或 Agent 前即安全失败。报告/结果提交与随后任务确认之间仍是两个短事务，所以读取端必须以 `fw_task` 为权威：只有 `SUCCESS` Doctor 才展示报告，`FAILED` 也不复用可能来自旧失租尝试的暂存报告；Agent suggestion 同样只有在精确任务已为 `SUCCESS` 后才能读取确认。
+任务状态确认的 token 围栏并不自动保护处理器写入的其他业务表。默认 Doctor 处理器因此还实现 `LeasedTaskHandler`：外部检查仍在数据库事务外，写入 `fw_doctor_record` 前才开启短事务，通过 `TaskMutationRepository.findForMutation` 锁定任务，并精确复核 tenant、task ID、type、business ID、`RUNNING`、owner 与 token。失租结果不会覆盖新领取者；无 token 的 legacy lease 在调用检查器前即安全失败。报告提交与随后任务确认之间仍是两个短事务，所以读取端必须以 `fw_task` 为权威：只有 `SUCCESS` Doctor 才展示报告，`FAILED` 也不复用可能来自旧失租尝试的暂存报告。显式旧版 Agent 兼容模式沿用同一 `LeasedTaskHandler` 围栏和 `fw_agent_result` 约束，但该路径不是 `0.0.2` 默认产品能力。
 
-JDBC 默认仓储已经同时实现 token 围栏与任务 mutation 行锁。自定义 `TaskProcessingRepository` 为兼容旧插件仍可继续运行，但只获得原有的 `lease_owner` 语义；要在多 Worker、重启或租约到期场景获得 token 围栏，必须同时实现可选的 `LeasedTaskProcessingRepository`，在领取和全部确认路径持久化并校验 `TaskLeaseClaim.leaseToken`。若使用 Starter 默认的 Doctor/Agent 业务投影，自定义任务仓储还必须实现唯一的 `TaskMutationRepository`，否则启动失败；不能把仅实现旧端口的仓储误认为已经具备 fencing。升级自定义仓储前应按至少一次语义验证任务 ID 和外部副作用幂等。
+JDBC 默认仓储已经同时实现 token 围栏与任务 mutation 行锁。自定义 `TaskProcessingRepository` 为兼容旧插件仍可继续运行，但只获得原有的 `lease_owner` 语义；要在多 Worker、重启或租约到期场景获得 token 围栏，必须同时实现可选的 `LeasedTaskProcessingRepository`，在领取和全部确认路径持久化并校验 `TaskLeaseClaim.leaseToken`。若使用 Starter 默认的 Doctor 业务投影，自定义任务仓储还必须实现唯一的 `TaskMutationRepository`，否则启动失败；不能把仅实现旧端口的仓储误认为已经具备 fencing。显式旧版 Agent 兼容模式也要求该仓储，但默认部署不得据此声明 Agent 能力。升级自定义仓储前应按至少一次语义验证任务 ID 和外部副作用幂等。
 
 ```yaml
 fileweft:
@@ -174,13 +197,13 @@ fileweft:
 
 同一工作流的最终审批或驳回会通过 `WorkflowInstanceRepository.findForDecision` 串行化。默认 PostgreSQL 实现对工作流父行使用 `SELECT … FOR UPDATE`，因此双人会签的第二位审批者会在第一位提交后读取最新任务状态，而不会用旧聚合快照覆盖已批准的任务。所有文档读改写用例则必须通过 `DocumentRepository.findForMutation` 获取同一文档的串行化读取；默认 PostgreSQL 实现对文档行使用 `SELECT … FOR UPDATE`。审批决策统一按“文档、工作流”顺序加锁，避免与提交、直接发布或版本更新形成反向锁顺序。
 
-`V017` 还在数据库层建立 `(tenant_id, document_id) WHERE state = 'PENDING'` 的部分唯一索引，保证一份文档最多存在一个本地待审批流。升级前会主动检查历史重复数据并以可诊断的错误中止，绝不静默删除或关闭审批记录；运营人员必须先核实、处理这些历史工作流后再重试迁移。自定义文档/工作流仓储必须实现等价的行锁、CAS 或互斥语义，框架不会退化为普通读取。
+`V017` 在数据库层保证同一 `(tenant_id, document_id)` 最多一条 `state='PENDING'` 的本地审批流。PostgreSQL 与 KingbaseES 使用部分唯一索引；MySQL 没有同等 partial unique 语法，因此使用两个仅在 `PENDING` 时非空的 stored generated columns，再对二者建立唯一索引。既有重复会让预检或唯一索引创建明确失败，迁移绝不静默删除、合并或关闭审批记录；运营人员必须核实并处理历史工作流后重试。自定义文档/工作流仓储仍须实现等价的行锁、CAS 或互斥语义，框架不会退化为普通读取。
 
 `PublishDocumentService` 始终检查同租户、同文档是否存在本地 `PENDING` 工作流。有活动工作流时，直接发布会被拒绝，保留原审批任务和文档状态；没有本地工作流的 `PENDING_REVIEW` 文档仍可用于“外部审批已完成”的集成场景。若业务需要显式绕过本地审批，必须另行实现带专门权限、不可空原因、取消状态和审计记录的用例，不能复用普通 `document:publish`。
 
 ## 数据库迁移与查询索引
 
-所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021` 新增待办和审批历史的稳定 keyset 查询索引；`V022` 增加受理人前导的待办部分索引，避免大租户为一个用户取待办时扫描其他用户的任务；`V023` 为每个交付目标建立当前事件、操作类型和单调派发序号围栏；`V026` 统一宿主用户标识宽度并新增工作流决策证据。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
+所有数据库变更只能新增版本化 Flyway 脚本。这里的“已发布迁移不可改写”边界必须准确：作为历史边界，`v0.0.1` 只发布了 PostgreSQL V001–V025；受保护 `v0.0.2` 标签成功发布后，PostgreSQL、MySQL 与 KingbaseES 三种方言的 V001–V028 全部成为不可改写的发布资源。任何后续开发线都必须只前进并保持 checksum 可审计，不得用 `repair` 掩盖差异。`V016` 新增同步/任务索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021`/`V022` 增加工作流 keyset 查询索引；`V023` 建立交付事件围栏；`V026` 统一宿主用户标识宽度并新增决策证据；`V027` 稳定 Worker 领取顺序；`V028` 收紧 MySQL 文本比较安全边界。普通升级保持单一前进版本。
 
 对于已有大量同步、任务或工作流数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql)、[V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)、[V021 审批查询并发预建脚本](sql/postgresql-v021-concurrent-workflow-query-indexes.sql) 和 [V022 受理人待办并发预建脚本](sql/postgresql-v022-concurrent-workflow-assignee-inbox-index.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
 
@@ -201,6 +224,14 @@ fileweft:
 V026 不能与旧审批入口节点滚动混跑：旧节点不了解决策证据列，即使迁移成功也能继续提交“已完成但没有决策者”的新任务。维护窗口中必须先关闭 submit/approve/reject 入口并停止全部旧 API 节点，等待在途决策事务完成，再重新运行预检，执行 Flyway V026，验证约束和列宽，最后一次性启动新节点并做一笔新审批读取 `/fileweft/v1/documents/{id}/workflow-decisions` 验收。`ALTER COLUMN TYPE`、加列以及 `VALIDATE CONSTRAINT` 会取得表锁或扫描历史数据；大表环境应事先检查长事务、锁等待、复制延迟和维护窗口，不能把它当作无锁在线变更。
 
 紧急回滚应用时必须保留 V026 的列、约束以及已经写入的决策证据，不得删除操作者快照、把遗留空证据回填为当前受理人，也不得把 256 宽身份列缩回 64；新版本可能已经写入旧列宽无法容纳的合法用户 ID。若只能启动不认识 V026 的旧二进制，应继续关闭所有审批提交入口，因为旧节点会制造新的证据缺口；恢复到支持 V026 的节点并完成对账后才能重新开放。决策者 ID/名称属于审计和个人信息治理范围，应按宿主已批准的合规保留、访问和归档策略处理，不能进入指标标签、普通错误文案或不受控日志；删除或匿名化策略必须同时满足不可抵赖审计要求，不能由通用 TTL 作业直接清理。
+
+`V027` 分别在 `fw_outbox_event` 与 `fw_task` 上创建 `(created_time, id)` 非唯一索引，使稳定领取顺序能直接使用索引；MySQL repository 还以对应 `FORCE INDEX` 避免 OR eligibility 谓词先 filesort 并在 `SKIP LOCKED` 前锁住过多候选行。三个方言都使用普通 `CREATE INDEX`，没有承诺 concurrent/online DDL：PostgreSQL/KingbaseES 建索引期间会阻塞相关表写入，MySQL 的实际 online 算法也受版本、表结构和运行条件影响，不能当作无锁合同。升级前停止 Outbox/Task Worker，并关闭所有会向两表写入的 API/调度入口；排空长事务，按表与索引规模为最终索引、临时排序/重建、WAL/binlog 和复制积压预留磁盘，持续监控锁等待、复制延迟和磁盘余量。
+
+V027 是只前进迁移。失败且 Flyway 尚未记录成功时，应先检查同名索引是否完整有效；任何不完整或定义不同的同名对象都由 DBA 在维护窗口清理后再重跑迁移，禁止伪造 history 或无条件 `repair`。应用紧急回滚可以保留两条兼容非唯一索引，不需要也不应同步降级 schema；只有全部依赖新领取计划的 Worker 已下线、旧版本查询计划和锁范围已实测，并确认磁盘回收必要时，才可另行评审删除。
+
+`V028` 是 MySQL 安全迁移：MySQL 常见 `utf8mb4` 默认排序规则会折叠大小写、重音或尾空格，不符合 Core Identifier 不归一化并允许首尾空格的契约。迁移对全部 18 张 FileWeft 业务表执行 `CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin`；该 MySQL 8 排序规则为 NO PAD，因此 tenant ID、用户 ID、业务/存储/任务/幂等 ID、V017 generated uniqueness keys 及其索引均按 Unicode 标量/文本值精确比较，大小写、重音和尾空格都不折叠。这里不承诺保存任意原始字节身份。标题、评论等显示文本也随表采用相同排序语义，这是防止未来 key 列静默继承不安全默认值的安全优先取舍。PostgreSQL 与 KingbaseES 的 V028 只用于版本对齐，不重写 schema。
+
+MySQL `ALTER TABLE ... CONVERT` 可能重建整张表和全部文本索引，必须独占维护窗口：停止所有新旧 API/Worker 写流量，禁止新旧节点混跑，完成可恢复备份，并按最大表同时预算原表、重建副本、索引、临时空间、redo/binlog 与复制积压；在演练环境测量真实锁时长，生产持续监控 metadata lock、磁盘和副本延迟。迁移后只能前进：应用回滚必须保留 NO PAD 的 `utf8mb4_0900_bin`，不得把表转回 PAD SPACE 的 `utf8mb4_bin`、`*_ci` 或其他会折叠大小写、重音或尾空格的排序规则。回退比较语义会重新混淆只在大小写、重音或尾空格上不同的 tenant/opaque ID，可能造成跨租户命中、错误唯一冲突或幂等身份折叠，不能作为故障恢复手段。
 
 ## 断点续传与对象完整性
 
@@ -257,7 +288,7 @@ fileweft:
 
 若业务方替换了默认 `DeliveryConnectorResolver` 或 `DocumentSyncService`，应通过 `ConnectorResilienceRegistry.protect(connectorId, connector)` 获取连接器；否则该自定义入口会自行承担超时与熔断责任。
 
-Doctor 的 `agent` 检查只验证已安装的 Agent 能力是否已被运行时登记，不会调用 AI、产生费用或修改文档。未安装 Agent 时结果为 `SKIPPED`，因为 Agent 是可选能力；安装后会报告已登记的能力列表。更细的第三方 AI 连通性检查应由对应插件提供 `DoctorChecker`。
+Doctor 的历史 `agent` 检查器仅为旧版兼容保留；`0.0.2` 默认运行时不注册它，Doctor 清单也不展示 Agent。显式启用旧版兼容模式时，该检查器只核对旧 Agent 登记状态，不调用 AI、产生费用或修改文档；这不构成当前产品支持。第三方 AI 连通性检查不得借普通 `DoctorChecker` 绕过 Agent 延后决策并冒充正式 Agent 能力。
 
 恢复步骤：
 

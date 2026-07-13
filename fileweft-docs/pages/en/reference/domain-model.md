@@ -121,10 +121,10 @@ Every state change produces an audit record bound to the trusted `UserIdentity` 
 | Layer | Owns |
 |-------|------|
 | `core` | Identifiers, results, errors, events, contexts |
-| `spi` | Contracts for tenant, identity, storage, catalog, workflow, connector, doctor, task, agent |
+| `spi` | Contracts for tenant, identity, storage, catalog, workflow, connector, doctor and tasks; legacy Agent ABI is compatibility-only |
 | `domain` | Document, FileAsset, Lifecycle, Version, Workflow, Audit rules |
 | `application` | Upload, publish, offline, review, Doctor, sync orchestration |
-| `adapter` | MinIO, OSS, S3, Dify, ESE, AppBuilder implementations |
+| `adapter` | Host- or plugin-provided storage/connector implementations; official OSS, Dify, ESE and AppBuilder adapters remain future roadmap work |
 | `persistence` | Repository implementations and Flyway migrations |
 
 ## Frequently asked questions

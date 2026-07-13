@@ -2,11 +2,11 @@
 kotlin = "2.1.21"
 junit = "5.11.4"
 flyway = "9.22.3"
+flyway-boot2 = "8.5.13"
+flyway-boot3 = "11.7.2"
 postgresql = "42.7.4"
 mysql = "8.0.33"
-# Kingbase ES JDBC driver is not on Maven Central; this version is documented for
-# consumers who provide the artifact through their own repository.
-kingbase = "8.6.0"
+kingbase = "8.6.1"
 jackson = "2.17.3"
 jackson-kotlin = "2.21.4"
 spring-boot2 = "2.7.18"
@@ -22,15 +22,21 @@ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-mysql = { module = "org.flywaydb:flyway-mysql", version.ref = "flyway" }
+flyway-core-boot2 = { module = "org.flywaydb:flyway-core", version.ref = "flyway-boot2" }
+flyway-core-boot3 = { module = "org.flywaydb:flyway-core", version.ref = "flyway-boot3" }
+flyway-mysql-boot3 = { module = "org.flywaydb:flyway-mysql", version.ref = "flyway-boot3" }
+flyway-postgresql-boot3 = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway-boot3" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql" }
-kingbase-jdbc = { module = "com.kingbase8:kingbase8", version.ref = "kingbase" }
+kingbase-jdbc = { module = "cn.com.kingbase:kingbase8", version.ref = "kingbase" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson-kotlin" }
 spring-boot2-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot2" }
 spring-boot2-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot2" }
 spring-boot2-test = { module = "org.springframework.boot:spring-boot-test", version.ref = "spring-boot2" }
 spring-boot2-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot2" }
+spring-boot2-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version.ref = "spring-boot2" }
 spring-boot2-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot2" }
 spring-boot3-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot3" }
 spring-boot3-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot3" }
@@ -49,7 +55,7 @@ opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version.ref
 opentelemetry-sdk-metrics = { module = "io.opentelemetry:opentelemetry-sdk-metrics", version.ref = "opentelemetry" }
 opentelemetry-sdk-logs = { module = "io.opentelemetry:opentelemetry-sdk-logs", version.ref = "opentelemetry" }
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
-slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.16" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version = "1.7.36" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

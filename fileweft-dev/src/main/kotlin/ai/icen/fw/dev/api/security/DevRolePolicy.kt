@@ -15,14 +15,14 @@ object DevRolePolicy {
         "document:read", "document:create", "document:edit", "document:rename", "document:version:add",
         "document:submit", "document:revise", "document:restore", "document:download", "file:upload", "document:doctor",
     )
-    private val reviewerActions = setOf("document:read", "document:download", "document:audit", "document:doctor", "agent:suggestion:read")
+    private val reviewerActions = setOf("document:read", "document:download", "document:audit", "document:doctor")
     private val viewerActions = setOf("document:read", "document:download")
     private val proofLabActions = linkedSetOf(
         "document:read", "document:download", "document:create", "document:edit", "file:upload", "document:rename", "document:version:add", "document:submit",
         "document:revise", "document:restore", "document:audit", "document:doctor", "document:publish", "document:offline",
         "document:archive", "system:outbox:process", "system:task:process",
         "system:doctor:read", PLUGIN_INVENTORY_READ_ACTION,
-        DOCUMENT_DELIVERY_READ_ACTION, "document:delivery:retry", "agent:suggestion:read", "agent:suggestion:confirm",
+        DOCUMENT_DELIVERY_READ_ACTION, "document:delivery:retry",
         "system:upload:cleanup", "file:upload:maintenance",
     )
 

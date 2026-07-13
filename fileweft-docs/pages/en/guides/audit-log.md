@@ -36,7 +36,7 @@ curl http://localhost:8080/fileweft/v1/documents/DOC-001/logs
 The response follows the standard FileWeft v1 envelope and contains a chronological list of events for the document. Use the trace ID to correlate with host gateway logs.
 
 > [!NOTE]
-> The exact field names and ordering are subject to the 0.0.1 response contract. See the [HTTP API reference](../reference/http-api.md) for the current shape.
+> The exact field names and ordering follow the 0.0.2 response contract. See the [HTTP API reference](../reference/http-api.md) for the current shape.
 
 ## 3. Read workflow decisions
 
@@ -46,7 +46,7 @@ For documents that went through review, the dedicated workflow-decisions endpoin
 curl http://localhost:8080/fileweft/v1/documents/DOC-001/workflow-decisions
 ```
 
-This view requires both `document:read` and `document:audit` permissions. In 0.0.1 it returns task outcomes and decision timestamps. Detailed operator identity snapshots are planned for a future release and are not promised as stable behavior.
+The authorized workflow-decision evidence view requires both `document:read` and `document:audit`. In 0.0.2, newly recorded approvals and rejections return an immutable operator ID, an optional safe display-name snapshot and `decidedTime`; legacy rows explicitly report that evidence was not recorded. Ordinary workflow history remains identity-redacted.
 
 ## 4. Tenant and privacy boundaries
 

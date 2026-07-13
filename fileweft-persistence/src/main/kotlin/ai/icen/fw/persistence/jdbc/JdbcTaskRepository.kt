@@ -112,7 +112,8 @@ class JdbcTaskRepository(
         val connection = JdbcConnectionContext.requireCurrent()
 
         val candidateIds = connection.prepareStatement(
-            "$CANDIDATE_SELECT_SQL ${dialect.limitClause()} ${dialect.forUpdateSkipLocked()}",
+            "${candidateSelectSql(dialect.claimCandidateTable(TASK_TABLE, CLAIM_ORDER_INDEX))} " +
+                "${dialect.limitClause()} ${dialect.forUpdateSkipLocked()}",
         ).use { statement ->
             statement.setLong(1, now)
             statement.setLong(2, now)
@@ -245,15 +246,18 @@ class JdbcTaskRepository(
         val STRING_MAP_TYPE = object : TypeReference<Map<String, String>>() {}
         const val LEGACY_RUNNING_GRACE_MILLIS = 300_000L
         const val SELECT_COLUMNS = "SELECT id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status, retry_count, next_attempt_time, last_error, lease_owner, lease_token"
-        const val CANDIDATE_SELECT_SQL = """
+        const val TASK_TABLE = "fw_task"
+        const val CLAIM_ORDER_INDEX = "idx_fw_task_claim_order"
+
+        fun candidateSelectSql(tableExpression: String): String = """
             SELECT id
-            FROM fw_task
+            FROM $tableExpression
             WHERE (task_status IN ('PENDING', 'RETRY') AND next_attempt_time <= ?)
                OR (task_status = 'RUNNING' AND (
                     (lease_token IS NOT NULL AND lease_expire_time <= ?)
                     OR (lease_token IS NULL AND updated_time <= ?)
                ))
             ORDER BY created_time, id
-        """
+        """.trimIndent()
     }
 }

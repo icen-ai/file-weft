@@ -9,12 +9,21 @@
   services:
     - docker
 
+.fileweft-stable-release-tag: &fileweft-stable-release-tag
+  name: validate-stable-release-tag
+  script: |
+    if [[ ! "$CNB_BRANCH" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "Release verification requires an exact stable vX.Y.Z tag" >&2
+      exit 1
+    fi
+
 "$":
   tag_push:
     quality:
       <<: *fileweft-release-jvm
       name: Release quality
       stages:
+        - *fileweft-stable-release-tag
         - name: release-quality
           script: |
             VERSION="${CNB_BRANCH#v}"
@@ -29,6 +38,7 @@
       <<: *fileweft-release-jvm
       name: Release Java 8 compatibility
       stages:
+        - *fileweft-stable-release-tag
         - name: java-8-compatibility
           script: |
             VERSION="${CNB_BRANCH#v}"
@@ -43,6 +53,7 @@
       <<: *fileweft-release-jvm
       name: Release Java 11 compatibility
       stages:
+        - *fileweft-stable-release-tag
         - name: java-11-compatibility
           script: |
             VERSION="${CNB_BRANCH#v}"
@@ -57,6 +68,7 @@
       <<: *fileweft-release-jvm
       name: Release Java 17 compatibility
       stages:
+        - *fileweft-stable-release-tag
         - name: java-17-compatibility
           script: |
             VERSION="${CNB_BRANCH#v}"
@@ -71,6 +83,7 @@
       <<: *fileweft-release-jvm
       name: Release Java 21 compatibility
       stages:
+        - *fileweft-stable-release-tag
         - name: java-21-compatibility
           script: |
             VERSION="${CNB_BRANCH#v}"
@@ -85,6 +98,7 @@
       <<: *fileweft-release-jvm
       name: Release Java 25 compatibility
       stages:
+        - *fileweft-stable-release-tag
         - name: java-25-compatibility
           script: |
             VERSION="${CNB_BRANCH#v}"
@@ -100,6 +114,7 @@
       name: Release PostgreSQL integration
       env: !reference [.fileweft-postgres-env]
       stages:
+        - *fileweft-stable-release-tag
         - name: start-postgres
           script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait postgres
         - name: postgres-integration
@@ -115,11 +130,56 @@
         - name: stop-postgres
           script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
 
+    mysql:
+      <<: *fileweft-release-service
+      name: Release MySQL 8 integration
+      env: !reference [.fileweft-mysql-env]
+      stages:
+        - *fileweft-stable-release-tag
+        - name: start-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait mysql
+        - name: mysql-integration
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew mysqlIntegrationCheck "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: mysql-complete
+          type: cnb:resolve
+          options:
+            key: release-mysql
+            data: { commit: $CNB_COMMIT }
+      endStages:
+        - name: stop-mysql
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
+    kingbase:
+      <<: *fileweft-release-service
+      name: Release KingbaseES V8 integration
+      env: !reference [.fileweft-kingbase-env]
+      stages:
+        - *fileweft-stable-release-tag
+        - name: load-verified-kingbase-image
+          script: bash .ci/scripts/prepare-kingbase-image.sh
+        - name: start-kingbase
+          script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait kingbase
+        - name: kingbase-integration
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew kingbaseIntegrationCheck "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: kingbase-complete
+          type: cnb:resolve
+          options:
+            key: release-kingbase
+            data: { commit: $CNB_COMMIT }
+      endStages:
+        - name: stop-kingbase
+          script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
+
     rustfs:
       <<: *fileweft-release-service
       name: Release RustFS integration
       env: !reference [.fileweft-rustfs-env]
       stages:
+        - *fileweft-stable-release-tag
         - name: start-rustfs
           script: docker compose -f .docker/docker-compose.dev.yaml up --detach --wait rustfs
         - name: rustfs-integration
@@ -143,6 +203,7 @@
       env: !reference [.fileweft-e2e-env]
       name: Release API and browser acceptance
       stages:
+        - *fileweft-stable-release-tag
         - name: install-browser-tests
           script: npm ci --prefix fileweft-dev/web
         - name: start-compose
@@ -169,12 +230,8 @@
         CI: "true"
         FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
       name: Publish verified Maven release
-      lock:
-        key: fileweft-maven-release
-        wait: true
-        timeout: 7200
-        expires: 7200
       stages:
+        - *fileweft-stable-release-tag
         - name: await-release-verification
           jobs:
             quality:
@@ -219,6 +276,18 @@
                 key: release-postgres
               exports:
                 commit: FILEWEFT_VERIFIED_POSTGRES_COMMIT
+            mysql:
+              type: cnb:await
+              options:
+                key: release-mysql
+              exports:
+                commit: FILEWEFT_VERIFIED_MYSQL_COMMIT
+            kingbase:
+              type: cnb:await
+              options:
+                key: release-kingbase
+              exports:
+                commit: FILEWEFT_VERIFIED_KINGBASE_COMMIT
             rustfs:
               type: cnb:await
               options:
@@ -241,6 +310,8 @@
               "$FILEWEFT_VERIFIED_JAVA21_COMMIT" \
               "$FILEWEFT_VERIFIED_JAVA25_COMMIT" \
               "$FILEWEFT_VERIFIED_POSTGRES_COMMIT" \
+              "$FILEWEFT_VERIFIED_MYSQL_COMMIT" \
+              "$FILEWEFT_VERIFIED_KINGBASE_COMMIT" \
               "$FILEWEFT_VERIFIED_RUSTFS_COMMIT" \
               "$FILEWEFT_VERIFIED_ACCEPTANCE_COMMIT"
             do
@@ -250,6 +321,12 @@
               fi
             done
         - name: publish-verified-artifacts
+          timeout: 2h
+          lock:
+            key: fileweft-maven-release
+            wait: true
+            timeout: 7200
+            expires: 10800
           script: |
             VERSION="${CNB_BRANCH#v}"
             export FILEWEFT_CI_VERIFIED_COMMIT="$FILEWEFT_VERIFIED_QUALITY_COMMIT"
@@ -268,3 +345,6 @@
               fi
               sleep $((attempt * 10))
             done
+      failStages:
+        - name: destroy-publication-token-after-failure
+          type: cnb:destroy-token

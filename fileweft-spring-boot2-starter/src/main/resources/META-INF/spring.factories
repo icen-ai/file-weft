@@ -1,2 +1,3 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+ai.icen.fw.starter.boot2.FileWeftKingbaseFlywayAutoConfiguration,\
 ai.icen.fw.starter.boot2.FileWeftAutoConfiguration

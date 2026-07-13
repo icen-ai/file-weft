@@ -37,10 +37,14 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Import
 import org.springframework.context.annotation.ConfigurationCondition.ConfigurationPhase
+import org.springframework.core.env.Environment
 import java.nio.file.Paths
 import java.time.Clock
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.core.instrument.MeterRegistry
+
+private const val LEGACY_AGENT_AUTOCONFIGURATION_PROPERTY =
+    "fileweft.compatibility.legacy-agent-autoconfiguration-enabled"
 
 @AutoConfiguration(after = [DataSourceAutoConfiguration::class, FlywayAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
@@ -90,7 +94,16 @@ class FileWeftAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(FileWeftPluginRegistry::class)
-    fun fileWeftPluginRegistry(plugins: List<FileWeftPlugin>): FileWeftPluginRegistry = FileWeftPluginRegistry(plugins)
+    fun fileWeftPluginRegistry(
+        plugins: List<FileWeftPlugin>,
+        environment: Environment,
+    ): FileWeftPluginRegistry = if (
+        environment.getProperty(LEGACY_AGENT_AUTOCONFIGURATION_PROPERTY, Boolean::class.java, false)
+    ) {
+        FileWeftPluginRegistry.withLegacyAgentCompatibility(plugins)
+    } else {
+        FileWeftPluginRegistry(plugins)
+    }
 
     @Bean
     @ConditionalOnMissingBean(PluginInventoryQueryService::class)

@@ -1,6 +1,11 @@
 
 # Final AI Execution Prompt
 
+> **Superseding instruction:** do not implement the historical Agent priority
+> for `0.0.2` or any currently committed version. Agent redesign is deferred
+> indefinitely and may only be reassessed after `1.0.0` is released; no later
+> release is promised.
+
 
 When implementing FileWeft:
 
@@ -36,6 +41,6 @@ Adapter
 
 Doctor
 
-Agent
+Agent (historical priority; superseded and deferred)
 
 Production

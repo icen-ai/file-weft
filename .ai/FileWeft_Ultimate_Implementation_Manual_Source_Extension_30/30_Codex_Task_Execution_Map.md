@@ -1,6 +1,11 @@
 
 # Codex Task Execution Map
 
+> **Superseding execution rule:** TASK-010 is retained only as historical
+> traceability. Do not execute it for `0.0.2` or any currently committed
+> version. Agent redesign may be reassessed only after `1.0.0` is released and
+> has no promised delivery version.
+
 
 TASK-001
 
@@ -49,7 +54,7 @@ Implement Doctor.
 
 TASK-010
 
-Implement Agent.
+Implement Agent. **SUPERSEDED / DEFERRED — historical task, do not execute.**
 
 
 Every task must:

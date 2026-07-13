@@ -24,7 +24,7 @@ format: "html"
 
 <aside class="callout warning" data-mark="!"><div><strong>证据只对被验证版本有效</strong><p>不能把另一种数据库、另一个 Boot 代际、厂商模拟器或旧版本的成功结果挪用为本版本的完成声明。证据不能复现时，该项仍是待办。</p></div></aside>
 
-<h2>0.0.2 · 收口当前开发线</h2>
+<h2>0.0.2 · 发布合同</h2>
 
 <p>0.0.2 完成 0.0.1 未尽之事：干净的 HTTP 表面、可信的发布元数据与可复现的校验。</p>
 
@@ -32,14 +32,25 @@ format: "html"
 <thead><tr><th>交付内容</th><th>验收证据</th><th>禁止冒充完成的边界</th></tr></thead>
 <tbody>
 <tr>
-<td>基于运行时闭包的 SBOM；SNAPSHOT 发布校验器；正式的断点续传、目录与 Agent HTTP 资源。</td>
-<td>SBOM 校验器从所有发布模块的真实 runtime closure 推导组件，并拒绝测试、编译器和构建工具泄漏；发布校验器证明 SNAPSHOT/正式版本规则；Boot 2 与 Boot 3 的契约、Context、MVC 测试及浏览器 E2E 覆盖三组 HTTP 的租户、权限、游标、错误和脱敏行为。</td>
-<td>SBOM 仍只是依赖转储、校验器会接受错误发布身份，或任一资源仅存在于内部服务、dev 路由或单一 Boot 代际时，都不能发布 0.0.2。</td>
+<td>基于运行时闭包的 SBOM；SNAPSHOT 发布校验器；正式五操作断点续传 HTTP 资源。</td>
+<td>SBOM 校验器从所有发布模块的真实 runtime closure 推导组件，并拒绝测试、编译器和构建工具泄漏；发布校验器证明 SNAPSHOT/正式版本规则；Boot 2 与 Boot 3 的契约、Context、MVC 测试及浏览器 E2E 覆盖正式续传的租户、权限、错误、检查点和脱敏行为。</td>
+<td>SBOM 仍只是依赖转储、校验器会接受错误发布身份，或续传资源仅存在于内部服务、dev 路由或单一 Boot 代际时，都不能发布 0.0.2。</td>
+</tr>
+<tr>
+<td>原生 MySQL 8.x 中 8.0.17+ 与 KingbaseES 的 0.0.2 持久化支持证据，以及各自独立的按需门禁。</td>
+<td>MySQL 8.0.46 与官方 KingbaseES V008R006C009B0014 环境分别通过由完整 28 个迁移（V001–V028）组成的 Flyway 链和 JDBC repository 实库套件；`mysqlIntegrationCheck` 与 `kingbaseIntegrationCheck` 在缺少指定真实环境时失败关闭，并由 CNB 为相关数据库变更、夜间全量验收或发布事件调度。</td>
+<td>H2、SQL 解析、Mock、仅 PostgreSQL 绿测或另一种数据库的结果，都不能证明 MySQL 或 KingbaseES。MariaDB 与 MySQL 9 不在原生 MySQL 8.x 支持边界内，当前实证也不能扩大为每个 8.x 小版本、排序规则、部署拓扑或厂商连接器支持。</td>
 </tr>
 </tbody>
 </table>
 
-<aside class="callout" data-mark="进行中"><div><strong>当前交接状态</strong><p>运行时闭包 SBOM、基于 Maven metadata 的时间戳 SNAPSHOT 仓库校验，以及五操作正式断点续传资源的纯契约、Runtime、Boot 2/3 镜像 MVC 和浏览器正式路径验收已经实现。仍待完成：正式版/SNAPSHOT fixture 及损坏、重复、XXE、路径穿越、混合构建负例；仓库精确库存、artifact 级 metadata/checksum 与危险 JAR entry 校验；正式目录与 Agent HTTP 资源及其双 Boot/浏览器验收；最后再跑干净发布门禁。</p></div></aside>
+<aside class="callout" data-mark="发布证据"><div><strong>0.0.2 消费规则</strong><p>发布合同包含运行时闭包 SBOM、精确库存校验、五操作正式断点续传契约、Boot 2/3 镜像 MVC 和浏览器验收、完整 28 个 V001–V028 数据库迁移，以及 MySQL 8.0.46 与 KingbaseES 的真实迁移/repository 证据。只有精确提交具备全部匹配 CNB lane、受保护标签发布和匿名冷缓存解析结果时，才能消费 <code>ai.icen:*:0.0.2</code>；本路线图不会提前声称这些远端步骤已经成功。</p></div></aside>
+
+<aside class="callout warning" data-mark="移出 0.0.2"><div><strong>正式目录树 HTTP 不是 0.0.2 交付项</strong><p>宿主拥有的目录 SPI 与目录感知授权 guard 继续是受支持的集成边界；独立正式目录树 HTTP 资源已经移出 0.0.2，没有承诺目标版本，也不得再作为本次发布的未验收阻断项。</p></div></aside>
+
+<h2>Agent 产品能力决策</h2>
+
+<aside class="callout warning" data-mark="延期"><div><strong>0.0.2 不提供 Agent 产品能力</strong><p><code>fileweft-agent</code> 制品、Agent SPI/公共 ABI，以及 V012/V026 中与 Agent 有关的表、列和约束仅为源码、二进制和数据库兼容而保留。0.0.2 默认 Runtime、Starter、Doctor 清单、插件清单、公共 HTTP API 与 <code>fileweft-dev</code> 都不注册、宣传或暴露 Agent。任何显式遗留兼容开关也不是 0.0.2 功能。</p><p>Agent 将来需要重新设计，但无限期延期；最早只能在 1.0.0 已发布之后重新评估，而且这不承诺 1.x、下一版本或任何其他版本会交付。</p></div></aside>
 
 <h2>0.1.0 · 生产供应链</h2>
 
@@ -56,17 +67,17 @@ format: "html"
 </tbody>
 </table>
 
-<h2>0.2.0 · 数据库与宿主集成</h2>
+<h2>0.2.0 · 宿主集成与可观测性</h2>
 
-<p>0.2.0 扩大支持的持久层，并为宿主作者提供可复用的测试套件。</p>
+<p>0.2.0 为宿主作者扩大可复用测试套件和可观测性；MySQL 8 与 KingbaseES 的当前实库证据已前移到 0.0.2，不再作为本阶段的未来承诺。</p>
 
 <table class="comparison-table">
 <thead><tr><th>交付内容</th><th>验收证据</th><th>禁止冒充完成的边界</th></tr></thead>
 <tbody>
 <tr>
-<td>MySQL 8 支持；扩大可复用 TestKit 的宿主 SPI 覆盖；结构化日志与 OpenTelemetry 集成。</td>
-<td>真实 MySQL 8 和 PostgreSQL 都通过全新安装、受支持版本升级、并发、租户隔离及可安全回滚的迁移套件；外部样例宿主运行身份、授权、租户、目录、工作流、存储、连接器与 Agent 契约套件；OpenTelemetry Collector 测试断言 Trace/Metric/Log 关联、脱敏和有界基数。</td>
-<td>H2 兼容、SQL 解析、Mock、单一 happy path 适配器测试或肉眼查看日志，都不能证明 MySQL、SPI 或可观测性支持。</td>
+<td>扩大可复用 TestKit 的宿主 SPI 覆盖；结构化日志与 OpenTelemetry 集成；按同等真实环境证据扩展未来数据库矩阵。</td>
+<td>外部样例宿主运行身份、授权、租户、目录、工作流、存储、连接器和通用任务契约套件；OpenTelemetry Collector 测试断言 Trace/Metric/Log 关联、脱敏和有界基数；任何新增数据库都具备独立的真实迁移与 repository 门禁。</td>
+<td>Mock、单一 happy path 适配器测试、肉眼查看日志，或把兼容保留的 Agent ABI 当作宿主产品契约，都不能证明 SPI、可观测性或未来数据库支持。</td>
 </tr>
 </tbody>
 </table>
@@ -127,6 +138,6 @@ format: "html"
 <h2>下一步</h2>
 
 <ul>
-<li>阅读 <a href="#/project/release-0-0-2-development">0.0.2 开发中</a> 了解当前交接状态。</li>
+<li>阅读 <a href="#/project/release-0-0-2-development">0.0.2 发布说明</a>，了解精确范围与远端消费规则。</li>
 <li>想帮忙关闭待办项，参见 <a href="#/project/contributing">参与贡献</a>。</li>
 </ul>

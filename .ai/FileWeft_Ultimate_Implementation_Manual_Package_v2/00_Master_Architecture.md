@@ -1,6 +1,11 @@
 
 # FileWeft Master Architecture
 
+> **Superseding Agent boundary:** the Agent layer listed below is retained as
+> historical architecture and compatibility surface only. `0.0.2` does not
+> expose it by default. Redesign may be reassessed only after `1.0.0` is
+> released, with no promised delivery version.
+
 FileWeft is a Kotlin/JVM enterprise file intelligence infrastructure.
 
 Primary goal:
@@ -16,7 +21,7 @@ persistence
 runtime
 adapter
 starter
-agent
+agent (historical; compatibility-only artifact/SPI)
 
 Dependency direction is immutable:
 

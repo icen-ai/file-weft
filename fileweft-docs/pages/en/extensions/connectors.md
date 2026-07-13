@@ -4,7 +4,7 @@ group: "extensions"
 order: 2
 locale: "en"
 nav: "Connector engineering"
-title: "Engineer resilient connectors"
+title: "Build resilient connectors"
 lead: "Learn how to implement a FileConnector that publishes documents to downstream systems safely using bounded timeouts, retries, idempotency, removal, and health checks."
 format: "markdown"
 ---
@@ -108,7 +108,7 @@ fileweft:
             owner-ref: search-ops
 ```
 
-The `connector-id` value must match a key returned from a plugin's `connectors()` map or from a Spring `FileConnector` bean.
+The `connector-id` value must exactly match a key returned from a plugin's `connectors()` map or the explicit name of a Spring `FileConnector` bean. For the required target above, that ID is `acmeArchive`.
 
 ## 3. Complete connector example
 
@@ -117,7 +117,7 @@ Add the SPI dependency:
 ```kotlin
 // build.gradle.kts
 dependencies {
-    compileOnly("ai.icen:fileweft-spi:0.0.1")
+    compileOnly("ai.icen:fileweft-spi:0.0.2")
 }
 ```
 
@@ -138,7 +138,7 @@ class AcmeArchiveConnector(
 ) : FileConnector {
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
-        val idempotencyKey = request.businessId.toString()
+        val idempotencyKey = request.invocation.idempotencyKey
         return withRetry(times = 3) {
             val url = URI("$baseUrl/archive/v1/documents").toURL()
             val conn = url.openConnection() as HttpURLConnection
@@ -180,6 +180,7 @@ class AcmeArchiveConnector(
 
     override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
         val externalId = request.externalId
+        val idempotencyKey = request.invocation.idempotencyKey
         return withRetry(times = 3) {
             val url = URI("$baseUrl/archive/v1/documents/${externalId.encode()}").toURL()
             val conn = url.openConnection() as HttpURLConnection
@@ -187,6 +188,7 @@ class AcmeArchiveConnector(
             conn.connectTimeout = 10_000
             conn.readTimeout = 30_000
             conn.setRequestProperty("Authorization", "Bearer $apiKey")
+            conn.setRequestProperty("Idempotency-Key", idempotencyKey)
 
             when (val status = conn.responseCode) {
                 in 200..299, 404 -> ConnectorSyncResult(
@@ -249,13 +251,55 @@ class AcmeArchiveConnector(
 }
 ```
 
+Register the connector in the Spring Boot host with the exact bean name used by `connector-id`. Keep the API key outside source code and ordinary YAML; inject it from the deployment secret store as `ACME_ARCHIVE_API_KEY`:
+
+```kotlin
+package com.example.fileweft.host
+
+import ai.icen.fw.spi.connector.FileConnector
+import com.example.fileweft.ext.AcmeArchiveConnector
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+
+@Configuration
+class AcmeArchiveConfiguration {
+
+    @Bean("acmeArchive")
+    fun acmeArchiveConnector(
+        @Value("\${acme.archive.base-url}") baseUrl: String,
+        @Value("\${ACME_ARCHIVE_API_KEY}") apiKey: String,
+    ): FileConnector = AcmeArchiveConnector(baseUrl, apiKey)
+}
+```
+
+```yaml
+acme:
+  archive:
+    base-url: https://archive.example.internal
+
+fileweft:
+  sync:
+    default-profile-id: regulated
+    profiles:
+      - id: regulated
+        display-name: Regulated publishing
+        targets:
+          - id: compliance
+            display-name: Compliance archive
+            connector-id: acmeArchive # exact @Bean name
+            required: true
+```
+
+Never include the API key in connector result messages, exception text, logs, metrics tags, Doctor details, plugin inventory, or HTTP responses. Also redact host `/env` and `/configprops` observability endpoints if they are enabled. The `acmeArchive` example is fictional and does not claim an official vendor adapter.
+
 > **TIP**  
 > Use a real JSON library such as Jackson in production; the inline string above is kept simple for readability. The same applies to request signing, content streaming, and metrics.
 
 What this connector demonstrates:
 
 - Bounded `connectTimeout` and `readTimeout` on every call.
-- Stable `Idempotency-Key` derived from the FileWeft `businessId`.
+- The FileWeft-provided `request.invocation.idempotencyKey` is forwarded unchanged instead of being derived from `businessId`.
 - Clear classification of HTTP status codes.
 - Redacted messages that never include the API key.
 - A read-only health check suitable for Doctor.
@@ -264,8 +308,8 @@ What this connector demonstrates:
 
 Integration tests should prove the connector behaves correctly under repetition and failure:
 
-1. Repeated `sync` with the same `businessId` returns the same `externalId`.
-2. Repeated `remove` with the same `externalId` is safe.
+1. Replaying `sync` with the same `request.invocation.idempotencyKey` returns the same `externalId`.
+2. Replaying `remove` with the same invocation key and `externalId` is safe.
 3. A timeout produces `RETRYABLE_FAILURE`.
 4. A `400 Bad Request` produces `PERMANENT_FAILURE`.
 5. Error messages do not contain credentials.
@@ -276,8 +320,10 @@ Integration tests should prove the connector behaves correctly under repetition 
 
 Before deploying a connector, verify:
 
+- [ ] Every profile `connector-id` exactly matches its Spring bean name or plugin map key.
+- [ ] Credentials come from the deployment secret store and cannot appear in logs, Doctor, inventory, metrics, or APIs.
 - [ ] Every network call has a timeout.
-- [ ] The idempotency key is stable and unique per business object.
+- [ ] Both sync and removal forward `request.invocation.idempotencyKey` unchanged.
 - [ ] Retryable and permanent failures are classified correctly.
 - [ ] Returned `externalId` is non-blank for successful deliveries.
 - [ ] Error messages are redacted.
@@ -293,7 +339,7 @@ curl -s http://localhost:8080/fileweft/v1/documents/{documentId}/sync-status
 ## FAQ
 
 **What if my downstream system does not support idempotency?**  
-Use the stable `businessId` as the idempotency key and store the returned external ID in your own state if necessary. The connector must still classify results so FileWeft knows whether to retry.
+Persist the invocation result under `request.invocation.idempotencyKey` (with tenant and connector namespaces if needed), then return the stored external ID on replay. Do not substitute `businessId`: one business document can produce distinct delivery targets, generations, and removal calls. The connector must still classify results so FileWeft knows whether to retry.
 
 **Can I invoke the connector synchronously from an application service?**  
 No. FileWeft delivers through the outbox and async worker so a downstream outage cannot block or roll back the local transaction.

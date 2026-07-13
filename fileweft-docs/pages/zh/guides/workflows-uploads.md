@@ -4,18 +4,25 @@ group: "guides"
 order: 2
 locale: "zh"
 nav: "工作流与上传"
-title: "审批、断点续传与持久化 Agent"
-lead: "理解 FileWeft 如何处理长周期工作——文档审批、分片上传和后台 AI 任务——同时不削弱事务边界，也不向外部泄漏存储内部细节。"
+title: "审批、断点续传与持久任务"
+lead: "理解 FileWeft 如何处理长周期工作——文档审批、分片上传和通用后台任务——同时不削弱事务边界，也不向外部泄漏存储内部细节。"
 format: "markdown"
 ---
 
-企业文件很少在一次请求内完成流转。一份文档可能需要审批，一段 2 GB 的视频需要断点续传，AI 模型可能需要异步处理内容。FileWeft 把这些关注点都保持为显式、持久且受控的。
+企业文件很少在一次请求内完成流转。一份文档可能需要审批，一段 2 GB 的视频需要断点续传，OCR 或扫描任务可能需要异步处理内容。FileWeft 把这些关注点保持为显式、持久且隔离的。
 
 ## 1. 审批路由
 
 `DocumentReviewRouteProvider` SPI 让宿主决定文档发布前需要谁审批。解析在 FileWeft 数据库事务外执行，因此可以安全查询 HR 或 BPM 系统。
 
 ```kotlin
+import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.workflow.DocumentReviewRoute
+import ai.icen.fw.spi.workflow.DocumentReviewRouteProvider
+import ai.icen.fw.spi.workflow.DocumentReviewRouteRequest
+import ai.icen.fw.spi.workflow.DocumentReviewRouteTask
+import org.springframework.stereotype.Component
+
 @Component
 class ComplianceRouteProvider : DocumentReviewRouteProvider {
 
@@ -25,11 +32,9 @@ class ComplianceRouteProvider : DocumentReviewRouteProvider {
         // 宿主根据文档类型、租户或请求中的其他属性决定审批人。
         val approvers = listOf("compliance-lead", "legal-lead")
         return DocumentReviewRoute(
+            workflowType = "COMPLIANCE_REVIEW",
             tasks = approvers.map { userId ->
-                DocumentReviewTask(
-                    assignee = Identifier(userId),
-                    operation = "APPROVE",
-                )
+                DocumentReviewRouteTask(assigneeId = Identifier(userId))
             },
         )
     }
@@ -38,7 +43,7 @@ class ComplianceRouteProvider : DocumentReviewRouteProvider {
 
 行为要点：
 
-1. 调用 `submit` 时，FileWeft 会请求所有已注册 Provider 解析任务。
+1. 调用 `submit` 时，FileWeft 只选择一个 Provider：优先使用请求中的 `reviewRouteId`，否则使用 `fileweft.workflow.default-review-route-id` 配置的默认路由。
 2. 并行任务同时会签，必须全部通过才发布。
 3. 任一驳回即结束流程。
 4. 最终事务在提交前会重新检查文档状态。
@@ -51,7 +56,7 @@ class ComplianceRouteProvider : DocumentReviewRouteProvider {
 | --- | --- | --- |
 | 1. 创建会话 | `POST /uploads` | 用幂等键预留上传 ID。 |
 | 2. 上传分片 | `PUT /uploads/{id}/parts/{n}` | 发送某个编号分片的原始字节。 |
-| 3. 检查检查点 | `GET /uploads/{id}` | 从服务端确认点恢复。 |
+| 3. 检查确认点 | `GET /uploads/{id}` | 从服务端确认点恢复。 |
 | 4. 完成上传 | `POST /uploads/{id}/complete` | 把分片组装成 `FileObject + FileAsset`。 |
 | 5. 放弃上传 | `DELETE /uploads/{id}` | 安全取消进行中的会话。 |
 
@@ -66,14 +71,17 @@ curl -i -X POST http://localhost:8080/fileweft/v1/uploads \
   }'
 ```
 
-完成后返回的 `fileAssetId` 可以传给业务命令，例如 `POST /documents` 或 `POST /documents/{id}/versions`。
+完成回执中的 `fileAssetId` 是已持久化资产的标识。当前正式 `POST /fileweft/v1/documents` 与 `POST /fileweft/v1/documents/{id}/versions` 仍接收 multipart 文件内容，并不接受这个 ID。若要复用该资产，宿主必须在自己的应用层集成中完成资产绑定；当前正式文档 HTTP 资源尚未提供这一步。
 
 > [!TIP]
 > 始终把检查接口返回的 `uploadedParts` 当作唯一权威检查点。客户端状态可能丢失，服务端状态不会。
 
-## 3. Agent 与后台任务
+## 3. 通用后台任务
 
-AI 抽取、OCR、病毒扫描和自定义诊断都应放入持久化 `fw_task` handler。它们在请求线程外执行，并通过租约重试。
+OCR、病毒扫描、宿主自有抽取和自定义诊断都应放入持久化 `fw_task` handler。它们在请求线程外执行，并通过租约重试。
+
+> [!CAUTION]
+> `FileWeftTaskHandler` 是 0.0.2 的通用持久任务能力，不是 FileWeft Agent。`fileweft-agent`、Agent SPI/ABI 和相关迁移仅为兼容保留；默认产品面不注册或暴露 Agent。
 
 ```kotlin
 @Component
@@ -97,7 +105,7 @@ class DocumentOcrHandler : FileWeftTaskHandler {
 }
 ```
 
-任务由应用层创建，或通过 Outbox 事件发出。Worker 消费后保证至少执行一次，并以 task id 幂等。
+任务由应用层创建，或通过 Outbox 事件发出。Worker 消费后保证至少执行一次，且对 task id 幂等。
 
 ## 4. 整体流程
 
@@ -105,7 +113,7 @@ class DocumentOcrHandler : FileWeftTaskHandler {
 
 1. 用户创建断点续传会话并发送所有分片。
 2. 完成接口返回 `fileAssetId`。
-3. 宿主用该资产调用 `POST /documents` 创建草稿文档。
+3. 宿主通过自有应用层集成把该资产绑定为文档或版本；这不是当前正式文档 HTTP 资源的一部分。
 4. 宿主调用 `POST /documents/{id}/submit` 启动审批。
 5. 审批路由 Provider 返回审批人。
 6. 全部审批通过后，FileWeft 发布文档并触发交付连接器。
@@ -119,7 +127,7 @@ class DocumentOcrHandler : FileWeftTaskHandler {
 ## 常见问题
 
 **Q：内部文档可以跳过审批吗？**
-可以。注册一个对特定文档类型返回空任务列表的路由 Provider，即可视为预审批。
+不能通过空路由表达。`DocumentReviewRoute` 要求 `workflowType` 非空、至少包含一个任务且任务不能重复；当前正式 `submit` HTTP 路径也会创建本地审批任务。若业务允许不走本地审批，宿主需要设计另一条受授权的生命周期流程，不能让该 Provider 返回空列表。
 
 **Q：Worker 执行任务时崩溃怎么办？**
 任务租约到期后，其他 Worker 会接管。Handler 必须对 task id 幂等。
@@ -130,5 +138,5 @@ class DocumentOcrHandler : FileWeftTaskHandler {
 ## 下一步
 
 - [断点续传协议](resumable-upload.md) 了解完整字节级语义。
-- [实现持久任务 Handler](agent-handler.md) 添加 OCR、扫描或 AI Agent。
+- [实现持久任务 Handler](agent-handler.md) 添加 OCR、扫描或其他宿主后台工作。
 - [生命周期与交付概念](../concepts/lifecycle-delivery.md) 了解发布/下线/归档行为。

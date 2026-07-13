@@ -1,6 +1,8 @@
 package ai.icen.fw.persistence.migration
 
+import ai.icen.fw.persistence.database.MySqlDatabaseSupport
 import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.FlywayException
 import java.nio.charset.StandardCharsets
 import java.sql.Connection
 import java.sql.DatabaseMetaData
@@ -21,7 +23,10 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     schema: String? = null,
     private val createSchema: Boolean = false,
 ) {
-    private val configuredSchema: String? = schema?.let { validatedSchemaName(it, DatabaseProduct.POSTGRESQL) }
+    // Product-specific identifier limits cannot be checked without opening the
+    // DataSource. Keep construction side-effect free and apply those limits at
+    // migrate/validate time after the database product is known.
+    private val configuredSchema: String? = schema?.let(::validatedSchemaSyntax)
 
     init {
         require(!createSchema || configuredSchema != null) {
@@ -83,8 +88,13 @@ class FlywayMigrationRunner @JvmOverloads constructor(
 
     private fun configuredFlyway(targetSchema: String): Flyway {
         val product = dataSource.connection.use { connection -> detectDatabaseProduct(connection) }
+        val flywayDataSource = when (product) {
+            DatabaseProduct.KINGBASE -> KingbaseFlywayDataSource(dataSource)
+            DatabaseProduct.POSTGRESQL,
+            DatabaseProduct.MYSQL -> dataSource
+        }
         return Flyway.configure()
-            .dataSource(dataSource)
+            .dataSource(flywayDataSource)
             .locations(migrationLocation(product))
             .failOnMissingLocations(true)
             .validateMigrationNaming(true)
@@ -100,7 +110,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             .load()
     }
 
-    private fun readCurrentSchema(): String? = dataSource.connection.use { connection ->
+    private fun readCurrentSchema(): CurrentSchema = dataSource.connection.use { connection ->
         val product = detectDatabaseProduct(connection)
         val sql = when (product) {
             DatabaseProduct.POSTGRESQL,
@@ -110,14 +120,18 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         connection.createStatement().use { statement ->
             statement.executeQuery(sql).use { result ->
                 check(result.next()) { "DataSource did not return current schema" }
-                result.getString(1)?.let { validatedSchemaName(it, product) }
+                CurrentSchema(
+                    product = product,
+                    name = result.getString(1)?.let { validatedSchemaName(it, product) },
+                )
             }
         }
     }
 
     private fun resolveTargetSchema(allowMissingCurrentSchema: Boolean): String {
-        val currentSchema = readCurrentSchema()
-        val explicitSchema = configuredSchema
+        val current = readCurrentSchema()
+        val currentSchema = current.name
+        val explicitSchema = configuredSchema?.let { validatedSchemaName(it, current.product) }
         if (explicitSchema == null) {
             return checkNotNull(currentSchema) {
                 "FileWeft migration requires the DataSource to expose a non-null current schema"
@@ -127,6 +141,11 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             return explicitSchema
         }
         if (currentSchema == null && allowMissingCurrentSchema) {
+            check(current.product != DatabaseProduct.MYSQL) {
+                "FileWeft cannot safely create MySQL database '$explicitSchema' from a DataSource " +
+                    "whose JDBC URL has no current database. Pre-create the database, bind it in " +
+                    "the DataSource URL, and use createSchema=false."
+            }
             return explicitSchema
         }
         throw IllegalStateException(
@@ -136,7 +155,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     }
 
     private fun assertCurrentSchema(expectedSchema: String, operation: String) {
-        val actualSchema = readCurrentSchema()
+        val actualSchema = readCurrentSchema().name
         check(actualSchema == expectedSchema) {
             "FileWeft $operation completed but DataSource current_schema " +
                 "'${actualSchema ?: "<null>"}' does not equal '$expectedSchema'"
@@ -151,7 +170,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     }
 
     private fun bootstrapNamespaceHistory(targetSchema: String, flyway: Flyway) {
-        if (namespaceHistoryExistsAndIsValid(targetSchema)) {
+        if (namespaceHistoryExistsAndIsValid(targetSchema, awaitEmptyHistory = true)) {
             return
         }
 
@@ -160,7 +179,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             // A concurrent runner may have created and committed the namespace
             // history after our first probe and then started V001. Re-check the
             // history before classifying those newly visible tables as untracked.
-            if (namespaceHistoryExistsAndIsValid(targetSchema)) {
+            if (namespaceHistoryExistsAndIsValid(targetSchema, awaitEmptyHistory = true)) {
                 return
             }
             rejectUntrackedFileWeftSchema(targetSchema, discoveredTables)
@@ -178,32 +197,44 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             }
         }
 
-        check(namespaceHistoryExistsAndIsValid(targetSchema)) {
+        check(namespaceHistoryExistsAndIsValid(targetSchema, awaitEmptyHistory = true)) {
             "FileWeft namespace bootstrap completed without creating $targetSchema.$HISTORY_TABLE"
         }
     }
 
-    private fun namespaceHistoryExistsAndIsValid(targetSchema: String): Boolean =
+    private fun namespaceHistoryExistsAndIsValid(
+        targetSchema: String,
+        awaitEmptyHistory: Boolean = false,
+    ): Boolean = when (inspectNamespaceHistory(targetSchema)) {
+        NamespaceHistoryState.ABSENT -> false
+        NamespaceHistoryState.VALID -> true
+        NamespaceHistoryState.EMPTY -> {
+            check(awaitEmptyHistory) {
+                "FileWeft migration history $targetSchema.$HISTORY_TABLE exists but contains no rows. " +
+                    "Its required namespace marker is missing; refusing to treat an empty history as an untracked namespace."
+            }
+            awaitNamespaceMarker(targetSchema)
+        }
+    }
+
+    private fun inspectNamespaceHistory(targetSchema: String): NamespaceHistoryState =
         dataSource.connection.use { connection ->
             if (!tableExists(connection, targetSchema, HISTORY_TABLE)) {
-                return@use false
+                return@use NamespaceHistoryState.ABSENT
             }
-            validateNamespaceMarker(connection, targetSchema)
-            true
+            inspectNamespaceMarker(connection, targetSchema)
         }
 
-    private fun validateNamespaceMarker(connection: Connection, targetSchema: String) {
+    private fun inspectNamespaceMarker(connection: Connection, targetSchema: String): NamespaceHistoryState {
         val historyTable = qualifiedIdentifier(
             connection.metaData.identifierQuoteString,
             targetSchema,
             HISTORY_TABLE,
         )
-        val markers = connection.prepareStatement(
+        val entries = connection.prepareStatement(
             "SELECT installed_rank, version, description, type, script, checksum, success " +
-                "FROM $historyTable WHERE version = ? OR type = ? ORDER BY installed_rank",
+                "FROM $historyTable ORDER BY installed_rank",
         ).use { statement ->
-            statement.setString(1, NAMESPACE_BASELINE_VERSION)
-            statement.setString(2, NAMESPACE_BASELINE_TYPE)
             statement.executeQuery().use { result ->
                 buildList {
                     while (result.next()) {
@@ -215,12 +246,18 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                                 type = result.getString("type"),
                                 script = result.getString("script"),
                                 checksum = result.getObject("checksum")?.let { (it as Number).toInt() },
-                                success = result.getObject("success") as? Boolean,
+                                success = result.getBoolean("success").takeUnless { result.wasNull() },
                             ),
                         )
                     }
                 }
             }
+        }
+        if (entries.isEmpty()) {
+            return NamespaceHistoryState.EMPTY
+        }
+        val markers = entries.filter { entry ->
+            entry.version == NAMESPACE_BASELINE_VERSION || entry.type == NAMESPACE_BASELINE_TYPE
         }
         check(markers.size == 1) {
             "FileWeft migration history $targetSchema.$HISTORY_TABLE requires exactly one " +
@@ -241,6 +278,35 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                 "description='$NAMESPACE_BASELINE_DESCRIPTION', type='$NAMESPACE_BASELINE_TYPE', " +
                 "script='$NAMESPACE_BASELINE_SCRIPT', checksum=NULL, success=true."
         }
+        return NamespaceHistoryState.VALID
+    }
+
+    private fun awaitNamespaceMarker(targetSchema: String): Boolean {
+        val deadline = System.nanoTime() + BOOTSTRAP_HISTORY_APPEAR_TIMEOUT_MILLIS * NANOS_PER_MILLISECOND
+        while (System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(BOOTSTRAP_HISTORY_RECHECK_MILLIS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                error(
+                    "Interrupted while waiting for FileWeft migration history " +
+                        "$targetSchema.$HISTORY_TABLE to publish its namespace marker",
+                )
+            }
+            when (inspectNamespaceHistory(targetSchema)) {
+                NamespaceHistoryState.VALID -> return true
+                NamespaceHistoryState.EMPTY -> Unit
+                NamespaceHistoryState.ABSENT -> error(
+                    "FileWeft migration history $targetSchema.$HISTORY_TABLE disappeared while " +
+                        "waiting for its namespace marker",
+                )
+            }
+        }
+        error(
+            "FileWeft migration history $targetSchema.$HISTORY_TABLE remained empty for " +
+                "$BOOTSTRAP_HISTORY_APPEAR_TIMEOUT_MILLIS ms without its required namespace marker; " +
+                "refusing to continue",
+        )
     }
 
     private fun discoverFileWeftSentinelTables(targetSchema: String): List<String> =
@@ -265,7 +331,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         }
 
         fun inspect(): Boolean = try {
-            namespaceHistoryExistsAndIsValid(targetSchema)
+            inspectNamespaceHistory(targetSchema) == NamespaceHistoryState.VALID
         } catch (invalidHistory: RuntimeException) {
             invalidHistory.addSuppressed(bootstrapFailure)
             throw invalidHistory
@@ -290,10 +356,30 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         return false
     }
 
-    private fun RuntimeException.isConcurrentBootstrapConflict(): Boolean =
-        generateSequence<Throwable>(this) { it.cause }
-            .filterIsInstance<SQLException>()
-            .any { it.sqlState in CONCURRENT_BOOTSTRAP_SQL_STATES }
+    private fun RuntimeException.isConcurrentBootstrapConflict(): Boolean {
+        val failures = generateSequence<Throwable>(this) { it.cause }.toList()
+        val sqlFailures = failures.filterIsInstance<SQLException>()
+        if (sqlFailures.any { failure -> failure.isKnownConcurrentBootstrapConflict() }) {
+            return true
+        }
+
+        // Flyway 8, 9, and 11 can observe a MySQL history table after the
+        // competing CREATE TABLE auto-commits but before that runner commits
+        // the V0 marker. DbBaseline reports this narrow race as a plain
+        // FlywayException without a SQLException cause. Accept only that exact
+        // condition (and no unrelated SQL state), then still require the full
+        // reviewed marker to appear within the bounded wait above.
+        return failures.filterIsInstance<FlywayException>().any { failure ->
+            failure.message.orEmpty().let { message ->
+                message.startsWith(EMPTY_HISTORY_BASELINE_FAILURE_PREFIX) &&
+                    message.contains(EMPTY_HISTORY_BASELINE_FAILURE_SUFFIX)
+            }
+        } && sqlFailures.all { failure -> failure.isKnownConcurrentBootstrapConflict() }
+    }
+
+    private fun SQLException.isKnownConcurrentBootstrapConflict(): Boolean =
+        sqlState in CONCURRENT_BOOTSTRAP_SQL_STATES ||
+            (sqlState == MYSQL_GENERAL_SQL_STATE && errorCode == MYSQL_DATABASE_EXISTS_ERROR_CODE)
 
     private fun rejectLegacyFileWeftHistory(targetSchema: String) {
         val legacyTable = dataSource.connection.use { connection ->
@@ -338,12 +424,23 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         table: String,
     ): Boolean {
         val metadata = connection.metaData
+        val product = detectDatabaseProduct(connection)
         val schemaPattern = exactMetadataPattern(metadata, schema)
         val tablePattern = exactMetadataPattern(metadata, table)
-        return metadata.getTables(null, schemaPattern, tablePattern, arrayOf("TABLE")).use { result ->
+        // JDBC catalog is an exact name, unlike schemaPattern/tableNamePattern.
+        // Escaping '_' or '%' here makes Connector/J search a different
+        // catalog and hides a history table in common names such as fw_prod.
+        val catalog = if (product == DatabaseProduct.MYSQL) schema else null
+        val metadataSchema = if (product == DatabaseProduct.MYSQL) null else schemaPattern
+        return metadata.getTables(catalog, metadataSchema, tablePattern, arrayOf("TABLE")).use { result ->
             generateSequence { if (result.next()) result else null }
                 .any { row ->
-                    row.getString("TABLE_SCHEM") == schema && row.getString("TABLE_NAME") == table
+                    val namespace = when (product) {
+                        DatabaseProduct.MYSQL -> row.getString("TABLE_CAT")
+                        DatabaseProduct.POSTGRESQL,
+                        DatabaseProduct.KINGBASE -> row.getString("TABLE_SCHEM")
+                    }
+                    namespace == schema && row.getString("TABLE_NAME") == table
                 }
         }
     }
@@ -402,8 +499,24 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         private const val BOOTSTRAP_HISTORY_APPEAR_TIMEOUT_MILLIS: Long = 5_000
         private const val BOOTSTRAP_HISTORY_RECHECK_MILLIS: Long = 50
         private const val NANOS_PER_MILLISECOND: Long = 1_000_000
+        private const val MYSQL_GENERAL_SQL_STATE: String = "HY000"
+        private const val MYSQL_DATABASE_EXISTS_ERROR_CODE: Int = 1007
+        private const val EMPTY_HISTORY_BASELINE_FAILURE_PREFIX: String =
+            "Unable to baseline schema history table "
+        private const val EMPTY_HISTORY_BASELINE_FAILURE_SUFFIX: String =
+            " as it already exists, and is empty."
         private val UNQUOTED_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_$]*")
-        private val CONCURRENT_BOOTSTRAP_SQL_STATES = setOf("42P06", "42P07", "23505")
+        private val CONCURRENT_BOOTSTRAP_SQL_STATES = setOf(
+            // PostgreSQL / Kingbase duplicate schema, table, or namespace marker.
+            "42P06",
+            "42P07",
+            "23505",
+            // MySQL duplicate table and integrity-constraint states. The
+            // exception is accepted only if the exact reviewed V0 marker is
+            // subsequently visible, so unrelated failures are never hidden.
+            "42S01",
+            "23000",
+        )
         private val FILEWEFT_SENTINEL_TABLES = setOf(
             "fw_agent_result",
             "fw_agent_suggestion_confirmation",
@@ -433,7 +546,10 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             val productName = connection.metaData.databaseProductName
             return when {
                 productName.equals("PostgreSQL", ignoreCase = true) -> DatabaseProduct.POSTGRESQL
-                productName.equals("MySQL", ignoreCase = true) -> DatabaseProduct.MYSQL
+                productName.equals("MySQL", ignoreCase = true) -> {
+                    MySqlDatabaseSupport.requireSupported(connection.metaData)
+                    DatabaseProduct.MYSQL
+                }
                 productName.startsWith("Kingbase", ignoreCase = true) -> DatabaseProduct.KINGBASE
                 else -> error(
                     "Unsupported database product '$productName'; " +
@@ -452,7 +568,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             DatabaseProduct.KINGBASE -> "classpath:ai/icen/fw/db/migration/kingbase"
         }
 
-        private fun validatedSchemaName(schema: String, product: DatabaseProduct): String {
+        private fun validatedSchemaSyntax(schema: String): String {
             require(schema.isNotEmpty()) { "FileWeft migration schema must not be empty" }
             val firstCodePoint = schema.codePointAt(0)
             val lastCodePoint = schema.codePointBefore(schema.length)
@@ -474,15 +590,25 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                 }
                 offset += Character.charCount(codePoint)
             }
+            return schema
+        }
+
+        private fun validatedSchemaName(schema: String, product: DatabaseProduct): String {
+            validatedSchemaSyntax(schema)
             val encodedLength = schema.toByteArray(StandardCharsets.UTF_8).size
-            val maxLength = when (product) {
+            when (product) {
                 DatabaseProduct.POSTGRESQL,
-                DatabaseProduct.KINGBASE -> POSTGRESQL_IDENTIFIER_MAX_BYTES
-                DatabaseProduct.MYSQL -> MYSQL_IDENTIFIER_MAX_CHARS
-            }
-            require(encodedLength <= maxLength) {
-                "FileWeft migration schema is $encodedLength UTF-8 bytes; $product identifiers allow at most " +
-                    "$maxLength ${if (product == DatabaseProduct.MYSQL) "characters" else "bytes"}"
+                DatabaseProduct.KINGBASE -> require(encodedLength <= POSTGRESQL_IDENTIFIER_MAX_BYTES) {
+                    "FileWeft migration schema is $encodedLength UTF-8 bytes; $product identifiers allow at most " +
+                        "$POSTGRESQL_IDENTIFIER_MAX_BYTES bytes"
+                }
+                DatabaseProduct.MYSQL -> {
+                    val characterCount = schema.codePointCount(0, schema.length)
+                    require(characterCount <= MYSQL_IDENTIFIER_MAX_CHARS) {
+                        "FileWeft migration schema is $characterCount characters; $product identifiers allow at most " +
+                            "$MYSQL_IDENTIFIER_MAX_CHARS characters"
+                    }
+                }
             }
             return schema
         }
@@ -500,4 +626,15 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         val checksum: Int?,
         val success: Boolean?,
     )
+
+    private data class CurrentSchema(
+        val product: DatabaseProduct,
+        val name: String?,
+    )
+
+    private enum class NamespaceHistoryState {
+        ABSENT,
+        EMPTY,
+        VALID,
+    }
 }

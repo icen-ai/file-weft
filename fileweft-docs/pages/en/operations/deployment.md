@@ -11,7 +11,7 @@ format: "markdown"
 
 ## What this page solves
 
-Production FileWeft is not a single jar with every capability turned on. This page shows how to deploy the same `ai.icen:*:0.0.1` artifact as separate runtime roles that share database and object storage but never share privileges they do not need.
+Production FileWeft is not a single jar with every capability turned on. This page shows how to deploy the same verified `ai.icen:*:0.0.2` artifact as separate runtime roles that share database and object storage but never share privileges they do not need.
 
 ## Recommended topology
 
@@ -30,7 +30,7 @@ Think of a small control plane: one role writes schema, one serves traffic, one 
 ## Rollout order
 
 1. Back up the database and verify a restore.
-2. Stop conflicting writers; run the migration job with exclusive migration ownership.
+2. Stop conflicting writers; run the migration job as the sole owner of schema changes.
 3. Start API and Worker roles in `validate` mode.
 4. Observe `/fileweft/v1/health`, Doctor results, Outbox ready age and lease recovery.
 5. Enable traffic only after validation succeeds.
@@ -101,13 +101,16 @@ fileweft:
     enabled: false
 ```
 
-Run it as a one-shot job, not a long-lived service:
+FileWeft's startup initializer runs the migration, but it does not automatically terminate the Spring process after success. Adding these flags to an ordinary long-running Web host therefore does not make it a one-shot migration job. Provide a host-owned non-Web executable or dedicated profile that explicitly closes the Spring context and exits with status 0 after initialization succeeds, for example:
 
 ```bash
-java -jar fileweft-host-0.0.1.jar \
+java -jar fileweft-migration-job-0.0.2.jar \
+  --spring.main.web-application-type=none \
   --fileweft.persistence.migration-mode=migrate \
   --fileweft.worker.enabled=false
 ```
+
+`fileweft-migration-job-0.0.2.jar` is an illustrative host-provided executable, not a standalone application published by FileWeft. The command is a true one-shot job only when the host implements that explicit post-migration exit.
 
 ## Health and readiness checks
 
@@ -120,7 +123,7 @@ curl -sf http://api:8080/fileweft/v1/health
 # Document-level Doctor (after authentication)
 curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 ## Credential boundaries

@@ -8,23 +8,22 @@ class FlywayMigrationRunnerTest {
     private val dataSource = PGSimpleDataSource()
 
     @Test
-    fun `accepts bounded diagnostic-safe PostgreSQL schema identifiers`() {
+    fun `construction accepts diagnostic-safe identifiers without opening the database`() {
         FlywayMigrationRunner(dataSource, "public", false)
         FlywayMigrationRunner(dataSource, "文件_存储", false)
         FlywayMigrationRunner(dataSource, "tenant-schema", false)
-        FlywayMigrationRunner(dataSource, "a".repeat(63), false)
+        FlywayMigrationRunner(dataSource, "a".repeat(65), false)
+        FlywayMigrationRunner(dataSource, "文".repeat(64), false)
     }
 
     @Test
-    fun `rejects schema identifiers that are ambiguous unsafe or truncated by PostgreSQL`() {
+    fun `construction rejects schema identifiers that are ambiguous or unsafe`() {
         listOf(
             "",
             " public",
             "public\u00a0",
             "tenant\nschema",
             "tenant\u200bschema",
-            "a".repeat(64),
-            "文".repeat(22),
             String(charArrayOf('\uD800')),
         ).forEach { schema ->
             assertFailsWith<IllegalArgumentException> {

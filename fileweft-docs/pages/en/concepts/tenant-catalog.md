@@ -91,7 +91,7 @@ Object storage keys never contain the folder ID. A rename or re-parent operation
 
 ## 03. No silent fallback
 
-When catalog mode is enabled, every mutation that needs a folder must pass through the provider. If the provider cannot confirm safe mutation capability, FileWeft returns `FEATURE_UNAVAILABLE`. It never falls back to a tenant-wide write path.
+When catalog mode is enabled, every mutation that needs a folder must pass through the provider. If the provider cannot confirm that the mutation is safe, FileWeft returns `FEATURE_UNAVAILABLE`. It never falls back to a tenant-wide write path.
 
 | Scenario | Result |
 |---|---|

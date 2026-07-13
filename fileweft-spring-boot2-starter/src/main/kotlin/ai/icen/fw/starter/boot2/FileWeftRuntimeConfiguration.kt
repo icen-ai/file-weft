@@ -155,6 +155,9 @@ import java.time.Duration
 import java.util.UUID
 import javax.sql.DataSource
 
+private const val FILEWEFT_COMPATIBILITY_PREFIX = "fileweft.compatibility"
+private const val LEGACY_AGENT_AUTOCONFIGURATION_ENABLED = "legacy-agent-autoconfiguration-enabled"
+
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(DataSource::class)
 class FileWeftRuntimeConfiguration {
@@ -276,6 +279,11 @@ class FileWeftRuntimeConfiguration {
     fun fileWeftTaskRepository(objectMapper: ObjectMapper, clock: Clock): JdbcTaskRepository = JdbcTaskRepository(objectMapper, clock)
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(AgentResultRepository::class)
     fun fileWeftAgentResultRepository(objectMapper: ObjectMapper, clock: Clock): AgentResultRepository =
         JdbcAgentResultRepository(objectMapper, clock)
@@ -546,6 +554,11 @@ class FileWeftRuntimeConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(ConfirmAgentSuggestionService::class)
     fun fileWeftConfirmAgentSuggestionService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -557,23 +570,43 @@ class FileWeftRuntimeConfiguration {
         )
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(AgentTaskOrchestrator::class)
     fun fileWeftAgentTaskOrchestrator(
         agents: List<ai.icen.fw.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry, clock: Clock,
     ): AgentTaskOrchestrator = AgentTaskOrchestrator(agents + plugins.agents(), clock)
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(AgentDoctorChecker::class)
     fun fileWeftAgentDoctorChecker(
         agents: List<ai.icen.fw.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry,
     ): AgentDoctorChecker = AgentDoctorChecker(agents + plugins.agents())
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(AgentTaskScheduler::class)
     fun fileWeftAgentTaskScheduler(identifiers: IdentifierGenerator, clock: Clock): AgentTaskScheduler =
         AgentTaskScheduler(identifiers, clock)
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(AgentTaskHandler::class)
     fun fileWeftAgentTaskHandler(
         orchestrator: AgentTaskOrchestrator, results: AgentResultRepository,
@@ -587,6 +620,11 @@ class FileWeftRuntimeConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(AgentTaskOutboxEventHandler::class)
     fun fileWeftAgentTaskOutboxEventHandler(
         triggers: List<ai.icen.fw.spi.ai.AgentTaskTrigger>, plugins: FileWeftPluginRegistry, scheduler: AgentTaskScheduler,
@@ -594,6 +632,11 @@ class FileWeftRuntimeConfiguration {
     ): AgentTaskOutboxEventHandler = AgentTaskOutboxEventHandler(triggers + plugins.agentTaskTriggers(), scheduler, tasks, transaction)
 
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(PersistedAgentSuggestionConfirmationService::class)
     fun fileWeftAgentSuggestionConfirmations(
         results: AgentResultRepository, transaction: ApplicationTransaction,
@@ -675,7 +718,14 @@ class FileWeftRuntimeConfiguration {
                 ),
             )
         }
-        val defaultProfileId = properties.sync.defaultProfileId.takeIf { configured.any { profile -> profile.id == it } }
+        val requestedDefaultProfileId = properties.sync.defaultProfileId
+        val defaultProfileId = requestedDefaultProfileId.takeIf { requested ->
+            configured.any { profile -> profile.id == requested }
+        }
+        require(defaultProfileId != null || requestedDefaultProfileId == DEFAULT_DELIVERY_PROFILE_ID) {
+            "fileweft.sync.default-profile-id '$requestedDefaultProfileId' does not match a configured delivery " +
+                "profile. Available profile ids: ${configured.joinToString { profile -> profile.id }}."
+        }
         return StaticDocumentDeliveryProfileProvider(configured, defaultProfileId)
     }
 
@@ -1073,7 +1123,31 @@ class FileWeftRuntimeConfiguration {
         profiles: DocumentDeliveryProfileProvider, connectors: DeliveryConnectorResolver,
     ): DeliveryProfileDoctorChecker = DeliveryProfileDoctorChecker(profiles, connectors)
 
+    @Bean(name = ["fileWeftDoctorService"])
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "false",
+        matchIfMissing = true,
+    )
+    @ConditionalOnMissingBean(DoctorApplicationService::class)
+    fun fileWeftDoctorServiceWithoutLegacyAgent(
+        tenants: TenantProvider, permission: PermissionDoctorChecker, deploymentSafety: DeploymentSafetyDoctorChecker,
+        lifecycle: LifecycleDoctorChecker,
+        storage: StorageDoctorChecker, workflow: WorkflowDoctorChecker, catalog: ObjectProvider<CatalogDoctorChecker>, connector: ConnectorDoctorChecker,
+        deliveryProfile: DeliveryProfileDoctorChecker, transaction: ApplicationTransaction,
+        clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
+    ): DoctorApplicationService = createDoctorApplicationService(
+        tenants, permission, deploymentSafety, lifecycle, storage, workflow, catalog, connector,
+        deliveryProfile, null, transaction, clock, metrics, plugins,
+    )
+
     @Bean
+    @ConditionalOnProperty(
+        prefix = FILEWEFT_COMPATIBILITY_PREFIX,
+        name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
+        havingValue = "true",
+    )
     @ConditionalOnMissingBean(DoctorApplicationService::class)
     fun fileWeftDoctorService(
         tenants: TenantProvider, permission: PermissionDoctorChecker, deploymentSafety: DeploymentSafetyDoctorChecker,
@@ -1082,6 +1156,26 @@ class FileWeftRuntimeConfiguration {
         deliveryProfile: DeliveryProfileDoctorChecker,
         agent: AgentDoctorChecker, transaction: ApplicationTransaction,
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
+    ): DoctorApplicationService = createDoctorApplicationService(
+        tenants, permission, deploymentSafety, lifecycle, storage, workflow, catalog, connector,
+        deliveryProfile, agent, transaction, clock, metrics, plugins,
+    )
+
+    private fun createDoctorApplicationService(
+        tenants: TenantProvider,
+        permission: PermissionDoctorChecker,
+        deploymentSafety: DeploymentSafetyDoctorChecker,
+        lifecycle: LifecycleDoctorChecker,
+        storage: StorageDoctorChecker,
+        workflow: WorkflowDoctorChecker,
+        catalog: ObjectProvider<CatalogDoctorChecker>,
+        connector: ConnectorDoctorChecker,
+        deliveryProfile: DeliveryProfileDoctorChecker,
+        agent: AgentDoctorChecker?,
+        transaction: ApplicationTransaction,
+        clock: Clock,
+        metrics: FileWeftMetrics,
+        plugins: FileWeftPluginRegistry,
     ): DoctorApplicationService {
         val catalogChecker = catalog.getIfAvailable()
         return DoctorApplicationService(
@@ -1095,8 +1189,7 @@ class FileWeftRuntimeConfiguration {
             ) + listOfNotNull(catalogChecker) + listOf(
                 deliveryProfile,
                 connector,
-                agent,
-            ) + plugins.doctorCheckers(),
+            ) + listOfNotNull(agent) + plugins.doctorCheckers(),
             clock,
             metrics,
         )

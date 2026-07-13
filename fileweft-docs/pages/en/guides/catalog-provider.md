@@ -5,7 +5,7 @@ order: 3
 locale: "en"
 nav: "Catalog provider"
 title: "Implement a catalog provider"
-lead: "Bind your host folder tree to FileWeft documents without surrendering control of directory paths, ACLs, or display names."
+lead: "Bind FileWeft documents to your host folder tree while keeping control of directory paths, ACLs, and display names."
 format: "markdown"
 ---
 
@@ -119,7 +119,7 @@ val request = DocumentCatalogAccessRequest(
 )
 ```
 
-If a user does not have visibility to the requested folder, return `null` or omit it from the list. FileWeft will surface this as a validation failure rather than creating a document in an invisible folder.
+If a user cannot see the requested folder, return `null` or omit it from the list. FileWeft treats this as a validation failure instead of creating the document in an invisible folder.
 
 > [!WARNING]
 > Do not use folder names or paths in storage keys. The folder binding is metadata only. Moving a folder must never require renaming stored objects.

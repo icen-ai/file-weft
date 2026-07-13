@@ -5,11 +5,11 @@ order: 3
 locale: "zh"
 nav: "目录 Provider"
 title: "实现目录 Provider"
-lead: "把宿主目录树绑定到 FileWeft 文档，同时不放弃对目录路径、ACL 和显示名称的控制权。"
+lead: "将 FileWeft 文档绑定到宿主目录树，同时保留对目录路径、ACL 和显示名称的控制。"
 format: "markdown"
 ---
 
-FileWeft 有意不保存目录路径或目录 ACL。它通过 `DocumentCatalogProvider` SPI 向宿主索要一个不透明的目录标识符，并只把这个引用作为资产元数据持久化。这样目录模型仍由你说了算，FileWeft 也能把文档挂到正确位置。
+FileWeft 有意不保存目录路径或目录 ACL。它通过 `DocumentCatalogProvider` SPI 向宿主索要一个不透明的目录标识符，并只把这个引用作为资产元数据持久化。这样目录模型仍由你控制，FileWeft 也能将文档挂到正确位置。
 
 ## 1. 为什么需要目录 Provider
 
@@ -119,7 +119,7 @@ val request = DocumentCatalogAccessRequest(
 )
 ```
 
-如果用户看不到目标目录，返回 `null` 或从列表中省略。FileWeft 会把它作为校验失败抛出，而不是在不可见目录中创建文档。
+如果用户看不到目标目录，返回 `null` 或从列表中省略。FileWeft 会将其视为校验失败，而不是在不可见目录中创建文档。
 
 > [!WARNING]
 > 不要在对象键里使用目录名或路径。目录绑定只是元数据。移动目录绝不应要求重命名已存储对象。

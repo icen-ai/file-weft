@@ -3,7 +3,7 @@ package ai.icen.fw.persistence.jdbc.dialect
 import java.sql.PreparedStatement
 
 /**
- * MySQL 8.0.13+ dialect.
+ * MySQL 8.0.17+ (8.x) dialect.
  */
 object MySqlDialect : SqlDialect {
     override val productName: String = "MySQL"
@@ -14,8 +14,10 @@ object MySqlDialect : SqlDialect {
 
     override fun jsonCast(expression: String): String = "CAST($expression AS JSON)"
 
-    override fun jsonExtractText(column: String, path: String): String =
-        "JSON_UNQUOTE(JSON_EXTRACT($column, '\$.$path'))"
+    override fun jsonExtractText(column: String, path: String): String {
+        val escapedPath = path.replace("\\", "\\\\").replace("\"", "\\\"")
+        return "JSON_UNQUOTE(JSON_EXTRACT($column, '\$.\"$escapedPath\"'))"
+    }
 
     override fun jsonType(): String = "json"
 
@@ -40,16 +42,19 @@ object MySqlDialect : SqlDialect {
 
     override fun returningClause(columns: List<String>): String = ""
 
-    override fun forUpdateSkipLocked(): String = forUpdate()
+    override fun forUpdateSkipLocked(): String = "FOR UPDATE SKIP LOCKED"
 
     override fun forUpdate(): String = "FOR UPDATE"
+
+    override fun claimCandidateTable(table: String, orderedIndex: String): String =
+        "$table FORCE INDEX ($orderedIndex)"
 
     override fun isDistinctFrom(column: String, parameter: String): String = "NOT ($column <=> $parameter)"
 
     override fun isNotDistinctFrom(column: String, parameter: String): String = "$column <=> $parameter"
 
     override fun arrayContainsAny(column: String, parameter: String): String =
-        "JSON_CONTAINS($parameter, CONCAT('[\"', $column, '\"]'))"
+        "JSON_CONTAINS(CAST($parameter AS JSON), JSON_QUOTE($column))"
 
     override fun setStringArrayParameter(statement: PreparedStatement, index: Int, values: Collection<String>) {
         statement.setString(index, createStringArrayParameter(statement.connection, values) as String)

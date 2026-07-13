@@ -23,6 +23,32 @@
 > documentation; the older `..._FINAL_PACKAGE` path is not present in this
 > repository.
 
+## Superseding Product Decision: FileWeft Agent Is Deferred
+
+This decision has the highest priority. It supersedes every older Agent phase,
+roadmap item, example, acceptance statement, and release-planning statement in
+this repository when they conflict with it.
+
+- FileWeft `0.0.2` does not provide Agent product capability.
+- Agent will be redesigned later, but that work is deferred indefinitely. The
+  earliest point at which the project may reassess it is **after `1.0.0` has
+  been released**. This is not a commitment to `1.x`, the next release, or any
+  other version.
+- Keep the existing `fileweft-agent` artifact, Agent SPI/public ABI, and the
+  Agent-related parts of migrations V012/V026 only for source, binary, and
+  database compatibility. Their presence does not make Agent a supported
+  product capability.
+- The default runtime, Starters, Doctor inventory, plugin inventory, public
+  HTTP API, and `fileweft-dev` must not register, advertise, exercise, or expose
+  Agent capability. Any explicit legacy compatibility switch remains
+  compatibility-only and must not be presented as a `0.0.2` feature.
+- Until a new architecture decision is approved after the reassessment point,
+  do not add Agent endpoints, UI, automatic registration, positive product
+  tests/examples, or new Agent behavior. Compatibility/security fixes and
+  negative tests that enforce default non-exposure are allowed.
+- Do not delete historical Agent text. Mark it as historical/superseded so the
+  reason for retained ABI and migrations remains auditable.
+
 ---
 
 # 1. Project Identity
@@ -357,6 +383,119 @@ Spring context tests.
 
 No untested infrastructure code.
 
+## Change-Scoped Verification and CNB Closure
+
+Before running verification, read `.ci/README.md` and select the union of the
+narrowest named tasks that cover every changed boundary.
+
+During implementation:
+
+- run one affected test class first
+- then run the affected module's `test` task
+- run `fastCheck` once after a coherent code or build-logic change, not after
+  every edit
+- after a failure, rerun the focused failing task before one final relevant
+  gate
+
+Do not use an unqualified root `test` or `check` as the default development
+entry point. Ordinary development must not run `compatibilityCheck`,
+`externalAcceptanceCheck`, `releaseVerification`, `releaseCheck`, or
+`releaseBundle`; these are CNB, nightly, or release responsibilities unless the
+changed boundary explicitly requires one of them. Preserve local incremental
+state: do not add `clean`, `--rerun-tasks`, `--no-build-cache`, or
+`--no-daemon` without a demonstrated reason.
+
+Run at most one Gradle invocation at a time in the same checkout. Agents must
+coordinate before starting Gradle and must not run overlapping wrappers against
+shared `build/` directories, Kotlin incremental caches, or test-result files.
+Use one invocation and let Gradle parallelize its own task graph. Separate CNB
+runners and genuinely separate worktrees may run in parallel because their
+outputs are isolated.
+
+External evidence is additive and fail-closed:
+
+- persistence or PostgreSQL migration changes require
+  `postgresIntegrationCheck`
+- MySQL or Kingbase migration/dialect changes require the corresponding
+  `mysqlIntegrationCheck` or `kingbaseIntegrationCheck`; PostgreSQL success is
+  not evidence for another dialect
+- S3-compatible storage changes require `rustFsIntegrationCheck`
+- Dev API, UI, or Compose behavior changes require `devAcceptanceCheck`
+- publication, POM, metadata, SBOM, or release bundle changes require
+  `releaseArtifactCheck`
+
+After an authorized push, CNB evidence must match the exact 40-character
+commit SHA and the intended event and branch. An older SHA, pending, cancelled,
+partially green, or unrelated build is not completion evidence. Inspect a
+failed pipeline's stage result and log before changing code. Prefer the CNB
+Pipeline skill when it is available; otherwise follow the read-only `cnb` CLI
+runbook in `.ci/README.md`. Never bypass tag/SHA identity checks or guarded
+publishing tasks to manufacture a successful release.
+
+### CNB result retrieval without a skill
+
+The CNB skill is optional; result retrieval must remain possible from a plain
+terminal. For this repository, use the read-only `cnb` CLI flow below. Do not
+trigger, stop, rerun, tag, or publish merely to inspect a result.
+
+```powershell
+$repo = "china.ai/file-weft"
+$sha = (git rev-parse HEAD).Trim()
+
+cnb status
+cnb build get-build-logs `
+  --repo $repo `
+  --sha $sha `
+  --page-size 100 `
+  --verbose
+```
+
+If `cnb status` reports no login, a human may authorize `cnb login`; never ask
+for or print their token. In `get-build-logs`, select the record whose full
+`sha`, `event`, `sourceRef`, and `targetRef` match the intended delivery. Record
+its `sn`; completion requires `status=success`, `pipelineFailCount=0`, and all
+pipelines expected by the matching `.ci/*.yml` path rules to be present and
+successful.
+
+```powershell
+cnb build get-build-status `
+  --repo $repo `
+  --sn <SN> `
+  --verbose
+```
+
+On failure, take the first failed business pipeline/stage ID from that response
+and retrieve its detail before editing code:
+
+```powershell
+cnb build get-build-stage `
+  --repo $repo `
+  --sn <SN> `
+  --pipelineId <PIPELINE_ID> `
+  --stageId <STAGE_ID> `
+  --verbose
+```
+
+Only when stage detail is insufficient, use:
+
+```powershell
+cnb build build-runner-download-log `
+  --repo $repo `
+  --pipelineId <PIPELINE_ID> `
+  --verbose
+```
+
+It returns a local log path. Read only the necessary tail and redact
+credentials, headers, signed URLs, and environment variables. Current CLI
+`1.10.x` has no `get-build-result`; use `get-build-logs` for the build summary,
+`get-build-status` for pipelines/stages, and `get-build-stage` for the failure
+log. If a future CLI differs, inspect `cnb build --help` rather than guessing.
+Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` or weaken TLS verification.
+
+Changes to `.cnb.yml`, executable `.ci/*.yml`, CI Dockerfiles, Gradle
+verification tasks, or release tasks require the CNB YAML, semantic, and Schema
+validation described in `.ci/README.md`.
+
 ---
 
 # 13. AI Change Control
@@ -386,10 +525,12 @@ Follow:
 7. Storage adapters
 8. Connector adapters
 9. Doctor
-10. Agent
-11. Production hardening
+10. Production hardening
 
 Do not skip foundational layers.
+
+The former Agent implementation phase is superseded by the product decision at
+the top of this file and must not be executed before a future approved redesign.
 
 ---
 

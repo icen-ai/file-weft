@@ -88,7 +88,7 @@ Query `GET /documents/{documentId}` or `GET /documents/{documentId}/sync-status`
 
 ## Frequently asked questions
 
-**Will error codes change between 0.0.1 and future releases?**
+**Will error codes change between 0.0.2 and future releases?**
 The listed codes are stable. New codes may be added, but existing codes keep their meaning.
 
 **Should I retry `INTERNAL_ERROR` immediately?**

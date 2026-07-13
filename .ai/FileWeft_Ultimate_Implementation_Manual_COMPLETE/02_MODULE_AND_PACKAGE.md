@@ -12,7 +12,7 @@ fileweft-runtime
 fileweft-spring-boot2-starter
 fileweft-spring-boot3-starter
 fileweft-adapter
-fileweft-agent
+fileweft-agent (compatibility-only artifact; no default product surface)
 fileweft-testkit
 
 
@@ -23,4 +23,3 @@ ai.icen.fw.spi
 ai.icen.fw.domain
 ai.icen.fw.application
 ai.icen.fw.adapter
-

@@ -4,12 +4,12 @@ group: "getting-started"
 order: 3
 locale: "zh"
 nav: "首次接入"
-title: "装配可信宿主"
+title: "接入可信宿主"
 lead: "从依赖声明走向生产宿主：提供可信身份上下文、共享存储、PostgreSQL schema 归属，并拆分运行时角色。"
 format: "markdown"
 ---
 
-## 这页解决什么问题？
+## 这页讲什么
 
 把 FileWeft 加入 classpath 只是第一步。生产宿主必须在每次请求时回答三个问题：
 
@@ -72,23 +72,36 @@ class HostAuthorizationProvider : AuthorizationProvider {
 
 ## 步骤二：遵守用户 ID 安全规则
 
-用户 ID 在 FileWeft 边界上是不透明字符串。把 Long、Int、UUID 或外部目录 ID 在宿主层转为永久稳定的字符串格式。
+跨越 FileWeft 边界时，用户 ID 应视为不透明字符串。把 Long、Int、UUID 或外部目录 ID 在宿主层转为永久稳定的字符串格式。
 
 合法的 FileWeft 用户 ID：
 
 - 区分大小写；
-- 最多 256 个 UTF-16 code unit；
+- 最多 256 个 UTF-16 码元；
 - 首尾无 Unicode 空白；
-- 不含 ISO control 或 FileWeft 固定拒绝的 format 字符。
+- 不含 ISO 控制字符或 FileWeft 拒绝的格式控制字符。
 
 > [!NOTE]
-> 不要在 FileWeft 内部 trim、lower-case 或归一化 ID。在宿主层一次性、一致地处理后再转成 `Identifier`。
+> 不要在 FileWeft 内部裁剪、转小写或归一化 ID。在宿主层一次性、一致地处理后再转成 `Identifier`。
 
 ## 步骤三：选择存储和数据库归属
 
 多节点部署需要共享、持久的 `StorageAdapter`。不要跨 Pod 或机器依赖本地文件系统 fallback。
 
-使用 PostgreSQL 时，DataSource 当前 schema 与 FileWeft schema 安全断言必须一致：
+FileWeft 不选择宿主连接池。下面是 Boot 3 单 DataSource 宿主的最小推荐依赖；如果已有自定义连接池，可以用能创建唯一 `DataSource` Bean 的等价 JDBC 方案替换第一项：
+
+```kotlin
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    runtimeOnly("org.postgresql:postgresql")
+}
+```
+
+Boot 2 宿主保留 `spring-boot-starter-jdbc`，并把两个 FileWeft 坐标改为对应的 `boot2` 版本。Boot 2.7 BOM 默认的 Kotlin 1.6.21 低于 FileWeft 的 2.1.21，纯 Java 宿主也必须对齐：Spring Dependency Management 设置 `extra["kotlin.version"] = "2.1.21"`，Maven 设置 `<kotlin.version>2.1.21</kotlin.version>`，原生 Gradle platform 同时导入 `org.jetbrains.kotlin:kotlin-bom:2.1.21` 或采用等价显式解析规则。普通 Kotlin BOM 不能覆盖 Boot 2 `enforcedPlatform`；请用 `dependencyInsight` 确认 `kotlin-stdlib` 为 2.1.21。
+
+使用 PostgreSQL 时，DataSource 的当前 schema 必须与 FileWeft 的 schema 断言一致：
 
 ```yaml
 spring:
@@ -113,7 +126,7 @@ fileweft:
 
 ## 步骤四：拆分运行时角色
 
-FileWeft 有两种运行人格。生产环境建议拆分为不同进程组：
+FileWeft 有两种运行角色。生产环境建议拆分为不同进程组：
 
 | 角色 | 职责 | 典型配置 |
 | --- | --- | --- |
@@ -145,7 +158,7 @@ fileweft:
 
 **Q: 目录文件夹存在哪里？**
 
-目录拓扑由宿主通过 `DocumentCatalogProvider` SPI 拥有。FileWeft 只在资产 metadata 中写入保留键 `catalog.folder-id`，对象存储路径本身不包含目录 ID。
+目录拓扑由宿主通过 `DocumentCatalogProvider` SPI 维护。FileWeft 只在资产 metadata 中写入保留键 `catalog.folder-id`，对象存储路径本身不包含目录 ID。
 
 ## 下一步
 

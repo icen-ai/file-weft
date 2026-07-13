@@ -1,6 +1,6 @@
 # FileWeft Docs
 
-Zero-dependency static documentation for FileWeft 0.0.1. The site defaults to English and provides a complete Chinese switch, responsive grouped navigation, local search, hash routing and copyable code samples.
+Zero-dependency static documentation for the FileWeft 0.0.2 release contract. The site defaults to English and provides a complete Chinese switch, responsive grouped navigation, local search, hash routing and copyable code samples. Treat `ai.icen:*:0.0.2` as remotely consumable only after the protected tag pipeline and anonymous cold-cache resolution succeed.
 
 Run locally with Node.js 18 or newer:
 

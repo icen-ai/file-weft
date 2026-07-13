@@ -85,7 +85,7 @@ Every major component exposes diagnostics through the `DoctorChecker` SPI. Query
 
 ## Known limits
 
-- The stable release is `0.0.1`. Anything labeled `0.0.2-SNAPSHOT` is an unreleased development line.
+- At the time of this historical release, `0.0.1` was the stable line and `0.0.2-SNAPSHOT` was unreleased. Current consumption guidance lives in the 0.0.2 release page.
 - The local filesystem storage fallback and default-tenant fallback are for development only. They are not production multi-tenant solutions.
 - Official vendor adapters for OSS, Dify, ESE and AppBuilder are on the roadmap; the S3-compatible adapter covers S3-like storage in 0.0.1.
 - Dev-only `/api/**` endpoints are not part of the formal public HTTP protocol.
@@ -100,7 +100,7 @@ FileWeft is available under the Apache License 2.0. Copyright belongs to icen.ai
 ## FAQ
 
 **Can I use `com.fileweft:*` artifacts?**
-No. Those trial artifacts have been withdrawn. Migrate to `ai.icen:*:0.0.1`.
+No. Those trial artifacts have been withdrawn. Existing `ai.icen:*:0.0.1` installations retain their historical upgrade boundary; new integrations use `ai.icen:*:0.0.2` only after its remote publication evidence is complete.
 
 **Is 0.0.1 production-ready?**
 It is the stable published line, but you must provide production identity, tenant, authorization, storage and database infrastructure. FileWeft does not turn development fallbacks into production multi-tenancy.
@@ -110,6 +110,6 @@ Not yet. 0.0.1 supports PostgreSQL. MySQL 8 is planned for a later line.
 
 ## Next steps
 
-- [Install the 0.0.1 line](getting-started/installation).
+- [Install the current verified release](getting-started/installation), or keep this page for the historical 0.0.1 contract.
 - [Wire a trustworthy host](getting-started/first-integration) with real tenant and storage providers.
 - Read the [HTTP API v1 reference](reference/http-api).

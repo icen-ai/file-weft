@@ -91,7 +91,7 @@ val request = AuthorizationRequest(
 
 ## 04. Fail-closed means "no" by default
 
-FileWeft assembles a capability only when its complete security boundary exists. Missing context or ambiguous providers make the operation unavailable instead of silently broadening access.
+FileWeft proceeds only when the complete security boundary exists. Missing context or ambiguous providers make the operation unavailable instead of silently broadening access.
 
 | Situation | FileWeft behavior |
 |---|---|

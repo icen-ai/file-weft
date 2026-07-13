@@ -121,10 +121,10 @@ interface FileWeftTaskHandler {
 | 层 | 负责 |
 |---|------|
 | `core` | 标识符、结果、错误、事件、上下文 |
-| `spi` | 租户、身份、存储、目录、工作流、连接器、Doctor、任务、Agent 契约 |
+| `spi` | 租户、身份、存储、目录、工作流、连接器、Doctor、任务契约；遗留 Agent ABI 仅兼容保留 |
 | `domain` | Document、FileAsset、Lifecycle、Version、Workflow、Audit 规则 |
 | `application` | 上传、发布、下线、审批、Doctor、同步编排等用例 |
-| `adapter` | MinIO、OSS、S3、Dify、ESE、AppBuilder 等实现 |
+| `adapter` | 宿主或插件提供的存储/连接器实现；OSS、Dify、ESE、AppBuilder 官方适配器仍是未来路线图工作 |
 | `persistence` | 仓储实现与 Flyway 迁移 |
 
 ## 常见问题

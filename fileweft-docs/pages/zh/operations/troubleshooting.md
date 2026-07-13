@@ -68,7 +68,7 @@ curl -sf http://api:8080/fileweft/v1/documents/doc_123/sync-status \
 curl -sf -X POST \
   http://api:8080/fileweft/v1/documents/doc_123/deliveries/dlv_456/retry \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 > [!NOTE]
@@ -97,7 +97,7 @@ fileweft.outbox_oldest_ready_age_seconds
 ```bash
 curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 如果某个检查器返回 `UNHEALTHY`：
@@ -108,7 +108,7 @@ curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
 
 ## 认证与 403
 
-FileWeft 失败关闭。403 通常意味着以下之一：
+FileWeft 默认拒绝。403 通常意味着以下之一：
 
 - `TenantProvider.currentTenant()` 返回了缺失或不可信的上下文。
 - `AuthorizationProvider.authorize()` 拒绝对资源的操作。
@@ -149,7 +149,7 @@ val decision = authorizationProvider.authorize(
 **为什么 Worker 不消费任务？**
 确认该角色配置了 `process-tasks: true`、租约时长大于 handler 执行时间，并且每个租户级队列只有一个活跃的任务 Worker 集群。
 
-**我可以删除失败的 Outbox 行来清除告警吗？**
+**能否删除失败的 Outbox 行来清除告警？**
 不可以。失败行是证据。应重试根因；使用正式重试端点，或等待 Worker 的退避与耗尽处理。
 
 ## 下一步

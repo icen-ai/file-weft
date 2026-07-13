@@ -1,7 +1,6 @@
 package ai.icen.fw.persistence.migration
 
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.sql.Connection
@@ -15,17 +14,11 @@ class KingbaseFlywayMigrationRunnerIntegrationTest {
 
     @BeforeEach
     fun prepareSchema() {
-        assumeTrue(System.getenv("FILEWEFT_RUN_KINGBASE_TESTS") == "true")
+        check(System.getenv("FILEWEFT_RUN_KINGBASE_TESTS") == "true") {
+            "Kingbase integration tests must run only through the fail-closed Gradle task"
+        }
         val driverClassName = System.getenv("FILEWEFT_KINGBASE_DRIVER") ?: "com.kingbase8.Driver"
-        assumeTrue(
-            try {
-                Class.forName(driverClassName)
-                true
-            } catch (_: ClassNotFoundException) {
-                false
-            },
-            "Kingbase JDBC driver '$driverClassName' is not on the test classpath",
-        )
+        Class.forName(driverClassName)
         val url = System.getenv("FILEWEFT_KINGBASE_URL") ?: "jdbc:kingbase8://localhost:54321/fileweft"
         val user = System.getenv("FILEWEFT_KINGBASE_USER") ?: "system"
         val password = System.getenv("FILEWEFT_KINGBASE_PASSWORD") ?: "kingbase"
@@ -67,7 +60,7 @@ class KingbaseFlywayMigrationRunnerIntegrationTest {
     @Test
     fun `applies all kingbase migrations and validates`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
-        assertEquals(26, migrations)
+        assertEquals(28, migrations)
 
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))

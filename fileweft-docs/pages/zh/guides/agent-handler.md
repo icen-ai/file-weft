@@ -3,13 +3,16 @@ route: "guides/agent-handler"
 group: "guides"
 order: 5
 locale: "zh"
-nav: "Agent Handler"
+nav: "任务 Handler"
 title: "实现持久任务 Handler"
-lead: "通过实现 FileWeftTaskHandler 添加 OCR、病毒扫描、AI 抽取等后台工作。Worker 使用租约和幂等任务 ID。"
+lead: "通过实现 FileWeftTaskHandler 添加 OCR、病毒扫描或宿主自有抽取等后台工作。Worker 使用租约和幂等任务 ID。"
 format: "markdown"
 ---
 
 并不是每个文件操作都能放进 HTTP 请求里。OCR、机器学习推理、病毒扫描和批量同步可能耗时数秒甚至数分钟。FileWeft 把这些工作推入持久化 `fw_task` 记录，由后台 Worker 处理。
+
+> [!CAUTION]
+> 本页讲的是通用 `FileWeftTaskHandler`，不是 FileWeft Agent 产品能力。0.0.2 默认不注册、宣传或暴露 Agent；兼容制品中的 Agent SPI/ABI 不应用于新集成。
 
 ## 1. 任务 Handler 契约
 

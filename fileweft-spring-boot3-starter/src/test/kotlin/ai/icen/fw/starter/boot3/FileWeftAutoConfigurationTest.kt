@@ -7,7 +7,9 @@ import ai.icen.fw.adapter.connector.ConnectorResiliencePolicy
 import ai.icen.fw.adapter.connector.ConnectorResilienceRegistry
 import ai.icen.fw.agent.AgentTaskHandler
 import ai.icen.fw.agent.AgentDoctorChecker
+import ai.icen.fw.agent.AgentTaskOrchestrator
 import ai.icen.fw.agent.AgentTaskOutboxEventHandler
+import ai.icen.fw.agent.AgentTaskScheduler
 import ai.icen.fw.agent.PersistedAgentSuggestionConfirmationService
 import ai.icen.fw.application.agent.AgentResultRepository
 import ai.icen.fw.application.agent.ConfirmAgentSuggestionService
@@ -126,6 +128,7 @@ import ai.icen.fw.spi.connector.ConnectorSyncRequest
 import ai.icen.fw.spi.connector.ConnectorSyncResult
 import ai.icen.fw.spi.connector.ConnectorSyncStatus
 import ai.icen.fw.spi.connector.FileConnector
+import ai.icen.fw.spi.delivery.DocumentDeliveryProfileProvider
 import ai.icen.fw.spi.identity.UserRealmProvider
 import ai.icen.fw.spi.identity.UserIdentity
 import ai.icen.fw.spi.storage.MultipartPart
@@ -301,12 +304,15 @@ class FileWeftAutoConfigurationTest {
             "fileweft.default-tenant-id" to "java.lang.String",
             "fileweft.storage.local-enabled" to "java.lang.Boolean",
             "fileweft.storage.local-root" to "java.lang.String",
+            "fileweft.compatibility.legacy-agent-autoconfiguration-enabled" to "java.lang.Boolean",
         )
         val requiredDescriptionFragments = mapOf(
             "fileweft.default-tenant-enabled" to listOf("fixed single-tenant", "TenantProvider", "production multi-tenant"),
             "fileweft.default-tenant-id" to listOf("fileweft.default-tenant-enabled", "configured explicitly"),
             "fileweft.storage.local-enabled" to listOf("process-local filesystem", "StorageAdapter", "durable production storage"),
             "fileweft.storage.local-root" to listOf("fileweft.storage.local-enabled", "configured explicitly"),
+            "fileweft.compatibility.legacy-agent-autoconfiguration-enabled" to
+                listOf("compatibility-only", "legacy Agent", "disabled by default", "must not be used"),
         )
 
         expectedTypes.forEach { (name, type) ->
@@ -319,7 +325,11 @@ class FileWeftAutoConfigurationTest {
             }
         }
 
-        listOf("fileweft.default-tenant-enabled", "fileweft.storage.local-enabled").forEach { name ->
+        listOf(
+            "fileweft.default-tenant-enabled",
+            "fileweft.storage.local-enabled",
+            "fileweft.compatibility.legacy-agent-autoconfiguration-enabled",
+        ).forEach { name ->
             val property = properties.single { candidate -> candidate.path("name").asText() == name }
             assertTrue(property.path("defaultValue").isBoolean)
             assertFalse(property.path("defaultValue").booleanValue())
@@ -352,6 +362,53 @@ class FileWeftAutoConfigurationTest {
                     .apply { isAccessible = true }
                     .get(delivery)
                 assertEquals(Duration.ofSeconds(9), sourceUrlTtl)
+            }
+    }
+
+    @Test
+    fun `selects an explicitly configured default delivery profile`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(*deliveryProfileProperties())
+            .withPropertyValues("fileweft.sync.default-profile-id=second")
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertEquals(
+                    "second",
+                    context.getBean(DocumentDeliveryProfileProvider::class.java)
+                        .defaultProfile(Identifier("test-tenant"))
+                        ?.id,
+                )
+            }
+    }
+
+    @Test
+    fun `preserves the first configured delivery profile when the default property is omitted`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(*deliveryProfileProperties())
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertEquals(
+                    "first",
+                    context.getBean(DocumentDeliveryProfileProvider::class.java)
+                        .defaultProfile(Identifier("test-tenant"))
+                        ?.id,
+                )
+            }
+    }
+
+    @Test
+    fun `fails startup when the configured default delivery profile does not exist`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues(*deliveryProfileProperties())
+            .withPropertyValues("fileweft.sync.default-profile-id=seocnd")
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("fileweft.sync.default-profile-id 'seocnd'") &&
+                        message.contains("Available profile ids: first, second")
+                })
             }
     }
 
@@ -722,17 +779,14 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(OutboxBacklogReader::class.java) != null)
             assertTrue(context.getBean(OutboxBacklogMetricsPublisher::class.java) != null)
             assertTrue(context.getBean(OperationLogRepository::class.java) != null)
-            assertTrue(context.getBean(AgentResultRepository::class.java) != null)
-            assertTrue(context.getBean(ConfirmAgentSuggestionService::class.java) != null)
-            assertTrue(privateField(context.getBean(ConfirmAgentSuggestionService::class.java), "tasks") is TaskRepository)
-            assertTrue(context.getBean(AgentTaskHandler::class.java) != null)
-            assertTrue(privateField(context.getBean(AgentTaskHandler::class.java), "taskMutations") is TaskMutationRepository)
-            assertTrue(context.getBean(AgentTaskOutboxEventHandler::class.java) != null)
-            assertTrue(context.getBean(PersistedAgentSuggestionConfirmationService::class.java) != null)
-            assertTrue(
-                privateField(context.getBean(PersistedAgentSuggestionConfirmationService::class.java), "tasks") is TaskRepository,
-            )
-            assertTrue(context.getBean(AgentDoctorChecker::class.java) != null)
+            assertTrue(context.getBeansOfType(AgentResultRepository::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(ConfirmAgentSuggestionService::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(AgentTaskOrchestrator::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(AgentDoctorChecker::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(AgentTaskScheduler::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(AgentTaskHandler::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(AgentTaskOutboxEventHandler::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(PersistedAgentSuggestionConfirmationService::class.java).isEmpty())
             assertTrue(context.getBean(DeliveryProfileDoctorChecker::class.java) != null)
             assertTrue(context.getBean(WorkflowDoctorChecker::class.java) != null)
             assertTrue(context.getBean(ConnectorInvocationExecutor::class.java) != null)
@@ -749,7 +803,40 @@ class FileWeftAutoConfigurationTest {
                     .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
                     .checks.any { it.checkerName == WorkflowDoctorChecker.NAME },
             )
+            assertFalse(
+                context.getBean(DoctorApplicationService::class.java)
+                    .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
+                    .checks.any { it.checkerName == AgentDoctorChecker.NAME },
+            )
         }
+    }
+
+    @Test
+    fun `enables legacy Agent auto configuration only through the compatibility property`() {
+        contextRunner()
+            .withUserConfiguration(DatabaseConfiguration::class.java)
+            .withPropertyValues("fileweft.compatibility.legacy-agent-autoconfiguration-enabled=true")
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertTrue(context.getBean(AgentResultRepository::class.java) != null)
+                assertTrue(context.getBean(ConfirmAgentSuggestionService::class.java) != null)
+                assertTrue(privateField(context.getBean(ConfirmAgentSuggestionService::class.java), "tasks") is TaskRepository)
+                assertTrue(context.getBean(AgentTaskOrchestrator::class.java) != null)
+                assertTrue(context.getBean(AgentDoctorChecker::class.java) != null)
+                assertTrue(context.getBean(AgentTaskScheduler::class.java) != null)
+                assertTrue(context.getBean(AgentTaskHandler::class.java) != null)
+                assertTrue(privateField(context.getBean(AgentTaskHandler::class.java), "taskMutations") is TaskMutationRepository)
+                assertTrue(context.getBean(AgentTaskOutboxEventHandler::class.java) != null)
+                assertTrue(context.getBean(PersistedAgentSuggestionConfirmationService::class.java) != null)
+                assertTrue(
+                    privateField(context.getBean(PersistedAgentSuggestionConfirmationService::class.java), "tasks") is TaskRepository,
+                )
+                assertTrue(
+                    context.getBean(DoctorApplicationService::class.java)
+                        .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
+                        .checks.any { it.checkerName == AgentDoctorChecker.NAME },
+                )
+            }
     }
 
     @Test
@@ -1095,6 +1182,19 @@ class FileWeftAutoConfigurationTest {
 
     private fun strictContextRunner(): ApplicationContextRunner = ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(FileWeftAutoConfiguration::class.java))
+
+    private fun deliveryProfileProperties(): Array<String> = arrayOf(
+        "fileweft.sync.profiles[0].id=first",
+        "fileweft.sync.profiles[0].display-name=First delivery",
+        "fileweft.sync.profiles[0].targets[0].id=first-target",
+        "fileweft.sync.profiles[0].targets[0].display-name=First target",
+        "fileweft.sync.profiles[0].targets[0].connector-id=first-connector",
+        "fileweft.sync.profiles[1].id=second",
+        "fileweft.sync.profiles[1].display-name=Second delivery",
+        "fileweft.sync.profiles[1].targets[0].id=second-target",
+        "fileweft.sync.profiles[1].targets[0].display-name=Second target",
+        "fileweft.sync.profiles[1].targets[0].connector-id=second-connector",
+    )
 
     private fun Throwable?.causeMessages(): List<String> =
         generateSequence(this) { failure -> failure.cause }

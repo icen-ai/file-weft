@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Browser acceptance tests for the FileWeft development proof lab.",
   "scripts": {
+    "test:static": "node --check app.js && node --check i18n.js && node --test test/*.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report"

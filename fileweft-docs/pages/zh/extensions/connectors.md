@@ -4,12 +4,12 @@ group: "extensions"
 order: 2
 locale: "zh"
 nav: "连接器工程"
-title: "构建高可用连接器"
+title: "构建弹性连接器"
 lead: "学习如何实现 FileConnector，通过有界超时、重试、幂等、撤回和健康检查，安全地将文档发布到下游系统。"
 format: "markdown"
 ---
 
-连接器将 FileWeft 稳定的交付契约转换为一个厂商集成。下游系统按设计就是不可靠的，因此生产级连接器必须把超时、重试、幂等、失败分类、撤回和健康检查当作一等公民，而不是事后补丁。
+连接器将 FileWeft 稳定的交付契约转换为一个厂商集成。下游系统天生不可靠，因此生产级连接器必须把超时、重试、幂等、失败分类、撤回和健康检查作为一等公民处理，而不是事后补丁。
 
 ## 1. FileConnector 契约
 
@@ -108,7 +108,7 @@ fileweft:
             owner-ref: search-ops
 ```
 
-`connector-id` 的值必须与插件 `connectors()` 映射中的键，或 Spring `FileConnector` Bean 的 ID 一致。
+`connector-id` 的值必须与插件 `connectors()` 映射中的键，或 Spring `FileConnector` Bean 的显式名称精确一致。上面的必达目标使用 `acmeArchive`。
 
 ## 3. 完整连接器示例
 
@@ -117,11 +117,11 @@ fileweft:
 ```kotlin
 // build.gradle.kts
 dependencies {
-    compileOnly("ai.icen:fileweft-spi:0.0.1")
+    compileOnly("ai.icen:fileweft-spi:0.0.2")
 }
 ```
 
-下面的示例将文档元数据提交到一个虚构的 Acme 归档系统。真实实现中，你可以从 `source.downloadUri` 读取字节流并上传到下游；连接器的结构保持不变。
+下面的示例将文档元数据提交到一个虚构的 Acme 归档系统。真实实现中，你会从 `source.downloadUri` 拉取字节流并推送到下游；连接器的结构保持不变。
 
 ```kotlin
 package com.example.fileweft.ext
@@ -138,7 +138,7 @@ class AcmeArchiveConnector(
 ) : FileConnector {
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
-        val idempotencyKey = request.businessId.toString()
+        val idempotencyKey = request.invocation.idempotencyKey
         return withRetry(times = 3) {
             val url = URI("$baseUrl/archive/v1/documents").toURL()
             val conn = url.openConnection() as HttpURLConnection
@@ -180,6 +180,7 @@ class AcmeArchiveConnector(
 
     override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
         val externalId = request.externalId
+        val idempotencyKey = request.invocation.idempotencyKey
         return withRetry(times = 3) {
             val url = URI("$baseUrl/archive/v1/documents/${externalId.encode()}").toURL()
             val conn = url.openConnection() as HttpURLConnection
@@ -187,6 +188,7 @@ class AcmeArchiveConnector(
             conn.connectTimeout = 10_000
             conn.readTimeout = 30_000
             conn.setRequestProperty("Authorization", "Bearer $apiKey")
+            conn.setRequestProperty("Idempotency-Key", idempotencyKey)
 
             when (val status = conn.responseCode) {
                 in 200..299, 404 -> ConnectorSyncResult(
@@ -249,13 +251,55 @@ class AcmeArchiveConnector(
 }
 ```
 
+在 Spring Boot 宿主中，以 `connector-id` 使用的精确名称注册连接器。API 密钥不要写入源码或普通 YAML；由部署侧密钥系统以 `ACME_ARCHIVE_API_KEY` 注入：
+
+```kotlin
+package com.example.fileweft.host
+
+import ai.icen.fw.spi.connector.FileConnector
+import com.example.fileweft.ext.AcmeArchiveConnector
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+
+@Configuration
+class AcmeArchiveConfiguration {
+
+    @Bean("acmeArchive")
+    fun acmeArchiveConnector(
+        @Value("\${acme.archive.base-url}") baseUrl: String,
+        @Value("\${ACME_ARCHIVE_API_KEY}") apiKey: String,
+    ): FileConnector = AcmeArchiveConnector(baseUrl, apiKey)
+}
+```
+
+```yaml
+acme:
+  archive:
+    base-url: https://archive.example.internal
+
+fileweft:
+  sync:
+    default-profile-id: regulated
+    profiles:
+      - id: regulated
+        display-name: 受监管发布
+        targets:
+          - id: compliance
+            display-name: 合规归档
+            connector-id: acmeArchive # 与 @Bean 名称精确一致
+            required: true
+```
+
+API 密钥绝不能进入连接器结果消息、异常文本、日志、指标标签、Doctor 详情、插件清单或 HTTP 响应。宿主若开启 `/env`、`/configprops` 等观测端点，也必须做脱敏。`acmeArchive` 只是虚构示例，不代表 FileWeft 提供任何官方厂商适配器。
+
 > **TIP**  
 > 生产环境建议使用 Jackson 等真正的 JSON 库；上例使用内联字符串仅为可读性。请求签名、内容流式传输和指标埋点同理。
 
 该示例展示了：
 
 - 每次调用都设置 `connectTimeout` 和 `readTimeout`。
-- 从 FileWeft `businessId` 派生稳定的 `Idempotency-Key`。
+- 原样使用 FileWeft 提供的 `request.invocation.idempotencyKey`，不会从 `businessId` 自行派生。
 - HTTP 状态码的清晰分类。
 - 错误信息中绝不包含 API 密钥。
 - 适合 Doctor 的只读健康检查。
@@ -264,8 +308,8 @@ class AcmeArchiveConnector(
 
 集成测试应证明连接器在重复和失败场景下的行为：
 
-1. 对同一 `businessId` 重复调用 `sync` 返回相同的 `externalId`。
-2. 对同一 `externalId` 重复调用 `remove` 是安全的。
+1. 使用相同 `request.invocation.idempotencyKey` 重放 `sync` 时返回相同的 `externalId`。
+2. 使用相同调用幂等键和 `externalId` 重放 `remove` 是安全的。
 3. 超时返回 `RETRYABLE_FAILURE`。
 4. `400 Bad Request` 返回 `PERMANENT_FAILURE`。
 5. 错误信息不包含凭据。
@@ -276,8 +320,10 @@ class AcmeArchiveConnector(
 
 部署连接器前，请确认：
 
+- [ ] 每个 profile `connector-id` 都与 Spring Bean 名称或插件映射键精确一致。
+- [ ] 凭据来自部署密钥系统，且不会进入日志、Doctor、清单、指标或 API。
 - [ ] 每次网络调用都有超时。
-- [ ] 幂等键稳定且每个业务对象唯一。
+- [ ] 同步和撤回都原样传递 `request.invocation.idempotencyKey`。
 - [ ] 可重试失败与永久失败分类正确。
 - [ ] 成功交付返回的 `externalId` 非空。
 - [ ] 错误信息已脱敏。
@@ -293,9 +339,9 @@ curl -s http://localhost:8080/fileweft/v1/documents/{documentId}/sync-status
 ## 常见问题
 
 **如果下游系统不支持幂等怎么办？**  
-使用稳定的 `businessId` 作为幂等键，必要时将返回的外部 ID 存入自己的状态。连接器仍需正确分类结果，以便 FileWeft 决定是否重试。
+连接器需要以 `request.invocation.idempotencyKey`（必要时加上租户和连接器命名空间）持久化调用结果，并在重放时返回已保存的外部 ID。不要改用 `businessId`：同一个业务文档可能产生不同交付目标、代次和撤回调用。连接器仍需正确分类结果，以便 FileWeft 决定是否重试。
 
-**我可以在应用服务中同步调用连接器吗？**  
+**能否在应用服务中同步调用连接器？**
 不可以。FileWeft 通过 Outbox 和异步 Worker 交付，避免下游故障阻塞或回滚本地事务。
 
 **必达目标失败会怎样？**  

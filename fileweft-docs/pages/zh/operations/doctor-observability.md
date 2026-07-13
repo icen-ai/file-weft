@@ -11,14 +11,14 @@ format: "markdown"
 
 ## 这页解决什么问题
 
-当上传卡住、交付失败或 Worker 漂移时，你需要三类独立信号：聚焦的诊断、聚合指标和资源级证据。本页说明 FileWeft 如何让这些信号保持分离、有界且可操作。
+当上传卡住、交付失败或 Worker 漂移时，应获取三类独立信号：聚焦的诊断、聚合指标和资源级证据。本页说明 FileWeft 如何让这些信号保持分离、有界且可操作。
 
 ## 三条 Doctor 路径
 
 | 路径 | 端点 | 适用场景 | 授权要求 |
 |------|------|----------|----------|
-| 即时文档 | `GET /documents/{id}/doctor` | 单个文档看起来异常，想要交互式答案 | 文档读权限 + 目录可见性 |
-| 异步文档 | `POST /documents/{id}/doctor/tasks` | 检查较贵、跨 Worker 或需要持久化 | 文档读权限 + 目录可见性 |
+| 即时文档 | `GET /documents/{id}/doctor` | 单个文档看起来异常，需要交互式答案 | 文档读权限 + 目录可见性 |
+| 异步文档 | `POST /documents/{id}/doctor/tasks` | 检查开销较大、跨 Worker 或需要持久化 | 文档读权限 + 目录可见性 |
 | 系统 | `GET /doctor` | 查看租户级运行时健康 | `system:doctor:read` |
 
 `DoctorChecker` 必须无副作用，并返回可操作结果而非抛出异常：
@@ -57,7 +57,7 @@ class StorageDoctorChecker(private val storageAdapter: StorageAdapter) : DoctorC
 ```bash
 curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 ```
 
 响应外层：
@@ -84,7 +84,7 @@ curl -sf http://api:8080/fileweft/v1/documents/doc_123/doctor \
 # 提交
 curl -sf -X POST http://api:8080/fileweft/v1/documents/doc_123/doctor/tasks \
   -H "Authorization: Bearer ${HOST_TOKEN}" \
-  -H "X-Idempotency-Key: $(uuidgen)"
+  -H "Idempotency-Key: $(uuidgen)"
 
 # 轮询
 TASK_ID="task_456"
@@ -119,7 +119,7 @@ curl -sf http://api:8080/fileweft/v1/doctor \
 | `fileweft.outbox_backlog_observation_failure` | Gauge | 指标观测失败次数 |
 
 > [!TIP]
-> `fileweft.outbox_backlog` 只使用 `state` 标签。资源级排查应使用审计日志和 Trace，而不是提高指标基数。
+> `fileweft.outbox_backlog` 只使用 `state` 标签。资源级排查应使用审计日志与 Trace ID，而不是提高指标基数。
 
 ## PromQL 告警示例
 
@@ -147,7 +147,7 @@ fileweft.outbox_oldest_ready_age_seconds > 300
 
 ## 常见问题
 
-**我应该把 `/fileweft/v1/doctor` 开放给所有用户吗？**
+**能否把 `/fileweft/v1/doctor` 开放给所有用户？**
 不应该。系统 Doctor 需要 `system:doctor:read`；文档 Doctor 受文档级授权约束。
 
 **为什么指标里看不到租户 ID？**

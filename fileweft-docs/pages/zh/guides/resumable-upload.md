@@ -40,7 +40,7 @@ curl -i -X POST http://localhost:8080/fileweft/v1/uploads \
   }'
 ```
 
-`contentType` 和 `contentHash` 可省略；提供哈希时必须严格使用小写 `sha256:<64 位小写十六进制>`，且完成结果必须与它一致。`documentNumber`、`title`、`totalParts`、`assetType` 和 `metadata` 不属于这个资源。
+`contentType` 和 `contentHash` 可省略；提供哈希时必须严格使用小写 `sha256:<64 个小写十六进制字符>`，且完成结果必须与它一致。`documentNumber`、`title`、`totalParts`、`assetType` 和 `metadata` 不属于这个资源。
 
 成功响应会带 `Location: /fileweft/v1/uploads/{uploadId}` 和统一 JSON 外层：
 
@@ -147,7 +147,7 @@ curl -X DELETE http://localhost:8080/fileweft/v1/uploads/fw-upload-7a8b9c
 不可以。复用幂等键但改变请求体会返回 `409 CONFLICT`。
 
 **Q：上传后的资产如何变成文档？**
-把返回的 `fileAssetId` 传给 `POST /fileweft/v1/documents` 或 `POST /documents/{id}/versions`。
+完成回执只提供稳定的 `fileAssetId`。当前正式 `POST /fileweft/v1/documents` 与 `POST /fileweft/v1/documents/{id}/versions` 都接收 multipart 文件内容，不接受该 ID；宿主需要通过自己的应用层集成把资产绑定为文档或版本。正式 HTTP 资源尚未提供这一步。
 
 ## 下一步
 

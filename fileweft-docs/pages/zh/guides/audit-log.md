@@ -5,7 +5,7 @@ order: 7
 locale: "zh"
 nav: "审计日志"
 title: "读取文档审计日志"
-lead: "通过正式 v1 审计端点，追踪文档被谁修改、何时发布、以及下游交付是否成功。"
+lead: "通过正式 v1 审计端点，追踪文档修改人、发布时间以及下游交付是否成功。"
 format: "markdown"
 ---
 
@@ -36,7 +36,7 @@ curl http://localhost:8080/fileweft/v1/documents/DOC-001/logs
 响应遵循 FileWeft 标准 v1 统一外层，并包含该文档的事件列表。使用 traceId 与宿主网关日志关联。
 
 > [!NOTE]
-> 具体字段名和排序以 0.0.1 响应契约为准。当前格式请参见 [HTTP API 参考](../reference/http-api.md)。
+> 具体字段名和排序以 0.0.2 响应契约为准。当前格式请参见 [HTTP API 参考](../reference/http-api.md)。
 
 ## 3. 读取工作流决策
 
@@ -46,13 +46,13 @@ curl http://localhost:8080/fileweft/v1/documents/DOC-001/logs
 curl http://localhost:8080/fileweft/v1/documents/DOC-001/workflow-decisions
 ```
 
-该视图需要同时具有 `document:read` 和 `document:audit` 权限。0.0.1 返回任务结果和决策时间戳，详细的操作者身份快照计划在未来版本提供，不作为稳定能力承诺。
+受权工作流决策证据视图需要同时具有 `document:read` 和 `document:audit` 权限。0.0.2 中新记录的审批与驳回返回不可变操作者 ID、可选安全显示名快照和 `decidedTime`；遗留记录显式表示未保存该证据。普通工作流历史继续保持身份脱敏。
 
 ## 4. 租户与隐私边界
 
 审计查询始终由 `TenantProvider` 解析的当前租户隔离。跨租户访问在 SPI 层被拒绝，而不是靠请求参数过滤。
 
-FileWeft 指标故意排除高基数或敏感标签：
+FileWeft 指标刻意排除高基数或敏感标签：
 
 - 计数器和 Gauge 不带 `tenantId` 标签。
 - 不带文档 ID 标签。

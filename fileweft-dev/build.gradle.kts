@@ -41,6 +41,28 @@ val acceptanceJavaLauncher = javaToolchains.launcherFor {
     languageVersion.set(JavaLanguageVersion.of(21))
 }
 
+val devUiStaticCheck = tasks.register<Exec>("devUiStaticCheck") {
+    group = "verification"
+    description = "Runs the zero-dependency Dev UI syntax and product-surface contract tests."
+    workingDir(layout.projectDirectory.dir("web"))
+    commandLine(
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "npm.cmd" else "npm",
+        "run",
+        "test:static",
+    )
+    inputs.files(
+        layout.projectDirectory.file("web/app.js"),
+        layout.projectDirectory.file("web/i18n.js"),
+        layout.projectDirectory.file("web/index.html"),
+        layout.projectDirectory.file("web/package.json"),
+        fileTree("web/test") { include("**/*.test.mjs") },
+    ).withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+tasks.named("test") {
+    dependsOn(devUiStaticCheck)
+}
+
 val devApiAcceptanceTest = tasks.register<Test>("devApiAcceptanceTest") {
     group = "verification"
     description = "Runs the Dev API acceptance suite exactly once against the Compose stack."

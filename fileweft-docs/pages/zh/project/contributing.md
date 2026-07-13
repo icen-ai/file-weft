@@ -17,7 +17,7 @@ format: "markdown"
 2. 确定改动属于哪个模块。如果现有 SPI 无法容纳，先提议新增 SPI，再增加依赖。
 3. 检查同样的问题是否能通过插件、适配器或宿主侧 Provider 解决，而不是改动框架内部。
 4. 任何架构变化都要说明兼容影响、迁移步骤，以及运维人员将如何诊断失败。
-5. 先开一个聚焦的 Issue 或 Draft PR，先描述边界，再描述实现。
+5. 先开一个聚焦的 Issue 或 Draft PR，描述边界，再描述实现。
 
 > [!TIP] 优先扩展，而非修改
 > 新增 `StorageAdapter`、`FileConnector`、`DoctorChecker` 或 `FileWeftTaskHandler` 可以放在独立适配器模块中，不会强迫所有宿主接受你的依赖。
@@ -32,7 +32,7 @@ format: "markdown"
 | `application` | 上传、发布、下线、审批、同步编排等用例 | 在事务中直接调用存储或连接器 |
 | `persistence` | PostgreSQL 映射、仓储、Flyway 迁移 | 业务逻辑 |
 | `starter` | Boot 2/3 自动装配与条件 Bean | 底层适配器逻辑 |
-| `adapter` | MinIO/OSS/S3/Dify/ESE/AppBuilder 实现 | 核心业务规则 |
+| `adapter` | 宿主/插件外部集成；具名官方厂商适配器仍是路线图工作 | 核心业务规则 |
 
 ## 测试你触及的每一层
 

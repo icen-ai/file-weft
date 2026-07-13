@@ -31,7 +31,11 @@ starter → application → domain → core
 | 工作流 | `DocumentReviewRouteProvider` | 审批路由与任务定义 |
 | 连接器 | `FileConnector` | 幂等的下游同步、撤回与健康检查 |
 | Doctor | `DoctorChecker` | 有界、无副作用的诊断 |
-| 任务与 Agent | `FileWeftTaskHandler`、`FileWeftAgent`、`AgentTaskTrigger` | 持久 Handler 与 AI 贡献 |
+| 任务 | `FileWeftTaskHandler` | 通用持久任务 Handler |
+| 遗留 Agent ABI | `FileWeftAgent`、`AgentTaskTrigger` | 仅兼容保留；0.0.2 默认不注册或暴露 |
+
+> [!CAUTION]
+> `fileweft-agent` 和 Agent SPI 类型的存在不代表 0.0.2 提供 Agent 产品能力。它们只用于源码/二进制兼容；新集成应使用当前通用 SPI（例如 `FileWeftTaskHandler`、`FileConnector`），而不是遗留 Agent ABI。
 
 ## 身份与租户
 
@@ -62,13 +66,13 @@ class AclAuthorizationProvider(private val aclService: AclService) : Authorizati
             resource = request.resource,
             action = request.action,
         )
-        return aclService.toDecision(permitted)
+        return AuthorizationDecision(allowed = permitted)
     }
 }
 ```
 
 > [!WARNING]
-> 用户 ID 是最长 256 个 UTF-16 code unit 的不透明字符串。不要在 Provider 里 trim、大小写折叠或归一化。
+> 用户 ID 是最长 256 个 UTF-16 code units 的不透明字符串。不要在 Provider 里 trim、大小写折叠或归一化。
 
 ## 存储适配器
 
@@ -100,7 +104,7 @@ class MinioStorageAdapter(private val minioClient: MinioClient) : StorageAdapter
         val response = minioClient.getObject(bucket, objectName)
         return StorageDownload(
             content = response,
-            contentLength = response.headers()["Content-Length"]?.toLong() ?: -1,
+            contentLength = response.headers()["Content-Length"]?.toLong(),
             contentType = response.headers()["Content-Type"],
         )
     }
@@ -133,20 +137,26 @@ class MinioStorageAdapter(private val minioClient: MinioClient) : StorageAdapter
 class ComplianceConnector : FileConnector {
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult {
-        val externalId = archiveClient.submit(request.contentUrl, request.metadata)
-        return ConnectorSyncResult.success(externalId = externalId)
+        val externalId = archiveClient.submit(request.source.downloadUri, request.attributes)
+        return ConnectorSyncResult(
+            status = ConnectorSyncStatus.SUCCESS,
+            externalId = externalId,
+        )
     }
 
     override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult {
         archiveClient.delete(request.externalId)
-        return ConnectorSyncResult.success(externalId = request.externalId)
+        return ConnectorSyncResult(
+            status = ConnectorSyncStatus.SUCCESS,
+            externalId = request.externalId,
+        )
     }
 
     override fun health(): ConnectorHealth {
         return when (archiveClient.ping()) {
-            is PingResult.Ok -> ConnectorHealth.HEALTHY
-            is PingResult.Timeout -> ConnectorHealth.DEGRADED
-            else -> ConnectorHealth.UNHEALTHY
+            is PingResult.Ok -> ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+            is PingResult.Timeout -> ConnectorHealth(ConnectorHealthStatus.DEGRADED)
+            else -> ConnectorHealth(ConnectorHealthStatus.UNHEALTHY)
         }
     }
 }

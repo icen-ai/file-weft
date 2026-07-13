@@ -147,7 +147,7 @@ Yes. The idempotency key identifies one logical file transfer. Reuse it only to 
 No. Changing the request body and reusing the idempotency key returns `409 CONFLICT`.
 
 **Q: How do I turn an uploaded asset into a document?**
-Pass the returned `fileAssetId` to `POST /fileweft/v1/documents` or `POST /documents/{id}/versions`.
+The completion receipt provides a stable `fileAssetId`, but the current formal `POST /fileweft/v1/documents` and `POST /fileweft/v1/documents/{id}/versions` endpoints accept multipart file content rather than that ID. The host must bind the asset to a document or version through its own application-layer integration; this step is not yet part of the formal HTTP resource.
 
 ## Next steps
 

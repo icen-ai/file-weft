@@ -32,7 +32,7 @@ class HostTenantProvider(private val hostContext: HostContext) : TenantProvider 
 
 ## 02. 目录树归宿主所有
 
-FileWeft 不存储目录层级。浏览器只提交一个有限的不透明 `folderId`。FileWeft 使用可信的租户、用户与操作上下文询问宿主目录提供者，然后将返回的 canonical ID 保存为元数据。
+FileWeft 不存储目录层级。浏览器只提交一个受约束的不透明 `folderId`。FileWeft 使用可信的租户、用户与操作上下文询问宿主目录提供者，然后将返回的 canonical ID 保存为元数据。
 
 契约是 `DocumentCatalogProvider`：
 
@@ -91,7 +91,7 @@ metadata:
 
 ## 03. 不会静默降级
 
-目录模式开启后，所有需要目录的变更操作都必须经过提供者。如果提供者无法确认安全变更能力，FileWeft 会返回 `FEATURE_UNAVAILABLE`，不会降级到租户级写入路径。
+目录模式开启后，所有需要目录的变更操作都必须经过提供者。如果提供者无法确认该变更是安全的，FileWeft 会返回 `FEATURE_UNAVAILABLE`，不会降级到租户级写入路径。
 
 | 场景 | 结果 |
 |---|---|

@@ -1,5 +1,8 @@
 package ai.icen.fw.runtime.plugin
 
+import ai.icen.fw.application.plugin.PluginCapabilityType
+import ai.icen.fw.core.context.DoctorCheckContext
+import ai.icen.fw.core.result.DoctorCheckResult
 import ai.icen.fw.spi.ai.AgentTaskTrigger
 import ai.icen.fw.spi.ai.FileWeftAgent
 import ai.icen.fw.spi.connector.ConnectorHealth
@@ -65,9 +68,54 @@ class FileWeftPluginRegistryTest {
     }
 
     @Test
+    fun `keeps deferred Agent plugin contributions invisible by default`() {
+        val plugin = DeferredAgentContributionPlugin()
+        val registry = FileWeftPluginRegistry(listOf(plugin), javaClass.classLoader)
+
+        assertEquals(1, plugin.doctorCheckerCalls)
+        assertEquals(0, plugin.agentCalls)
+        assertEquals(0, plugin.agentTaskTriggerCalls)
+        assertEquals(listOf("storage"), registry.doctorCheckers().map { checker -> checker.name() })
+        assertTrue(registry.agents().isEmpty())
+        assertTrue(registry.agentTaskTriggers().isEmpty())
+        assertEquals(
+            listOf(PluginCapabilityType.DOCTOR_CHECKER to 1),
+            registry.inventory().single { descriptor -> descriptor.id == DeferredAgentContributionPlugin.ID }
+                .capabilities
+                .map { capability -> capability.type to capability.count },
+        )
+    }
+
+    @Test
+    fun `restores deferred Agent plugin contributions only through the compatibility factory`() {
+        val plugin = DeferredAgentContributionPlugin()
+        val registry = FileWeftPluginRegistry.withLegacyAgentCompatibility(
+            listOf(plugin),
+            javaClass.classLoader,
+        )
+
+        assertEquals(1, plugin.doctorCheckerCalls)
+        assertEquals(1, plugin.agentCalls)
+        assertEquals(1, plugin.agentTaskTriggerCalls)
+        assertEquals(listOf("agent", "storage"), registry.doctorCheckers().map { checker -> checker.name() })
+        assertEquals(1, registry.agents().size)
+        assertEquals(1, registry.agentTaskTriggers().size)
+        assertEquals(
+            listOf(
+                PluginCapabilityType.DOCTOR_CHECKER to 2,
+                PluginCapabilityType.AGENT to 1,
+                PluginCapabilityType.AGENT_TASK_TRIGGER to 1,
+            ),
+            registry.inventory().single { descriptor -> descriptor.id == DeferredAgentContributionPlugin.ID }
+                .capabilities
+                .map { capability -> capability.type to capability.count },
+        )
+    }
+
+    @Test
     fun `snapshots every plugin contribution once and reuses the same instances`() {
         val plugin = FreshContributionPlugin()
-        val registry = FileWeftPluginRegistry(listOf(plugin), javaClass.classLoader)
+        val registry = FileWeftPluginRegistry.withLegacyAgentCompatibility(listOf(plugin), javaClass.classLoader)
 
         FreshContributionPlugin.CONTRIBUTION_NAMES.forEach { contribution ->
             assertEquals(1, plugin.callCount(contribution), "$contribution must be read exactly once during construction.")
@@ -165,6 +213,45 @@ class FileWeftPluginRegistryTest {
         override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult = ConnectorSyncResult(ai.icen.fw.spi.connector.ConnectorSyncStatus.SUCCESS)
         override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult = ConnectorSyncResult(ai.icen.fw.spi.connector.ConnectorSyncStatus.SUCCESS)
         override fun health(): ConnectorHealth = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
+    }
+
+    private class DeferredAgentContributionPlugin : FileWeftPlugin {
+        var doctorCheckerCalls: Int = 0
+            private set
+        var agentCalls: Int = 0
+            private set
+        var agentTaskTriggerCalls: Int = 0
+            private set
+
+        override fun id(): String = ID
+
+        override fun doctorCheckers(): List<DoctorChecker> {
+            doctorCheckerCalls += 1
+            return listOf(NamedDoctorChecker("agent"), NamedDoctorChecker("storage"))
+        }
+
+        override fun agents(): List<FileWeftAgent> {
+            agentCalls += 1
+            return listOf(freshProxy(FileWeftAgent::class.java))
+        }
+
+        override fun agentTaskTriggers(): List<AgentTaskTrigger> {
+            agentTaskTriggerCalls += 1
+            return listOf(freshProxy(AgentTaskTrigger::class.java))
+        }
+
+        companion object {
+            const val ID = "deferred-agent-plugin"
+        }
+    }
+
+    private class NamedDoctorChecker(
+        private val checkerName: String,
+    ) : DoctorChecker {
+        override fun name(): String = checkerName
+
+        override fun check(context: DoctorCheckContext): DoctorCheckResult =
+            error("Registry tests must not execute Doctor checkers.")
     }
 
     private class FreshContributionPlugin : FileWeftPlugin {

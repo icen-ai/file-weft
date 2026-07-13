@@ -44,7 +44,7 @@ format: "markdown"
 ```text
 主题：[SECURITY] FileWeft - workflow decisions 中疑似租户隔离绕过
 
-受影响版本：ai.icen:fileweft-web-api:0.0.1
+受影响版本：ai.icen:fileweft-web-api:0.0.2
 模块：fileweft-web-runtime
 部署环境：Spring Boot 3.2、PostgreSQL 16、MinIO
 

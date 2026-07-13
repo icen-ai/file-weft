@@ -23,9 +23,9 @@ adapter → spi
 - `spi` 定义契约：租户、身份、授权、存储、连接器、工作流、AI 与任务。它不包含实现。
 - `domain` 包含业务规则：`Document`、`FileAsset`、生命周期与版本。它只依赖 `core` 和 `spi`。
 - `application` 编排用例，如上传、发布、下线、Doctor。它调用领域对象并通过仓库持久化，但绝不直接调用 MinIO 或 Dify。
-- `adapter` 存放外部实现：MinIO、OSS、S3、Dify、ESE、AppBuilder。适配器依赖 `spi`。
+- `adapter` 是宿主或插件外部实现的归属层。OSS、Dify、ESE、AppBuilder 官方适配器仍是未来路线图工作；适配器依赖 `spi`。
 - `persistence` 实现仓库与 Flyway 迁移。
-- `runtime` 和 `starter` 打包 Web 层与 Spring Boot 自动装配。
+- `runtime` 和 `starter` 打包 Web 层与 Spring Boot 自动配置。
 
 > [!NOTE]
 > 箭头方向是编译期规则，不是运行期建议。如果 `core` 里出现了 Spring 或厂商 SDK 的导入，架构就已经被破坏。
@@ -38,9 +38,9 @@ adapter → spi
 | `fileweft-spi` | 存储、身份、租户、授权、连接器、任务、诊断等契约 | 实现、厂商类型 |
 | `fileweft-domain` | `Document`、`FileAsset`、生命周期、版本、审计规则 | 数据库查询、HTTP、SDK 调用 |
 | `fileweft-application` | 上传、发布、下线、Doctor、同步编排等用例 | 直接访问存储/连接器 |
-| `fileweft-adapter-*` | 外部系统集成（S3、MinIO、Dify、ESE、AppBuilder） | 业务规则 |
+| `fileweft-adapter-*` | 外部系统适配边界；当前支持声明只覆盖仓库中已有真实证据的实现 | 业务规则 |
 | `fileweft-persistence` | 仓库实现、Flyway 迁移、租户级 SQL | 业务逻辑 |
-| `fileweft-web-runtime` / `fileweft-spring-boot3-starter` | HTTP 控制器、DTO 转换、自动装配 | 仓库/存储/连接器调用 |
+| `fileweft-web-runtime` / `fileweft-spring-boot3-starter` | HTTP 控制器、DTO 转换、自动配置 | 仓库/存储/连接器调用 |
 
 ## 03. 正确地新增存储适配器
 
@@ -51,7 +51,7 @@ adapter → spi
 ```kotlin
 // fileweft-adapter-acme/build.gradle.kts
 dependencies {
-    implementation("ai.icen:fileweft-spi:0.0.1")
+    implementation("ai.icen:fileweft-spi:0.0.2")
 }
 ```
 
@@ -179,7 +179,7 @@ class LocalStoragePlugin : FileWeftPlugin {
 - **SPI 不能暴露厂商类型。** 返回 S3 `PutObjectResult` 的接口会迫使所有调用方依赖 AWS。
 - **Controller 只负责校验与转换，不访问存储或仓库。** Controller 调用应用服务。
 
-## 05. 快速气味测试
+## 05. 快速自查
 
 提交改动前问自己：
 
@@ -206,4 +206,4 @@ class LocalStoragePlugin : FileWeftPlugin {
 
 - [存储适配器指南](../guides/storage-adapter.md)——从头到尾实现 `StorageAdapter`。
 - [插件](../extensions/plugins.md)——把适配器、Doctor 检查器与任务处理器打包成插件。
-- [安全架构](../architecture/security.md)——失败关闭设计如何保护每个边界。
+- [安全架构](../architecture/security.md)——故障关闭设计如何保护每个边界。

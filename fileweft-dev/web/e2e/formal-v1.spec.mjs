@@ -552,7 +552,7 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   const approveKey = `formal-approve-${randomUUID()}`;
   const approveOptions = {
     headers: { ...authorization(reviewer.token, traceId), "Idempotency-Key": approveKey },
-    data: { comment: `formal approval ${nonce}` },
+    data: { comment: `formal approval ${nonce}`, deliveryProfileId: "regulated" },
   };
   const approved = await success(
     await request.post(
@@ -614,6 +614,66 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   expect(decisionTask.decidedTime).toEqual(expect.any(Number));
   expect(sortedKeys(decisionTask)).not.toContain("assigneeId");
   expect(sortedKeys(decisionTask)).not.toContain("comment");
+
+  let publishedDetail;
+  let publishedSyncStatus;
+  await expect.poll(
+    async () => {
+      publishedDetail = await success(
+        await request.get(`/fileweft/v1/documents/${documentId}`, {
+          headers: authorization(viewer.token, traceId),
+        }),
+        200,
+      );
+      publishedSyncStatus = await success(
+        await request.get(`/fileweft/v1/documents/${documentId}/sync-status`, {
+          headers: authorization(viewer.token, traceId),
+        }),
+        200,
+      );
+      return {
+        lifecycleState: publishedDetail.document.lifecycleState,
+        targets: publishedSyncStatus.deliveryTargets
+          .map((target) => ({
+            targetId: target.targetId,
+            requirement: target.requirement,
+            deliveryStatus: target.deliveryStatus,
+          }))
+          .sort((left, right) => left.targetId.localeCompare(right.targetId)),
+      };
+    },
+    {
+      message: "the formal regulated publication should reach all three downstream targets",
+      timeout: 60_000,
+      intervals: [250, 500, 1_000, 2_000],
+    },
+  ).toEqual({
+    lifecycleState: "PUBLISHED",
+    targets: [
+      { targetId: "collaboration", requirement: "REQUIRED", deliveryStatus: "SUCCEEDED" },
+      { targetId: "compliance", requirement: "REQUIRED", deliveryStatus: "SUCCEEDED" },
+      { targetId: "search", requirement: "OPTIONAL", deliveryStatus: "SUCCEEDED" },
+    ],
+  });
+  expect(sortedKeys(publishedSyncStatus)).toEqual(["deliveryTargets", "documentId"]);
+  expect(publishedSyncStatus.documentId).toBe(documentId);
+  expect(publishedSyncStatus.deliveryTargets).toHaveLength(3);
+  for (const target of publishedSyncStatus.deliveryTargets) {
+    expect(sortedKeys(target)).toEqual([
+      "deliveryId",
+      "deliveryRetryCount",
+      "deliveryRetryable",
+      "deliveryStatus",
+      "displayName",
+      "removalRetryCount",
+      "removalRetryable",
+      "removalStatus",
+      "requirement",
+      "targetId",
+      "updatedTime",
+    ]);
+  }
+
   await failure(
     await request.get(`/fileweft/v1/documents/${documentId}/workflow-decisions`, {
       headers: authorization(betaReviewer.token, traceId),

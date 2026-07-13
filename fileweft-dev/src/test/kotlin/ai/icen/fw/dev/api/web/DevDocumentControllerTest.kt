@@ -2,7 +2,6 @@ package ai.icen.fw.dev.api.web
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import ai.icen.fw.application.agent.ConfirmAgentSuggestionService
 import ai.icen.fw.application.catalog.DocumentCatalogBindingService
 import ai.icen.fw.application.catalog.DocumentCatalogLifecycleService
 import ai.icen.fw.application.catalog.DocumentCatalogMutationService
@@ -54,7 +53,9 @@ class DevDocumentControllerTest {
         assertTrue(DocumentCatalogMutationService::class.java in dependencyTypes)
         assertFalse(DocumentDraftService::class.java in dependencyTypes)
         assertFalse(dependencyTypes.any { type -> type.simpleName.contains("Doctor") })
+        assertFalse(dependencyTypes.any { type -> type.simpleName.contains("Agent") })
         assertFalse(DevDocumentController::class.java.declaredMethods.any { method -> method.name.contains("doctor", ignoreCase = true) })
+        assertFalse(DevDocumentController::class.java.declaredMethods.any { method -> method.name.contains("agent", ignoreCase = true) })
     }
 
     @Test
@@ -71,6 +72,8 @@ class DevDocumentControllerTest {
         mvc.perform(post("/api/documents/document-1/doctor/tasks"))
             .andExpect(status().isNotFound)
         mvc.perform(get("/api/documents/document-1/logs"))
+            .andExpect(status().isNotFound)
+        mvc.perform(post("/api/documents/agent-results/task-1/suggestions/suggestion-1/confirm"))
             .andExpect(status().isNotFound)
     }
 
@@ -223,7 +226,6 @@ class DevDocumentControllerTest {
         access = access,
         queries = queries,
         retryDeliveries = Mockito.mock(RetryDocumentDeliveryService::class.java),
-        agentSuggestions = Mockito.mock(ConfirmAgentSuggestionService::class.java),
         platformMirror = platformMirror,
     )
 

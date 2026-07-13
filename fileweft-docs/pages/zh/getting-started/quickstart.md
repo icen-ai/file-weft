@@ -9,12 +9,12 @@ lead: "用最小的 Spring Boot 宿主和几个 curl 命令，在笔记本上跑
 format: "markdown"
 ---
 
-## 这页解决什么问题？
+## 这页讲什么
 
 这页带你完成一个自包含的本地环境：
 
 1. 用 Docker 启动 PostgreSQL；
-2. 在 Spring Boot 3 项目中引入 FileWeft 0.0.1；
+2. 在 Spring Boot 3 项目中引入已完成远端验证的 FileWeft 0.0.2 坐标；
 3. 提供 FileWeft 要求的三个 SPI bean；
 4. 启用开发 fallback；
 5. 通过正式的 `/fileweft/v1/documents` 端点上传第一个文件。
@@ -54,14 +54,16 @@ plugins {
 }
 
 dependencies {
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")
-    implementation("ai.icen:fileweft-persistence:0.0.1")
+    // 宿主持有 DataSource 与连接池；此依赖让 Boot 从 spring.datasource.* 自动创建它们。
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```
 
 > [!NOTE]
-> Boot 2 宿主请使用 `fileweft-web-spring-boot2-starter`，Web API 契约完全一致。
+> FileWeft Starter 不会替宿主传递引入 JDBC 连接池。Boot 2 宿主仍需保留 `spring-boot-starter-jdbc`，并对应改用 `fileweft-spring-boot2-starter` 与 `fileweft-web-spring-boot2-starter`；Web API 契约完全一致。Boot 2.7 BOM 默认的 Kotlin 1.6.21 低于 FileWeft 的 2.1.21，纯 Java 宿主也必须对齐：Spring Dependency Management 设置 `extra["kotlin.version"] = "2.1.21"`，Maven 设置 `<kotlin.version>2.1.21</kotlin.version>`，原生 Gradle platform 同时导入 `org.jetbrains.kotlin:kotlin-bom:2.1.21` 或使用等价显式解析规则。不要依赖普通 Kotlin BOM 覆盖 Boot 2 `enforcedPlatform`；请用 `dependencyInsight` 确认 `kotlin-stdlib` 为 2.1.21。
 
 ## 步骤三：提供可信宿主上下文
 
@@ -166,7 +168,7 @@ curl -i -X POST \
 }
 ```
 
-`documentId` 与 `versionId` 来自已提交的领域聚合。FileWeft 故意不在命令后执行第二次查询，因此即使调用方没有读权限，响应也会成功。
+`documentId` 与 `versionId` 来自已提交的领域聚合。FileWeft 有意不在命令后执行第二次查询，因此即使调用方没有读权限，响应也会成功。
 
 ## 步骤七：查看结果
 
@@ -182,7 +184,7 @@ curl http://localhost:8080/fileweft/v1/health
 
 **Q: 为什么用 multipart，而不是断点续传 API？**
 
-小文件走 multipart `POST /fileweft/v1/documents` 最快。大文件、并行分片或不稳定网络请使用断点续传 API（`POST /fileweft/v1/uploads`）。
+multipart `POST /fileweft/v1/documents` 是创建带小文件文档的最快方式。大文件、并行分片或不稳定网络请使用断点续传 API（`POST /fileweft/v1/uploads`）。
 
 **Q: 可以暴露 `/api/**` 端点吗？**
 
