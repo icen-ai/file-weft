@@ -113,6 +113,7 @@ abstract class GenerateReleaseSbomTask : DefaultTask() {
         val components = (root["components"] as? List<*>)
             ?.mapNotNull { component -> (component as? Map<*, *>)?.toMutableJsonObject() }
             ?: error("Aggregate JSON SBOM does not contain components.")
+        validateJsonComponents(components, "Aggregate JSON SBOM")
         val internalComponents = components.filter { component -> component["group"] == expectedGroup.get() }
         verifyReviewedComponents(
             internalComponents.map { component ->
@@ -199,7 +200,9 @@ abstract class GenerateReleaseSbomTask : DefaultTask() {
 
         val componentsContainer = directChild(bom, "components")
             ?: error("Aggregate XML SBOM does not contain components.")
-        val internalComponents = directChildren(componentsContainer, "component")
+        val componentElements = directChildren(componentsContainer, "component")
+        validateXmlComponents(componentElements, "Aggregate XML SBOM")
+        val internalComponents = componentElements
             .filter { component -> directChildText(component, "group") == expectedGroup.get() }
         verifyReviewedComponents(
             internalComponents.map { component ->
@@ -440,6 +443,50 @@ abstract class GenerateReleaseSbomTask : DefaultTask() {
         output.parentFile.mkdirs()
         output.outputStream().buffered().use { stream ->
             transformer.transform(DOMSource(document), StreamResult(stream))
+        }
+    }
+
+    private fun validateJsonComponents(components: List<MutableMap<String, Any?>>, source: String) {
+        check(components.isNotEmpty()) { "$source does not contain any components." }
+        val references = mutableSetOf<String>()
+        components.forEach { component ->
+            val reference = component["bom-ref"] as? String
+            check(!reference.isNullOrBlank()) { "$source component ${component["name"]} does not declare a bom-ref." }
+            check(references.add(reference)) { "$source contains duplicate component bom-ref: $reference." }
+            validateComponentIdentity(
+                group = component["group"] as? String,
+                name = component["name"] as? String,
+                version = component["version"] as? String,
+                source = "$source component $reference",
+            )
+        }
+    }
+
+    private fun validateXmlComponents(components: List<Element>, source: String) {
+        check(components.isNotEmpty()) { "$source does not contain any components." }
+        val references = mutableSetOf<String>()
+        components.forEach { component ->
+            val reference = component.getAttribute("bom-ref").takeIf { it.isNotBlank() }
+                ?: error("$source component ${directChildText(component, "name")} does not declare a bom-ref.")
+            check(references.add(reference)) { "$source contains duplicate component bom-ref: $reference." }
+            validateComponentIdentity(
+                group = directChildText(component, "group"),
+                name = directChildText(component, "name"),
+                version = directChildText(component, "version"),
+                source = "$source component $reference",
+            )
+        }
+    }
+
+    private fun validateComponentIdentity(group: String?, name: String?, version: String?, source: String) {
+        check(!group.isNullOrBlank()) { "$source has a blank group." }
+        check(!name.isNullOrBlank()) { "$source has a blank name." }
+        check(!version.isNullOrBlank()) { "$source has a blank version." }
+        check(!name.contains("..") && !name.startsWith("/") && !name.startsWith("\\")) {
+            "$source has a path-traversal-like name: $name."
+        }
+        if (!expectedVersion.get().endsWith("-SNAPSHOT")) {
+            check(!version.contains("-SNAPSHOT")) { "$source contains a SNAPSHOT version in a non-SNAPSHOT release: $version." }
         }
     }
 

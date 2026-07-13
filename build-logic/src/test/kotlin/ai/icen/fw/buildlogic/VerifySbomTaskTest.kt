@@ -140,6 +140,62 @@ class VerifySbomTaskTest {
         assertTrue(result.output.contains("JSON and XML SBOM dependency graphs differ"))
     }
 
+    @Test
+    fun `rejects a release bom with a SNAPSHOT component`() = withTestProject { projectDir ->
+        writeBuild(projectDir)
+        writeValidSboms(projectDir)
+        mutateReleaseSboms(projectDir) { content ->
+            content.replace("\"version\":\"1.2.3\"", "\"version\":\"1.2.3-SNAPSHOT\"")
+                .replace("<version>1.2.3</version>", "<version>1.2.3-SNAPSHOT</version>")
+        }
+
+        val result = runner(projectDir).buildAndFail()
+
+        assertTrue(result.output.contains("SNAPSHOT version in a non-SNAPSHOT release"))
+    }
+
+    @Test
+    fun `rejects a release bom with a path-traversal component name`() = withTestProject { projectDir ->
+        writeBuild(projectDir)
+        writeValidSboms(projectDir)
+        mutateReleaseSboms(projectDir) { content ->
+            content.replace("\"name\":\"external-lib\"", "\"name\":\"../external-lib\"")
+                .replace("<name>external-lib</name>", "<name>../external-lib</name>")
+        }
+
+        val result = runner(projectDir).buildAndFail()
+
+        assertTrue(result.output.contains("path-traversal-like name"))
+    }
+
+    @Test
+    fun `rejects a release bom with duplicate component bom-refs`() = withTestProject { projectDir ->
+        writeBuild(projectDir)
+        writeValidSboms(projectDir)
+        mutateReleaseSboms(projectDir) { content ->
+            content.replace(
+                "\"bom-ref\":\"pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi\"",
+                "\"bom-ref\":\"pkg:maven/ai.icen/fileweft-core@0.0.1?project_path=%3Afileweft-core\"",
+            ).replace(
+                "bom-ref=\"pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi\"",
+                "bom-ref=\"pkg:maven/ai.icen/fileweft-core@0.0.1?project_path=%3Afileweft-core\"",
+            )
+        }
+
+        val result = runner(projectDir).buildAndFail()
+
+        assertTrue(result.output.contains("duplicate component bom-ref"))
+    }
+
+    private fun mutateReleaseSboms(projectDir: File, mutation: (String) -> String) {
+        listOf(
+            projectDir.resolve("build/reports/cyclonedx-release/bom.json"),
+            projectDir.resolve("build/reports/cyclonedx-release/bom.xml"),
+        ).forEach { release ->
+            release.writeText(mutation(release.readText(StandardCharsets.UTF_8)), StandardCharsets.UTF_8)
+        }
+    }
+
     private fun writeBuild(projectDir: File) {
         writeFile(projectDir, "settings.gradle.kts", "rootProject.name = \"verify-sbom-fixture\"")
         writeFile(
