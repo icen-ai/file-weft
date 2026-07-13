@@ -17,12 +17,16 @@ import ai.icen.fw.spi.identity.UserIdentity
 import ai.icen.fw.spi.identity.UserRealmProvider
 import ai.icen.fw.spi.observability.FileWeftMetric
 import ai.icen.fw.spi.observability.FileWeftMetrics
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
 import ai.icen.fw.spi.storage.StorageUploadRequest
 import ai.icen.fw.spi.storage.StoredObject
 import ai.icen.fw.spi.tenant.TenantProvider
+import java.io.FilterInputStream
 import java.io.InputStream
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Duration
 
@@ -57,16 +61,65 @@ class ResumableUploadService @JvmOverloads constructor(
     fun start(command: StartResumableUploadCommand): ResumableUploadSession {
         ApplicationTransactionBoundary.requireInactive(transaction)
         val requestIdentity = currentRequestIdentity()
+        return start(command, requestIdentity, requireFormalResourceId = false)
+    }
+
+    /**
+     * Creates or replays a session and returns its durable checkpoint from one trusted request identity.
+     *
+     * This is a compatibility primitive for callers whose idempotency key is already an internal,
+     * tenant-scoped value. Formal transports must use [startAndInspectWithCallerKey], which additionally
+     * validates and hashes the caller key and verifies the completion-reset capability before side effects.
+     */
+    fun startAndInspect(command: StartResumableUploadCommand): ResumableUploadSessionView {
+        ApplicationTransactionBoundary.requireInactive(transaction)
+        val requestIdentity = currentRequestIdentity()
+        return startAndInspect(command, requestIdentity, requireFormalResourceId = false)
+    }
+
+    /**
+     * Formal-boundary variant that derives one trusted identity snapshot and replaces the validated
+     * caller key with a tenant-scoped one-way value before any storage or persistence operation.
+     */
+    fun startAndInspectWithCallerKey(command: StartResumableUploadCommand): ResumableUploadSessionView {
+        ApplicationTransactionBoundary.requireInactive(transaction)
+        require(FORMAL_CALLER_KEY_PATTERN.matches(command.idempotencyKey)) {
+            "Resumable upload caller idempotency key is invalid."
+        }
+        val requestIdentity = currentRequestIdentity()
+        requireFormalStartRepositoryCapabilities()
+        val internalCommand = command.copy(
+            idempotencyKey = digestCallerIdempotencyKey(requestIdentity.tenantId.value, command.idempotencyKey),
+        )
+        return startAndInspect(internalCommand, requestIdentity, requireFormalResourceId = true)
+    }
+
+    private fun startAndInspect(
+        command: StartResumableUploadCommand,
+        requestIdentity: ResumableUploadRequestIdentity,
+        requireFormalResourceId: Boolean,
+    ): ResumableUploadSessionView {
+        val session = start(command, requestIdentity, requireFormalResourceId)
+        return stableOwnedView(session.tenantId, requestIdentity.ownerId, session.id)
+    }
+
+    private fun start(
+        command: StartResumableUploadCommand,
+        requestIdentity: ResumableUploadRequestIdentity,
+        requireFormalResourceId: Boolean,
+    ): ResumableUploadSession {
         val tenantId = requestIdentity.tenantId
         // An owner-scoped replay can safely authorize its own existing resource without allocating
         // new identifiers. A miss is authorized against a fresh create resource before the
         // tenant-global occupancy query, so another owner's resource id is never exposed.
         findOwnedByIdempotency(tenantId, requestIdentity.ownerId, command.idempotencyKey)?.let { existing ->
+            if (requireFormalResourceId) requireFormalResourceId(existing.id)
             authorize(existing, requestIdentity.user)
             requireEquivalent(existing, command)
             return existing
         }
         val sessionId = identifiers.nextId()
+        if (requireFormalResourceId) requireFormalResourceId(sessionId)
         val fileObjectId = identifiers.nextId()
         authorization.requireActionAs(
             tenantId,
@@ -80,16 +133,22 @@ class ResumableUploadService @JvmOverloads constructor(
         requireStagingCapability()
         val now = clock.millis()
         val fileAssetId = identifiers.nextId()
-        val storageUpload = storageAdapter.beginMultipartUpload(
-            StorageUploadRequest(
-                tenantId = tenantId,
-                objectName = command.fileName,
-                contentLength = command.contentLength,
-                contentType = command.contentType,
-                contentHash = command.contentHash,
-                metadata = command.metadata,
-            ),
-        )
+        val storageUpload = try {
+            storageAdapter.beginMultipartUpload(
+                StorageUploadRequest(
+                    tenantId = tenantId,
+                    objectName = command.fileName,
+                    contentLength = command.contentLength,
+                    contentType = command.contentType,
+                    contentHash = command.contentHash,
+                    metadata = command.metadata,
+                ),
+            )
+        } catch (failure: IllegalArgumentException) {
+            throw failure
+        } catch (failure: Throwable) {
+            throw ResumableUploadUnavailableException(failure)
+        }
         val session = ResumableUploadSession(
             id = sessionId,
             tenantId = tenantId,
@@ -128,9 +187,7 @@ class ResumableUploadService @JvmOverloads constructor(
         val requestIdentity = currentRequestIdentity()
         val session = requiredOwnedSession(requestIdentity.tenantId, requestIdentity.ownerId, sessionId)
         authorize(session, requestIdentity.user)
-        return transaction.execute {
-            ResumableUploadSessionView(session, sessions.findParts(session.tenantId, session.id))
-        }
+        return stableOwnedView(requestIdentity.tenantId, requestIdentity.ownerId, sessionId)
     }
 
     fun uploadPart(sessionId: Identifier, partNumber: Int, contentLength: Long, content: InputStream): ResumableUploadPart {
@@ -138,15 +195,25 @@ class ResumableUploadService @JvmOverloads constructor(
         require(partNumber in 1..ResumableUploadPart.MAX_PART_NUMBER) {
             "Multipart part number must be between 1 and ${ResumableUploadPart.MAX_PART_NUMBER}."
         }
-        require(contentLength >= 0) { "Multipart part length must not be negative." }
+        require(contentLength > 0) { "Multipart part length must be positive." }
         val requestIdentity = currentRequestIdentity()
         val session = requiredOwnedSession(requestIdentity.tenantId, requestIdentity.ownerId, sessionId)
         authorize(session, requestIdentity.user)
         requireActive(session, clock.millis())
-        val acknowledged = storageAdapter.uploadPart(storageUpload(session), partNumber, content, contentLength)
+        val measured = CountingInputStream(content)
+        val acknowledged = try {
+            storageAdapter.uploadPart(storageUpload(session), partNumber, measured, contentLength)
+        } catch (failure: IllegalArgumentException) {
+            throw failure
+        } catch (failure: Throwable) {
+            throw ResumableUploadUnavailableException(failure)
+        }
         require(acknowledged.partNumber == partNumber) { "Storage adapter acknowledged a different multipart part number." }
+        require(measured.read() == -1 && measured.contentLength == contentLength) {
+            "Multipart part body length does not match its declared content length."
+        }
         return transaction.execute {
-            val current = requiredOwnedSession(session.tenantId, requestIdentity.ownerId, session.id)
+            val current = requiredOwnedSessionInTransaction(session.tenantId, requestIdentity.ownerId, session.id)
             requireActive(current, clock.millis())
             val existing = sessions.findParts(current.tenantId, current.id).firstOrNull { it.partNumber == partNumber }
             ResumableUploadPart(
@@ -165,9 +232,37 @@ class ResumableUploadService @JvmOverloads constructor(
     fun complete(sessionId: Identifier): UploadFileResult {
         ApplicationTransactionBoundary.requireInactive(transaction)
         val requestIdentity = currentRequestIdentity()
+        return complete(sessionId, requestIdentity, requireCompletionResetCapability = false)
+    }
+
+    /**
+     * Completes an upload and obtains its public receipt timestamp without consulting a mutable identity provider twice.
+     * Failure of the post-commit timestamp read never changes a successful completion into an apparent command failure.
+     */
+    fun completeAndInspect(sessionId: Identifier): ResumableUploadCompletionResult {
+        ApplicationTransactionBoundary.requireInactive(transaction)
+        val requestIdentity = currentRequestIdentity()
+        val result = complete(sessionId, requestIdentity, requireCompletionResetCapability = true)
+        val completedAt = try {
+            stableOwnedView(requestIdentity.tenantId, requestIdentity.ownerId, sessionId).session
+                .takeIf { session -> session.status == ResumableUploadSessionStatus.COMPLETED }
+                ?.completedAt
+        } catch (_: RuntimeException) {
+            null
+        }
+        return ResumableUploadCompletionResult(result, completedAt)
+    }
+
+    private fun complete(
+        sessionId: Identifier,
+        requestIdentity: ResumableUploadRequestIdentity,
+        requireCompletionResetCapability: Boolean,
+    ): UploadFileResult {
         val existing = requiredOwnedSession(requestIdentity.tenantId, requestIdentity.ownerId, sessionId)
         authorize(existing, requestIdentity.user)
         if (existing.status == ResumableUploadSessionStatus.COMPLETED) return completedResult(existing)
+        if (existing.status == ResumableUploadSessionStatus.COMPLETING) return reconcileCompleting(existing)
+        if (requireCompletionResetCapability) requireCompletionRejectionResetCapability()
         requireActive(existing, clock.millis())
         validateParts(existing, transaction.execute { sessions.findParts(existing.tenantId, existing.id) })
         val session = transaction.execute {
@@ -191,48 +286,18 @@ class ResumableUploadService @JvmOverloads constructor(
             throw failure
         }
         val stored = try {
-            storageAdapter.completeMultipartUpload(storageUpload(session), parts.map { ai.icen.fw.spi.storage.MultipartPart(it.partNumber, it.eTag) })
+            storageAdapter.completeMultipartUpload(
+                storageUpload(session),
+                parts.sortedBy { it.partNumber }.map { ai.icen.fw.spi.storage.MultipartPart(it.partNumber, it.eTag) },
+            )
         } catch (failure: Throwable) {
-            recoverStorageCompletionFailure(session, failure)
+            val classified = recoverStorageCompletionFailure(session, failure)
             recordMetric(FileWeftMetric.UPLOAD_FAILURE, session.tenantId.value)
-            throw failure
+            throw classified
         }
         try {
             validateStored(session, stored)
-            val fileObject = FileObject(
-                id = session.fileObjectId,
-                tenantId = session.tenantId,
-                fileName = session.fileName,
-                contentLength = stored.contentLength,
-                storageType = stored.location.storageType,
-                storagePath = stored.location.path,
-                contentType = stored.contentType,
-                contentHash = stored.contentHash,
-            )
-            val fileAsset = FileAsset(
-                id = session.fileAssetId,
-                tenantId = session.tenantId,
-                fileObjectId = fileObject.id,
-                assetType = session.assetType,
-                metadata = session.metadata,
-            )
-            val result = transaction.execute {
-                fileObjects.save(fileObject)
-                fileAssets.save(fileAsset)
-                outbox.append(
-                    OutboxEvent(
-                        id = identifiers.nextId(),
-                        tenantId = session.tenantId,
-                        type = FILE_UPLOADED_EVENT_TYPE,
-                        payload = mapOf("fileObjectId" to fileObject.id.value, "fileAssetId" to fileAsset.id.value),
-                        timestamp = clock.millis(),
-                    ),
-                )
-                require(sessions.markCompleted(session.tenantId, session.id, clock.millis())) {
-                    "Upload session completion state was changed concurrently."
-                }
-                UploadFileResult(fileObject, fileAsset)
-            }
+            val result = persistCompleted(session, stored)
             recordMetric(FileWeftMetric.UPLOAD_COUNT, session.tenantId.value)
             return result
         } catch (failure: Throwable) {
@@ -243,6 +308,26 @@ class ResumableUploadService @JvmOverloads constructor(
     fun abort(sessionId: Identifier): ResumableUploadSession {
         ApplicationTransactionBoundary.requireInactive(transaction)
         val requestIdentity = currentRequestIdentity()
+        return abort(sessionId, requestIdentity)
+    }
+
+    /** Aborts a session and returns its final checkpoint without taking a second trusted identity snapshot. */
+    fun abortAndInspect(sessionId: Identifier): ResumableUploadSessionView {
+        ApplicationTransactionBoundary.requireInactive(transaction)
+        val requestIdentity = currentRequestIdentity()
+        val session = abort(sessionId, requestIdentity)
+        return try {
+            stableOwnedView(session.tenantId, requestIdentity.ownerId, session.id)
+        } catch (_: RuntimeException) {
+            // The abort is already durable; a secondary checkpoint read must not make it appear to have failed.
+            ResumableUploadSessionView(session, emptyList())
+        }
+    }
+
+    private fun abort(
+        sessionId: Identifier,
+        requestIdentity: ResumableUploadRequestIdentity,
+    ): ResumableUploadSession {
         val existing = requiredOwnedSession(requestIdentity.tenantId, requestIdentity.ownerId, sessionId)
         authorize(existing, requestIdentity.user)
         if (existing.status.isTerminal()) return existing
@@ -259,15 +344,20 @@ class ResumableUploadService @JvmOverloads constructor(
             ?: return abortClaimFailure(existing, requestIdentity.ownerId)
         try {
             abortStorage(storageUpload(claimed), null)
+        } catch (failure: Throwable) {
+            safeMarkFailed(claimed, failure)
+            throw ResumableUploadUnavailableException(failure)
+        }
+        try {
             return transaction.execute {
                 require(sessions.markAborted(claimed.tenantId, claimed.id, expired = false, updatedAt = clock.millis())) {
                     "Upload session abort state was changed concurrently."
                 }
-                requiredOwnedSession(claimed.tenantId, requestIdentity.ownerId, claimed.id)
+                requiredOwnedSessionInTransaction(claimed.tenantId, requestIdentity.ownerId, claimed.id)
             }
         } catch (failure: Throwable) {
             safeMarkFailed(claimed, failure)
-            throw failure
+            throw outcomeUnknown(failure, emptyList())
         }
     }
 
@@ -396,6 +486,116 @@ class ResumableUploadService @JvmOverloads constructor(
         UploadFileResult(fileObject, fileAsset)
     }
 
+    private fun persistCompleted(session: ResumableUploadSession, stored: StoredObject): UploadFileResult {
+        val fileObject = expectedFileObject(session, stored)
+        val fileAsset = expectedFileAsset(session)
+        return transaction.execute {
+            fileObjects.save(fileObject)
+            fileAssets.save(fileAsset)
+            outbox.append(
+                OutboxEvent(
+                    id = identifiers.nextId(),
+                    tenantId = session.tenantId,
+                    type = FILE_UPLOADED_EVENT_TYPE,
+                    payload = mapOf("fileObjectId" to fileObject.id.value, "fileAssetId" to fileAsset.id.value),
+                    timestamp = clock.millis(),
+                ),
+            )
+            require(sessions.markCompleted(session.tenantId, session.id, clock.millis())) {
+                "Upload session completion state was changed concurrently."
+            }
+            UploadFileResult(fileObject, fileAsset)
+        }
+    }
+
+    /**
+     * Recovers a stale completion whose storage acknowledgement or database commit response was lost.
+     * A fresh COMPLETING claim is never inspected: another request can still be legitimately executing it.
+     */
+    private fun reconcileCompleting(original: ResumableUploadSession): UploadFileResult {
+        val now = clock.millis()
+        if (now - original.updatedTime < COMPLETION_RECONCILIATION_DELAY_MILLIS) {
+            throw ResumableUploadStateException(
+                "Upload session ${original.id.value} is still completing.",
+            )
+        }
+        val snapshot = try {
+            transaction.execute {
+                CompletionPersistenceSnapshot(
+                    session = sessions.findById(original.tenantId, original.id),
+                    fileObject = fileObjects.findById(original.tenantId, original.fileObjectId),
+                    fileAsset = fileAssets.findById(original.tenantId, original.fileAssetId),
+                )
+            }
+        } catch (failure: Throwable) {
+            throw outcomeUnknown(failure, emptyList())
+        }
+        val current = snapshot.session
+            ?: throw ResumableUploadNotFoundException(original.id)
+        if (!isSamePersistedSession(current, original)) {
+            throw outcomeUnknown(completionReconciliationMismatch(), emptyList())
+        }
+        if (current.status == ResumableUploadSessionStatus.COMPLETED) return completedResult(current)
+        if (current.status != ResumableUploadSessionStatus.COMPLETING) {
+            throw ResumableUploadStateException(
+                "Upload session ${current.id.value} cannot be reconciled from ${current.status.name}.",
+            )
+        }
+        if (snapshot.fileObject != null || snapshot.fileAsset != null) {
+            throw outcomeUnknown(completionReconciliationMismatch(), emptyList())
+        }
+        val finalObjectExists = try {
+            storageAdapter.exists(current.storageLocation)
+        } catch (failure: Throwable) {
+            throw outcomeUnknown(failure, emptyList())
+        }
+        if (!finalObjectExists) {
+            // A stale caller or process may still be inside the remote completion call. Absence alone
+            // cannot fence that operation, so never reactivate or delete from a later request.
+            throw outcomeUnknown(ResumableUploadStateException(COMPLETION_NOT_YET_VISIBLE_MESSAGE), emptyList())
+        }
+        val stored = inspectCompletedObject(current)
+        try {
+            validateStored(current, stored)
+            return persistCompleted(current, stored).also {
+                recordMetric(FileWeftMetric.UPLOAD_COUNT, current.tenantId.value)
+            }
+        } catch (failure: Throwable) {
+            return reconcileFailedCompletion(current, stored, failure)
+        }
+    }
+
+    private fun inspectCompletedObject(session: ResumableUploadSession): StoredObject {
+        try {
+            val download = storageAdapter.download(session.storageLocation)
+            val digest = MessageDigest.getInstance("SHA-256")
+            var measuredLength = 0L
+            download.content.use { content ->
+                val buffer = ByteArray(RECONCILIATION_BUFFER_SIZE)
+                while (true) {
+                    val read = content.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    digest.update(buffer, 0, read)
+                    measuredLength = Math.addExact(measuredLength, read.toLong())
+                }
+            }
+            require(download.contentLength == null || download.contentLength == measuredLength) {
+                "Completed upload download length does not match the bytes read during reconciliation."
+            }
+            return StoredObject(
+                location = session.storageLocation,
+                contentLength = measuredLength,
+                contentType = download.contentType ?: session.contentType,
+                contentHash = "sha256:" + digest.digest().joinToString(separator = "") { byte ->
+                    (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+                },
+            )
+        } catch (failure: Throwable) {
+            throw outcomeUnknown(failure, emptyList())
+        }
+    }
+
     /**
      * Reconciles the durable side of a multipart completion before considering destructive compensation.
      * A final object is never deleted while the database outcome or any persisted reference is uncertain.
@@ -494,21 +694,73 @@ class ResumableUploadService @JvmOverloads constructor(
             candidate.assetType == expected.assetType &&
             candidate.metadata == expected.metadata
 
-    private fun recoverStorageCompletionFailure(session: ResumableUploadSession, failure: Throwable) {
-        val finalObjectDefinitelyAbsent = try {
-            !storageAdapter.exists(session.storageLocation)
-        } catch (existenceFailure: Throwable) {
-            failure.addSuppressed(existenceFailure)
-            false
+    private fun recoverStorageCompletionFailure(session: ResumableUploadSession, failure: Throwable): Throwable {
+        if (failure is MultipartCompletionRejectedException) {
+            return recoverRejectedStorageCompletion(session, failure)
         }
-        if (finalObjectDefinitelyAbsent) {
-            try {
-                transaction.execute {
-                    sessions.reactivateAfterCompletionFailure(session.tenantId, session.id, completionFailureMessage(failure), clock.millis())
-                }
-            } catch (stateFailure: Throwable) {
-                failure.addSuppressed(stateFailure)
+        try {
+            storageAdapter.exists(session.storageLocation)
+        } catch (existenceFailure: Throwable) {
+            return outcomeUnknown(failure, listOf(existenceFailure))
+        }
+        // A transport exception does not prove that a remote multipart completion stopped. Even an
+        // immediate absence probe may race with a request still executing behind a timed-out client.
+        // Keep the COMPLETING fence for every unclassified Storage failure; a later stale retry may
+        // reconcile a visible final object, but must never reactivate based on one exists=false result.
+        return outcomeUnknown(failure, emptyList())
+    }
+
+    private fun recoverRejectedStorageCompletion(
+        session: ResumableUploadSession,
+        failure: MultipartCompletionRejectedException,
+    ): Throwable {
+        val resettable = sessions as? CompletionRejectionResettableResumableUploadSessionRepository
+            ?: return outcomeUnknown(failure, listOf(completionRejectionResetUnavailable()))
+        val reset = try {
+            transaction.execute {
+                val resetAt = clock.millis()
+                resettable.resetAfterCompletionRejection(
+                    session.tenantId,
+                    session.id,
+                    completionFailureMessage(failure),
+                    Math.addExact(resetAt, sessionTtl.toMillis()),
+                    resetAt,
+                )
             }
+        } catch (stateFailure: Throwable) {
+            return outcomeUnknown(failure, listOf(stateFailure))
+        }
+        if (!reset) return outcomeUnknown(failure, listOf(completionReconciliationMismatch()))
+        return ResumableUploadStateException(
+            "Multipart completion was rejected; upload parts must be acknowledged again.",
+            failure,
+        )
+    }
+
+    private fun requireCompletionRejectionResetCapability() {
+        if (sessions !is CompletionRejectionResettableResumableUploadSessionRepository) {
+            throw ResumableUploadUnavailableException(
+                ResumableUploadStateException(COMPLETION_REJECTION_RESET_CAPABILITY_MESSAGE),
+            )
+        }
+    }
+
+    private fun requireFormalStartRepositoryCapabilities() {
+        if (
+            sessions !is StagedResumableUploadSessionRepository ||
+            sessions !is CompletionRejectionResettableResumableUploadSessionRepository
+        ) {
+            throw ResumableUploadUnavailableException(
+                ResumableUploadStateException(FORMAL_REPOSITORY_CAPABILITY_MESSAGE),
+            )
+        }
+    }
+
+    private fun requireFormalResourceId(sessionId: Identifier) {
+        // Keep this creation guard aligned with web-runtime's defensive
+        // ResumableUploadApiLocations check. Generic Application APIs retain opaque IDs.
+        check(FORMAL_RESOURCE_ID_PATTERN.matches(sessionId.value)) {
+            "The application issued an upload identifier that cannot be represented as a formal resource path."
         }
     }
 
@@ -522,6 +774,24 @@ class ResumableUploadService @JvmOverloads constructor(
         )
     }
 
+    private fun digestCallerIdempotencyKey(trustedTenantId: String, callerKey: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        updateDigestFrame(digest, FORMAL_IDEMPOTENCY_HASH_DOMAIN)
+        updateDigestFrame(digest, trustedTenantId)
+        updateDigestFrame(digest, callerKey)
+        return FORMAL_IDEMPOTENCY_STORAGE_PREFIX + digest.digest().joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
+    }
+
+    private fun updateDigestFrame(digest: MessageDigest, value: String) {
+        val bytes = value.toByteArray(StandardCharsets.UTF_8)
+        digest.update(bytes.size.toString().toByteArray(StandardCharsets.US_ASCII))
+        digest.update(FORMAL_IDEMPOTENCY_FRAME_SEPARATOR)
+        digest.update(bytes)
+        digest.update(FORMAL_IDEMPOTENCY_FRAME_TERMINATOR)
+    }
+
     private fun requiredOwnedSession(
         tenantId: Identifier,
         ownerId: String,
@@ -529,24 +799,57 @@ class ResumableUploadService @JvmOverloads constructor(
     ): ResumableUploadSession = findOwnedSession(tenantId, ownerId, sessionId)
         ?: throw ResumableUploadNotFoundException(sessionId)
 
+    private fun requiredOwnedSessionInTransaction(
+        tenantId: Identifier,
+        ownerId: String,
+        sessionId: Identifier,
+    ): ResumableUploadSession = findOwnedSessionInTransaction(tenantId, ownerId, sessionId)
+        ?: throw ResumableUploadNotFoundException(sessionId)
+
     private fun findOwnedSession(
         tenantId: Identifier,
         ownerId: String,
         sessionId: Identifier,
     ): ResumableUploadSession? = transaction.execute {
+        findOwnedSessionInTransaction(tenantId, ownerId, sessionId)
+    }
+
+    private fun findOwnedSessionInTransaction(
+        tenantId: Identifier,
+        ownerId: String,
+        sessionId: Identifier,
+    ): ResumableUploadSession? {
         val owned = when (val repository = sessions) {
             is OwnerScopedResumableUploadSessionRepository -> repository.findById(tenantId, ownerId, sessionId)
             else -> repository.findById(tenantId, sessionId)
         }?.takeIf {
             it.tenantId == tenantId && it.id == sessionId && it.ownerId == ownerId
-        } ?: return@execute null
+        } ?: return null
         val global = sessions.findById(tenantId, sessionId)
             ?.takeIf { it.tenantId == tenantId && it.id == sessionId }
-        global?.takeIf {
+        return global?.takeIf {
             it.ownerId == ownerId &&
                 isSamePersistedSession(owned, it) &&
                 isUserVisible(it)
         }
+    }
+
+    /** Returns one owner-safe session/parts checkpoint that was stable across the repository read. */
+    private fun stableOwnedView(
+        tenantId: Identifier,
+        ownerId: String,
+        sessionId: Identifier,
+    ): ResumableUploadSessionView {
+        repeat(MAX_STABLE_VIEW_ATTEMPTS) {
+            val view = transaction.execute {
+                val before = requiredOwnedSessionInTransaction(tenantId, ownerId, sessionId)
+                val parts = sessions.findParts(tenantId, sessionId)
+                val after = requiredOwnedSessionInTransaction(tenantId, ownerId, sessionId)
+                if (isSameSessionSnapshot(before, after)) ResumableUploadSessionView(after, parts) else null
+            }
+            if (view != null) return view
+        }
+        throw ResumableUploadStateException("Upload checkpoint changed concurrently; retry inspection.")
     }
 
     private fun findOwnedByIdempotency(
@@ -1051,6 +1354,16 @@ class ResumableUploadService @JvmOverloads constructor(
             candidate.expiresAt == attempted.expiresAt &&
             candidate.createdTime == attempted.createdTime
 
+    private fun isSameSessionSnapshot(
+        first: ResumableUploadSession,
+        second: ResumableUploadSession,
+    ): Boolean =
+        isSamePersistedSession(first, second) &&
+            first.status == second.status &&
+            first.lastError == second.lastError &&
+            first.completedAt == second.completedAt &&
+            first.updatedTime == second.updatedTime
+
     private fun isSamePersistedSessionIgnoringOwner(
         candidate: ResumableUploadSession,
         attempted: ResumableUploadSession,
@@ -1089,6 +1402,9 @@ class ResumableUploadService @JvmOverloads constructor(
 
     private fun completionReconciliationMismatch(): ResumableUploadStateException =
         ResumableUploadStateException(COMPLETION_RECONCILIATION_MISMATCH_MESSAGE)
+
+    private fun completionRejectionResetUnavailable(): ResumableUploadStateException =
+        ResumableUploadStateException(COMPLETION_REJECTION_RESET_CAPABILITY_MESSAGE)
 
     private fun untrustedCompletedLocation(): ResumableUploadStateException =
         ResumableUploadStateException(UNTRUSTED_COMPLETED_LOCATION_MESSAGE)
@@ -1144,12 +1460,19 @@ class ResumableUploadService @JvmOverloads constructor(
     }
 
     private fun validateParts(session: ResumableUploadSession, parts: List<ResumableUploadPart>) {
-        require(parts.isNotEmpty()) { "At least one multipart part is required before completion." }
-        require(parts.map { it.partNumber }.distinct().size == parts.size) { "Multipart upload parts are duplicated." }
+        if (parts.isEmpty()) throw ResumableUploadStateException("At least one multipart part is required before completion.")
+        if (parts.map { it.partNumber }.distinct().size != parts.size) {
+            throw ResumableUploadStateException("Multipart upload parts are duplicated.")
+        }
+        if (parts.sortedBy { it.partNumber }.map { it.partNumber } != (1..parts.size).toList()) {
+            throw ResumableUploadStateException("Multipart upload parts must form one consecutive sequence starting at part 1.")
+        }
         var total = 0L
         parts.forEach { part -> total = Math.addExact(total, part.contentLength) }
-        require(total == session.contentLength) {
-            "Multipart uploaded part length $total does not match expected content length ${session.contentLength}."
+        if (total != session.contentLength) {
+            throw ResumableUploadStateException(
+                "Multipart uploaded part length $total does not match expected content length ${session.contentLength}.",
+            )
         }
     }
 
@@ -1164,14 +1487,18 @@ class ResumableUploadService @JvmOverloads constructor(
     }
 
     private fun requireEquivalent(session: ResumableUploadSession, command: StartResumableUploadCommand) {
-        require(
-            session.fileName == command.fileName &&
-                session.contentLength == command.contentLength &&
-                session.assetType == command.assetType &&
-                session.contentType == command.contentType &&
-                session.expectedContentHash == command.contentHash &&
-                session.metadata == command.metadata,
-        ) { "Resumable upload idempotency key was reused with different upload content." }
+        if (
+            session.fileName != command.fileName ||
+            session.contentLength != command.contentLength ||
+            session.assetType != command.assetType ||
+            session.contentType != command.contentType ||
+            session.expectedContentHash != command.contentHash ||
+            session.metadata != command.metadata
+        ) {
+            throw ResumableUploadStateException(
+                "Resumable upload idempotency key was reused with different upload content.",
+            )
+        }
     }
 
     private fun storageUpload(session: ResumableUploadSession): MultipartUpload =
@@ -1216,7 +1543,8 @@ class ResumableUploadService @JvmOverloads constructor(
     }
 
     private fun completionFailureMessage(failure: Throwable): String =
-        failure.message?.takeIf { it.isNotBlank() } ?: "Multipart upload could not complete."
+        (failure.message?.takeIf { it.isNotBlank() } ?: "Multipart upload could not complete.")
+            .take(MAX_LAST_ERROR_LENGTH)
 
     private fun recordMetric(metric: FileWeftMetric, tenantId: String) {
         try {
@@ -1226,12 +1554,33 @@ class ResumableUploadService @JvmOverloads constructor(
         }
     }
 
+    /** Counts bytes actually consumed by an adapter without buffering the request body. */
+    private class CountingInputStream(content: InputStream) : FilterInputStream(content) {
+        var contentLength: Long = 0
+            private set
+
+        override fun read(): Int = super.read().also { value ->
+            if (value >= 0) contentLength = Math.addExact(contentLength, 1L)
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+            super.read(buffer, offset, length).also { read ->
+                if (read > 0) contentLength = Math.addExact(contentLength, read.toLong())
+            }
+    }
+
     private companion object {
         const val FILE_OBJECT_RESOURCE_TYPE = "FILE_OBJECT"
         const val UPLOAD_ACTION = "file:upload"
         const val UPLOAD_MAINTENANCE_ACTION = "file:upload:maintenance"
         const val MAINTENANCE_RESOURCE_ID = "resumable-upload-maintenance"
         const val FILE_UPLOADED_EVENT_TYPE = "file.uploaded"
+        const val FORMAL_IDEMPOTENCY_HASH_DOMAIN = "fileweft-resumable-upload-idempotency-v1"
+        const val FORMAL_IDEMPOTENCY_STORAGE_PREFIX = "v1:sha256:"
+        const val FORMAL_IDEMPOTENCY_FRAME_SEPARATOR: Byte = 0x3a
+        const val FORMAL_IDEMPOTENCY_FRAME_TERMINATOR: Byte = 0x00
+        val FORMAL_CALLER_KEY_PATTERN: Regex = Regex("[A-Za-z0-9][A-Za-z0-9._~:-]{0,127}")
+        private val FORMAL_RESOURCE_ID_PATTERN: Regex = Regex("[A-Za-z0-9_~-](?:[A-Za-z0-9._~-]{0,127})")
         const val IDEMPOTENCY_KEY_UNAVAILABLE_MESSAGE = "Resumable upload idempotency key is unavailable."
         const val RECONCILIATION_MISMATCH_MESSAGE =
             "The persisted resumable upload does not exactly match the attempted session."
@@ -1255,8 +1604,18 @@ class ResumableUploadService @JvmOverloads constructor(
             "An expired aborting upload session could not be durably quarantined."
         const val COMPLETION_RECONCILIATION_MISMATCH_MESSAGE =
             "The persisted multipart completion does not exactly match the completed storage object."
+        const val COMPLETION_REJECTION_RESET_CAPABILITY_MESSAGE =
+            "A definitive multipart rejection requires atomic checkpoint reset support."
+        const val FORMAL_REPOSITORY_CAPABILITY_MESSAGE =
+            "The resumable upload repository lacks a capability required by the formal resource."
         const val UNTRUSTED_COMPLETED_LOCATION_MESSAGE =
             "The storage adapter returned a completed object outside the requested upload location."
+        const val COMPLETION_NOT_YET_VISIBLE_MESSAGE =
+            "The multipart completion outcome is still fenced because no final object is visible."
+        const val COMPLETION_RECONCILIATION_DELAY_MILLIS = 30_000L
+        const val RECONCILIATION_BUFFER_SIZE = 64 * 1024
+        const val MAX_STABLE_VIEW_ATTEMPTS = 3
+        const val MAX_LAST_ERROR_LENGTH = 2_048
         const val DEFAULT_CLEANUP_LIMIT = 100
         const val MAX_CLEANUP_LIMIT = 1_000
     }

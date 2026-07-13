@@ -5,6 +5,7 @@ import ai.icen.fw.application.document.DocumentDownloadService
 import ai.icen.fw.application.document.DocumentDraftService
 import ai.icen.fw.application.document.DocumentQueryService
 import ai.icen.fw.application.plugin.PluginInventoryQueryService
+import ai.icen.fw.application.upload.ResumableUploadService
 import ai.icen.fw.dev.api.config.DevRole
 import ai.icen.fw.dev.api.config.FileWeftDevProperties
 import ai.icen.fw.dev.api.security.DevAuthenticationFilter
@@ -22,10 +23,12 @@ import ai.icen.fw.web.runtime.v1.document.DocumentApiReadFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentApiWriteFacade
 import ai.icen.fw.web.runtime.v1.health.HealthApiFacade
 import ai.icen.fw.web.runtime.v1.plugin.PluginInventoryApiFacade
+import ai.icen.fw.web.runtime.v1.upload.ResumableUploadApiFacade
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3AuditLogAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3AutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3ContentAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3DoctorAutoConfiguration
+import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3ResumableUploadAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3SystemProjectionAutoConfiguration
 import ai.icen.fw.web.spring.boot3.FileWeftWebBoot3WriteAutoConfiguration
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentContentController
@@ -36,6 +39,8 @@ import ai.icen.fw.web.spring.boot3.v1.doctor.V1DocumentDoctorController
 import ai.icen.fw.web.spring.boot3.v1.doctor.V1SystemDoctorController
 import ai.icen.fw.web.spring.boot3.v1.system.V1HealthController
 import ai.icen.fw.web.spring.boot3.v1.system.V1PluginInventoryController
+import ai.icen.fw.web.spring.boot3.v1.upload.V1ResumableUploadController
+import ai.icen.fw.web.spring.boot3.v1.upload.V1ResumableUploadRequestFailureHandler
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.autoconfigure.AutoConfigurations
@@ -89,6 +94,10 @@ class DevFormalV1AutoConfigurationTest {
             assertEquals(1, context.getBeansOfType(HealthApiFacade::class.java).size)
             assertEquals(1, context.getBeansOfType(V1PluginInventoryController::class.java).size)
             assertEquals(1, context.getBeansOfType(V1HealthController::class.java).size)
+            assertEquals(1, context.getBeansOfType(ResumableUploadService::class.java).size)
+            assertEquals(1, context.getBeansOfType(ResumableUploadApiFacade::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1ResumableUploadController::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1ResumableUploadRequestFailureHandler::class.java).size)
 
             assertEquals(1, context.getBeansOfType(DevAuthController::class.java).size)
             assertEquals(1, context.getBeansOfType(DevAuthenticationFilter::class.java).size)
@@ -105,6 +114,9 @@ class DevFormalV1AutoConfigurationTest {
             val auditLogController: V1DocumentAuditLogController = context.getBean(V1DocumentAuditLogController::class.java)
             val pluginInventoryController: V1PluginInventoryController = context.getBean(V1PluginInventoryController::class.java)
             val healthController: V1HealthController = context.getBean(V1HealthController::class.java)
+            val uploadController: V1ResumableUploadController = context.getBean(V1ResumableUploadController::class.java)
+            val uploadFailureHandler: V1ResumableUploadRequestFailureHandler =
+                context.getBean(V1ResumableUploadRequestFailureHandler::class.java)
             val traceFilter: jakarta.servlet.Filter = context.getBean(DevTraceFilter::class.java)
             val authenticationFilter: jakarta.servlet.Filter = context.getBean(DevAuthenticationFilter::class.java)
             val mvc = MockMvcBuilders
@@ -115,7 +127,9 @@ class DevFormalV1AutoConfigurationTest {
                     auditLogController,
                     pluginInventoryController,
                     healthController,
+                    uploadController,
                 )
+                .setControllerAdvice(uploadFailureHandler)
                 .addFilters<StandaloneMockMvcBuilder>(traceFilter, authenticationFilter)
                 .build()
 
@@ -134,6 +148,12 @@ class DevFormalV1AutoConfigurationTest {
                 .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
                 .andExpect(jsonPath("$.error.message").value("Authentication is required."))
                 .andExpect(jsonPath("$.traceId").value("formal-auth-test"))
+
+            mvc.perform(get("/fileweft/v1/uploads/upload-1").header("X-Trace-Id", "formal-upload-auth-test"))
+                .andExpect(status().isUnauthorized)
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"))
+                .andExpect(jsonPath("$.traceId").value("formal-upload-auth-test"))
 
             mvc.perform(get("/fileweft/v1"))
                 .andExpect(status().isUnauthorized)
@@ -211,6 +231,7 @@ class DevFormalV1AutoConfigurationTest {
                 FileWeftWebBoot3WriteAutoConfiguration::class.java,
                 FileWeftWebBoot3ContentAutoConfiguration::class.java,
                 FileWeftWebBoot3DoctorAutoConfiguration::class.java,
+                FileWeftWebBoot3ResumableUploadAutoConfiguration::class.java,
                 FileWeftWebBoot3AuditLogAutoConfiguration::class.java,
                 FileWeftWebBoot3SystemProjectionAutoConfiguration::class.java,
             ),

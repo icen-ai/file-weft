@@ -647,6 +647,156 @@ class DevAcceptanceIntegrationTest {
     }
 
     @Test
+    fun `serves the formal resumable upload resource with durable replay and owner isolation`() {
+        val editor = login("editor@alpha", "dev-editor")
+        val callerKey = "formal-resumable-${UUID.randomUUID()}"
+        val startBody = """{"fileName":"formal-resumable.txt","contentLength":7,"contentType":"text/plain"}"""
+        val startRequest = {
+            authorizedRequest("$apiUrl/fileweft/v1/uploads", editor)
+                .header("Content-Type", "application/json")
+                .header("Idempotency-Key", callerKey)
+                .POST(HttpRequest.BodyPublishers.ofString(startBody, StandardCharsets.UTF_8))
+                .build()
+        }
+
+        val startedResponse = client.send(startRequest(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+        assertEquals(201, startedResponse.statusCode())
+        assertJsonContentType(startedResponse)
+        val startedEnvelope = mapper.readTree(startedResponse.body())
+        assertV1SuccessEnvelope(startedEnvelope)
+        val started = startedEnvelope.path("data")
+        val uploadId = started.path("uploadId").asText()
+        assertTrue(uploadId.isNotBlank())
+        assertEquals("UPLOADING", started.path("status").asText())
+        assertEquals(0, started.path("uploadedParts").size())
+        assertEquals("/fileweft/v1/uploads/$uploadId", startedResponse.headers().firstValue("Location").orElse(""))
+        assertTrue(!startedEnvelope.toString().contains(callerKey))
+        listOf("tenantId", "ownerId", "storageUploadId", "storageLocation", "storagePath", "eTag", "lastError").forEach { field ->
+            assertTrue(startedEnvelope.findValue(field) == null, "Formal upload exposed internal field '$field'.")
+        }
+
+        val changedReplay = client.send(
+            authorizedRequest("$apiUrl/fileweft/v1/uploads", editor)
+                .header("Content-Type", "application/json")
+                .header("Idempotency-Key", callerKey)
+                .POST(
+                    HttpRequest.BodyPublishers.ofString(
+                        """{"fileName":"changed-command.txt","contentLength":7,"contentType":"text/plain"}""",
+                        StandardCharsets.UTF_8,
+                    ),
+                )
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(409, changedReplay.statusCode())
+        assertV1FailureEnvelope(
+            mapper.readTree(changedReplay.body()),
+            "CONFLICT",
+            "Request conflicts with the current resource state.",
+        )
+
+        val admin = login("admin@alpha", "dev-admin")
+        listOf(
+            resumableResponse("GET", "$apiUrl/fileweft/v1/uploads/$uploadId", admin),
+            resumableResponse(
+                "PUT",
+                "$apiUrl/fileweft/v1/uploads/$uploadId/parts/1",
+                admin,
+                "hostile".toByteArray(StandardCharsets.UTF_8),
+            ),
+            resumableResponse("POST", "$apiUrl/fileweft/v1/uploads/$uploadId/complete", admin),
+            resumableResponse("DELETE", "$apiUrl/fileweft/v1/uploads/$uploadId", admin),
+        ).forEach { response ->
+            assertEquals(404, response.statusCode())
+            assertJsonContentType(response)
+            assertV1FailureEnvelope(mapper.readTree(response.body()), "NOT_FOUND", "Resource was not found.")
+        }
+
+        val partResponse = client.send(
+            authorizedRequest("$apiUrl/fileweft/v1/uploads/$uploadId/parts/1", editor)
+                .header("Content-Type", "application/octet-stream")
+                .header("X-FileWeft-Part-Length", "7")
+                .PUT(HttpRequest.BodyPublishers.ofString("content", StandardCharsets.UTF_8))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(200, partResponse.statusCode())
+        val partEnvelope = mapper.readTree(partResponse.body())
+        assertV1SuccessEnvelope(partEnvelope)
+        assertEquals(uploadId, partEnvelope.path("data").path("uploadId").asText())
+        assertEquals(1, partEnvelope.path("data").path("partNumber").asInt())
+        assertTrue(partEnvelope.findValue("eTag") == null)
+
+        val replayedResponse = client.send(startRequest(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+        assertEquals(201, replayedResponse.statusCode())
+        val replayedEnvelope = mapper.readTree(replayedResponse.body())
+        assertV1SuccessEnvelope(replayedEnvelope)
+        assertEquals(uploadId, replayedEnvelope.path("data").path("uploadId").asText())
+        assertEquals(1, replayedEnvelope.path("data").path("uploadedParts").size())
+
+        fun complete(): JsonNode {
+            val response = client.send(
+                authorizedRequest("$apiUrl/fileweft/v1/uploads/$uploadId/complete", editor)
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+            )
+            assertEquals(200, response.statusCode())
+            return mapper.readTree(response.body()).also(::assertV1SuccessEnvelope)
+        }
+
+        val completed = complete().path("data")
+        val repeated = complete().path("data")
+        assertEquals(completed.path("fileObjectId").asText(), repeated.path("fileObjectId").asText())
+        assertEquals(completed.path("fileAssetId").asText(), repeated.path("fileAssetId").asText())
+        assertTrue(completed.path("completedAt").asLong() > 0)
+
+        val inspectedResponse = client.send(
+            authorizedRequest("$apiUrl/fileweft/v1/uploads/$uploadId", editor).GET().build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(200, inspectedResponse.statusCode())
+        val inspectedEnvelope = mapper.readTree(inspectedResponse.body())
+        assertV1SuccessEnvelope(inspectedEnvelope)
+        assertEquals("COMPLETED", inspectedEnvelope.path("data").path("status").asText())
+        assertEquals(
+            completed.path("fileAssetId").asText(),
+            inspectedEnvelope.path("data").path("completion").path("fileAssetId").asText(),
+        )
+
+        val incompleteStart = client.send(
+            authorizedRequest("$apiUrl/fileweft/v1/uploads", editor)
+                .header("Content-Type", "application/json")
+                .header("Idempotency-Key", "formal-incomplete-${UUID.randomUUID()}")
+                .POST(
+                    HttpRequest.BodyPublishers.ofString(
+                        """{"fileName":"incomplete.txt","contentLength":1}""",
+                        StandardCharsets.UTF_8,
+                    ),
+                )
+                .build(),
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),
+        )
+        assertEquals(201, incompleteStart.statusCode())
+        val incompleteId = mapper.readTree(incompleteStart.body()).path("data").path("uploadId").asText()
+        val prematureCompletion = resumableResponse(
+            "POST",
+            "$apiUrl/fileweft/v1/uploads/$incompleteId/complete",
+            editor,
+        )
+        assertEquals(409, prematureCompletion.statusCode())
+        assertV1FailureEnvelope(
+            mapper.readTree(prematureCompletion.body()),
+            "CONFLICT",
+            "Request conflicts with the current resource state.",
+        )
+        assertEquals(
+            200,
+            resumableResponse("DELETE", "$apiUrl/fileweft/v1/uploads/$incompleteId", editor).statusCode(),
+        )
+    }
+
+    @Test
     fun `keeps catalog folders and bound documents isolated between tenants`() {
         val alphaEditor = login("editor@alpha", "dev-editor")
         val alphaReviewer = login("reviewer@alpha", "dev-reviewer")

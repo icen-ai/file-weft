@@ -12,12 +12,20 @@ interface ResumableUploadSessionRepository {
 
     fun findParts(tenantId: Identifier, sessionId: Identifier): List<ResumableUploadPart>
 
+    /**
+     * Persists one acknowledgement only while its session is ACTIVE and unexpired.
+     *
+     * The session eligibility check, acknowledgement upsert, and advancement of the session's
+     * observable [ResumableUploadSession.updatedTime] to [ResumableUploadPart.updatedTime] must be
+     * atomic. This operation must serialize with [claimForCompletion], so a late part can neither
+     * enter COMPLETING/COMPLETED nor escape stable checkpoint reads.
+     */
     fun savePart(part: ResumableUploadPart)
 
     /** Atomically transitions an active, unexpired session to COMPLETING. */
     fun claimForCompletion(tenantId: Identifier, sessionId: Identifier, now: Long): ResumableUploadSession?
 
-    /** Returns a failed storage completion to ACTIVE only when no final object was observed. */
+    /** Returns a pre-Storage completion validation failure to ACTIVE. */
     fun reactivateAfterCompletionFailure(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean
 
     fun markFailed(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean
@@ -46,6 +54,24 @@ interface ResumableUploadSessionRepository {
 
     /** Tenant-scoped form for an administrator who is not a platform-wide operator. */
     fun findExpiredCompleting(tenantId: Identifier, now: Long, limit: Int): List<ResumableUploadSession>
+}
+
+/**
+ * Additive capability for recovering from a Storage adapter's definitive multipart-completion rejection.
+ *
+ * Implementations must atomically transition only COMPLETING to ACTIVE, renew the session to the supplied
+ * future expiration, and delete every acknowledged part for that session before returning `true`. Clearing
+ * the checkpoint forces the client to upload and persist fresh acknowledgements instead of replaying an
+ * ETag that Storage has already superseded, while the renewed deadline guarantees a usable retry window.
+ */
+interface CompletionRejectionResettableResumableUploadSessionRepository : ResumableUploadSessionRepository {
+    fun resetAfterCompletionRejection(
+        tenantId: Identifier,
+        sessionId: Identifier,
+        message: String,
+        expiresAt: Long,
+        updatedAt: Long,
+    ): Boolean
 }
 
 /**

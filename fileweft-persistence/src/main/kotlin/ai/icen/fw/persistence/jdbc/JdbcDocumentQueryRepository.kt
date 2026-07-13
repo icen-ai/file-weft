@@ -125,7 +125,7 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
     ) {
         var index = 1
         setString(index++, tenantId.value)
-        setFolderVisibilityParameter(index++, visibilityArray)
+        if (visibilityArray != null) setFolderVisibilityParameter(index++, visibilityArray)
         request.lifecycleState?.let { setString(index++, it.name) }
         request.folderId?.let { setString(index++, it) }
         request.cursor?.let { cursor ->

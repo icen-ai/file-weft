@@ -1,6 +1,7 @@
 package ai.icen.fw.adapter.storage
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartPart
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
@@ -23,6 +24,18 @@ import java.security.NoSuchAlgorithmException
 import java.time.Duration
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+/** JVM-wide striped locks keep multipart mutations atomic across adapter instances sharing one local root. */
+internal object LocalMultipartLocks {
+    private val stripes: Array<ReentrantLock> = Array(256) { ReentrantLock() }
+
+    fun <T> withLock(root: Path, uploadId: String, action: () -> T): T {
+        val key = root.toString() + '\u0000' + uploadId
+        return stripes[Math.floorMod(key.hashCode(), stripes.size)].withLock(action)
+    }
+}
 
 /**
  * Filesystem-backed [StorageAdapter] for development and single-node deployments.
@@ -132,16 +145,17 @@ class LocalStorageAdapter(
     ): MultipartPart {
         require(partNumber > 0) { "Part number must be positive." }
         require(contentLength >= 0) { "Part content length must not be negative." }
-        val session = readSession(upload)
-        val target = partPath(session.directory, partNumber)
         val temporaryPart = createStagingFile("part")
         try {
             val copied = writeContent(content, temporaryPart)
             require(copied.contentLength == contentLength) {
                 "Part content length does not match the declared content length."
             }
-            move(temporaryPart, target, replaceExisting = true)
-            return MultipartPart(partNumber, copied.contentHash.removePrefix(HASH_PREFIX))
+            return withMultipartLock(upload) {
+                val session = readSession(upload)
+                move(temporaryPart, partPath(session.directory, partNumber), replaceExisting = true)
+                MultipartPart(partNumber, copied.contentHash.removePrefix(HASH_PREFIX))
+            }
         } finally {
             Files.deleteIfExists(temporaryPart)
         }
@@ -149,45 +163,58 @@ class LocalStorageAdapter(
 
     override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject {
         require(parts.isNotEmpty()) { "At least one multipart upload part is required." }
-        val session = readSession(upload)
-        val requestedParts = parts.associateBy { it.partNumber }
-        require(requestedParts.size == parts.size) { "Multipart upload parts must not contain duplicates." }
-
-        val storedParts = listPartNumbers(session.directory)
-        require(storedParts.keys == requestedParts.keys) {
-            "Completed parts must exactly match the uploaded parts."
-        }
-        requestedParts.forEach { (partNumber, part) ->
-            val actualHash = digest(partPath(session.directory, partNumber)).removePrefix(HASH_PREFIX)
-            require(actualHash == part.eTag) { "Multipart upload part eTag does not match its content." }
-        }
-
-        val temporaryObject = createStagingFile("multipart-object")
-        try {
-            val copied = concatenateParts(storedParts, temporaryObject)
-            require(copied.contentLength == session.contentLength) {
-                "Completed multipart content length does not match the declared content length."
+        return withMultipartLock(upload) {
+            val session = readSession(upload)
+            val requestedParts = parts.associateBy { it.partNumber }
+            if (requestedParts.size != parts.size) {
+                throw MultipartCompletionRejectedException("Multipart upload parts must not contain duplicates.")
             }
-            publishObject(
-                location = session.location,
-                temporaryObject = temporaryObject,
-                metadata = session.metadata.copy(contentHash = copied.contentHash),
-            )
-            cleanupUploadDirectory(session.directory)
-            return StoredObject(session.location, copied.contentLength, session.metadata.contentType, copied.contentHash)
-        } finally {
-            Files.deleteIfExists(temporaryObject)
+
+            val storedParts = listPartNumbers(session.directory)
+            if (storedParts.keys != requestedParts.keys) {
+                throw MultipartCompletionRejectedException("Completed parts must exactly match the uploaded parts.")
+            }
+            requestedParts.forEach { (partNumber, part) ->
+                val actualHash = digest(partPath(session.directory, partNumber)).removePrefix(HASH_PREFIX)
+                if (actualHash != part.eTag) {
+                    throw MultipartCompletionRejectedException("Multipart upload part eTag does not match its content.")
+                }
+            }
+
+            val temporaryObject = createStagingFile("multipart-object")
+            try {
+                val copied = concatenateParts(storedParts, temporaryObject)
+                if (copied.contentLength != session.contentLength) {
+                    throw MultipartCompletionRejectedException(
+                        "Completed multipart content length does not match the declared content length.",
+                    )
+                }
+                publishObject(
+                    location = session.location,
+                    temporaryObject = temporaryObject,
+                    metadata = session.metadata.copy(contentHash = copied.contentHash),
+                )
+                cleanupUploadDirectory(session.directory)
+                StoredObject(session.location, copied.contentLength, session.metadata.contentType, copied.contentHash)
+            } finally {
+                Files.deleteIfExists(temporaryObject)
+            }
         }
     }
 
     override fun abortMultipartUpload(upload: MultipartUpload) {
-        val directory = uploadDirectory(upload.uploadId.value)
-        if (!Files.exists(directory, NOFOLLOW_LINKS)) {
-            return
+        withMultipartLock(upload) {
+            val directory = uploadDirectory(upload.uploadId.value)
+            if (!Files.exists(directory, NOFOLLOW_LINKS)) {
+                return@withMultipartLock
+            }
+            readSession(upload)
+            cleanupUploadDirectory(directory)
         }
-        readSession(upload)
-        cleanupUploadDirectory(directory)
     }
+
+    private fun <T> withMultipartLock(upload: MultipartUpload, action: () -> T): T =
+        LocalMultipartLocks.withLock(root, upload.uploadId.value, action)
 
     private fun newObjectLocation(tenantId: Identifier): StorageObjectLocation =
         StorageObjectLocation(

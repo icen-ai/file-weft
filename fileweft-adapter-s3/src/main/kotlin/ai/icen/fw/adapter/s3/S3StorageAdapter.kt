@@ -1,6 +1,7 @@
 package ai.icen.fw.adapter.s3
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartPart
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
@@ -171,20 +172,27 @@ class S3StorageAdapter(
             "Multipart upload parts must not contain duplicates."
         }
         val key = validatedKey(upload.location)
-        client.completeMultipartUpload(
-            CompleteMultipartUploadRequest.builder()
-                .bucket(configuration.bucket)
-                .key(key)
-                .uploadId(upload.uploadId.value)
-                .multipartUpload(
-                    CompletedMultipartUpload.builder()
-                        .parts(parts.sortedBy { it.partNumber }.map { part ->
-                            CompletedPart.builder().partNumber(part.partNumber).eTag(part.eTag).build()
-                        })
-                        .build(),
-                )
-                .build(),
-        )
+        try {
+            client.completeMultipartUpload(
+                CompleteMultipartUploadRequest.builder()
+                    .bucket(configuration.bucket)
+                    .key(key)
+                    .uploadId(upload.uploadId.value)
+                    .multipartUpload(
+                        CompletedMultipartUpload.builder()
+                            .parts(parts.sortedBy { it.partNumber }.map { part ->
+                                CompletedPart.builder().partNumber(part.partNumber).eTag(part.eTag).build()
+                            })
+                            .build(),
+                    )
+                    .build(),
+            )
+        } catch (failure: S3Exception) {
+            if (isDefinitiveMultipartCompletionRejection(failure)) {
+                throw MultipartCompletionRejectedException(cause = failure)
+            }
+            throw failure
+        }
         val head = client.headObject(HeadObjectRequest.builder().bucket(configuration.bucket).key(key).build())
         val contentLength = head.contentLength()
         require(contentLength >= 0) { "S3 service returned an invalid object length." }
@@ -309,3 +317,12 @@ class S3StorageAdapter(
         private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 }
+
+internal fun isDefinitiveMultipartCompletionRejection(failure: S3Exception): Boolean =
+    failure.awsErrorDetails()?.errorCode() in DEFINITIVE_MULTIPART_COMPLETION_REJECTION_CODES
+
+private val DEFINITIVE_MULTIPART_COMPLETION_REJECTION_CODES: Set<String> = setOf(
+    "EntityTooSmall",
+    "InvalidPart",
+    "InvalidPartOrder",
+)

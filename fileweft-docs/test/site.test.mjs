@@ -25,7 +25,7 @@ test("every navigation group has ordered bilingual pages with markdown sources",
       assert.ok(meta.lead.length > 20, `${route} ${locale} lead`);
       assert.ok(meta.file.endsWith(".md") && meta.file.includes(`/${locale}/`), `${route} ${locale} file path`);
       const source = await read(meta.file);
-      assert.match(source, /^---\n/);
+      assert.match(source, /^---\r?\n/);
       assert.doesNotMatch(source, /<script\b/i, `${route} must not embed scripts`);
       assert.doesNotMatch(source, /\son\w+\s*=/i, `${route} must not embed event handlers`);
       const markdownHeadings = source.match(/^## /gm) || [];

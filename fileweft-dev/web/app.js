@@ -62,6 +62,7 @@ const RESUMABLE_CHECKPOINT_PREFIX = "fileweft.resumable.v1";
 const MINIMUM_RESUMABLE_CHUNK_BYTES = 5 * 1024 * 1024;
 const MAXIMUM_RESUMABLE_PARTS = 10_000;
 const V1_DOCUMENTS_PATH = "/fileweft/v1/documents";
+const V1_UPLOADS_PATH = "/fileweft/v1/uploads";
 const V1_WORKFLOW_TASKS_PATH = "/fileweft/v1/workflows/tasks";
 const V1_SYSTEM_DOCTOR_PATH = "/fileweft/v1/doctor";
 const V1_HEALTH_PATH = "/fileweft/v1/health";
@@ -1365,26 +1366,26 @@ async function startOrResumeUpload(event) {
       writeResumableCheckpoint(checkpoint);
     }
     setResumableBusy(true);
-    let session = checkpoint.sessionId ? await api(`/api/resumable-uploads/${checkpoint.sessionId}`) : null;
+    let session = checkpoint.sessionId ? await v1Api(`${V1_UPLOADS_PATH}/${checkpoint.sessionId}`) : null;
     if (session?.status === "COMPLETED") {
       clearResumableCheckpoint();
       $("#resumable-abort").classList.add("hidden");
       setResumableStatus(t("upload.alreadyCompleted"), "complete");
       return;
     }
-    if (session && session.status !== "ACTIVE") throw new Error(interpolate("upload.unavailable", { status: session.status }));
+    if (session && !["UPLOADING", "FINALIZING"].includes(session.status)) {
+      throw new Error(interpolate("upload.unavailable", { status: session.status }));
+    }
     if (!session) {
       setResumableStatus(t("upload.initializing"), "active");
-      session = await api("/api/resumable-uploads", json({
+      session = await v1Api(V1_UPLOADS_PATH, json({
         fileName: checkpoint.fileName,
         contentLength: checkpoint.contentLength,
-        assetType: "DOCUMENT",
-        idempotencyKey: checkpoint.idempotencyKey,
         contentType: checkpoint.contentType,
-      }));
-      checkpoint.sessionId = session.id;
+      }, { "Idempotency-Key": checkpoint.idempotencyKey }));
+      checkpoint.sessionId = session.uploadId;
       checkpoint.expiresAt = session.expiresAt;
-      checkpoint.confirmedParts = session.parts.length;
+      checkpoint.confirmedParts = session.uploadedParts.length;
       writeResumableCheckpoint(checkpoint);
     }
     await uploadResumableParts(file, checkpoint, session);
@@ -1403,7 +1404,7 @@ async function startOrResumeUpload(event) {
 
 async function uploadResumableParts(file, checkpoint, session) {
   const totalParts = Math.ceil(file.size / checkpoint.chunkSizeBytes);
-  const acknowledged = new Map(session.parts.map((part) => [part.partNumber, part]));
+  const acknowledged = new Map(session.uploadedParts.map((part) => [part.partNumber, part]));
   for (let partNumber = 1; partNumber <= totalParts; partNumber += 1) {
     const start = (partNumber - 1) * checkpoint.chunkSizeBytes;
     const part = file.slice(start, Math.min(start + checkpoint.chunkSizeBytes, file.size));
@@ -1414,7 +1415,7 @@ async function uploadResumableParts(file, checkpoint, session) {
         total: totalParts,
         percent: Math.floor((start / file.size) * 100),
       }), "active");
-      const accepted = await api(`/api/resumable-uploads/${checkpoint.sessionId}/parts/${partNumber}`, {
+      const accepted = await v1Api(`${V1_UPLOADS_PATH}/${checkpoint.sessionId}/parts/${partNumber}`, {
         method: "PUT",
         headers: { "Content-Type": "application/octet-stream", "X-FileWeft-Part-Length": String(part.size) },
         body: part,
@@ -1428,7 +1429,7 @@ async function uploadResumableParts(file, checkpoint, session) {
     }
   }
   setResumableStatus(interpolate("upload.progress", { current: totalParts, total: totalParts, percent: 100 }), "active");
-  const completed = await api(`/api/resumable-uploads/${checkpoint.sessionId}/complete`, { method: "POST" });
+  const completed = await v1Api(`${V1_UPLOADS_PATH}/${checkpoint.sessionId}/complete`, { method: "POST" });
   clearResumableCheckpoint();
   $("#resumable-file").value = "";
   $("#resumable-abort").classList.add("hidden");
@@ -1444,7 +1445,7 @@ async function abortResumableUpload() {
   let failureMessage = null;
   try {
     setResumableBusy(true);
-    if (checkpoint.sessionId) await api(`/api/resumable-uploads/${checkpoint.sessionId}`, { method: "DELETE" });
+    if (checkpoint.sessionId) await v1Api(`${V1_UPLOADS_PATH}/${checkpoint.sessionId}`, { method: "DELETE" });
     clearResumableCheckpoint();
     $("#resumable-abort").classList.add("hidden");
     setResumableStatus(t("upload.aborted"));
@@ -1538,7 +1539,11 @@ async function processTasks() {
   }
 }
 
-const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const json = (body, headers = {}) => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json", ...headers },
+  body: JSON.stringify(body),
+});
 const lifecycleKey = (action) => `dev-ui-${action}-${crypto.randomUUID()}`;
 const lifecycleRequest = (action) => ({ method: "POST", headers: { "Idempotency-Key": lifecycleKey(action) } });
 const lifecycleJson = (body, action) => ({

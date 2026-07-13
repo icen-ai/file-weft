@@ -1,10 +1,13 @@
 package ai.icen.fw.adapter.storage
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
+import ai.icen.fw.spi.storage.MultipartPart
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
 import ai.icen.fw.spi.storage.StorageObjectLocation
 import ai.icen.fw.spi.storage.StorageUploadRequest
+import ai.icen.fw.spi.storage.StoredObject
 import ai.icen.fw.testkit.storage.StorageAdapterContractTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -12,6 +15,11 @@ import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -110,17 +118,78 @@ class LocalStorageAdapterTest : StorageAdapterContractTest() {
         val upload = adapter.beginMultipartUpload(request(contentLength = 3))
         val part = adapter.uploadPart(upload, 1, ByteArrayInputStream("abc".toByteArray()), 3)
 
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<MultipartCompletionRejectedException> {
             adapter.completeMultipartUpload(upload, listOf(part.copy(eTag = "incorrect")))
         }
         assertFalse(adapter.exists(upload.location))
 
         val wrongLength = adapter.beginMultipartUpload(request(contentLength = 4))
         val wrongLengthPart = adapter.uploadPart(wrongLength, 1, ByteArrayInputStream("abc".toByteArray()), 3)
-        assertFailsWith<IllegalArgumentException> {
+        assertFailsWith<MultipartCompletionRejectedException> {
             adapter.completeMultipartUpload(wrongLength, listOf(wrongLengthPart))
         }
         assertFalse(adapter.exists(wrongLength.location))
+    }
+
+    @Test
+    fun `serializes part replacement with completion across adapter instances`() {
+        val firstAdapter = adapter()
+        val secondAdapter = adapter()
+        val upload = firstAdapter.beginMultipartUpload(request(contentLength = 3))
+        val original = firstAdapter.uploadPart(upload, 1, ByteArrayInputStream("old".toByteArray()), 3)
+        val lockHeld = CountDownLatch(1)
+        val releaseLock = CountDownLatch(1)
+        val operationsStarted = CountDownLatch(2)
+        val executor = Executors.newFixedThreadPool(3)
+        try {
+            val holder = executor.submit {
+                LocalMultipartLocks.withLock(root.toRealPath(), upload.uploadId.value) {
+                    lockHeld.countDown()
+                    check(releaseLock.await(5, TimeUnit.SECONDS)) { "Timed out releasing multipart test lock." }
+                }
+            }
+            assertTrue(lockHeld.await(5, TimeUnit.SECONDS))
+            val replacement = executor.submit(Callable<Result<MultipartPart>> {
+                operationsStarted.countDown()
+                runCatching {
+                    secondAdapter.uploadPart(upload, 1, ByteArrayInputStream("new".toByteArray()), 3)
+                }
+            })
+            val completion = executor.submit(Callable<Result<StoredObject>> {
+                operationsStarted.countDown()
+                runCatching { firstAdapter.completeMultipartUpload(upload, listOf(original)) }
+            })
+            assertTrue(operationsStarted.await(5, TimeUnit.SECONDS))
+            assertFailsWith<TimeoutException> { replacement.get(200, TimeUnit.MILLISECONDS) }
+            assertFailsWith<TimeoutException> { completion.get(200, TimeUnit.MILLISECONDS) }
+
+            releaseLock.countDown()
+            holder.get(5, TimeUnit.SECONDS)
+            val replacementResult = replacement.get(5, TimeUnit.SECONDS)
+            val completionResult = completion.get(5, TimeUnit.SECONDS)
+
+            if (completionResult.isSuccess) {
+                assertTrue(replacementResult.isFailure)
+                assertEquals(
+                    "old",
+                    firstAdapter.download(completionResult.getOrThrow().location).content.use {
+                        it.readBytes().toString(Charsets.UTF_8)
+                    },
+                )
+            } else {
+                assertTrue(replacementResult.isSuccess)
+                assertTrue(completionResult.exceptionOrNull() is MultipartCompletionRejectedException)
+                assertFalse(firstAdapter.exists(upload.location))
+            }
+        } finally {
+            releaseLock.countDown()
+            executor.shutdownNow()
+            if (firstAdapter.exists(upload.location)) {
+                firstAdapter.delete(upload.location)
+            } else {
+                firstAdapter.abortMultipartUpload(upload)
+            }
+        }
     }
 
     @Test

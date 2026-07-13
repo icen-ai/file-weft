@@ -20,10 +20,99 @@ async function fulfillJson(route, body, status = 200) {
   }
 }
 
-async function installMockBackend(page) {
+async function fulfillV1(route, data, status = 200) {
+  await fulfillJson(route, {
+    code: "OK",
+    message: "OK",
+    data,
+    error: null,
+    traceId: null,
+  }, status);
+}
+
+async function installMockBackend(page, { resumeFinalizing = false } = {}) {
   const partStarted = deferred();
   const releasePart = deferred();
   const resumableCalls = [];
+
+  await page.route("**/fileweft/v1/uploads**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const authorization = request.headers().authorization || "";
+    let requestBody = null;
+    if (request.headers()["content-type"]?.includes("application/json")) {
+      requestBody = request.postDataJSON();
+    }
+    resumableCalls.push({
+      authorization,
+      method: request.method(),
+      path,
+      idempotencyKey: request.headers()["idempotency-key"] || null,
+      requestBody,
+    });
+    if (path === "/fileweft/v1/uploads" && request.method() === "POST") {
+      await fulfillV1(route, {
+        uploadId: SESSION_ID,
+        fileName: "uploader-a.bin",
+        contentLength: 5 * 1024 * 1024 + 1,
+        contentType: "application/octet-stream",
+        contentHash: null,
+        status: "UPLOADING",
+        expiresAt: 1_900_000_000_000,
+        createdTime: 1_800_000_000_000,
+        updatedTime: 1_800_000_000_000,
+        uploadedParts: [],
+        completion: null,
+      }, 201);
+      return;
+    }
+    if (resumeFinalizing && path === `/fileweft/v1/uploads/${SESSION_ID}` && request.method() === "GET") {
+      await fulfillV1(route, {
+        uploadId: SESSION_ID,
+        fileName: "uploader-a.bin",
+        contentLength: 5 * 1024 * 1024 + 1,
+        contentType: "application/octet-stream",
+        contentHash: null,
+        status: "FINALIZING",
+        expiresAt: 1_900_000_000_000,
+        createdTime: 1_800_000_000_000,
+        updatedTime: 1_800_000_000_200,
+        uploadedParts: [
+          { uploadId: SESSION_ID, partNumber: 1, contentLength: 5 * 1024 * 1024, uploadedTime: 1_800_000_000_100 },
+          { uploadId: SESSION_ID, partNumber: 2, contentLength: 1, uploadedTime: 1_800_000_000_200 },
+        ],
+        completion: null,
+      });
+      return;
+    }
+    if (resumeFinalizing && path === `/fileweft/v1/uploads/${SESSION_ID}/complete` && request.method() === "POST") {
+      await fulfillV1(route, {
+        uploadId: SESSION_ID,
+        fileObjectId: "object-finalized",
+        fileAssetId: "asset-finalized",
+        completedAt: 1_800_000_000_300,
+      });
+      return;
+    }
+    if (path === `/fileweft/v1/uploads/${SESSION_ID}/parts/1` && request.method() === "PUT") {
+      partStarted.resolve();
+      await releasePart.promise;
+      await fulfillV1(route, {
+        uploadId: SESSION_ID,
+        partNumber: 1,
+        contentLength: 5 * 1024 * 1024,
+        uploadedTime: 1_800_000_000_100,
+      });
+      return;
+    }
+    await fulfillJson(route, {
+      code: "CONFLICT",
+      message: "Request conflicts with the current resource state.",
+      data: null,
+      error: { code: "CONFLICT", message: "Request conflicts with the current resource state." },
+      traceId: null,
+    }, 409);
+  });
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -53,25 +142,7 @@ async function installMockBackend(page) {
       return;
     }
     if (path.startsWith("/api/resumable-uploads")) {
-      resumableCalls.push({ authorization, method: request.method(), path });
-      if (path === "/api/resumable-uploads" && request.method() === "POST") {
-        await fulfillJson(route, {
-          id: SESSION_ID,
-          fileName: "uploader-a.bin",
-          contentLength: 5 * 1024 * 1024 + 1,
-          status: "ACTIVE",
-          expiresAt: 1_900_000_000_000,
-          parts: [],
-        });
-        return;
-      }
-      if (path === `/api/resumable-uploads/${SESSION_ID}/parts/1` && request.method() === "PUT") {
-        partStarted.resolve();
-        await releasePart.promise;
-        await fulfillJson(route, { partNumber: 1, contentLength: 5 * 1024 * 1024, eTag: "part-one" });
-        return;
-      }
-      await fulfillJson(route, { code: "UNEXPECTED_RESUMABLE_CALL", message: `${request.method()} ${path}` }, 409);
+      await fulfillJson(route, { code: "UNEXPECTED_DEV_UPLOAD_CALL", message: `${request.method()} ${path}` }, 409);
       return;
     }
     await fulfillJson(route, { code: "NOT_FOUND", message: `Unexpected mock API path: ${path}` }, 404);
@@ -134,6 +205,14 @@ test("scopes resumable checkpoints to tenant and stable user without cross-user 
   expect(uploaderAKey).not.toContain(TENANT_ID);
   expect(uploaderAKey).not.toContain(USER_A);
   expect(checkpoint.value).toMatchObject({ version: 1, sessionId: SESSION_ID, fileName: "uploader-a.bin" });
+  const createCall = backend.callsFor("token-uploader-a")[0];
+  expect(createCall).toMatchObject({ method: "POST", path: "/fileweft/v1/uploads" });
+  expect(createCall.idempotencyKey).toBe(checkpoint.value.idempotencyKey);
+  expect(createCall.requestBody).toEqual({
+    fileName: "uploader-a.bin",
+    contentLength: 5 * 1024 * 1024 + 1,
+    contentType: "application/octet-stream",
+  });
 
   await page.locator("#logout").click();
   await expect(page.locator("#login-view")).toBeVisible();
@@ -165,4 +244,47 @@ test("scopes resumable checkpoints to tenant and stable user without cross-user 
   await expect(page.locator("#resumable-abort")).toBeVisible();
   expect(await page.evaluate(() => window.__fileweftCheckpointReads.slice())).toContain(uploaderAKey);
   expect(backend.callsFor("token-uploader-a")).toHaveLength(uploaderACallCount);
+});
+
+test("retries completion without re-uploading acknowledged parts when a checkpoint is finalizing", async ({ page }) => {
+  const backend = await installMockBackend(page, { resumeFinalizing: true });
+  await page.goto("/");
+  await login(page, "uploader-a@alpha");
+  const checkpointKey = await page.evaluate(({ prefix, tenantId, userId }) => {
+    const segment = (value) => {
+      const bytes = new TextEncoder().encode(value);
+      let binary = "";
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+      return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    };
+    return `${prefix}.tenant.${segment(tenantId)}.user.${segment(userId)}`;
+  }, { prefix: CHECKPOINT_PREFIX, tenantId: TENANT_ID, userId: USER_A });
+  await page.evaluate(({ key }) => {
+    localStorage.setItem(key, JSON.stringify({
+      version: 1,
+      idempotencyKey: "resume-finalizing-001",
+      fileName: "uploader-a.bin",
+      contentLength: 5 * 1024 * 1024 + 1,
+      contentType: "application/octet-stream",
+      chunkSizeBytes: 5 * 1024 * 1024,
+      sessionId: "session-owned-by-uploader-a",
+      expiresAt: 1_900_000_000_000,
+      confirmedParts: 2,
+    }));
+  }, { key: checkpointKey });
+
+  await page.locator("[data-panel='uploads']").click();
+  await page.locator("#resumable-file").setInputFiles({
+    name: "uploader-a.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(5 * 1024 * 1024 + 1, 0x41),
+  });
+  await page.locator("#resumable-upload-form button[type='submit']").click();
+  await expect(page.locator("#resumable-upload-status")).toContainText("asset-finalized");
+
+  expect(backend.callsFor("token-uploader-a").map(({ method, path }) => ({ method, path }))).toEqual([
+    { method: "GET", path: `/fileweft/v1/uploads/${SESSION_ID}` },
+    { method: "POST", path: `/fileweft/v1/uploads/${SESSION_ID}/complete` },
+  ]);
+  expect(await page.evaluate((key) => localStorage.getItem(key), checkpointKey)).toBeNull();
 });

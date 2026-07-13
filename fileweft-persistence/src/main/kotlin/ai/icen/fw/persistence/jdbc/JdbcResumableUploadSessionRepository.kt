@@ -2,6 +2,7 @@ package ai.icen.fw.persistence.jdbc
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
+import ai.icen.fw.application.upload.CompletionRejectionResettableResumableUploadSessionRepository
 import ai.icen.fw.application.upload.OwnerScopedResumableUploadSessionRepository
 import ai.icen.fw.application.upload.ResumableUploadPart
 import ai.icen.fw.application.upload.ResumableUploadSession
@@ -15,7 +16,8 @@ import java.sql.ResultSet
 class JdbcResumableUploadSessionRepository(
     private val objectMapper: ObjectMapper,
 ) : OwnerScopedResumableUploadSessionRepository,
-    StagedResumableUploadSessionRepository {
+    StagedResumableUploadSessionRepository,
+    CompletionRejectionResettableResumableUploadSessionRepository {
     override fun save(session: ResumableUploadSession) {
         val ownerId = requireNotNull(session.ownerId) {
             "New resumable upload sessions must have a trusted owner id."
@@ -175,6 +177,31 @@ class JdbcResumableUploadSessionRepository(
             """.trimIndent(),
             message, updatedAt, tenantId.value, sessionId.value,
         )
+
+    override fun resetAfterCompletionRejection(
+        tenantId: Identifier,
+        sessionId: Identifier,
+        message: String,
+        expiresAt: Long,
+        updatedAt: Long,
+    ): Boolean {
+        val reactivated = transition(
+            """
+            UPDATE fw_upload_session SET session_status = 'ACTIVE', last_error = ?, expires_at = ?, updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND session_status = 'COMPLETING'
+            """.trimIndent(),
+            message, expiresAt, updatedAt, tenantId.value, sessionId.value,
+        )
+        if (!reactivated) return false
+        JdbcConnectionContext.requireCurrent().prepareStatement(
+            "DELETE FROM fw_upload_session_part WHERE tenant_id = ? AND session_id = ?",
+        ).use { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, sessionId.value)
+            statement.executeUpdate()
+        }
+        return true
+    }
 
     override fun markFailed(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean {
         val dialect = JdbcConnectionContext.requireDialect()

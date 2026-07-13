@@ -21,9 +21,7 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
         folderReadScope: DocumentFolderReadScope?,
     ): DocumentAuditLogPageResult? {
         val connection = JdbcConnectionContext.requireCurrent()
-        val visibilityArray = folderReadScope
-            ?.takeIf { scope -> !scope.isEmpty }
-            ?.let { scope -> connection.createArrayOf("text", scope.folderIds.toTypedArray()) }
+        val visibilityArray = connection.createFolderVisibilityArray(folderReadScope)
         return try {
             connection.prepareStatement(querySql(request, folderReadScope)).use { statement ->
                 statement.bind(tenantId, documentId, request, visibilityArray)
@@ -73,7 +71,7 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
         var index = 1
         setString(index++, tenantId.value)
         setString(index++, documentId.value)
-        setFolderVisibilityParameter(index++, visibilityArray)
+        if (visibilityArray != null) setFolderVisibilityParameter(index++, visibilityArray)
         setString(index++, tenantId.value)
         request.cursor?.let { cursor ->
             setLong(index++, cursor.createdTime)

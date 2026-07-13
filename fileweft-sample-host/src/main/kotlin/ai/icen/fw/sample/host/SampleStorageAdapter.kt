@@ -1,6 +1,7 @@
 package ai.icen.fw.sample.host
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartPart
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
@@ -25,7 +26,7 @@ private fun newObjectId(): String = UUID.randomUUID().toString()
 class SampleStorageAdapter : StorageAdapter {
 
     private val objects = ConcurrentHashMap<StorageObjectLocation, ByteArray>()
-    private val multipartParts = ConcurrentHashMap<Identifier, MutableMap<Int, ByteArray>>()
+    private val multipartParts = ConcurrentHashMap<Identifier, MutableMap<Int, SampleMultipartPart>>()
 
     override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject {
         val bytes = readExact(content, request.contentLength.toInt())
@@ -76,20 +77,51 @@ class SampleStorageAdapter : StorageAdapter {
         val parts = multipartParts[upload.uploadId]
             ?: throw IllegalArgumentException("Unknown multipart upload: ${upload.uploadId}")
         val bytes = readExact(content, contentLength.toInt())
-        parts[partNumber] = bytes
-        return MultipartPart(partNumber = partNumber, eTag = "etag-$partNumber")
+        val acknowledgement = MultipartPart(partNumber = partNumber, eTag = "etag-$partNumber-${UUID.randomUUID()}")
+        synchronized(parts) {
+            require(multipartParts[upload.uploadId] === parts) {
+                "Unknown multipart upload: ${upload.uploadId}"
+            }
+            parts[partNumber] = SampleMultipartPart(bytes, acknowledgement.eTag)
+        }
+        return acknowledgement
     }
 
     override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject {
-        val partMap = multipartParts.remove(upload.uploadId)
+        val partMap = multipartParts[upload.uploadId]
             ?: throw IllegalArgumentException("Unknown multipart upload: ${upload.uploadId}")
-        val sorted = parts.sortedBy { it.partNumber }
-        val combined = sorted.flatMap { partMap[it.partNumber]?.toList() ?: emptyList() }.toByteArray()
-        objects[upload.location] = combined
-        return StoredObject(
-            location = upload.location,
-            contentLength = combined.size.toLong(),
-        )
+        return synchronized(partMap) {
+            require(multipartParts[upload.uploadId] === partMap) {
+                "Unknown multipart upload: ${upload.uploadId}"
+            }
+            val sorted = parts.sortedBy { it.partNumber }
+            if (sorted.isEmpty()) {
+                throw MultipartCompletionRejectedException("Multipart completion requires at least one part.")
+            }
+            if (sorted.map { it.partNumber }.distinct().size != sorted.size) {
+                throw MultipartCompletionRejectedException("Multipart completion must not contain duplicate part numbers.")
+            }
+            val combined = sorted.flatMap { acknowledgement ->
+                val stored = partMap[acknowledgement.partNumber]
+                    ?: throw MultipartCompletionRejectedException(
+                        "Unknown multipart part: ${acknowledgement.partNumber}",
+                    )
+                if (stored.eTag != acknowledgement.eTag) {
+                    throw MultipartCompletionRejectedException(
+                        "Multipart part acknowledgement is stale: ${acknowledgement.partNumber}",
+                    )
+                }
+                stored.content.toList()
+            }.toByteArray()
+            check(multipartParts.remove(upload.uploadId, partMap)) {
+                "Multipart upload changed during completion: ${upload.uploadId}"
+            }
+            objects[upload.location] = combined
+            StoredObject(
+                location = upload.location,
+                contentLength = combined.size.toLong(),
+            )
+        }
     }
 
     override fun abortMultipartUpload(upload: MultipartUpload) {
@@ -117,4 +149,9 @@ class SampleStorageAdapter : StorageAdapter {
         require(offset == length) { "Expected $length bytes but read $offset." }
         return buffer
     }
+
+    private data class SampleMultipartPart(
+        val content: ByteArray,
+        val eTag: String,
+    )
 }

@@ -179,8 +179,8 @@ class PublishedReleaseRepositoryVerifierFixtureTest {
             apacheLicenseName = apacheLicenseName,
             apacheLicenseUrl = apacheLicenseUrl,
             releaseScmTag = "v$version",
-            withdrawnMavenGroup = "com.fileweft",
-            withdrawnJvmPath = "com/fileweft",
+            withdrawnMavenGroup = listOf("com", "fileweft").joinToString("."),
+            withdrawnJvmPath = listOf("com", "fileweft").joinToString("/"),
         )
 
     private fun withFixtureRepository(

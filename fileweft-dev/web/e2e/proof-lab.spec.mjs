@@ -493,7 +493,19 @@ test("returns a rejected document to an editor-controlled draft", async ({ brows
   }
 });
 
-test("runs resumable upload and maintenance through the administrator UI", async ({ page }) => {
+test("runs the formal resumable upload and dev-only maintenance through the administrator UI", async ({ page }) => {
+  const uploadRequests = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/fileweft/v1/uploads") || path.startsWith("/api/resumable-uploads")) {
+      uploadRequests.push({
+        method: request.method(),
+        path,
+        idempotencyKey: request.headers()["idempotency-key"] || null,
+        body: request.headers()["content-type"]?.includes("application/json") ? request.postDataJSON() : null,
+      });
+    }
+  });
   await login(page, "admin@alpha");
   await page.locator("[data-panel='uploads']").click();
   await expect(page.locator("#uploads-panel")).toBeVisible();
@@ -505,7 +517,30 @@ test("runs resumable upload and maintenance through the administrator UI", async
   await page.locator("#resumable-upload-form button[type='submit']").click();
   await expect(page.locator("#resumable-upload-status")).toContainText("Upload completed as asset");
 
+  const formalRequests = uploadRequests.filter(({ path }) => path.startsWith("/fileweft/v1/uploads"));
+  expect(formalRequests.map(({ method, path }) => ({ method, path }))).toEqual([
+    { method: "POST", path: "/fileweft/v1/uploads" },
+    { method: "PUT", path: expect.stringMatching(/^\/fileweft\/v1\/uploads\/[^/]+\/parts\/1$/) },
+    { method: "PUT", path: expect.stringMatching(/^\/fileweft\/v1\/uploads\/[^/]+\/parts\/2$/) },
+    { method: "POST", path: expect.stringMatching(/^\/fileweft\/v1\/uploads\/[^/]+\/complete$/) },
+  ]);
+  expect(formalRequests[0].idempotencyKey).toMatch(/^[A-Za-z0-9._~:-]{1,128}$/);
+  expect(formalRequests[0].body).toEqual({
+    fileName: "frontend-resumable.bin",
+    contentLength: (5 * 1024 * 1024) + 1,
+    contentType: "application/octet-stream",
+  });
+  expect(uploadRequests.some(({ path }) => path.startsWith("/api/resumable-uploads"))).toBe(false);
+
   await expect(page.locator("#resumable-maintenance")).toBeVisible();
   await page.locator("#resumable-maintenance").click();
   await expect(page.locator("#resumable-maintenance-output")).toBeVisible();
+  expect(uploadRequests.filter(({ path }) => path.startsWith("/api/resumable-uploads"))).toEqual([
+    {
+      method: "GET",
+      path: "/api/resumable-uploads/maintenance",
+      idempotencyKey: null,
+      body: null,
+    },
+  ]);
 });

@@ -1,6 +1,7 @@
 package ai.icen.fw.testkit.storage
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartPart
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
@@ -80,15 +81,23 @@ class StorageAdapterContractTestBehaviorTest : StorageAdapterContractTest() {
 
         override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject {
             val session = session(upload)
-            require(parts.isNotEmpty()) { "Parts are required." }
-            require(parts.map { it.partNumber }.distinct().size == parts.size) { "Parts must be unique." }
-            require(parts.map { it.partNumber }.toSet() == session.parts.keys) { "Parts do not match uploaded content." }
+            if (parts.isEmpty()) throw MultipartCompletionRejectedException("Parts are required.")
+            if (parts.map { it.partNumber }.distinct().size != parts.size) {
+                throw MultipartCompletionRejectedException("Parts must be unique.")
+            }
+            if (parts.map { it.partNumber }.toSet() != session.parts.keys) {
+                throw MultipartCompletionRejectedException("Parts do not match uploaded content.")
+            }
             parts.forEach { part ->
                 val content = requireNotNull(session.parts[part.partNumber])
-                require(part.eTag == eTag(part.partNumber, content)) { "Part eTag mismatch." }
+                if (part.eTag != eTag(part.partNumber, content)) {
+                    throw MultipartCompletionRejectedException("Part eTag mismatch.")
+                }
             }
             val content = concatenate(parts.sortedBy { it.partNumber }.map { session.parts.getValue(it.partNumber) })
-            require(content.size.toLong() == session.request.contentLength) { "Multipart content length mismatch." }
+            if (content.size.toLong() != session.request.contentLength) {
+                throw MultipartCompletionRejectedException("Multipart content length mismatch.")
+            }
             objects[session.location] = ObjectRecord(content, session.request.contentType)
             uploads.remove(upload.uploadId.value)
             return StoredObject(session.location, content.size.toLong(), session.request.contentType)

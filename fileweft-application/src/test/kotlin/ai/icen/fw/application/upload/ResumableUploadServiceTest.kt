@@ -20,6 +20,7 @@ import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
 import ai.icen.fw.spi.identity.UserIdentity
 import ai.icen.fw.spi.identity.UserRealmProvider
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartPart
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
@@ -42,6 +43,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -102,6 +104,246 @@ class ResumableUploadServiceTest {
         assertThrows<ResumableUploadStateException> {
             service.uploadPart(session.id, 3, 1, ByteArrayInputStream(byteArrayOf(1)))
         }
+    }
+
+    @Test
+    fun `start and inspect uses one trusted identity snapshot and returns replayed acknowledgements`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, MutableClock(100))
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        state.currentUserCalls.set(0)
+
+        val replayed = service.startAndInspect(command())
+
+        assertEquals(session.id, replayed.session.id)
+        assertEquals(listOf(1), replayed.parts.map { it.partNumber })
+        assertEquals(1, state.currentUserCalls.get())
+        assertEquals(1, storage.beginCalls.get())
+    }
+
+    @Test
+    fun `reusing an owned idempotency key with a different command is a state conflict`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, MutableClock(100))
+        service.start(command())
+
+        assertThrows<ResumableUploadStateException> {
+            service.start(command(contentHash = "sha256:different"))
+        }
+
+        assertEquals(1, storage.beginCalls.get())
+    }
+
+    @Test
+    fun `formal start hashes a validated caller key with one trusted tenant snapshot before application work`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, MutableClock(100))
+        val callerKey = "browser-retry-key"
+
+        val first = service.startAndInspectWithCallerKey(command(idempotencyKey = callerKey))
+        val firstStoredKey = first.session.idempotencyKey
+        state.tenant = Identifier("tenant-2")
+        val second = service.startAndInspectWithCallerKey(command(idempotencyKey = callerKey))
+
+        assertTrue(firstStoredKey.startsWith("v1:sha256:"))
+        assertEquals(74, firstStoredKey.length)
+        assertTrue(!firstStoredKey.contains(callerKey))
+        assertNotEquals(firstStoredKey, second.session.idempotencyKey)
+        assertNotEquals(first.session.id, second.session.id)
+        assertEquals(2, storage.beginCalls.get())
+
+        val operationsBeforeInvalidKey = storage.operationCalls()
+        assertThrows<IllegalArgumentException> {
+            service.startAndInspectWithCallerKey(command(idempotencyKey = "secret key"))
+        }
+        assertEquals(operationsBeforeInvalidKey, storage.operationCalls())
+    }
+
+    @Test
+    fun `formal start fails before storage when checkpoint reset capability is unavailable`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(
+            storage,
+            state,
+            MutableClock(100),
+            sessionRepository = FormalRepositoryWithoutCompletionReset(state.sessions),
+        )
+
+        assertThrows<ResumableUploadUnavailableException> {
+            service.startAndInspectWithCallerKey(command(idempotencyKey = "formal-reset-required"))
+        }
+
+        assertEquals(1, state.currentUserCalls.get())
+        assertEquals(0, state.sessions.queryCalls.get())
+        assertEquals(0, state.sessions.mutationCalls.get())
+        assertEquals(0, storage.operationCalls())
+        assertEquals(0, state.ids.get())
+    }
+
+    @Test
+    fun `formal start classifies missing staging capability as unavailable before application work`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(
+            storage,
+            state,
+            MutableClock(100),
+            sessionRepository = FormalRepositoryWithoutStaging(state.sessions),
+        )
+
+        assertThrows<ResumableUploadUnavailableException> {
+            service.startAndInspectWithCallerKey(command(idempotencyKey = "formal-staging-required"))
+        }
+
+        assertEquals(1, state.currentUserCalls.get())
+        assertEquals(0, state.authorizationCalls.get())
+        assertEquals(0, state.sessions.queryCalls.get())
+        assertEquals(0, state.sessions.mutationCalls.get())
+        assertEquals(0, storage.operationCalls())
+        assertEquals(0, state.ids.get())
+    }
+
+    @Test
+    fun `formal start rejects an unroutable generated session id before authorization storage or persistence mutations`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val identifiers = object : IdentifierGenerator {
+            override fun nextId(): Identifier {
+                state.ids.incrementAndGet()
+                return Identifier("unsafe/id")
+            }
+        }
+        val service = service(storage, state, MutableClock(100), identifierGenerator = identifiers)
+
+        val failure = assertThrows<IllegalStateException> {
+            service.startAndInspectWithCallerKey(command(idempotencyKey = "formal-route-safe"))
+        }
+
+        assertFalse(failure.message.orEmpty().contains("unsafe/id"))
+        assertEquals(1, state.ids.get())
+        assertEquals(0, state.authorizationCalls.get())
+        assertEquals(0, storage.operationCalls())
+        assertEquals(0, state.sessions.mutationCalls.get())
+        assertEquals(0, state.businessMutationCalls())
+    }
+
+    @Test
+    fun `formal replay rejects an unroutable legacy session without mutating it`() {
+        val callerKey = "formal-legacy-route"
+        val probeState = State()
+        val internalSession = service(FakeMultipartStorage(), probeState, MutableClock(100))
+            .startAndInspectWithCallerKey(command(idempotencyKey = callerKey))
+            .session
+        val storage = FakeMultipartStorage()
+        val state = State()
+        state.sessions.save(copySessionForTest(internalSession, id = Identifier("unsafe/id")))
+        state.sessions.mutationCalls.set(0)
+        val service = service(storage, state, MutableClock(100))
+
+        val failure = assertThrows<IllegalStateException> {
+            service.startAndInspectWithCallerKey(command(idempotencyKey = callerKey))
+        }
+
+        assertFalse(failure.message.orEmpty().contains("unsafe/id"))
+        assertEquals(0, state.ids.get())
+        assertEquals(0, state.authorizationCalls.get())
+        assertEquals(0, storage.operationCalls())
+        assertEquals(0, state.sessions.mutationCalls.get())
+        assertEquals(ResumableUploadSessionStatus.ACTIVE, state.sessions.findById(state.tenant, Identifier("unsafe/id"))?.status)
+    }
+
+    @Test
+    fun `formal completion fails before claiming a legacy active session when checkpoint reset is unavailable`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(
+            storage,
+            state,
+            MutableClock(100),
+            sessionRepository = FormalRepositoryWithoutCompletionReset(state.sessions),
+        )
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+
+        assertThrows<ResumableUploadUnavailableException> {
+            service.completeAndInspect(session.id)
+        }
+
+        val checkpoint = service.inspect(session.id)
+        assertEquals(ResumableUploadSessionStatus.ACTIVE, checkpoint.session.status)
+        assertEquals(listOf(1), checkpoint.parts.map { part -> part.partNumber })
+        assertEquals(0, storage.completeCalls.get())
+    }
+
+    @Test
+    fun `complete and inspect uses one trusted identity snapshot for the completion receipt`() {
+        val clock = MutableClock(100)
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, clock)
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        state.currentUserCalls.set(0)
+
+        val completion = service.completeAndInspect(session.id)
+
+        assertEquals(session.fileObjectId, completion.result.fileObject.id)
+        assertEquals(session.fileAssetId, completion.result.fileAsset.id)
+        assertEquals(100L, completion.completedAt)
+        assertEquals(1, state.currentUserCalls.get())
+    }
+
+    @Test
+    fun `abort and inspect uses one trusted identity snapshot and preserves the final checkpoint`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, MutableClock(100))
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        state.currentUserCalls.set(0)
+
+        val aborted = service.abortAndInspect(session.id)
+
+        assertEquals(ResumableUploadSessionStatus.ABORTED, aborted.session.status)
+        assertEquals(listOf(1), aborted.parts.map { part -> part.partNumber })
+        assertEquals(1, state.currentUserCalls.get())
+    }
+
+    @Test
+    fun `rejects a truncated or oversized part body before persisting its acknowledgement`() {
+        val storage = FakeMultipartStorage().apply { trustDeclaredPartLength = true }
+        val state = State()
+        val service = service(storage, state, MutableClock(100))
+        val session = service.start(command())
+
+        assertThrows<IllegalArgumentException> {
+            service.uploadPart(session.id, 1, 3, ByteArrayInputStream("four".toByteArray()))
+        }
+        assertTrue(service.inspect(session.id).parts.isEmpty())
+
+        assertThrows<IllegalArgumentException> {
+            service.uploadPart(session.id, 1, 8, ByteArrayInputStream("short".toByteArray()))
+        }
+        assertTrue(service.inspect(session.id).parts.isEmpty())
+    }
+
+    @Test
+    fun `completion rejects a gapped part sequence even when declared lengths add up`() {
+        val storage = FakeMultipartStorage()
+        val state = State()
+        val service = service(storage, state, MutableClock(100))
+        val session = service.start(command())
+        service.uploadPart(session.id, 2, 7, ByteArrayInputStream("content".toByteArray()))
+
+        assertThrows<ResumableUploadStateException> { service.complete(session.id) }
+
+        assertEquals(0, storage.completeCalls.get())
+        assertEquals(ResumableUploadSessionStatus.ACTIVE, service.inspect(session.id).session.status)
     }
 
     @Test
@@ -285,7 +527,7 @@ class ResumableUploadServiceTest {
     }
 
     @Test
-    fun `returns a failed completion to active when storage has no completed object`() {
+    fun `storage completion failure remains fenced when the final object is not yet visible`() {
         val clock = MutableClock(100)
         val storage = FakeMultipartStorage().apply { failComplete = true }
         val state = State()
@@ -293,16 +535,70 @@ class ResumableUploadServiceTest {
         val session = service.start(command())
         service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
 
-        assertThrows<IllegalStateException> { service.complete(session.id) }
+        assertThrows<ApplicationTransactionOutcomeUnknownException> { service.complete(session.id) }
 
         val inspected = service.inspect(session.id)
-        assertEquals(ResumableUploadSessionStatus.ACTIVE, inspected.session.status)
-        assertTrue(inspected.session.lastError!!.contains("storage completion failed"))
+        assertEquals(ResumableUploadSessionStatus.COMPLETING, inspected.session.status)
         assertEquals(0, state.events.size)
     }
 
     @Test
-    fun `completion acknowledgement loss with a final object stays completing and is never expired destructively`() {
+    fun `definitive storage rejection clears stale acknowledgements and reopens the upload`() {
+        val clock = MutableClock(100)
+        val storage = FakeMultipartStorage().apply {
+            rejectComplete = true
+            rejectCompleteMessage = "r".repeat(4_096)
+        }
+        val state = State()
+        val service = service(storage, state, clock)
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+
+        val rejection = assertThrows<ResumableUploadStateException> { service.complete(session.id) }
+
+        assertTrue(rejection.cause is MultipartCompletionRejectedException)
+        val reopened = service.inspect(session.id)
+        assertEquals(ResumableUploadSessionStatus.ACTIVE, reopened.session.status)
+        assertEquals(2_048, reopened.session.lastError?.length)
+        assertTrue(reopened.parts.isEmpty())
+        assertEquals(0, state.events.size)
+
+        storage.rejectComplete = false
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        val completed = service.complete(session.id)
+
+        assertEquals(session.fileObjectId, completed.fileObject.id)
+        assertEquals(2, storage.uploadPartCalls.get())
+        assertEquals(2, storage.completeCalls.get())
+    }
+
+    @Test
+    fun `definitive rejection renews a full retry window when completion crosses the original expiry`() {
+        val clock = MutableClock(100)
+        val storage = FakeMultipartStorage().apply {
+            rejectComplete = true
+            beforeComplete = { clock.advance(5) }
+        }
+        val state = State()
+        val service = service(storage, state, clock, ttl = Duration.ofMillis(5))
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+
+        assertThrows<ResumableUploadStateException> { service.complete(session.id) }
+
+        val reopened = service.inspect(session.id)
+        assertEquals(ResumableUploadSessionStatus.ACTIVE, reopened.session.status)
+        assertEquals(110, reopened.session.expiresAt)
+        assertTrue(reopened.parts.isEmpty())
+
+        storage.beforeComplete = null
+        storage.rejectComplete = false
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+        assertEquals(session.fileObjectId, service.complete(session.id).fileObject.id)
+    }
+
+    @Test
+    fun `completion acknowledgement loss is non destructive and a stale retry reconciles the final object`() {
         val clock = MutableClock(100)
         val storage = FakeMultipartStorage().apply { completeThenFail = true }
         val state = State()
@@ -310,7 +606,8 @@ class ResumableUploadServiceTest {
         val session = service.start(command())
         service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
 
-        assertThrows<IllegalStateException> { service.complete(session.id) }
+        val initialFailure = assertThrows<ApplicationTransactionOutcomeUnknownException> { service.complete(session.id) }
+        assertEquals("storage completion acknowledgement lost", initialFailure.cause?.message)
         assertEquals(
             ResumableUploadSessionStatus.COMPLETING,
             state.sessions.findById(session.tenantId, session.id)?.status,
@@ -326,6 +623,39 @@ class ResumableUploadServiceTest {
         assertEquals(0, storage.abortCalls.get())
         assertEquals(0, storage.deleteCalls.get())
         assertTrue(storage.exists(session.storageLocation))
+
+        assertThrows<ResumableUploadStateException> { service.complete(session.id) }
+        clock.advance(30_000)
+        val recovered = service.complete(session.id)
+
+        assertEquals(session.fileObjectId, recovered.fileObject.id)
+        assertEquals(session.fileAssetId, recovered.fileAsset.id)
+        assertEquals(ResumableUploadSessionStatus.COMPLETED, service.inspect(session.id).session.status)
+        assertEquals(1, storage.completeCalls.get())
+        assertEquals(0, storage.deleteCalls.get())
+    }
+
+    @Test
+    fun `stale completion without a visible final object remains fenced from a slow original caller`() {
+        val clock = MutableClock(100)
+        val storage = FakeMultipartStorage().apply {
+            failComplete = true
+            failExists = true
+        }
+        val state = State()
+        val service = service(storage, state, clock)
+        val session = service.start(command())
+        service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
+
+        assertThrows<ApplicationTransactionOutcomeUnknownException> { service.complete(session.id) }
+        assertEquals(ResumableUploadSessionStatus.COMPLETING, state.sessions.findById(session.tenantId, session.id)?.status)
+
+        storage.failExists = false
+        clock.advance(30_000)
+        assertThrows<ApplicationTransactionOutcomeUnknownException> { service.complete(session.id) }
+        assertEquals(ResumableUploadSessionStatus.COMPLETING, service.inspect(session.id).session.status)
+        assertEquals(1, storage.completeCalls.get())
+        assertEquals(0, storage.deleteCalls.get())
     }
 
     @Test
@@ -340,7 +670,7 @@ class ResumableUploadServiceTest {
         val session = service.start(command())
         service.uploadPart(session.id, 1, 7, ByteArrayInputStream("content".toByteArray()))
 
-        val failure = assertThrows<IllegalStateException> { service.complete(session.id) }
+        val failure = assertThrows<ApplicationTransactionOutcomeUnknownException> { service.complete(session.id) }
 
         assertTrue(failure.suppressed.contains(storage.existsFailure))
         assertEquals(
@@ -361,7 +691,7 @@ class ResumableUploadServiceTest {
         val session = service.start(command(contentLength = 7))
         service.uploadPart(session.id, 1, 3, ByteArrayInputStream("abc".toByteArray()))
 
-        assertThrows<IllegalArgumentException> { service.complete(session.id) }
+        assertThrows<ResumableUploadStateException> { service.complete(session.id) }
         assertEquals(0, storage.completeCalls.get())
         assertEquals(ResumableUploadSessionStatus.ACTIVE, service.inspect(session.id).session.status)
     }
@@ -1376,6 +1706,7 @@ class ResumableUploadServiceTest {
         fileObjectRepository: FileObjectRepository = state.fileObjects,
         fileAssetRepository: FileAssetRepository = state.fileAssets,
         transaction: ApplicationTransaction = DirectTransaction,
+        identifierGenerator: IdentifierGenerator? = null,
     ) = ResumableUploadService(
         tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(state.tenant) },
         userRealmProvider = object : UserRealmProvider {
@@ -1397,7 +1728,7 @@ class ResumableUploadServiceTest {
         fileObjects = fileObjectRepository,
         fileAssets = fileAssetRepository,
         outbox = state,
-        identifiers = object : IdentifierGenerator {
+        identifiers = identifierGenerator ?: object : IdentifierGenerator {
             override fun nextId(): Identifier {
                 val kind = when (state.ids.get()) {
                     0 -> "session"
@@ -1554,6 +1885,41 @@ class ResumableUploadServiceTest {
     private class LegacyRepositoryView(
         delegate: ResumableUploadSessionRepository,
     ) : ResumableUploadSessionRepository by delegate
+
+    /** Keeps released staging/owner behavior while deliberately omitting the formal completion-reset capability. */
+    private class FormalRepositoryWithoutCompletionReset(
+        private val delegate: InMemorySessions,
+    ) : OwnerScopedResumableUploadSessionRepository, StagedResumableUploadSessionRepository by delegate {
+        override fun findById(
+            tenantId: Identifier,
+            ownerId: String,
+            sessionId: Identifier,
+        ): ResumableUploadSession? = delegate.findById(tenantId, ownerId, sessionId)
+
+        override fun findByIdempotencyKey(
+            tenantId: Identifier,
+            ownerId: String,
+            idempotencyKey: String,
+        ): ResumableUploadSession? = delegate.findByIdempotencyKey(tenantId, ownerId, idempotencyKey)
+    }
+
+    /** Keeps reset/owner behavior while deliberately omitting staging and quarantine support. */
+    private class FormalRepositoryWithoutStaging(
+        private val delegate: InMemorySessions,
+    ) : CompletionRejectionResettableResumableUploadSessionRepository by delegate,
+        OwnerScopedResumableUploadSessionRepository {
+        override fun findById(
+            tenantId: Identifier,
+            ownerId: String,
+            sessionId: Identifier,
+        ): ResumableUploadSession? = delegate.findById(tenantId, ownerId, sessionId)
+
+        override fun findByIdempotencyKey(
+            tenantId: Identifier,
+            ownerId: String,
+            idempotencyKey: String,
+        ): ResumableUploadSession? = delegate.findByIdempotencyKey(tenantId, ownerId, idempotencyKey)
+    }
 
     /** Deliberately violates the optional capability contract to prove the application rechecks every result. */
     private class BrokenOwnerScopedRepository(
@@ -2142,7 +2508,9 @@ class ResumableUploadServiceTest {
         }
     }
 
-    private class InMemorySessions : OwnerScopedResumableUploadSessionRepository, StagedResumableUploadSessionRepository {
+    private class InMemorySessions : OwnerScopedResumableUploadSessionRepository,
+        StagedResumableUploadSessionRepository,
+        CompletionRejectionResettableResumableUploadSessionRepository {
         private val sessions = linkedMapOf<Pair<String, String>, ResumableUploadSession>()
         private val parts = linkedMapOf<Pair<String, String>, MutableList<ResumableUploadPart>>()
         val mutationCalls = AtomicInteger()
@@ -2211,6 +2579,27 @@ class ResumableUploadServiceTest {
                 ResumableUploadSessionStatus.ACTIVE,
                 message,
             ) != null
+
+        override fun resetAfterCompletionRejection(
+            tenantId: Identifier,
+            sessionId: Identifier,
+            message: String,
+            expiresAt: Long,
+            updatedAt: Long,
+        ): Boolean {
+            val reactivated = transitionMutation(
+                tenantId,
+                sessionId,
+                updatedAt,
+                setOf(ResumableUploadSessionStatus.COMPLETING),
+                ResumableUploadSessionStatus.ACTIVE,
+                message,
+            ) ?: return false
+            val key = reactivated.tenantId.value to reactivated.id.value
+            sessions[key] = copySessionForTest(reactivated, expiresAt = expiresAt)
+            parts.remove(key)
+            return true
+        }
 
         override fun markFailed(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean {
             if (findById(tenantId, sessionId)?.lastError == START_CREATION_STAGING_MARKER) return false
@@ -2362,6 +2751,7 @@ class ResumableUploadServiceTest {
         private val uploadSequence = AtomicInteger()
         private val uploads = linkedMapOf<String, UploadState>()
         private val objects = linkedMapOf<StorageObjectLocation, StoredObject>()
+        private val objectBytes = linkedMapOf<StorageObjectLocation, ByteArray>()
         val beginCalls = AtomicInteger()
         val uploadPartCalls = AtomicInteger()
         val completeCalls = AtomicInteger()
@@ -2370,10 +2760,14 @@ class ResumableUploadServiceTest {
         val aborted = mutableListOf<Identifier>()
         val deleted = mutableListOf<StorageObjectLocation>()
         var failComplete = false
+        var rejectComplete = false
+        var rejectCompleteMessage = MultipartCompletionRejectedException.DEFAULT_MESSAGE
+        var beforeComplete: (() -> Unit)? = null
         var completeThenFail = false
         var failExists = false
         var failAbort = false
         var failDelete = false
+        var trustDeclaredPartLength = false
         var completedLocationOverride: StorageObjectLocation? = null
         var completedLengthOverride: Long? = null
         var completedHashOverride: String? = null
@@ -2394,14 +2788,27 @@ class ResumableUploadServiceTest {
 
         override fun uploadPart(upload: MultipartUpload, partNumber: Int, content: InputStream, contentLength: Long): MultipartPart {
             uploadPartCalls.incrementAndGet()
-            val bytes = content.readBytes()
-            require(bytes.size.toLong() == contentLength)
+            val bytes = if (trustDeclaredPartLength) {
+                val expected = contentLength.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                val buffer = ByteArray(expected)
+                var offset = 0
+                while (offset < expected) {
+                    val read = content.read(buffer, offset, expected - offset)
+                    if (read < 0) break
+                    offset += read
+                }
+                buffer.copyOf(offset)
+            } else {
+                content.readBytes().also { read -> require(read.size.toLong() == contentLength) }
+            }
             uploads.getValue(upload.uploadId.value).parts[partNumber] = bytes
             return MultipartPart(partNumber, "etag-$partNumber-${bytes.size}")
         }
 
         override fun completeMultipartUpload(upload: MultipartUpload, parts: List<MultipartPart>): StoredObject {
             completeCalls.incrementAndGet()
+            beforeComplete?.invoke()
+            if (rejectComplete) throw MultipartCompletionRejectedException(rejectCompleteMessage)
             if (failComplete) throw IllegalStateException("storage completion failed")
             val state = uploads.getValue(upload.uploadId.value)
             val bytes = parts.sortedBy { it.partNumber }.flatMap { state.parts.getValue(it.partNumber).asIterable() }.toByteArray()
@@ -2412,6 +2819,7 @@ class ResumableUploadServiceTest {
                 completedHashOverride ?: "sha256:test-${bytes.size}",
             ).also {
                 objects[it.location] = it
+                objectBytes[it.location] = bytes
                 uploads.remove(upload.uploadId.value)
             }
             if (completeThenFail) throw IllegalStateException("storage completion acknowledgement lost")
@@ -2430,6 +2838,7 @@ class ResumableUploadServiceTest {
             if (failDelete) throw deleteFailure
             deleted += location
             objects.remove(location)
+            objectBytes.remove(location)
         }
 
         override fun exists(location: StorageObjectLocation): Boolean {
@@ -2438,7 +2847,14 @@ class ResumableUploadServiceTest {
         }
 
         override fun upload(request: StorageUploadRequest, content: InputStream): StoredObject = error("Not used by resumable tests")
-        override fun download(location: StorageObjectLocation): StorageDownload = error("Not used by resumable tests")
+        override fun download(location: StorageObjectLocation): StorageDownload {
+            val stored = objects.getValue(location)
+            return StorageDownload(
+                content = ByteArrayInputStream(objectBytes.getValue(location)),
+                contentLength = stored.contentLength,
+                contentType = stored.contentType,
+            )
+        }
         override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI = URI.create("https://storage.test/$location")
 
         private class UploadState(val location: StorageObjectLocation, val contentType: String?) {
@@ -2475,6 +2891,7 @@ private fun copySessionForTest(
     id: Identifier = session.id,
     tenantId: Identifier = session.tenantId,
     idempotencyKey: String = session.idempotencyKey,
+    expiresAt: Long = session.expiresAt,
     ownerId: String? = session.ownerId,
 ): ResumableUploadSession = ResumableUploadSession(
     id = id,
@@ -2491,7 +2908,7 @@ private fun copySessionForTest(
     expectedContentHash = session.expectedContentHash,
     metadata = session.metadata,
     status = session.status,
-    expiresAt = session.expiresAt,
+    expiresAt = expiresAt,
     lastError = session.lastError,
     completedAt = session.completedAt,
     createdTime = session.createdTime,

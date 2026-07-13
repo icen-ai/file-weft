@@ -23,6 +23,11 @@ object MySqlDialect : SqlDialect {
         // MySQL does not support a conflict target; ON DUPLICATE KEY UPDATE
         // applies to any unique constraint violation. We rewrite EXCLUDED.col
         // references to VALUES(col).
+        if (updateAssignments.isEmpty()) {
+            val noOpColumn = conflictColumns.firstOrNull()
+                ?: error("A no-op MySQL upsert requires at least one conflict column.")
+            return "ON DUPLICATE KEY UPDATE $noOpColumn = $noOpColumn"
+        }
         val assignments = updateAssignments.joinToString(", ") { assignment ->
             assignment.replace(Regex("""EXCLUDED\.([A-Za-z_][A-Za-z0-9_]*)""")) { matchResult ->
                 "VALUES(${matchResult.groupValues[1]})"
