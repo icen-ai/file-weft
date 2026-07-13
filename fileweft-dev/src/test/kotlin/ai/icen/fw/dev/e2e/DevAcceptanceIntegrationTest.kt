@@ -989,20 +989,26 @@ class DevAcceptanceIntegrationTest {
             editor,
         )
         postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"PERMANENT_FAILURE","targetId":"search"}""")
-        val reviewer = login("reviewer@alpha", "dev-reviewer")
-        postJson(
-            "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
-            """{"comment":"验证可选下游失败","deliveryProfileId":"regulated"}""",
-            reviewer,
-        )
-        val admin = login("admin@alpha", "dev-admin")
-        post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
+        try {
+            val reviewer = login("reviewer@alpha", "dev-reviewer")
+            postJson(
+                "$apiUrl/api/documents/workflows/${workflow.path("workflowId").asText()}/tasks/${workflow.path("taskId").asText()}/approve",
+                """{"comment":"验证可选下游失败","deliveryProfileId":"regulated"}""",
+                reviewer,
+            )
+            val admin = login("admin@alpha", "dev-admin")
+            post("$apiUrl/api/outbox/process?limit=20", null, admin, "application/json")
 
-        val detail = awaitPublished(documentId, admin)
-        assertEquals("SUCCEEDED", delivery(detail, "compliance").path("status").asText())
-        assertEquals("SUCCEEDED", delivery(detail, "collaboration").path("status").asText())
-        assertEquals("FAILED", delivery(detail, "search").path("status").asText())
-        assertTrue(delivery(detail, "search").path("errorMessage").asText().isNotBlank())
+            // Required targets may publish the document before the optional target reaches its
+            // independent terminal state. Wait for both facts instead of sampling the asynchronous
+            // projection in the short interval between PUBLISHED and optional failure recording.
+            val detail = awaitPublishedDeliveryStatus(documentId, admin, "search", "FAILED")
+            assertEquals("SUCCEEDED", delivery(detail, "compliance").path("status").asText())
+            assertEquals("SUCCEEDED", delivery(detail, "collaboration").path("status").asText())
+            assertTrue(delivery(detail, "search").path("errorMessage").asText().isNotBlank())
+        } finally {
+            postPlatformJson("$platformUrl/platform/v1/admin/fault-mode", """{"mode":"AVAILABLE","targetId":"search"}""")
+        }
     }
 
     @Test
@@ -1369,6 +1375,28 @@ class DevAcceptanceIntegrationTest {
             Thread.sleep(200)
         }
         throw AssertionError("Document $documentId did not reach lifecycle state $expected within the expected window.")
+    }
+
+    private fun awaitPublishedDeliveryStatus(
+        documentId: String,
+        token: String,
+        targetId: String,
+        expected: String,
+    ): JsonNode {
+        repeat(50) {
+            val detail = getJson("$apiUrl/api/documents/$documentId", token)
+            val current = detail.path("deliveries")
+                .firstOrNull { delivery -> delivery.path("targetId").asText() == targetId }
+                ?.path("status")
+                ?.asText()
+            val lifecycle = detail.path("document").path("lifecycleState").asText()
+            if (lifecycle == "PUBLISHED" && current == expected) return detail
+            Thread.sleep(200)
+        }
+        throw AssertionError(
+            "Document $documentId did not become PUBLISHED with delivery target $targetId at $expected " +
+                "within the expected window.",
+        )
     }
 
     private fun awaitDoctorTask(documentId: String, taskId: String, token: String): JsonNode {

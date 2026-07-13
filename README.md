@@ -6,6 +6,10 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
 `.ai` 手册的基础能力对照、验证命令以及开源发布前仍需由项目所有者决定的事项见[实现对照与发布门槛](docs/implementation-status.md)。
 
+FileWeft 采用 [Apache License 2.0](LICENSE) 开源。安全漏洞请按[安全策略](SECURITY.md)私密报告至 `support@icen.ai`。
+
+仓库根目录内置独立前端项目 [fileweft-docs](fileweft-docs/)，默认英文并可完整切换中文；启动 `fw-dev` 后可访问 `http://127.0.0.1:8088/docs/`。它沿用 `fileweft-dev/web` 的视觉语言，但独立维护、启动和测试。面向 AI 的最小接入、SPI 实现和生产运行约束见根目录 [SKILL.md](SKILL.md)。
+
 ## 项目接入
 
 FileWeft 的正式 Maven group 为 `ai.icen`，JVM 包名为 `ai.icen.fw`。SPI 依赖写法如下，将 `x.x.x` 替换为实际发布版本：
@@ -27,9 +31,9 @@ dependencies {
 }
 ```
 
-Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前开发版本为 `0.0.2-SNAPSHOT`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle`；该任务会先执行完整发布门禁，并要求 `FILEWEFT_RUN_POSTGRES_TESTS`、`FILEWEFT_RUN_RUSTFS_TESTS`、`FILEWEFT_RUN_DEV_E2E`、`FILEWEFT_RUN_DEV_UI_E2E` 全部为 `true`，且 `fw-dev` 已使用同一 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 启动。启用这些外部套件时对应 Test 任务固定重新执行，不会复用一次未启用验收时的缓存结果。成功后完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。
+Boot 2 项目将坐标中的 `boot3` 改为 `boot2`。当前稳定版本为 `0.0.1`；本机立即接入可先执行 `.\gradlew.bat installReleaseToMavenLocal`，消费项目启用 `mavenLocal()`。需要交给其他项目或上传私服时执行 `.\gradlew.bat releaseBundle --no-configuration-cache --no-parallel`；该任务会先执行完整发布门禁，并要求 `FILEWEFT_RUN_POSTGRES_TESTS`、`FILEWEFT_RUN_RUSTFS_TESTS`、`FILEWEFT_RUN_DEV_E2E`、`FILEWEFT_RUN_DEV_UI_E2E` 全部为 `true`，且 `fw-dev` 已使用同一 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 启动。启用这些外部套件时对应 Test 任务固定重新执行，不会复用一次未启用验收时的缓存结果。成功后完整 Maven 仓库与发布压缩包分别输出到 `build/repository/` 和 `build/release/`。
 
-历史 `0.0.1` 使用过试发布坐标 `com.fileweft`，项目已将其标记为撤回，不得用于新接入或新的生产部署；这一状态不表示外部制品库中的缓存或版本已经物理删除。对应 Git 记录与[历史发布说明](docs/releases/0.0.1.md)仅保留用于追溯。从 `0.0.2` 起源码与二进制统一使用新命名空间，这是一次明确的不兼容迁移。
+早期试推曾使用 `com.fileweft:*:0.0.1`，这些坐标已撤回且不得接入；正式版使用完全不同的 `ai.icen:*:0.0.1`。源码与二进制包名统一为 `ai.icen.fw`，不会兼容或自动收养旧试推坐标写入的共享 Flyway history。迁移边界见[正式发布说明](docs/releases/0.0.1.md)。
 
 ### 数据库迁移隔离
 
@@ -57,7 +61,7 @@ fileweft:
 
 首次建立专属 history 时，runner 只会在确认不存在旧 FileWeft history、`fileweft_schema_history` 和任何已知 FileWeft 业务表后，写入版本 `0` 的命名空间初始化标记；随后仍会逐个执行全部 `V001` 及之后的脚本，不会跳过任何业务迁移。发现旧记录、失败记录或无 history 的 FileWeft 表时会直接失败，绝不会把它们当作版本 `0` 收养。
 
-生产环境建议预建 schema 并保持 `create-schema=false`。`validate` 运行账号至少需要目标 schema 的 `USAGE`、FileWeft 业务读取权限及 `fileweft_schema_history` 的只读权限；若 FileWeft 与宿主共享 schema 且存在默认 `flyway_schema_history`，还需要读取该表以执行旧记录拦截。`migrate` 应使用受控迁移账号，额外授予建表、索引、约束等 DDL 权限；只有显式创建 schema 时才授予建 schema 权限。推荐由宿主提供的一次性 Migration Job 或受控进程执行 `migrate` 并在成功后自行退出，再以 `validate` 启动 API/Worker；Starter 不提供迁移完成后自动退出的通用 Job 入口。`0.0.1` 可能曾把 FileWeft 记录写入宿主默认 history；`0.0.2` 不会猜测或自动收养这些记录。旧库升级必须先停止全部 API/Worker、完成可恢复备份，并由 DBA 严格核验实际成功版本、脚本名、checksum、schema 与宿主迁移是否冲突；在形成经评审的人工转换或数据迁移方案前不得滚动升级，也不得使用盲目 baseline、复制/删除 history 行来绕过校验。完整步骤见[生产部署与恢复](docs/production-operations.md#fileweft-迁移命名空间与旧库升级)。
+生产环境建议预建 schema 并保持 `create-schema=false`。`validate` 运行账号至少需要目标 schema 的 `USAGE`、FileWeft 业务读取权限及 `fileweft_schema_history` 的只读权限；若 FileWeft 与宿主共享 schema 且存在默认 `flyway_schema_history`，还需要读取该表以执行旧记录拦截。`migrate` 应使用受控迁移账号，额外授予建表、索引、约束等 DDL 权限；只有显式创建 schema 时才授予建 schema 权限。推荐由宿主提供的一次性 Migration Job 或受控进程执行 `migrate` 并在成功后自行退出，再以 `validate` 启动 API/Worker；Starter 不提供迁移完成后自动退出的通用 Job 入口。旧 `com.fileweft:*:0.0.1` 试推可能曾把 FileWeft 记录写入宿主默认 history；正式 `ai.icen:*:0.0.1` 不会猜测或自动收养这些记录。旧库升级必须先停止全部 API/Worker、完成可恢复备份，并由 DBA 严格核验实际成功版本、脚本名、checksum、schema 与宿主迁移是否冲突；在形成经评审的人工转换或数据迁移方案前不得滚动升级，也不得使用盲目 baseline、复制/删除 history 行来绕过校验。完整步骤见[生产部署与恢复](docs/production-operations.md#fileweft-迁移命名空间与旧库升级)。
 
 ## 构建要求
 

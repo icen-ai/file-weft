@@ -30,7 +30,7 @@ fileweft:
 
 权限应按角色拆分：`validate` 账号至少需要目标 schema 的 `USAGE`、FileWeft 业务读取权限，以及 `fileweft_schema_history` 的只读权限；若目标 schema 也存在宿主 `flyway_schema_history`，旧记录检测还需要读取其中的 `script` 等迁移记录。Migration Job 的账号除上述读取权限外，还需要创建/修改 FileWeft 表、索引和约束的 DDL 权限；`create-schema=true` 时才额外授予建 schema 权限。不要把 Migration Job 的 DDL 凭据长期下发给 Web/Worker。
 
-已运行历史 `0.0.1` 的数据库属于特殊升级，不支持自动 adoption。该版本可能把 FileWeft 迁移写入默认 `flyway_schema_history`，而同一张表也可能含宿主迁移；框架无法仅凭版本号安全判断每一行的所有权。升级必须：
+已运行旧 `com.fileweft:*:0.0.1` 试推的数据库属于特殊升级，不支持自动 adoption。该试推可能把 FileWeft 迁移写入默认 `flyway_schema_history`，而同一张表也可能含宿主迁移；框架无法仅凭版本号安全判断每一行的所有权。升级必须：
 
 1. 关闭写入口，排空并停止全部旧 API、Outbox Worker 和任务 Worker，禁止新旧版本混跑。
 2. 对数据库、默认 history、FileWeft 业务 schema 和关联对象存储完成可恢复备份，并实际验证恢复路径。

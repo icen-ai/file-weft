@@ -49,7 +49,7 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
     abstract val sourceRoots: ConfigurableFileCollection
 
     /**
-     * All repository-owned code and runtime metadata that must not reintroduce the pre-0.0.2 namespace.
+     * All repository-owned code and runtime metadata that must not reintroduce the retired namespace.
      * This is deliberately broader than [sourceRoots], which only models architecture-boundary modules.
      */
     @get:InputFiles

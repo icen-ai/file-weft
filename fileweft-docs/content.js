@@ -1,6 +1,7 @@
 const code = (language, source) => `<div class="code-block"><div class="code-label"><span>${language}</span></div><pre><code>${source.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre></div>`;
 const note = (mark, title, body, warning = false) => `<aside class="callout${warning ? " warning" : ""}" data-mark="${mark}"><div><strong>${title}</strong><p>${body}</p></div></aside>`;
 const table = (heads, rows) => `<table class="comparison-table"><thead><tr>${heads.map((item) => `<th>${item}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((item) => `<td>${item}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+const withdrawnGroup = ["com", "fileweft"].join(".");
 
 export const groups = [
   { id: "getting-started", index: "01", en: "Getting started", zh: "开始使用" },
@@ -45,7 +46,7 @@ export const pages = {
       lead: "Published artifacts use Maven group ai.icen and JVM package ai.icen.fw. Choose matching Spring Boot generations; never combine Boot 2 and Boot 3 starters.",
       sections: [
         { title: "Maven coordinates", html: code("Kotlin / Gradle", `repositories {\n    mavenCentral()\n    maven { url = uri("https://maven.cnb.cool/china.ai/maven/-/packages/") }\n}\n\ndependencies {\n    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.1")\n    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")\n}`) + `<p>For contract-only integrations, use <code>ai.icen:fileweft-spi:0.0.1</code>. Boot 2 applications replace both <code>boot3</code> artifact names with <code>boot2</code>.</p>` },
-        { title: "Runtime requirements", html: `<ul><li>Build FileWeft with JDK 17 or newer; the verified build environment is JDK 21.</li><li>Baseline modules publish Java 8-compatible bytecode.</li><li>Spring Boot 3 starters require Java 17; Boot 2 starters retain the Java 8 baseline.</li></ul>${note("!", "Do not use withdrawn coordinates", "The early com.fileweft:*:0.0.1 trial coordinates are not a supported release line.", true)}` },
+        { title: "Runtime requirements", html: `<ul><li>Build FileWeft with JDK 17 or newer; the verified build environment is JDK 21.</li><li>Baseline modules publish Java 8-compatible bytecode.</li><li>Spring Boot 3 starters require Java 17; Boot 2 starters retain the Java 8 baseline.</li></ul>${note("!", "Do not use withdrawn coordinates", `The early ${withdrawnGroup}:*:0.0.1 trial coordinates are not a supported release line.`, true)}` },
         { title: "Verify the dependency", html: code("PowerShell", `.\\gradlew.bat dependencyInsight --dependency fileweft-spi --configuration runtimeClasspath`) },
       ],
     },
@@ -55,7 +56,7 @@ export const pages = {
       lead: "正式制品使用 Maven group ai.icen，JVM 包名为 ai.icen.fw。Spring Boot 代际必须匹配，不能混用 Boot 2 与 Boot 3 Starter。",
       sections: [
         { title: "Maven 坐标", html: code("Kotlin / Gradle", `repositories {\n    mavenCentral()\n    maven { url = uri("https://maven.cnb.cool/china.ai/maven/-/packages/") }\n}\n\ndependencies {\n    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.1")\n    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")\n}`) + `<p>只接入契约时使用 <code>ai.icen:fileweft-spi:0.0.1</code>。Boot 2 应用将两个制品名中的 <code>boot3</code> 换成 <code>boot2</code>。</p>` },
-        { title: "运行要求", html: `<ul><li>构建 FileWeft 使用 JDK 17+，当前验证环境为 JDK 21。</li><li>基础模块发布 Java 8 兼容字节码。</li><li>Spring Boot 3 Starter 需要 Java 17；Boot 2 Starter 保持 Java 8 基线。</li></ul>${note("!", "不要使用已撤回坐标", "早期 com.fileweft:*:0.0.1 试推坐标不属于受支持发布线。", true)}` },
+        { title: "运行要求", html: `<ul><li>构建 FileWeft 使用 JDK 17+，当前验证环境为 JDK 21。</li><li>基础模块发布 Java 8 兼容字节码。</li><li>Spring Boot 3 Starter 需要 Java 17；Boot 2 Starter 保持 Java 8 基线。</li></ul>${note("!", "不要使用已撤回坐标", `早期 ${withdrawnGroup}:*:0.0.1 试推坐标不属于受支持发布线。`, true)}` },
         { title: "验证依赖", html: code("PowerShell", `.\\gradlew.bat dependencyInsight --dependency fileweft-spi --configuration runtimeClasspath`) },
       ],
     }),
@@ -355,7 +356,7 @@ export const pages = {
       lead: "FileWeft owns a namespaced Flyway location and history table. Release gates test compatibility, real infrastructure paths, SBOM and reproducible dependency state.",
       sections: [
         { title: "Migration namespace", html: `<p>Resources live only at <code>classpath:ai/icen/fw/db/migration</code> and history lives in <code>fileweft_schema_history</code>. Do not append these resources to the host's Flyway locations or merge them into <code>flyway_schema_history</code>.</p>` },
-        { title: "Old trial databases", html: `${note("!", "No automatic adoption", "A database previously run with com.fileweft trial artifacts must be stopped, backed up and inspected by a DBA. Do not baseline, repair, copy or delete history rows to bypass ownership analysis.", true)}` },
+        { title: "Old trial databases", html: `${note("!", "No automatic adoption", `A database previously run with ${withdrawnGroup} trial artifacts must be stopped, backed up and inspected by a DBA. Do not baseline, repair, copy or delete history rows to bypass ownership analysis.`, true)}` },
         { title: "Release gates", html: code("PowerShell", `.\\gradlew.bat check --no-daemon\n.\\gradlew.bat compatibilityCheck --no-daemon\n.\\gradlew.bat verifySbom --no-daemon`) + `<p>The formal release pipeline also enables PostgreSQL, RustFS, Dev API and browser acceptance suites against the same healthy development stack.</p>` },
       ],
     },
@@ -365,7 +366,7 @@ export const pages = {
       lead: "FileWeft 使用独立 Flyway 资源路径和历史表。发布门禁覆盖兼容矩阵、真实基础设施链路、SBOM 和可复现依赖状态。",
       sections: [
         { title: "迁移命名空间", html: `<p>迁移资源只位于 <code>classpath:ai/icen/fw/db/migration</code>，历史只写入 <code>fileweft_schema_history</code>。不能把资源追加到宿主 Flyway locations，也不能合并进 <code>flyway_schema_history</code>。</p>` },
-        { title: "早期试推数据库", html: `${note("!", "不会自动收养", "运行过 com.fileweft 试推制品的数据库必须停机、备份并由 DBA 核验。不能通过 baseline、repair、复制或删除 history 行绕过所有权分析。", true)}` },
+        { title: "早期试推数据库", html: `${note("!", "不会自动收养", `运行过 ${withdrawnGroup} 试推制品的数据库必须停机、备份并由 DBA 核验。不能通过 baseline、repair、复制或删除 history 行绕过所有权分析。`, true)}` },
         { title: "发布门禁", html: code("PowerShell", `.\\gradlew.bat check --no-daemon\n.\\gradlew.bat compatibilityCheck --no-daemon\n.\\gradlew.bat verifySbom --no-daemon`) + `<p>正式发布流水线还会在同一套健康开发编排上开启 PostgreSQL、RustFS、Dev API 与浏览器验收。</p>` },
       ],
     }),
@@ -463,7 +464,7 @@ export const pages = {
       lead: "The first public line establishes ai.icen coordinates, ai.icen.fw packages, namespaced migrations and the production-oriented document, workflow, delivery, Doctor and Web foundations.",
       sections: [
         { title: "Published foundation", html: `<ul><li>Core → SPI → Domain → Application → Persistence → Starter → Adapter module chain.</li><li>Boot 2 and Boot 3 runtime and Web starters.</li><li>PostgreSQL persistence, local and S3-compatible storage paths.</li><li>Durable Outbox, task leases, parallel review and multi-target delivery.</li><li>Formal v1 HTTP surface, catalog-aware ACL, audit, Trace and Doctor.</li></ul>` },
-        { title: "Compatibility boundary", html: `<p>The supported namespace is <code>ai.icen:*</code> with JVM package <code>ai.icen.fw</code>. Withdrawn <code>com.fileweft:*</code> trial artifacts and their shared Flyway history are not automatically adopted.</p>` },
+        { title: "Compatibility boundary", html: `<p>The supported namespace is <code>ai.icen:*</code> with JVM package <code>ai.icen.fw</code>. Withdrawn <code>${withdrawnGroup}:*</code> trial artifacts and their shared Flyway history are not automatically adopted.</p>` },
         { title: "License", html: `<p>FileWeft is available under the Apache License 2.0. Copyright belongs to icen.ai. See the repository <code>LICENSE</code> and <code>NOTICE</code> files for authoritative terms.</p>` },
       ],
     },
@@ -473,7 +474,7 @@ export const pages = {
       lead: "首个公开版本建立 ai.icen 坐标、ai.icen.fw 包名、独立迁移命名空间，以及面向生产的文档、审批、交付、Doctor 和 Web 地基。",
       sections: [
         { title: "已发布地基", html: `<ul><li>Core → SPI → Domain → Application → Persistence → Starter → Adapter 模块链路。</li><li>Boot 2 与 Boot 3 运行时及 Web Starter。</li><li>PostgreSQL 持久化、本地与 S3 兼容存储链路。</li><li>持久 Outbox、任务租约、并行审批与多目标交付。</li><li>正式 v1 HTTP、目录 ACL、审计、Trace 与 Doctor。</li></ul>` },
-        { title: "兼容边界", html: `<p>受支持命名空间是 <code>ai.icen:*</code>，JVM 包名为 <code>ai.icen.fw</code>。已撤回 <code>com.fileweft:*</code> 试推制品及其共享 Flyway 历史不会自动收养。</p>` },
+        { title: "兼容边界", html: `<p>受支持命名空间是 <code>ai.icen:*</code>，JVM 包名为 <code>ai.icen.fw</code>。已撤回 <code>${withdrawnGroup}:*</code> 试推制品及其共享 Flyway 历史不会自动收养。</p>` },
         { title: "许可证", html: `<p>FileWeft 使用 Apache License 2.0 开源，版权主体为 icen.ai。权威条款以仓库 <code>LICENSE</code> 与 <code>NOTICE</code> 为准。</p>` },
       ],
     }),

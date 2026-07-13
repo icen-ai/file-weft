@@ -1,0 +1,376 @@
+package ai.icen.fw.buildlogic
+
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+import org.w3c.dom.Document
+import org.w3c.dom.Element
+import java.nio.charset.StandardCharsets
+import javax.xml.XMLConstants
+import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.transform.OutputKeys
+import javax.xml.transform.TransformerFactory
+import javax.xml.transform.dom.DOMSource
+import javax.xml.transform.stream.StreamResult
+
+/**
+ * Derives deterministic public-release SBOMs from the CycloneDX plugin's aggregate outputs.
+ *
+ * Third-party components are retained. Internal components are restricted to the reviewed
+ * publishable module set, and the root plus every published module receives the project license.
+ */
+@CacheableTask
+abstract class GenerateReleaseSbomTask : DefaultTask() {
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val aggregateJsonSbom: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val aggregateXmlSbom: RegularFileProperty
+
+    @get:Input
+    abstract val expectedGroup: Property<String>
+
+    @get:Input
+    abstract val expectedName: Property<String>
+
+    @get:Input
+    abstract val expectedVersion: Property<String>
+
+    @get:Input
+    abstract val publishableModuleNames: ListProperty<String>
+
+    @get:Input
+    abstract val licenseName: Property<String>
+
+    @get:Input
+    abstract val licenseUrl: Property<String>
+
+    @get:OutputFile
+    abstract val releaseJsonSbom: RegularFileProperty
+
+    @get:OutputFile
+    abstract val releaseXmlSbom: RegularFileProperty
+
+    @TaskAction
+    fun generate() {
+        val modules = reviewedModules()
+        generateJson(modules)
+        generateXml(modules)
+    }
+
+    private fun reviewedModules(): Set<String> {
+        val configured = publishableModuleNames.get()
+        check(configured.isNotEmpty()) { "The release SBOM requires at least one publishable module." }
+        check(configured.none { module -> module.isBlank() }) {
+            "The release SBOM contains a blank publishable module name."
+        }
+        check(configured.size == configured.toSet().size) {
+            "The release SBOM contains duplicate publishable module names."
+        }
+        return configured.toSortedSet()
+    }
+
+    private fun generateJson(modules: Set<String>) {
+        val parsed = JsonSlurper().parse(
+            aggregateJsonSbom.get().asFile,
+            StandardCharsets.UTF_8.name(),
+        ) as? Map<*, *> ?: error("Aggregate JSON SBOM must contain a JSON object.")
+        val root = parsed.toMutableJsonObject()
+        check(root["bomFormat"] == "CycloneDX") {
+            "Aggregate JSON SBOM does not declare the CycloneDX BOM format."
+        }
+        root.remove("serialNumber")
+
+        val metadata = root.mutableObject("metadata", "Aggregate JSON SBOM does not contain metadata.")
+        metadata.remove("timestamp")
+        val rootComponent = metadata.mutableObject(
+            "component",
+            "Aggregate JSON SBOM does not contain the root component.",
+        )
+        verifyCoordinates(
+            rootComponent["group"] as? String,
+            rootComponent["name"] as? String,
+            rootComponent["version"] as? String,
+            "Aggregate JSON SBOM root component",
+            expectedName.get(),
+        )
+        rootComponent["licenses"] = jsonLicenseChoice()
+        metadata.remove("licenses")
+
+        val components = (root["components"] as? List<*>)
+            ?.mapNotNull { component -> (component as? Map<*, *>)?.toMutableJsonObject() }
+            ?: error("Aggregate JSON SBOM does not contain components.")
+        val internalComponents = components.filter { component -> component["group"] == expectedGroup.get() }
+        verifyReviewedComponents(
+            internalComponents.map { component ->
+                InternalComponent(
+                    name = component["name"] as? String,
+                    version = component["version"] as? String,
+                    reference = component["bom-ref"] as? String,
+                )
+            },
+            modules,
+            "Aggregate JSON SBOM",
+        )
+
+        val retainedComponents = components.filter { component ->
+            component["group"] != expectedGroup.get() || component["name"] in modules
+        }
+        retainedComponents
+            .filter { component -> component["group"] == expectedGroup.get() }
+            .forEach { component -> component["licenses"] = jsonLicenseChoice() }
+        root["components"] = retainedComponents
+
+        val removedReferences = internalComponents
+            .filter { component -> component["name"] !in modules }
+            .mapNotNull { component -> component["bom-ref"] as? String }
+            .toSet()
+        root["dependencies"] = filterJsonDependencies(root["dependencies"], removedReferences)
+
+        val output = releaseJsonSbom.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            JsonOutput.prettyPrint(JsonOutput.toJson(root)) + "\n",
+            StandardCharsets.UTF_8,
+        )
+    }
+
+    private fun filterJsonDependencies(value: Any?, removedReferences: Set<String>): List<MutableMap<String, Any?>> {
+        return (value as? List<*>)
+            .orEmpty()
+            .mapNotNull { dependency -> (dependency as? Map<*, *>)?.toMutableJsonObject() }
+            .filterNot { dependency -> dependency["ref"] in removedReferences }
+            .onEach { dependency ->
+                dependency["dependsOn"] = (dependency["dependsOn"] as? List<*>)
+                    .orEmpty()
+                    .filterIsInstance<String>()
+                    .filterNot { reference -> reference in removedReferences }
+            }
+    }
+
+    private fun generateXml(modules: Set<String>) {
+        val document = secureDocumentBuilderFactory().newDocumentBuilder().parse(aggregateXmlSbom.get().asFile)
+        val bom = document.documentElement
+        check(bom.localName == "bom" && bom.namespaceURI.orEmpty().contains("cyclonedx")) {
+            "Aggregate XML SBOM is not a namespaced CycloneDX BOM."
+        }
+        bom.removeAttribute("serialNumber")
+        val metadata = directChild(bom, "metadata")
+            ?: error("Aggregate XML SBOM does not contain metadata.")
+        directChildren(metadata, "timestamp").forEach { timestamp -> metadata.removeChild(timestamp) }
+        val rootComponent = directChild(metadata, "component")
+            ?: error("Aggregate XML SBOM does not contain the root component.")
+        verifyCoordinates(
+            directChildText(rootComponent, "group"),
+            directChildText(rootComponent, "name"),
+            directChildText(rootComponent, "version"),
+            "Aggregate XML SBOM root component",
+            expectedName.get(),
+        )
+        replaceXmlLicense(document, rootComponent)
+        directChildren(metadata, "licenses").forEach { child -> metadata.removeChild(child) }
+
+        val componentsContainer = directChild(bom, "components")
+            ?: error("Aggregate XML SBOM does not contain components.")
+        val internalComponents = directChildren(componentsContainer, "component")
+            .filter { component -> directChildText(component, "group") == expectedGroup.get() }
+        verifyReviewedComponents(
+            internalComponents.map { component ->
+                InternalComponent(
+                    name = directChildText(component, "name"),
+                    version = directChildText(component, "version"),
+                    reference = component.getAttribute("bom-ref").ifBlank { null },
+                )
+            },
+            modules,
+            "Aggregate XML SBOM",
+        )
+
+        val removedReferences = mutableSetOf<String>()
+        internalComponents.forEach { component ->
+            if (directChildText(component, "name") in modules) {
+                replaceXmlLicense(document, component)
+            } else {
+                component.getAttribute("bom-ref").takeIf { reference -> reference.isNotBlank() }
+                    ?.let(removedReferences::add)
+                componentsContainer.removeChild(component)
+            }
+        }
+        filterXmlDependencies(bom, removedReferences)
+        writeXml(document)
+    }
+
+    private fun replaceXmlLicense(document: Document, component: Element) {
+        directChildren(component, "licenses").forEach { child -> component.removeChild(child) }
+        val namespace = component.namespaceURI
+        val licenses = document.createElementNS(namespace, "licenses")
+        val license = document.createElementNS(namespace, "license")
+        val name = document.createElementNS(namespace, "name").apply { textContent = licenseName.get() }
+        val url = document.createElementNS(namespace, "url").apply { textContent = licenseUrl.get() }
+        license.appendChild(name)
+        license.appendChild(url)
+        licenses.appendChild(license)
+
+        val followingElementNames = setOf(
+            "copyright",
+            "cpe",
+            "purl",
+            "omniborId",
+            "swhid",
+            "swid",
+            "modified",
+            "pedigree",
+            "externalReferences",
+            "properties",
+            "components",
+            "evidence",
+            "releaseNotes",
+            "modelCard",
+            "data",
+        )
+        val insertionPoint = childElements(component)
+            .firstOrNull { child -> child.localName in followingElementNames }
+        component.insertBefore(licenses, insertionPoint)
+    }
+
+    private fun filterXmlDependencies(bom: Element, removedReferences: Set<String>) {
+        val dependencies = directChild(bom, "dependencies") ?: return
+        directChildren(dependencies, "dependency").forEach { dependency ->
+            if (dependency.getAttribute("ref") in removedReferences) {
+                dependencies.removeChild(dependency)
+            } else {
+                directChildren(dependency, "dependency")
+                    .filter { child -> child.getAttribute("ref") in removedReferences }
+                    .forEach { child -> dependency.removeChild(child) }
+            }
+        }
+    }
+
+    private fun writeXml(document: Document) {
+        val factory = TransformerFactory.newInstance().apply {
+            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "")
+        }
+        val transformer = factory.newTransformer().apply {
+            setOutputProperty(OutputKeys.ENCODING, StandardCharsets.UTF_8.name())
+            setOutputProperty(OutputKeys.INDENT, "yes")
+            setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
+            setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "2")
+        }
+        val output = releaseXmlSbom.get().asFile
+        output.parentFile.mkdirs()
+        output.outputStream().buffered().use { stream ->
+            transformer.transform(DOMSource(document), StreamResult(stream))
+        }
+    }
+
+    private fun verifyReviewedComponents(
+        components: List<InternalComponent>,
+        modules: Set<String>,
+        source: String,
+    ) {
+        val namedComponents = components.filter { component -> component.name != null }
+        val names = namedComponents.mapNotNull { component -> component.name }
+        val duplicates = names.groupingBy { name -> name }.eachCount().filterValues { count -> count > 1 }.keys
+        check(duplicates.isEmpty()) { "$source contains duplicate internal components: $duplicates." }
+        val actual = names.toSet()
+        check(actual.containsAll(modules)) {
+            "$source is missing publishable modules: ${modules - actual}."
+        }
+        namedComponents.filter { component -> component.name in modules }.forEach { component ->
+            check(component.version == expectedVersion.get()) {
+                "$source component ${component.name} has version ${component.version}; expected ${expectedVersion.get()}."
+            }
+            check(!component.reference.isNullOrBlank()) {
+                "$source component ${component.name} does not declare a bom-ref."
+            }
+        }
+    }
+
+    private fun verifyCoordinates(
+        group: String?,
+        name: String?,
+        version: String?,
+        description: String,
+        requiredName: String,
+    ) {
+        check(group == expectedGroup.get()) { "$description has group $group; expected ${expectedGroup.get()}." }
+        check(name == requiredName) { "$description has name $name; expected $requiredName." }
+        check(version == expectedVersion.get()) {
+            "$description has version $version; expected ${expectedVersion.get()}."
+        }
+    }
+
+    private fun jsonLicenseChoice(): List<Map<String, Map<String, String>>> = listOf(
+        mapOf(
+            "license" to linkedMapOf(
+                "name" to licenseName.get(),
+                "url" to licenseUrl.get(),
+            ),
+        ),
+    )
+
+    private fun Map<*, *>.toMutableJsonObject(): MutableMap<String, Any?> = entries.associateTo(linkedMapOf()) {
+        (key, value) -> key.toString() to value.toMutableJsonValue()
+    }
+
+    private fun Any?.toMutableJsonValue(): Any? = when (this) {
+        is Map<*, *> -> toMutableJsonObject()
+        is List<*> -> map { value -> value.toMutableJsonValue() }.toMutableList()
+        else -> this
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun MutableMap<String, Any?>.mutableObject(key: String, message: String): MutableMap<String, Any?> =
+        this[key] as? MutableMap<String, Any?> ?: error(message)
+
+    private data class InternalComponent(
+        val name: String?,
+        val version: String?,
+        val reference: String?,
+    )
+
+    companion object {
+        internal fun secureDocumentBuilderFactory(): DocumentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+        }
+
+        internal fun directChild(parent: Element, localName: String): Element? =
+            directChildren(parent, localName).firstOrNull()
+
+        internal fun directChildText(parent: Element, localName: String): String? =
+            directChild(parent, localName)?.textContent?.trim()
+
+        internal fun directChildren(parent: Element, localName: String): List<Element> =
+            childElements(parent).filter { child -> child.localName == localName || child.nodeName == localName }
+
+        internal fun childElements(parent: Element): List<Element> =
+            (0 until parent.childNodes.length)
+                .asSequence()
+                .map { index -> parent.childNodes.item(index) }
+                .filterIsInstance<Element>()
+                .toList()
+    }
+}
