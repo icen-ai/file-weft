@@ -98,7 +98,7 @@ class DeliveryDispatchFenceMigrationIntegrationTest {
     private fun migrateThroughV022() {
         val flyway = Flyway.configure()
             .dataSource(dataSource)
-            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
             .table(FlywayMigrationRunner.HISTORY_TABLE)
             .baselineVersion("0")
             .baselineDescription("FileWeft namespace initialization")

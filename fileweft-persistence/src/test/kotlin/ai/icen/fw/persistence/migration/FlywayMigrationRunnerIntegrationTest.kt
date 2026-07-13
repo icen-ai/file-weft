@@ -181,7 +181,7 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `packaged versioned migration inventory remains complete and isolated`() {
         val packagedScripts = Flyway.configure()
             .dataSource(dataSource)
-            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
             .table(FlywayMigrationRunner.HISTORY_TABLE)
             .load()
             .info()
@@ -204,7 +204,7 @@ class FlywayMigrationRunnerIntegrationTest {
         val historyTable = "v026_upgrade_history"
         val before = Flyway.configure()
             .dataSource(dataSource)
-            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
             .table(historyTable)
             .target("025")
             .load()
@@ -236,7 +236,7 @@ class FlywayMigrationRunnerIntegrationTest {
 
         val upgraded = Flyway.configure()
             .dataSource(dataSource)
-            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
             .table(historyTable)
             .load()
         assertEquals(1, upgraded.migrate().migrationsExecuted)
@@ -685,7 +685,7 @@ class FlywayMigrationRunnerIntegrationTest {
             1,
             Flyway.configure()
                 .dataSource(dataSource)
-                .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+                .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
                 .table("flyway_schema_history")
                 .target("1")
                 .baselineOnMigrate(false)
@@ -942,7 +942,7 @@ class FlywayMigrationRunnerIntegrationTest {
     ) {
         Flyway.configure()
             .dataSource(dataSource)
-            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
             .table(FlywayMigrationRunner.HISTORY_TABLE)
             .baselineOnMigrate(false)
             .baselineVersion(version)
@@ -955,7 +955,7 @@ class FlywayMigrationRunnerIntegrationTest {
         baselineFileWeftNamespace()
         Flyway.configure()
             .dataSource(dataSource)
-            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .locations(FlywayMigrationRunner.migrationLocation(FlywayMigrationRunner.DatabaseProduct.POSTGRESQL))
             .table(FlywayMigrationRunner.HISTORY_TABLE)
             .target(target)
             .baselineOnMigrate(false)

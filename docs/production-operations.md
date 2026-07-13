@@ -24,6 +24,24 @@ fileweft:
 
 `fileweft.persistence.schema` 是对 DataSource 的安全断言：它必须与同一连接执行 `SELECT current_schema()` 的结果完全一致，不能依赖 Flyway 在运行中替宿主切换 schema。Migration Job、Web 和所有 Worker 的 JDBC search path 与该配置必须相同。独立 schema 推荐使用 PostgreSQL JDBC `currentSchema=fileweft`；共享 `public` 时应使用 `currentSchema=public`（或其他能确定返回 `public` 的等价 search path）并配置 `schema: public`。仅当模式为 `migrate` 且 `create-schema=true` 时允许目标尚未创建；即便如此，JDBC search path 也必须预先指向该名称，使创建前 `current_schema()` 返回 `null`，而不能返回另一个可用 schema。宿主有多个 DataSource 时，Starter 即使发现 `@Primary` 也不会猜测，必须显式注册绑定正确 DataSource 的 `FlywayMigrationRunner`。
 
+### MySQL 8 与人大金仓（Kingbase ES）
+
+`feature/mysql-kingbase-support` 分支已为 MySQL 8 和 Kingbase ES 提供独立的 V001–V026 迁移脚本与 `FlywayMigrationRunner` 方言路由：`FlywayMigrationRunner` 会根据 `DatabaseMetaData.getDatabaseProductName()` 自动选择 `classpath:ai/icen/fw/db/migration/postgres|mysql|kingbase`。MySQL 连接示例：
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:mysql://db.example.internal:3306/fileweft?useUnicode=true&characterEncoding=utf8
+
+fileweft:
+  persistence:
+    migration-mode: validate
+    schema: fileweft
+    create-schema: false
+```
+
+Kingbase ES 驱动未发布到 Maven Central，宿主需通过自有仓库或本地依赖提供 JDBC 驱动；`fileweft-persistence` 的 `runtimeOnly` 与测试类路径均不再强制引入该驱动。MySQL 与 Kingbase 的迁移脚本已完成 DDL 层面的表、索引、约束与 JSON 列适配，但仓库 JDBC 实现（DML 中的 `ON CONFLICT`、`RETURNING`、`FOR UPDATE SKIP LOCKED`、`text[]`、`IS DISTINCT FROM` 等）仍以 PostgreSQL 方言为主；在这些数据库上运行业务功能前，需要进一步完成 JDBC 方言抽象与实库并发测试。本节后续关于 PostgreSQL 并发预建脚本、部分唯一索引、`pg_stat_progress_create_index` 等说明仅适用于 PostgreSQL。
+
 当目标 schema 已包含宿主对象但尚无 FileWeft 对象时，Flyway 默认会把“非空 schema”视为需要人工 baseline。FileWeft runner 不会启用 `baselineOnMigrate`：它先确认专属 history 不存在、默认 history 中没有任一已知 FileWeft 脚本、目标 schema 中没有任一已知 FileWeft 业务表，才通过 Flyway 公共 API 写入版本 `0` 的命名空间初始化标记，并继续执行全部 `V001` 及后续脚本。该标记只隔离两套 history，不代表收养既有 FileWeft 数据；任何旧、失败或无 history 的 FileWeft 痕迹都会在写入标记前失败关闭。
 
 推荐由宿主提供的一次性 Migration Job 或受控迁移进程使用 `migrate`，成功后由宿主明确退出该进程，再让全部 Web/Worker 节点以 `validate` 启动；FileWeft Starter 只负责启动时迁移，不提供迁移后自动退出的通用 Job 入口。所有角色必须指向相同 FileWeft schema；不要让每个滚动节点自行改变 migration mode，也不要把 FileWeft 资源路径追加到宿主 `spring.flyway.locations`。Spring Boot 自己的 Flyway 可以继续管理宿主 schema 和默认 history，它与 `fileweft.persistence.*` 是两套独立边界。

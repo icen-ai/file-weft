@@ -21,12 +21,22 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     schema: String? = null,
     private val createSchema: Boolean = false,
 ) {
-    private val configuredSchema: String? = schema?.let(::validatedSchemaName)
+    private val configuredSchema: String? = schema?.let { validatedSchemaName(it, DatabaseProduct.POSTGRESQL) }
 
     init {
         require(!createSchema || configuredSchema != null) {
             "FileWeft createSchema=true requires an explicit migration schema"
         }
+    }
+
+    /**
+     * Supported database products. Detection is based on
+     * [DatabaseMetaData.getDatabaseProductName].
+     */
+    enum class DatabaseProduct {
+        POSTGRESQL,
+        MYSQL,
+        KINGBASE,
     }
 
     /**
@@ -71,21 +81,39 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         assertCurrentSchema(targetSchema, "validation")
     }
 
-    private fun configuredFlyway(targetSchema: String): Flyway = Flyway.configure()
-        .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
-        .failOnMissingLocations(true)
-        .validateMigrationNaming(true)
-        .table(HISTORY_TABLE)
-        .defaultSchema(targetSchema)
-        .schemas(targetSchema)
-        .createSchemas(createSchema)
-        .baselineOnMigrate(false)
-        .baselineVersion(NAMESPACE_BASELINE_VERSION)
-        .baselineDescription(NAMESPACE_BASELINE_DESCRIPTION)
-        .ignoreMigrationPatterns(*emptyArray<String>())
-        .validateOnMigrate(true)
-        .load()
+    private fun configuredFlyway(targetSchema: String): Flyway {
+        val product = dataSource.connection.use { connection -> detectDatabaseProduct(connection) }
+        return Flyway.configure()
+            .dataSource(dataSource)
+            .locations(migrationLocation(product))
+            .failOnMissingLocations(true)
+            .validateMigrationNaming(true)
+            .table(HISTORY_TABLE)
+            .defaultSchema(targetSchema)
+            .schemas(targetSchema)
+            .createSchemas(createSchema)
+            .baselineOnMigrate(false)
+            .baselineVersion(NAMESPACE_BASELINE_VERSION)
+            .baselineDescription(NAMESPACE_BASELINE_DESCRIPTION)
+            .ignoreMigrationPatterns(*emptyArray<String>())
+            .validateOnMigrate(true)
+            .load()
+    }
+
+    private fun readCurrentSchema(): String? = dataSource.connection.use { connection ->
+        val product = detectDatabaseProduct(connection)
+        val sql = when (product) {
+            DatabaseProduct.POSTGRESQL,
+            DatabaseProduct.KINGBASE -> "SELECT current_schema()"
+            DatabaseProduct.MYSQL -> "SELECT DATABASE()"
+        }
+        connection.createStatement().use { statement ->
+            statement.executeQuery(sql).use { result ->
+                check(result.next()) { "DataSource did not return current schema" }
+                result.getString(1)?.let { validatedSchemaName(it, product) }
+            }
+        }
+    }
 
     private fun resolveTargetSchema(allowMissingCurrentSchema: Boolean): String {
         val currentSchema = readCurrentSchema()
@@ -112,15 +140,6 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         check(actualSchema == expectedSchema) {
             "FileWeft $operation completed but DataSource current_schema " +
                 "'${actualSchema ?: "<null>"}' does not equal '$expectedSchema'"
-        }
-    }
-
-    private fun readCurrentSchema(): String? = dataSource.connection.use { connection ->
-        connection.createStatement().use { statement ->
-            statement.executeQuery("SELECT current_schema()").use { result ->
-                check(result.next()) { "DataSource did not return current_schema()" }
-                result.getString(1)?.let(::validatedSchemaName)
-            }
         }
     }
 
@@ -294,12 +313,12 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             .filter { it.startsWith("V") || it.startsWith("R") }
             .toSet()
         check(packagedScripts.isNotEmpty()) {
-            "No packaged FileWeft migrations were resolved from $MIGRATION_LOCATION"
+            "No packaged FileWeft migrations were resolved for schema '$targetSchema'"
         }
         val placeholders = packagedScripts.joinToString(",") { "?" }
         dataSource.connection.use { connection ->
             connection.prepareStatement(
-                "SELECT installed_rank FROM $legacyTable WHERE script IN ($placeholders) FETCH FIRST 1 ROW ONLY",
+                "SELECT installed_rank FROM $legacyTable WHERE script IN ($placeholders) LIMIT 1",
             ).use { statement ->
                 packagedScripts.forEachIndexed { index, script ->
                     statement.setString(index + 1, script)
@@ -370,7 +389,6 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     }
 
     companion object {
-        const val MIGRATION_LOCATION: String = "classpath:ai/icen/fw/db/migration"
         const val HISTORY_TABLE: String = "fileweft_schema_history"
 
         private const val LEGACY_HISTORY_TABLE: String = "flyway_schema_history"
@@ -380,6 +398,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         private const val NAMESPACE_BASELINE_TYPE: String = "BASELINE"
         private const val NAMESPACE_BASELINE_SCRIPT: String = NAMESPACE_BASELINE_DESCRIPTION
         private const val POSTGRESQL_IDENTIFIER_MAX_BYTES: Int = 63
+        private const val MYSQL_IDENTIFIER_MAX_CHARS: Int = 64
         private const val BOOTSTRAP_HISTORY_APPEAR_TIMEOUT_MILLIS: Long = 5_000
         private const val BOOTSTRAP_HISTORY_RECHECK_MILLIS: Long = 50
         private const val NANOS_PER_MILLISECOND: Long = 1_000_000
@@ -406,7 +425,34 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             "fw_workflow_task",
         )
 
-        private fun validatedSchemaName(schema: String): String {
+        /**
+         * Detects the database product from JDBC metadata.
+         */
+        @JvmStatic
+        fun detectDatabaseProduct(connection: Connection): DatabaseProduct {
+            val productName = connection.metaData.databaseProductName
+            return when {
+                productName.equals("PostgreSQL", ignoreCase = true) -> DatabaseProduct.POSTGRESQL
+                productName.equals("MySQL", ignoreCase = true) -> DatabaseProduct.MYSQL
+                productName.startsWith("Kingbase", ignoreCase = true) -> DatabaseProduct.KINGBASE
+                else -> error(
+                    "Unsupported database product '$productName'; " +
+                        "FileWeft supports PostgreSQL, MySQL 8, and Kingbase ES",
+                )
+            }
+        }
+
+        /**
+         * Returns the Flyway location for the requested database product.
+         */
+        @JvmStatic
+        fun migrationLocation(product: DatabaseProduct): String = when (product) {
+            DatabaseProduct.POSTGRESQL -> "classpath:ai/icen/fw/db/migration/postgres"
+            DatabaseProduct.MYSQL -> "classpath:ai/icen/fw/db/migration/mysql"
+            DatabaseProduct.KINGBASE -> "classpath:ai/icen/fw/db/migration/kingbase"
+        }
+
+        private fun validatedSchemaName(schema: String, product: DatabaseProduct): String {
             require(schema.isNotEmpty()) { "FileWeft migration schema must not be empty" }
             val firstCodePoint = schema.codePointAt(0)
             val lastCodePoint = schema.codePointBefore(schema.length)
@@ -429,9 +475,14 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                 offset += Character.charCount(codePoint)
             }
             val encodedLength = schema.toByteArray(StandardCharsets.UTF_8).size
-            require(encodedLength <= POSTGRESQL_IDENTIFIER_MAX_BYTES) {
-                "FileWeft migration schema is $encodedLength UTF-8 bytes; PostgreSQL identifiers allow at most " +
-                    "$POSTGRESQL_IDENTIFIER_MAX_BYTES bytes"
+            val maxLength = when (product) {
+                DatabaseProduct.POSTGRESQL,
+                DatabaseProduct.KINGBASE -> POSTGRESQL_IDENTIFIER_MAX_BYTES
+                DatabaseProduct.MYSQL -> MYSQL_IDENTIFIER_MAX_CHARS
+            }
+            require(encodedLength <= maxLength) {
+                "FileWeft migration schema is $encodedLength UTF-8 bytes; $product identifiers allow at most " +
+                    "$maxLength ${if (product == DatabaseProduct.MYSQL) "characters" else "bytes"}"
             }
             return schema
         }
