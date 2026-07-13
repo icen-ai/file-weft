@@ -34,11 +34,11 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
                 var index = 1
                 statement.setString(index++, tenantId.value)
                 statement.setString(index++, documentId.value)
-                visibilityArray?.let { statement.setArray(index, it) }
+                statement.setFolderVisibilityParameter(index, visibilityArray)
                 statement.executeQuery().use(::mapDetail)
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -67,7 +67,7 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
                 }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -107,10 +107,11 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
     )
 
     private fun pageSql(request: DocumentPageRequest, folderReadScope: DocumentFolderReadScope?): String = buildString {
-        append(PAGE_SELECT_SQL)
-        appendFolderVisibility(folderReadScope)
+        val folderExpression = folderIdExpression()
+        append(pageSelectSql(folderExpression))
+        appendFolderVisibility(folderReadScope, folderExpression)
         if (request.lifecycleState != null) append(" AND document.lifecycle_state = ?")
-        if (request.folderId != null) append(" AND ").append(FOLDER_ID_SQL).append(" = ?")
+        if (request.folderId != null) append(" AND ").append(folderExpression).append(" = ?")
         request.cursor?.let {
             append(" AND (document.updated_time < ? OR (document.updated_time = ? AND document.id < ?))")
         }
@@ -120,11 +121,11 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
     private fun PreparedStatement.bindPage(
         tenantId: Identifier,
         request: DocumentPageRequest,
-        visibilityArray: JdbcArray?,
+        visibilityArray: Any?,
     ) {
         var index = 1
         setString(index++, tenantId.value)
-        visibilityArray?.let { setArray(index++, it) }
+        setFolderVisibilityParameter(index++, visibilityArray)
         request.lifecycleState?.let { setString(index++, it.name) }
         request.folderId?.let { setString(index++, it) }
         request.cursor?.let { cursor ->
@@ -135,37 +136,47 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
         setInt(index, request.limit + 1)
     }
 
-    private fun StringBuilder.appendFolderVisibility(folderReadScope: DocumentFolderReadScope?) {
+    private fun StringBuilder.appendFolderVisibility(folderReadScope: DocumentFolderReadScope?, folderExpression: String) {
         if (folderReadScope == null) return
         if (folderReadScope.isEmpty) {
             append(" AND 1 = 0")
         } else {
-            append(" AND ").append(FOLDER_ID_SQL).append(" = ANY (?)")
+            append(" AND ").append(JdbcConnectionContext.requireDialect().arrayContainsAny(folderExpression, "?"))
         }
     }
 
-    private fun java.sql.Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): JdbcArray? =
+    private fun folderIdExpression(): String =
+        "COALESCE(NULLIF(${JdbcConnectionContext.requireDialect().jsonExtractText("asset.metadata_json", "catalog.folder-id")}, ''), 'inbox')"
+
+    private fun java.sql.Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): Any? =
         folderReadScope
             ?.takeIf { !it.isEmpty }
-            ?.let { scope -> createArrayOf("text", scope.folderIds.toTypedArray()) }
+            ?.let { scope -> JdbcConnectionContext.requireDialect().createStringArrayParameter(this, scope.folderIds) }
+
+    private fun PreparedStatement.setFolderVisibilityParameter(index: Int, parameter: Any?) {
+        when (parameter) {
+            is JdbcArray -> setArray(index, parameter)
+            is String -> setString(index, parameter)
+            null -> Unit
+            else -> throw IllegalArgumentException("Unsupported folder visibility parameter type ${parameter.javaClass.name}")
+        }
+    }
 
     private fun detailSql(folderReadScope: DocumentFolderReadScope?): String = buildString {
-        append(DETAIL_SQL)
-        appendFolderVisibility(folderReadScope)
+        val folderExpression = folderIdExpression()
+        append(detailSelectSql(folderExpression))
+        appendFolderVisibility(folderReadScope, folderExpression)
         append(" ORDER BY version.created_time ASC, version.version_no ASC, version.id ASC")
     }
 
     private companion object {
-        // This expression intentionally mirrors the development catalog fallback.
-        const val FOLDER_ID_SQL = "COALESCE(NULLIF(asset.metadata_json ->> 'catalog.folder-id', ''), 'inbox')"
-
-        const val PAGE_SELECT_SQL = """
+        private fun pageSelectSql(folderExpression: String): String = """
             SELECT document.id AS document_id,
                    document.doc_no AS document_number,
                    document.title AS document_title,
                    document.lifecycle_state,
                    document.current_version_id,
-                   $FOLDER_ID_SQL AS folder_id,
+                   $folderExpression AS folder_id,
                    document.created_time AS document_created_time,
                    document.updated_time AS document_updated_time
             FROM fw_document document
@@ -175,13 +186,13 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
             WHERE document.tenant_id = ?
         """
 
-        const val DETAIL_SQL = """
+        private fun detailSelectSql(folderExpression: String): String = """
             SELECT document.id AS document_id,
                    document.doc_no AS document_number,
                    document.title AS document_title,
                    document.lifecycle_state,
                    document.current_version_id,
-                   $FOLDER_ID_SQL AS folder_id,
+                   $folderExpression AS folder_id,
                    document.created_time AS document_created_time,
                    document.updated_time AS document_updated_time,
                    version.id AS version_id,

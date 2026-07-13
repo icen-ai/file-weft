@@ -10,11 +10,12 @@ class JdbcOperationLogRepository(
     private val objectMapper: ObjectMapper,
 ) : OperationLogRepository {
     override fun append(record: OperationLogRecord) {
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_operation_log(
                 id, tenant_id, resource_type, resource_id, action, operator_id, operator_name, trace_id, detail_json, created_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?)
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, record.id.value)

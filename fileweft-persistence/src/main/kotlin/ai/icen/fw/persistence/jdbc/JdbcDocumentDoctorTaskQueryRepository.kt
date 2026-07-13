@@ -33,7 +33,7 @@ class JdbcDocumentDoctorTaskQueryRepository(
                 }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -41,14 +41,14 @@ class JdbcDocumentDoctorTaskQueryRepository(
         tenantId: Identifier,
         documentId: Identifier,
         taskId: Identifier,
-        visibilityArray: JdbcArray?,
+        visibilityArray: Any?,
     ) {
         var index = 1
         setString(index++, tenantId.value)
         setString(index++, documentId.value)
         setString(index++, taskId.value)
         setString(index++, DocumentDoctorTaskHandler.TASK_TYPE)
-        visibilityArray?.let { setArray(index, it) }
+        setFolderVisibilityParameter(index, visibilityArray)
     }
 
     private fun map(
@@ -91,23 +91,34 @@ class JdbcDocumentDoctorTaskQueryRepository(
     }
 
     private fun querySql(folderReadScope: DocumentFolderReadScope?): String = buildString {
-        append(SELECT_SQL)
+        val folderExpression = folderIdExpression()
+        append(selectSql(folderExpression))
         when {
             folderReadScope == null -> Unit
             folderReadScope.isEmpty -> append(" AND 1 = 0")
-            else -> append(" AND ").append(FOLDER_ID_SQL).append(" = ANY (?)")
+            else -> append(" AND ").append(JdbcConnectionContext.requireDialect().arrayContainsAny(folderExpression, "?"))
         }
     }
 
-    private fun Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): JdbcArray? =
+    private fun folderIdExpression(): String =
+        "COALESCE(NULLIF(${JdbcConnectionContext.requireDialect().jsonExtractText("asset.metadata_json", "catalog.folder-id")}, ''), 'inbox')"
+
+    private fun Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): Any? =
         folderReadScope
             ?.takeIf { scope -> !scope.isEmpty }
-            ?.let { scope -> createArrayOf("text", scope.folderIds.toTypedArray()) }
+            ?.let { scope -> JdbcConnectionContext.requireDialect().createStringArrayParameter(this, scope.folderIds) }
+
+    private fun PreparedStatement.setFolderVisibilityParameter(index: Int, parameter: Any?) {
+        when (parameter) {
+            is JdbcArray -> setArray(index, parameter)
+            is String -> setString(index, parameter)
+            null -> Unit
+            else -> throw IllegalArgumentException("Unsupported folder visibility parameter type ${parameter.javaClass.name}")
+        }
+    }
 
     private companion object {
-        const val FOLDER_ID_SQL = "COALESCE(NULLIF(asset.metadata_json ->> 'catalog.folder-id', ''), 'inbox')"
-
-        const val SELECT_SQL: String = """
+        private fun selectSql(folderExpression: String): String = """
             SELECT task.tenant_id,
                    task.id AS task_id,
                    task.business_id AS document_id,
@@ -115,7 +126,7 @@ class JdbcDocumentDoctorTaskQueryRepository(
                    task.created_time,
                    task.updated_time,
                    report.doctor_status,
-                   report.report_json::text AS report_json
+                   ${JdbcConnectionContext.requireDialect().jsonToText("report.report_json")} AS report_json
             FROM fw_task task
             JOIN fw_document document
               ON document.tenant_id = task.tenant_id

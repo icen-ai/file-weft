@@ -30,21 +30,21 @@ class JdbcDocumentSyncStatusQueryRepository : DocumentSyncStatusQueryRepository 
                 statement.executeQuery().use { result -> mapStatus(result, documentId) }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
     private fun PreparedStatement.bindStatusQuery(
         tenantId: Identifier,
         documentId: Identifier,
-        visibilityArray: JdbcArray?,
+        visibilityArray: Any?,
     ) {
         var index = 1
         setString(index++, DocumentDeliveryPlanner.DELIVERY_REQUESTED_EVENT_TYPE)
         setString(index++, DocumentDeliveryRemovalPlanner.DELIVERY_REMOVAL_REQUESTED_EVENT_TYPE)
         setString(index++, tenantId.value)
         setString(index++, documentId.value)
-        visibilityArray?.let { setArray(index, it) }
+        setFolderVisibilityParameter(index, visibilityArray)
     }
 
     private fun mapStatus(result: ResultSet, expectedDocumentId: Identifier): DocumentSyncStatusView? {
@@ -74,30 +74,41 @@ class JdbcDocumentSyncStatusQueryRepository : DocumentSyncStatusQueryRepository 
     }
 
     private fun statusSql(folderReadScope: DocumentFolderReadScope?): String = buildString {
-        append(STATUS_SELECT_SQL)
-        appendFolderVisibility(folderReadScope)
-        append(" ORDER BY target.created_time ASC NULLS LAST, target.id ASC NULLS LAST")
+        val dialect = JdbcConnectionContext.requireDialect()
+        val folderExpression = folderIdExpression()
+        append(statusSelectSql(folderExpression))
+        appendFolderVisibility(folderReadScope, folderExpression)
+        append(" ORDER BY ${dialect.nullsLastOrderBy("target.created_time", false)}, ${dialect.nullsLastOrderBy("target.id", false)}")
     }
 
-    private fun StringBuilder.appendFolderVisibility(folderReadScope: DocumentFolderReadScope?) {
+    private fun StringBuilder.appendFolderVisibility(folderReadScope: DocumentFolderReadScope?, folderExpression: String) {
         if (folderReadScope == null) return
         if (folderReadScope.isEmpty) {
             append(" AND 1 = 0")
         } else {
-            append(" AND ").append(FOLDER_ID_SQL).append(" = ANY (?)")
+            append(" AND ").append(JdbcConnectionContext.requireDialect().arrayContainsAny(folderExpression, "?"))
         }
     }
 
-    private fun Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): JdbcArray? =
+    private fun folderIdExpression(): String =
+        "COALESCE(NULLIF(${JdbcConnectionContext.requireDialect().jsonExtractText("asset.metadata_json", "catalog.folder-id")}, ''), 'inbox')"
+
+    private fun Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): Any? =
         folderReadScope
             ?.takeIf { scope -> !scope.isEmpty }
-            ?.let { scope -> createArrayOf("text", scope.folderIds.toTypedArray()) }
+            ?.let { scope -> JdbcConnectionContext.requireDialect().createStringArrayParameter(this, scope.folderIds) }
+
+    private fun PreparedStatement.setFolderVisibilityParameter(index: Int, parameter: Any?) {
+        when (parameter) {
+            is JdbcArray -> setArray(index, parameter)
+            is String -> setString(index, parameter)
+            null -> Unit
+            else -> throw IllegalArgumentException("Unsupported folder visibility parameter type ${parameter.javaClass.name}")
+        }
+    }
 
     private companion object {
-        const val FOLDER_ID_SQL: String =
-            "COALESCE(NULLIF(asset.metadata_json ->> 'catalog.folder-id', ''), 'inbox')"
-
-        const val STATUS_SELECT_SQL: String = """
+        private fun statusSelectSql(folderExpression: String): String = """
             SELECT document.id AS document_id,
                    target.id AS delivery_id,
                    target.target_id,

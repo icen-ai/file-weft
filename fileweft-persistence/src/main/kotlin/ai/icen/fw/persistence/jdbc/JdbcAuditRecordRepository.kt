@@ -10,8 +10,9 @@ class JdbcAuditRecordRepository(
     private val objectMapper: ObjectMapper,
 ) : AuditRecordRepository {
     override fun append(record: AuditRecord) {
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
-            "INSERT INTO fw_audit_record(id, tenant_id, resource_type, resource_id, action, operator_id, operator_name, detail_json, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)",
+            "INSERT INTO fw_audit_record(id, tenant_id, resource_type, resource_id, action, operator_id, operator_name, detail_json, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?, ?)",
         ).use { statement ->
             statement.setString(1, record.id.value)
             statement.setString(2, record.tenantId.value)

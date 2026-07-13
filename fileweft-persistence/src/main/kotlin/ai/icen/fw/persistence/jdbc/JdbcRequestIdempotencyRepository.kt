@@ -21,7 +21,16 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
         now: Long,
     ): RequestIdempotencyClaim {
         val connection = JdbcConnectionContext.requireCurrent()
-        val acquired = connection.prepareStatement(CLAIM_SQL).use { statement ->
+        val dialect = JdbcConnectionContext.requireDialect()
+        val acquired = connection.prepareStatement(
+            """
+            INSERT INTO fw_idempotency_record(
+                id, tenant_id, key_digest, operator_id, action, resource_type, resource_id, subresource_id,
+                request_fingerprint, record_status, created_time, updated_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_PROGRESS', ?, ?)
+            ${dialect.upsertClause(listOf("tenant_id", "key_digest"), emptyList())}
+            """.trimIndent(),
+        ).use { statement ->
             statement.setString(1, newRecordId.value)
             statement.setString(2, request.tenantId.value)
             statement.setString(3, request.keyDigest)
@@ -46,23 +55,32 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
         keyDigest: String,
         result: IdempotencyResult,
         completedAt: Long,
-    ): RequestIdempotencyRecord = JdbcConnectionContext.requireCurrent().prepareStatement(COMPLETE_SQL).use { statement ->
-        statement.setString(1, result.resourceType)
-        statement.setString(2, result.resourceId.value)
-        statement.setString(3, result.relatedResourceType)
-        statement.setString(4, result.relatedResourceId?.value)
-        statement.setLong(5, completedAt)
-        statement.setLong(6, completedAt)
-        statement.setString(7, tenantId.value)
-        statement.setString(8, recordId.value)
-        statement.setString(9, keyDigest)
-        statement.executeQuery().use { rows ->
-            if (!rows.next()) {
-                throw IdempotencyStoreException(
-                    "Idempotency record cannot be completed from its current tenant, key, or status.",
-                )
+    ): RequestIdempotencyRecord {
+        val connection = JdbcConnectionContext.requireCurrent()
+        val updated = connection.prepareStatement(COMPLETE_UPDATE_SQL).use { statement ->
+            statement.setString(1, result.resourceType)
+            statement.setString(2, result.resourceId.value)
+            statement.setString(3, result.relatedResourceType)
+            statement.setString(4, result.relatedResourceId?.value)
+            statement.setLong(5, completedAt)
+            statement.setLong(6, completedAt)
+            statement.setString(7, tenantId.value)
+            statement.setString(8, recordId.value)
+            statement.setString(9, keyDigest)
+            statement.executeUpdate()
+        }
+        if (updated == 0) {
+            throw IdempotencyStoreException(
+                "Idempotency record cannot be completed from its current tenant, key, or status.",
+            )
+        }
+        return connection.prepareStatement(FIND_BY_KEY_DIGEST_SQL).use { statement ->
+            statement.setString(1, tenantId.value)
+            statement.setString(2, keyDigest)
+            statement.executeQuery().use { rows ->
+                check(rows.next()) { "Completed idempotency record is unavailable in the current tenant." }
+                mapRecord(rows)
             }
-            mapRecord(rows)
         }
     }
 
@@ -122,15 +140,7 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
 
         const val FIND_FOR_CLAIM_SQL = FIND_BY_KEY_DIGEST_SQL + " FOR UPDATE"
 
-        const val CLAIM_SQL = """
-            INSERT INTO fw_idempotency_record(
-                id, tenant_id, key_digest, operator_id, action, resource_type, resource_id, subresource_id,
-                request_fingerprint, record_status, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_PROGRESS', ?, ?)
-            ON CONFLICT (tenant_id, key_digest) DO NOTHING
-        """
-
-        const val COMPLETE_SQL = """
+        const val COMPLETE_UPDATE_SQL = """
             UPDATE fw_idempotency_record
             SET record_status = 'COMPLETED',
                 result_resource_type = ?,
@@ -140,7 +150,6 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
                 completed_time = ?,
                 updated_time = ?
             WHERE tenant_id = ? AND id = ? AND key_digest = ? AND record_status = 'IN_PROGRESS'
-            RETURNING $SELECT_COLUMNS
         """
     }
 }

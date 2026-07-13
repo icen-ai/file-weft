@@ -99,6 +99,15 @@ class JdbcWorkflowInstanceRepository(
         }
 
     private fun saveTask(task: WorkflowTask, now: Long) {
+        val dialect = JdbcConnectionContext.requireDialect()
+        if (dialect.returningClause(emptyList()).isEmpty()) {
+            saveTaskMySql(task, now)
+        } else {
+            saveTaskPostgreSql(task, now)
+        }
+    }
+
+    private fun saveTaskPostgreSql(task: WorkflowTask, now: Long) {
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_workflow_task(
@@ -154,21 +163,108 @@ class JdbcWorkflowInstanceRepository(
               )
             """.trimIndent(),
         ).use { statement ->
-            statement.setString(1, task.id.value)
-            statement.setString(2, task.tenantId.value)
-            statement.setString(3, task.workflowId.value)
-            statement.setString(4, task.assigneeId?.value)
-            statement.setString(5, task.state.name)
-            statement.setString(6, task.comment)
-            statement.setString(7, task.decisionOperatorId?.value)
-            statement.setString(8, task.decisionOperatorName)
-            if (task.decisionOperatorId == null) statement.setNull(9, java.sql.Types.BIGINT) else statement.setLong(9, now)
-            statement.setLong(10, now)
-            statement.setLong(11, now)
+            bindTaskInsert(statement, task, now)
             check(statement.executeUpdate() == 1) {
                 "Workflow task identity or completed decision changed while saving ${task.id.value}."
             }
         }
+    }
+
+    private fun saveTaskMySql(task: WorkflowTask, now: Long) {
+        val connection = JdbcConnectionContext.requireCurrent()
+        try {
+            connection.prepareStatement(
+                """
+                INSERT INTO fw_workflow_task(
+                    id, tenant_id, workflow_id, assignee_id, task_state, comment_text,
+                    decision_operator_id, decision_operator_name, decided_time, created_time, updated_time
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+            ).use { statement ->
+                bindTaskInsert(statement, task, now)
+                statement.executeUpdate()
+            }
+            return
+        } catch (failure: java.sql.SQLException) {
+            if (failure.sqlState != MYSQL_UNIQUE_VIOLATION_SQL_STATE) throw failure
+        }
+
+        connection.prepareStatement(TASK_SELECT_FOR_UPDATE_SQL).use { statement ->
+            statement.setString(1, task.id.value)
+            statement.executeQuery().use { result ->
+                check(result.next()) {
+                    "Workflow task identity or completed decision changed while saving ${task.id.value}."
+                }
+                val existingTenantId = result.getString("tenant_id")
+                val existingWorkflowId = result.getString("workflow_id")
+                val existingAssigneeId = result.getString("assignee_id")
+                val existingState = result.getString("task_state")
+                val existingComment = result.getString("comment_text")
+                val existingDecisionOperatorId = result.getString("decision_operator_id")
+                val existingDecisionOperatorName = result.getString("decision_operator_name")
+                val existingDecidedTime = result.getLong("decided_time").takeUnless { result.wasNull() }
+                val existingUpdatedTime = result.getLong("updated_time")
+
+                val taskAssigneeId = task.assigneeId
+                val assigneeMatches = (existingAssigneeId == null && taskAssigneeId == null) ||
+                    (existingAssigneeId != null && taskAssigneeId != null && existingAssigneeId == taskAssigneeId.value)
+                val completedDecisionUnchanged = existingState == task.state.name &&
+                    existingComment == task.comment &&
+                    existingDecisionOperatorId == task.decisionOperatorId?.value &&
+                    existingDecisionOperatorName == task.decisionOperatorName
+
+                check(
+                    existingTenantId == task.tenantId.value &&
+                        existingWorkflowId == task.workflowId.value &&
+                        assigneeMatches &&
+                        (existingState == "PENDING" || completedDecisionUnchanged),
+                ) {
+                    "Workflow task identity or completed decision changed while saving ${task.id.value}."
+                }
+
+                val newDecisionOperatorId = if (existingState == "PENDING") task.decisionOperatorId?.value else existingDecisionOperatorId
+                val newDecisionOperatorName = if (existingState == "PENDING") task.decisionOperatorName else existingDecisionOperatorName
+                val newDecidedTime = when {
+                    existingDecidedTime != null -> existingDecidedTime
+                    existingState == "PENDING" && task.decisionOperatorId != null -> now
+                    else -> null
+                }
+                val changed = existingState != task.state.name ||
+                    existingComment != task.comment ||
+                    existingDecisionOperatorId != task.decisionOperatorId?.value ||
+                    existingDecisionOperatorName != task.decisionOperatorName
+
+                connection.prepareStatement(TASK_UPDATE_SQL).use { update ->
+                    update.setString(1, task.state.name)
+                    update.setString(2, task.comment)
+                    update.setString(3, newDecisionOperatorId)
+                    update.setString(4, newDecisionOperatorName)
+                    newDecidedTime?.let { update.setLong(5, it) } ?: update.setNull(5, java.sql.Types.BIGINT)
+                    update.setLong(6, if (changed) now else existingUpdatedTime)
+                    update.setString(7, task.tenantId.value)
+                    update.setString(8, task.workflowId.value)
+                    update.setString(9, task.id.value)
+                    check(update.executeUpdate() == 1) {
+                        "Workflow task identity or completed decision changed while saving ${task.id.value}."
+                    }
+                }
+            }
+        }
+    }
+
+    private fun bindTaskInsert(statement: java.sql.PreparedStatement, task: WorkflowTask, now: Long) {
+        statement.setString(1, task.id.value)
+        statement.setString(2, task.tenantId.value)
+        statement.setString(3, task.workflowId.value)
+        statement.setString(4, task.assigneeId?.value)
+        statement.setString(5, task.state.name)
+        statement.setString(6, task.comment)
+        statement.setString(7, task.decisionOperatorId?.value)
+        statement.setString(8, task.decisionOperatorName)
+        if (task.decisionOperatorId == null) statement.setNull(9, java.sql.Types.BIGINT) else statement.setLong(9, now)
+        statement.setLong(10, now)
+        statement.setLong(11, now)
     }
 
     private fun mapWorkflow(result: ResultSet, tasks: List<WorkflowTask>): WorkflowInstance = WorkflowInstance(
@@ -179,4 +275,25 @@ class JdbcWorkflowInstanceRepository(
         state = WorkflowState.valueOf(result.getString("state")),
         tasks = tasks,
     )
+
+    private companion object {
+        const val MYSQL_UNIQUE_VIOLATION_SQL_STATE = "23000"
+        const val TASK_SELECT_FOR_UPDATE_SQL = """
+            SELECT tenant_id, workflow_id, assignee_id, task_state, comment_text,
+                   decision_operator_id, decision_operator_name, decided_time, updated_time
+            FROM fw_workflow_task
+            WHERE id = ?
+            FOR UPDATE
+        """
+        const val TASK_UPDATE_SQL = """
+            UPDATE fw_workflow_task
+            SET task_state = ?,
+                comment_text = ?,
+                decision_operator_id = ?,
+                decision_operator_name = ?,
+                decided_time = ?,
+                updated_time = ?
+            WHERE tenant_id = ? AND workflow_id = ? AND id = ?
+        """
+    }
 }
