@@ -10,5 +10,8 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.opentelemetry.sdk)
+    testImplementation(libs.opentelemetry.sdk.metrics)
+    testImplementation(libs.opentelemetry.sdk.logs)
+    testImplementation(libs.opentelemetry.sdk.testing)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

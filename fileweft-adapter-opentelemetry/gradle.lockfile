@@ -8,6 +8,7 @@ io.opentelemetry:opentelemetry-context:1.40.0=apiDependenciesMetadata,compileCla
 io.opentelemetry:opentelemetry-sdk-common:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 io.opentelemetry:opentelemetry-sdk-logs:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 io.opentelemetry:opentelemetry-sdk-metrics:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-sdk-testing:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 io.opentelemetry:opentelemetry-sdk-trace:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 io.opentelemetry:opentelemetry-sdk:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testImplementationDependenciesMetadata
