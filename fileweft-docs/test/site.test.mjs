@@ -6,7 +6,7 @@ import { groups, orderedRoutes, pages, ui } from "../content.js";
 const root = new URL("../", import.meta.url);
 const read = (name) => readFile(new URL(name, root), "utf8");
 
-test("every navigation group has ordered bilingual pages", () => {
+test("every navigation group has ordered bilingual pages with markdown sources", async () => {
   const routes = orderedRoutes();
   assert.ok(routes.length >= 18, "documentation should cover the full product surface");
   assert.equal(new Set(routes).size, routes.length);
@@ -19,15 +19,18 @@ test("every navigation group has ordered bilingual pages", () => {
     assert.match(route, /^[a-z0-9-]+\/[a-z0-9-]+$/);
     assert.ok(groups.some((group) => group.id === entry.group), `unknown group for ${route}`);
     for (const locale of ["en", "zh"]) {
-      assert.ok(entry[locale].title.length > 3, `${route} ${locale} title`);
-      assert.ok(entry[locale].nav.length > 1, `${route} ${locale} navigation label`);
-      assert.ok(entry[locale].lead.length > 20, `${route} ${locale} lead`);
-      assert.ok(entry[locale].sections.length >= 2, `${route} ${locale} sections`);
-      for (const section of entry[locale].sections) {
-        assert.ok(section.title && section.html, `${route} ${locale} complete section`);
-        assert.doesNotMatch(section.html, /<script\b/i, `${route} must not embed scripts`);
-        assert.doesNotMatch(section.html, /\son\w+\s*=/i, `${route} must not embed event handlers`);
-      }
+      const meta = entry[locale];
+      assert.ok(meta.nav.length > 1, `${route} ${locale} navigation label`);
+      assert.ok(meta.title.length > 3, `${route} ${locale} title`);
+      assert.ok(meta.lead.length > 20, `${route} ${locale} lead`);
+      assert.ok(meta.file.endsWith(".md") && meta.file.includes(`/${locale}/`), `${route} ${locale} file path`);
+      const source = await read(meta.file);
+      assert.match(source, /^---\n/);
+      assert.doesNotMatch(source, /<script\b/i, `${route} must not embed scripts`);
+      assert.doesNotMatch(source, /\son\w+\s*=/i, `${route} must not embed event handlers`);
+      const markdownHeadings = source.match(/^## /gm) || [];
+      const htmlHeadings = source.match(/<h2[\s>]/gim) || [];
+      assert.ok(markdownHeadings.length + htmlHeadings.length >= 2, `${route} ${locale} must have at least two sections`);
     }
   }
 });
@@ -48,9 +51,7 @@ test("site shell uses local assets and exposes accessible controls", async () =>
 
 test("interaction script includes hash routing, search shortcuts and copy support", async () => {
   const source = await read("app.js");
-  const content = await read("content.js");
   assert.match(source, /addEventListener\("hashchange"/);
-  assert.match(content, /Idempotency-Key/);
   assert.match(source, /navigator\.clipboard\.writeText/);
   assert.match(source, /event\.key\.toLowerCase\(\) === "k"/);
   assert.match(source, /event\.key === "\/"/);
