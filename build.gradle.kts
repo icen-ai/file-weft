@@ -14,6 +14,7 @@ import java.util.zip.ZipFile
 import java.security.MessageDigest
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
+import org.cyclonedx.gradle.CyclonedxDirectTask
 
 plugins {
     id("fileweft.architecture-guard")
@@ -94,6 +95,24 @@ tasks.cyclonedxBom {
     componentGroup = rootProject.group.toString()
     componentName = rootProject.name
     componentVersion = rootProject.version.toString()
+}
+
+// A public SBOM describes what consumers run. Restrict every direct BOM to the
+// production runtime graph and keep the non-published Dev proof application out
+// of the aggregate entirely. GenerateReleaseSbomTask still performs a second
+// reachability prune so a plugin regression cannot retain orphan Dev/Test nodes.
+allprojects {
+    tasks.withType<CyclonedxDirectTask>().configureEach {
+        includeConfigs.set(listOf("runtimeClasspath"))
+        includeBuildEnvironment.set(false)
+        includeConfigs.disallowChanges()
+        includeBuildEnvironment.disallowChanges()
+    }
+}
+subprojects.filter { candidate -> candidate.name !in publishableModuleNames }.forEach { candidate ->
+    candidate.tasks.withType<CyclonedxDirectTask>().configureEach {
+        enabled = false
+    }
 }
 
 val verifyFileWeftBuildLogic = tasks.register("verifyFileWeftBuildLogic") {

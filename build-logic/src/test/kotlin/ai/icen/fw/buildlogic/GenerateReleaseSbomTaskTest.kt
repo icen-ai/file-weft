@@ -55,6 +55,7 @@ class GenerateReleaseSbomTaskTest {
                 .toSet(),
         )
         assertTrue(components.any { component -> component["name"] == "external-lib" })
+        assertFalse(components.any { component -> component["name"] == "dev-only-lib" })
         assertTrue(
             components.filter { component -> component["group"] == "ai.icen" }
                 .all(::hasApacheJsonLicense),
@@ -84,6 +85,7 @@ class GenerateReleaseSbomTaskTest {
             }.map { component -> GenerateReleaseSbomTask.directChildText(component, "name") }.toSet(),
         )
         assertTrue(xmlComponents.any { component -> GenerateReleaseSbomTask.directChildText(component, "name") == "external-lib" })
+        assertFalse(xmlComponents.any { component -> GenerateReleaseSbomTask.directChildText(component, "name") == "dev-only-lib" })
     }
 
     @Test
@@ -173,13 +175,15 @@ class GenerateReleaseSbomTaskTest {
             {"type":"library","bom-ref":"pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev","group":"ai.icen","name":"fileweft-dev","version":"0.0.1"},
             {"type":"library","bom-ref":"pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi","group":"ai.icen","name":"fileweft-spi","version":"0.0.1"},
             {"type":"library","bom-ref":"pkg:maven/org.example/external-lib@1.2.3","group":"org.example","name":"external-lib","version":"1.2.3"}
+            ,{"type":"library","bom-ref":"pkg:maven/org.example/dev-only-lib@9.9.9","group":"org.example","name":"dev-only-lib","version":"9.9.9"}
           ],
           "dependencies":[
             {"ref":"pkg:maven/ai.icen/release-sbom-fixture@0.0.1?project_path=%3A","dependsOn":["pkg:maven/ai.icen/fileweft-core@0.0.1?project_path=%3Afileweft-core","pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev","pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi"]},
             {"ref":"pkg:maven/ai.icen/fileweft-core@0.0.1?project_path=%3Afileweft-core","dependsOn":["pkg:maven/org.example/external-lib@1.2.3"]},
-            {"ref":"pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev","dependsOn":["pkg:maven/org.example/external-lib@1.2.3"]},
+            {"ref":"pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev","dependsOn":["pkg:maven/org.example/external-lib@1.2.3","pkg:maven/org.example/dev-only-lib@9.9.9"]},
             {"ref":"pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi","dependsOn":[]},
-            {"ref":"pkg:maven/org.example/external-lib@1.2.3","dependsOn":[]}
+            {"ref":"pkg:maven/org.example/external-lib@1.2.3","dependsOn":[]},
+            {"ref":"pkg:maven/org.example/dev-only-lib@9.9.9","dependsOn":[]}
           ]
         }
         """.trimIndent()
@@ -197,13 +201,15 @@ class GenerateReleaseSbomTaskTest {
             <component type="library" bom-ref="pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev"><group>ai.icen</group><name>fileweft-dev</name><version>0.0.1</version></component>
             <component type="library" bom-ref="pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi"><group>ai.icen</group><name>fileweft-spi</name><version>0.0.1</version></component>
             <component type="library" bom-ref="pkg:maven/org.example/external-lib@1.2.3"><group>org.example</group><name>external-lib</name><version>1.2.3</version></component>
+            <component type="library" bom-ref="pkg:maven/org.example/dev-only-lib@9.9.9"><group>org.example</group><name>dev-only-lib</name><version>9.9.9</version></component>
           </components>
           <dependencies>
             <dependency ref="pkg:maven/ai.icen/release-sbom-fixture@0.0.1?project_path=%3A"><dependency ref="pkg:maven/ai.icen/fileweft-core@0.0.1?project_path=%3Afileweft-core"/><dependency ref="pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev"/><dependency ref="pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi"/></dependency>
             <dependency ref="pkg:maven/ai.icen/fileweft-core@0.0.1?project_path=%3Afileweft-core"><dependency ref="pkg:maven/org.example/external-lib@1.2.3"/></dependency>
-            <dependency ref="pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev"><dependency ref="pkg:maven/org.example/external-lib@1.2.3"/></dependency>
+            <dependency ref="pkg:maven/ai.icen/fileweft-dev@0.0.1?project_path=%3Afileweft-dev"><dependency ref="pkg:maven/org.example/external-lib@1.2.3"/><dependency ref="pkg:maven/org.example/dev-only-lib@9.9.9"/></dependency>
             <dependency ref="pkg:maven/ai.icen/fileweft-spi@0.0.1?project_path=%3Afileweft-spi"/>
             <dependency ref="pkg:maven/org.example/external-lib@1.2.3"/>
+            <dependency ref="pkg:maven/org.example/dev-only-lib@9.9.9"/>
           </dependencies>
         </bom>
         """.trimIndent()

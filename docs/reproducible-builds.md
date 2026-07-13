@@ -35,7 +35,11 @@ FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle depend
 .\gradlew.bat verifySbom --no-daemon
 ```
 
-该任务通过 CycloneDX Gradle 插件聚合所有子模块已解析的依赖，并在 `build/reports/cyclonedx/bom.json` 与 `build/reports/cyclonedx/bom.xml` 生成 JSON/XML 物料清单；`verifySbom` 会拒绝空文件或不声明 `bomFormat: CycloneDX` 的 JSON。物料清单包含生成时刻和构建序列号，属于本次发布的审计证据而非应提交的可复现源码文件。发布系统应将两份文件与工件、签名和版本号一起归档。
+CycloneDX Direct BOM 只解析 17 个正式发布模块各自独立的 `runtimeClasspath`，关闭 Gradle build environment，并禁用未发布的 `fileweft-dev`。不能把 17 个模块合并到一个 configuration 后再解析，否则 Gradle 的版本冲突消解会错误丢弃 Boot 2/3 等替代型模块各自合法的运行时版本。
+
+原始聚合结果位于 `build/reports/cyclonedx/`；发布任务会删除非发布内部模块以及只由 Dev/Test/Build 节点可达的第三方孤儿，补齐根到 17 个模块的发布关系，移除时间戳和随机序列号，并将确定性 JSON/XML 输出到 `build/reports/cyclonedx-release/`。`verifySbom` 校验正式模块集合、版本、Apache-2.0 许可证、坐标和依赖图双格式一致性。Mockito、AssertJ、Kotlin compiler 与 Boot starter-test 不属于发布闭包；`fileweft-testkit` 公共契约需要的 JUnit 5.11.4 则是合法运行时依赖，不得按名称误删。
+
+发布系统只归档 `cyclonedx-release/bom.json` 与 `bom.xml`，并与工件、签名和版本号一起保存；原始聚合文件仅用于诊断，不能当作对外 SBOM。
 
 ## Docker 开发编排
 

@@ -132,13 +132,27 @@ abstract class GenerateReleaseSbomTask : DefaultTask() {
         retainedComponents
             .filter { component -> component["group"] == expectedGroup.get() }
             .forEach { component -> component["licenses"] = jsonLicenseChoice() }
-        root["components"] = retainedComponents
-
         val removedReferences = internalComponents
             .filter { component -> component["name"] !in modules }
             .mapNotNull { component -> component["bom-ref"] as? String }
             .toSet()
-        root["dependencies"] = filterJsonDependencies(root["dependencies"], removedReferences)
+        val rootReference = rootComponent["bom-ref"] as? String
+            ?: error("Aggregate JSON SBOM root component does not declare a bom-ref.")
+        val reviewedReferences = retainedComponents
+            .filter { component -> component["group"] == expectedGroup.get() }
+            .map { component -> component["bom-ref"] as String }
+            .toSet()
+        val pruned = pruneJsonGraph(
+            rootReference,
+            retainedComponents,
+            ensureJsonRootDependency(
+                rootReference,
+                reviewedReferences,
+                filterJsonDependencies(root["dependencies"], removedReferences),
+            ),
+        )
+        root["components"] = pruned.components
+        root["dependencies"] = pruned.dependencies
 
         val output = releaseJsonSbom.get().asFile
         output.parentFile.mkdirs()
@@ -210,7 +224,158 @@ abstract class GenerateReleaseSbomTask : DefaultTask() {
             }
         }
         filterXmlDependencies(bom, removedReferences)
+        val rootReference = rootComponent.getAttribute("bom-ref").takeIf { reference -> reference.isNotBlank() }
+            ?: error("Aggregate XML SBOM root component does not declare a bom-ref.")
+        val reviewedReferences = directChildren(componentsContainer, "component")
+            .filter { component -> directChildText(component, "group") == expectedGroup.get() }
+            .map { component -> component.getAttribute("bom-ref") }
+            .toSet()
+        ensureXmlRootDependency(document, bom, rootReference, reviewedReferences)
+        pruneXmlGraph(bom, componentsContainer, rootReference)
         writeXml(document)
+    }
+
+    private fun ensureJsonRootDependency(
+        rootReference: String,
+        reviewedReferences: Set<String>,
+        dependencies: List<MutableMap<String, Any?>>,
+    ): List<MutableMap<String, Any?>> {
+        val rootDependency = dependencies.firstOrNull { dependency -> dependency["ref"] == rootReference }
+            ?: linkedMapOf<String, Any?>("ref" to rootReference, "dependsOn" to emptyList<String>())
+        val existingTargets = (rootDependency["dependsOn"] as? List<*>)
+            .orEmpty()
+            .filterIsInstance<String>()
+        rootDependency["dependsOn"] = (existingTargets + reviewedReferences).distinct().sorted()
+        return if (rootDependency in dependencies) dependencies else listOf(rootDependency) + dependencies
+    }
+
+    private fun ensureXmlRootDependency(
+        document: Document,
+        bom: Element,
+        rootReference: String,
+        reviewedReferences: Set<String>,
+    ) {
+        val dependencies = directChild(bom, "dependencies")
+            ?: document.createElementNS(bom.namespaceURI, "dependencies").also(bom::appendChild)
+        val rootDependency = directChildren(dependencies, "dependency")
+            .firstOrNull { dependency -> dependency.getAttribute("ref") == rootReference }
+            ?: document.createElementNS(bom.namespaceURI, "dependency").also { dependency ->
+                dependency.setAttribute("ref", rootReference)
+                dependencies.insertBefore(dependency, dependencies.firstChild)
+            }
+        val existingTargets = directChildren(rootDependency, "dependency")
+            .map { dependency -> dependency.getAttribute("ref") }
+            .toSet()
+        (reviewedReferences - existingTargets).sorted().forEach { reference ->
+            rootDependency.appendChild(
+                document.createElementNS(bom.namespaceURI, "dependency").apply {
+                    setAttribute("ref", reference)
+                },
+            )
+        }
+    }
+
+    private fun pruneJsonGraph(
+        rootReference: String,
+        components: List<MutableMap<String, Any?>>,
+        dependencies: List<MutableMap<String, Any?>>,
+    ): JsonGraph {
+        val componentReferences = components.map { component ->
+            component["bom-ref"] as? String
+                ?: error("Aggregate JSON SBOM component ${component["name"]} does not declare a bom-ref.")
+        }
+        check(componentReferences.size == componentReferences.toSet().size) {
+            "Aggregate JSON SBOM contains duplicate component bom-ref values."
+        }
+        val graph = dependencyGraph(
+            dependencies.map { dependency ->
+                val reference = dependency["ref"] as? String
+                    ?: error("Aggregate JSON SBOM dependency does not declare a ref.")
+                reference to (dependency["dependsOn"] as? List<*>)
+                    .orEmpty()
+                    .map { target -> target as? String ?: error("Aggregate JSON SBOM dependency target is not a string.") }
+                    .toSet()
+            },
+            rootReference,
+            componentReferences.toSet(),
+            "Aggregate JSON SBOM",
+        )
+        val reachable = reachableReferences(rootReference, graph)
+        return JsonGraph(
+            components = components.filter { component -> component["bom-ref"] in reachable },
+            dependencies = dependencies.filter { dependency -> dependency["ref"] in reachable },
+        )
+    }
+
+    private fun pruneXmlGraph(bom: Element, components: Element, rootReference: String) {
+        val componentElements = directChildren(components, "component")
+        val componentReferences = componentElements.map { component ->
+            component.getAttribute("bom-ref").takeIf { reference -> reference.isNotBlank() }
+                ?: error("Aggregate XML SBOM component ${directChildText(component, "name")} does not declare a bom-ref.")
+        }
+        check(componentReferences.size == componentReferences.toSet().size) {
+            "Aggregate XML SBOM contains duplicate component bom-ref values."
+        }
+        val dependencies = directChild(bom, "dependencies")
+            ?: error("Aggregate XML SBOM does not contain dependencies.")
+        val dependencyElements = directChildren(dependencies, "dependency")
+        val graph = dependencyGraph(
+            dependencyElements.map { dependency ->
+                val reference = dependency.getAttribute("ref").takeIf { value -> value.isNotBlank() }
+                    ?: error("Aggregate XML SBOM dependency does not declare a ref.")
+                reference to directChildren(dependency, "dependency")
+                    .map { child ->
+                        child.getAttribute("ref").takeIf { value -> value.isNotBlank() }
+                            ?: error("Aggregate XML SBOM dependency target does not declare a ref.")
+                    }
+                    .toSet()
+            },
+            rootReference,
+            componentReferences.toSet(),
+            "Aggregate XML SBOM",
+        )
+        val reachable = reachableReferences(rootReference, graph)
+        componentElements
+            .filter { component -> component.getAttribute("bom-ref") !in reachable }
+            .forEach { component -> components.removeChild(component) }
+        dependencyElements
+            .filter { dependency -> dependency.getAttribute("ref") !in reachable }
+            .forEach { dependency -> dependencies.removeChild(dependency) }
+    }
+
+    private fun dependencyGraph(
+        entries: List<Pair<String, Set<String>>>,
+        rootReference: String,
+        componentReferences: Set<String>,
+        source: String,
+    ): Map<String, Set<String>> {
+        val duplicateReferences = entries.groupingBy { entry -> entry.first }
+            .eachCount()
+            .filterValues { count -> count > 1 }
+            .keys
+        check(duplicateReferences.isEmpty()) { "$source contains duplicate dependency refs: $duplicateReferences." }
+        val graph = entries.toMap()
+        val knownReferences = componentReferences + rootReference
+        val unknownSources = graph.keys - knownReferences
+        val unknownTargets = graph.values.flatten().toSet() - knownReferences
+        check(unknownSources.isEmpty() && unknownTargets.isEmpty()) {
+            "$source dependency graph contains unknown refs; sources=$unknownSources, targets=$unknownTargets."
+        }
+        check(rootReference in graph) { "$source dependency graph does not contain the root component." }
+        return graph
+    }
+
+    private fun reachableReferences(rootReference: String, graph: Map<String, Set<String>>): Set<String> {
+        val reachable = linkedSetOf<String>()
+        val pending = ArrayDeque<String>()
+        pending.add(rootReference)
+        while (pending.isNotEmpty()) {
+            val reference = pending.removeFirst()
+            if (reachable.add(reference)) {
+                graph[reference].orEmpty().forEach(pending::addLast)
+            }
+        }
+        return reachable
     }
 
     private fun replaceXmlLicense(document: Document, component: Element) {
@@ -342,6 +507,11 @@ abstract class GenerateReleaseSbomTask : DefaultTask() {
         val name: String?,
         val version: String?,
         val reference: String?,
+    )
+
+    private data class JsonGraph(
+        val components: List<MutableMap<String, Any?>>,
+        val dependencies: List<MutableMap<String, Any?>>,
     )
 
     companion object {
