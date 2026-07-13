@@ -13,6 +13,7 @@ import java.util.Locale
 import java.util.zip.ZipFile
 import java.security.MessageDigest
 import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.XMLConstants
 import org.w3c.dom.Element
 import org.cyclonedx.gradle.CyclonedxDirectTask
 
@@ -450,15 +451,50 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
 
         val expectedLicense = projectLicenseFile.asFile.readBytes()
         val expectedNotice = projectNoticeFile.asFile.readBytes()
-        fun directChildText(parent: Element, localName: String): String? =
+        fun directChildren(parent: Element, localName: String): List<Element> =
             (0 until parent.childNodes.length)
                 .asSequence()
                 .map { index -> parent.childNodes.item(index) }
                 .filterIsInstance<Element>()
-                .firstOrNull { child -> child.localName == localName || child.nodeName == localName }
+                .filter { child -> child.localName == localName || child.nodeName == localName }
+                .toList()
+        fun directChildText(parent: Element, localName: String): String? =
+            directChildren(parent, localName)
+                .firstOrNull()
                 ?.textContent
                 ?.trim()
+        fun requiredSingleChild(parent: Element, localName: String, source: File): Element {
+            val children = directChildren(parent, localName)
+            require(children.size == 1) {
+                "${source.name} must contain exactly one direct <$localName> element; found ${children.size}."
+            }
+            return children.single()
+        }
+        fun optionalSingleChildText(parent: Element, localName: String, source: File): String? {
+            val children = directChildren(parent, localName)
+            require(children.size <= 1) {
+                "${source.name} contains duplicate direct <$localName> elements."
+            }
+            return children.singleOrNull()?.textContent?.trim()
+        }
+        fun requiredSingleChildText(parent: Element, localName: String, source: File): String =
+            optionalSingleChildText(parent, localName, source)
+                ?.takeIf { value -> value.isNotEmpty() }
+                ?: error("${source.name} must contain one non-empty direct <$localName> element.")
+        fun secureDocumentBuilderFactory(): DocumentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+        }
 
+        val resolvedSnapshotVersions = mutableSetOf<String>()
         expectedModules.sorted().forEach { moduleName ->
             val moduleDirectory = groupDirectory.resolve(moduleName)
             val publishedVersions = moduleDirectory.listFiles()
@@ -471,7 +507,76 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
                     publishedVersions
             }
             val versionDirectory = moduleDirectory.resolve(expectedVersion)
-            val artifactPrefix = "$moduleName-$expectedVersion"
+            val publishedArtifactVersion = if (expectedVersion.endsWith("-SNAPSHOT")) {
+                val metadataFile = versionDirectory.resolve("maven-metadata.xml")
+                require(metadataFile.isFile && metadataFile.length() > 0L) {
+                    "SNAPSHOT metadata is missing or empty: ${metadataFile.absolutePath}"
+                }
+                val metadataDocument = secureDocumentBuilderFactory().newDocumentBuilder().parse(metadataFile)
+                val metadata = metadataDocument.documentElement
+                require(requiredSingleChildText(metadata, "groupId", metadataFile) == releaseGroup) {
+                    "SNAPSHOT metadata has the wrong group: ${metadataFile.name}"
+                }
+                require(requiredSingleChildText(metadata, "artifactId", metadataFile) == moduleName) {
+                    "SNAPSHOT metadata has the wrong artifact: ${metadataFile.name}"
+                }
+                require(requiredSingleChildText(metadata, "version", metadataFile) == expectedVersion) {
+                    "SNAPSHOT metadata has the wrong version: ${metadataFile.name}"
+                }
+                val versioning = requiredSingleChild(metadata, "versioning", metadataFile)
+                val snapshot = requiredSingleChild(versioning, "snapshot", metadataFile)
+                val timestamp = requiredSingleChildText(snapshot, "timestamp", metadataFile)
+                val buildNumber = requiredSingleChildText(snapshot, "buildNumber", metadataFile)
+                require(Regex("^\\d{8}\\.\\d{6}$").matches(timestamp)) {
+                    "SNAPSHOT metadata has an invalid timestamp: $timestamp"
+                }
+                require(Regex("^[1-9]\\d*$").matches(buildNumber)) {
+                    "SNAPSHOT metadata has an invalid build number: $buildNumber"
+                }
+                val expectedUpdated = timestamp.replace(".", "")
+                require(requiredSingleChildText(versioning, "lastUpdated", metadataFile) == expectedUpdated) {
+                    "SNAPSHOT metadata lastUpdated does not match its timestamp: ${metadataFile.name}"
+                }
+                val snapshotVersions = requiredSingleChild(versioning, "snapshotVersions", metadataFile)
+                val entries = directChildren(snapshotVersions, "snapshotVersion").map { entry ->
+                    val extension = requiredSingleChildText(entry, "extension", metadataFile)
+                    val classifier = optionalSingleChildText(entry, "classifier", metadataFile).orEmpty()
+                    val value = requiredSingleChildText(entry, "value", metadataFile)
+                    require(requiredSingleChildText(entry, "updated", metadataFile) == expectedUpdated) {
+                        "SNAPSHOT metadata entry update does not match its timestamp: ${metadataFile.name}"
+                    }
+                    (extension to classifier) to value
+                }
+                val entriesByType = entries.toMap()
+                require(entriesByType.size == entries.size) {
+                    "SNAPSHOT metadata contains duplicate extension/classifier entries: ${metadataFile.name}"
+                }
+                val expectedTypes = setOf(
+                    "jar" to "",
+                    "jar" to "sources",
+                    "pom" to "",
+                    "module" to "",
+                )
+                require(entriesByType.keys == expectedTypes) {
+                    "SNAPSHOT metadata artifact types differ for $releaseGroup:$moduleName; " +
+                        "missing=${expectedTypes - entriesByType.keys}, unexpected=${entriesByType.keys - expectedTypes}."
+                }
+                val moduleResolvedVersions = entriesByType.values.toSet()
+                require(moduleResolvedVersions.size == 1) {
+                    "SNAPSHOT metadata resolves inconsistent artifact versions: $moduleResolvedVersions"
+                }
+                val expectedResolvedVersion =
+                    "${expectedVersion.removeSuffix("-SNAPSHOT")}-$timestamp-$buildNumber"
+                moduleResolvedVersions.single().also { resolvedVersion ->
+                    require(resolvedVersion == expectedResolvedVersion) {
+                        "SNAPSHOT metadata artifact version does not match timestamp/buildNumber: $resolvedVersion"
+                    }
+                    resolvedSnapshotVersions += resolvedVersion
+                }
+            } else {
+                expectedVersion
+            }
+            val artifactPrefix = "$moduleName-$publishedArtifactVersion"
             val binaryJar = versionDirectory.resolve("$artifactPrefix.jar")
             val sourcesJar = versionDirectory.resolve("$artifactPrefix-sources.jar")
             val pomFile = versionDirectory.resolve("$artifactPrefix.pom")
@@ -538,13 +643,7 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
                 }
             }
 
-            val documentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
-                isNamespaceAware = true
-                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-                setFeature("http://xml.org/sax/features/external-general-entities", false)
-                setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            }
-            val pomDocument = documentBuilderFactory.newDocumentBuilder().parse(pomFile)
+            val pomDocument = secureDocumentBuilderFactory().newDocumentBuilder().parse(pomFile)
             val pomText = pomFile.readText(Charsets.UTF_8)
             require(!pomText.contains(withdrawnMavenGroup)) {
                 "POM contains the withdrawn $withdrawnMavenGroup group: ${pomFile.name}"
@@ -608,6 +707,11 @@ val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRep
             }
             require(expectedVersion.endsWith("-SNAPSHOT") || !moduleText.contains("-SNAPSHOT")) {
                 "Release Gradle module metadata contains a SNAPSHOT dependency or coordinate: ${moduleFile.name}"
+            }
+        }
+        if (expectedVersion.endsWith("-SNAPSHOT")) {
+            require(resolvedSnapshotVersions.size == 1) {
+                "Published modules resolve to mixed SNAPSHOT identities: $resolvedSnapshotVersions"
             }
         }
     }
