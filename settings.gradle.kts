@@ -34,6 +34,7 @@ include(
     ":fileweft-spring-boot3-starter",
     ":fileweft-adapter",
     ":fileweft-adapter-micrometer",
+    ":fileweft-adapter-opentelemetry",
     ":fileweft-adapter-s3",
     ":fileweft-agent",
     ":fileweft-testkit",

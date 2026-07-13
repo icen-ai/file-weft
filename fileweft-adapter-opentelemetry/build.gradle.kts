@@ -4,11 +4,11 @@ plugins {
 
 dependencies {
     api(project(":fileweft-spi"))
-    implementation(project(":fileweft-core"))
-    api(libs.slf4j.api)
-    testImplementation(project(":fileweft-testkit"))
+    // OpenTelemetry API is part of the public adapter constructor contract.
+    api(libs.opentelemetry.api)
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.opentelemetry.sdk)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

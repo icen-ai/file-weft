@@ -1,7 +1,15 @@
 # This is a Gradle generated file for dependency locking.
 # Manual edits can break the build and are not advised.
 # This file is expected to be part of source control.
-# To regenerate this file, run: ./gradlew :fileweft-web-runtime:dependencies --write-locks
+# To regenerate this file, run: ./gradlew :fileweft-adapter-opentelemetry:dependencies --write-locks
+io.opentelemetry:opentelemetry-api-incubator:1.40.0-alpha=testRuntimeClasspath
+io.opentelemetry:opentelemetry-api:1.40.0=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-context:1.40.0=apiDependenciesMetadata,compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-sdk-common:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-sdk-logs:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-sdk-metrics:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-sdk-trace:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+io.opentelemetry:opentelemetry-sdk:1.40.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath,testImplementationDependenciesMetadata
 org.jetbrains.intellij.deps:trove4j:1.0.20200330=kotlinBuildToolsApiClasspath,kotlinCompilerClasspath,kotlinKlibCommonizerClasspath
 org.jetbrains.kotlin:kotlin-build-tools-api:2.1.21=kotlinBuildToolsApiClasspath
