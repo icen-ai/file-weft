@@ -5,31 +5,57 @@ order: 4
 locale: "en"
 nav: "Quick start"
 title: "Quick start"
-lead: "Get a FileWeft endpoint running in a Spring Boot host with a minimal SPI implementation."
+lead: "Run a complete FileWeft endpoint on your laptop with a minimal Spring Boot host and a few curl commands."
 format: "markdown"
 ---
 
-## Add the runtime dependency
+## What this page covers
 
-FileWeft is published to the CNB Maven repository. Add the BOM and the Spring Boot 3 Web starter to your host:
+This page walks you through a self-contained local setup:
+
+1. Start PostgreSQL in Docker.
+2. Add FileWeft 0.0.1 to a Spring Boot 3 project.
+3. Provide the three required SPI beans.
+4. Enable the development fallbacks.
+5. Upload your first file through the formal `/fileweft/v1/documents` endpoint.
+
+> [!WARNING]
+> The configuration in this page uses fixed tenant and local filesystem fallbacks. They are **only** for local development; see [First integration](first-integration.md) for production wiring.
+
+## Prerequisites
+
+- JDK 17 or newer
+- Docker (to run PostgreSQL)
+- A Spring Boot 3.2+ application
+
+## Step 1: Start PostgreSQL
+
+Run a local PostgreSQL container with a database and user for FileWeft:
+
+```bash
+docker run -d \
+  --name fw-postgres \
+  -e POSTGRES_DB=fileweft \
+  -e POSTGRES_USER=fileweft \
+  -e POSTGRES_PASSWORD=fileweft \
+  -p 5432:5432 \
+  postgres:16-alpine
+```
+
+## Step 2: Add FileWeft dependencies
+
+Create or edit `build.gradle.kts`:
 
 ```kotlin
-// build.gradle.kts
 plugins {
     kotlin("jvm") version "2.1.21"
     id("org.springframework.boot") version "3.4.0"
     kotlin("plugin.spring") version "2.1.21"
 }
 
-dependencyManagement {
-    imports {
-        mavenBom("ai.icen:fileweft-bom:0.0.2-SNAPSHOT")
-    }
-}
-
 dependencies {
-    implementation("ai.icen:fileweft-web-spring-boot3-starter")
-    implementation("ai.icen:fileweft-persistence")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.1")
+    implementation("ai.icen:fileweft-persistence:0.0.1")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```
@@ -37,62 +63,137 @@ dependencies {
 > [!NOTE]
 > Boot 2 hosts use `fileweft-web-spring-boot2-starter`. The Web API contract is identical.
 
-## Provide trusted host context
+## Step 3: Provide trusted host context
 
-FileWeft never reads tenant, user or permissions from HTTP parameters. You must supply three beans:
+Create a small config class with the three beans FileWeft requires:
 
 ```kotlin
-@Component
-class HostTenantProvider : TenantProvider {
-    override fun currentTenant(): TenantContext =
-        TenantContext.current() ?: TenantContext.of(Identifier.from("default"))
-}
+import ai.icen.fw.core.context.TenantContext
+import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.tenant.TenantProvider
+import ai.icen.fw.spi.identity.UserIdentity
+import ai.icen.fw.spi.identity.UserRealmProvider
+import ai.icen.fw.spi.authorization.AuthorizationDecision
+import ai.icen.fw.spi.authorization.AuthorizationProvider
+import ai.icen.fw.spi.authorization.AuthorizationRequest
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
 
-@Component
-class HostUserRealmProvider : UserRealmProvider {
-    override fun currentUser(): UserIdentity? =
-        SecurityContextHolder.getContext().authentication?.name
-            ?.let { UserIdentity(Identifier.from(it), displayName = it) }
+@Configuration
+class HostContextConfiguration {
 
-    override fun findUser(userId: Identifier): UserIdentity? =
-        currentUser()?.takeIf { it.id == userId }
-}
+    @Bean
+    fun tenantProvider(): TenantProvider = object : TenantProvider {
+        override fun currentTenant(): TenantContext =
+            TenantContext(Identifier("dev-tenant"))
+    }
 
-@Component
-class HostAuthorizationProvider : AuthorizationProvider {
-    override fun decide(request: AuthorizationRequest): AuthorizationDecision {
-        // Your real ACL check goes here.
-        return AuthorizationDecision.GRANTED
+    @Bean
+    fun userRealmProvider(): UserRealmProvider = object : UserRealmProvider {
+        override fun currentUser(): UserIdentity =
+            UserIdentity(Identifier("dev-user"), displayName = "Developer")
+
+        override fun findUser(userId: Identifier): UserIdentity? =
+            currentUser().takeIf { it.id == userId }
+    }
+
+    @Bean
+    fun authorizationProvider(): AuthorizationProvider = object : AuthorizationProvider {
+        override fun authorize(request: AuthorizationRequest): AuthorizationDecision =
+            AuthorizationDecision(allowed = true)
     }
 }
 ```
 
-## Configure FileWeft
+## Step 4: Configure development fallbacks
 
-Add a small set of properties so FileWeft can locate its Flyway migrations and storage:
+Create `src/main/resources/application-dev.yaml`:
 
 ```yaml
 fileweft:
+  default-tenant-enabled: true
+  default-tenant-id: dev-tenant
   storage:
-    adapter: local
-    local:
-      root-path: ${user.home}/fileweft-store
+    local-enabled: true
+    local-root: ${user.home}/fileweft-store
+  persistence:
+    migration-mode: migrate
+    schema: fileweft
+    create-schema: true
+
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/fileweft
+    url: jdbc:postgresql://localhost:5432/fileweft?currentSchema=fileweft
     username: fileweft
     password: fileweft
 ```
 
-## Upload your first file
+> [!WARNING]
+> `default-tenant-enabled` and `local-enabled` are development shortcuts. They do not provide production multi-tenancy or shared storage across nodes.
 
-Start the application and create a document with a multipart request:
+## Step 5: Start the application
 
 ```bash
-curl -F "documentNumber=DOC-001" \
-     -F "title=First document" \
-     -F "file=@report.pdf" \
-     http://localhost:8080/fileweft/v1/documents
+./gradlew bootRun --args='--spring.profiles.active=dev'
 ```
 
-The response contains the committed `documentId` and `versionId`. No second read is performed, so the command succeeds even when the caller does not hold the read permission.
+Wait for the Flyway migrations to finish. You should see the application listening on port `8080`.
+
+## Step 6: Upload your first file
+
+The formal v1 endpoint creates a document and its first version in a single multipart request. Pick any PDF or text file:
+
+```bash
+curl -i -X POST \
+  -F "documentNumber=DOC-001" \
+  -F "title=My first document" \
+  -F "file=@report.pdf" \
+  http://localhost:8080/fileweft/v1/documents
+```
+
+A successful response looks like this:
+
+```json
+{
+  "code": "OK",
+  "message": "OK",
+  "data": {
+    "documentId": "doc_...",
+    "versionId": "ver_..."
+  },
+  "error": null,
+  "traceId": "..."
+}
+```
+
+The `documentId` and `versionId` come from the committed aggregate. FileWeft deliberately does not perform a second read after the command, so the response succeeds even if the caller does not hold read permission.
+
+## Step 7: Inspect the result
+
+```bash
+# List documents
+curl http://localhost:8080/fileweft/v1/documents
+
+# Check system health
+curl http://localhost:8080/fileweft/v1/health
+```
+
+## FAQ
+
+**Q: Why use multipart instead of the resumable upload API?**
+
+Multipart `POST /fileweft/v1/documents` is the fastest way to create a document with a small file. For large files, parallel parts, or unreliable networks, use the resumable upload API (`POST /fileweft/v1/uploads`).
+
+**Q: Can I expose `/api/**` endpoints instead?**
+
+No. The formal public protocol is `/fileweft/v1/**`. Internal `/api/**` routes are development-only and may change without notice.
+
+**Q: The local filesystem fallback works on my laptop; can I use it in production?**
+
+No. It is only for single-node development. Production deployments need a shared `StorageAdapter` such as S3, MinIO, or OSS.
+
+## Next steps
+
+- [Read First integration to wire production SPIs](first-integration.md)
+- [Explore the HTTP API reference](../reference/http-api.md)
+- [Implement a custom storage adapter](../guides/storage-adapter.md)

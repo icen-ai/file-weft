@@ -5,23 +5,150 @@ order: 3
 locale: "en"
 nav: "First integration"
 title: "Wire a trustworthy host"
-lead: "A production host must provide trusted tenant, identity and authorization context, a shared persistent StorageAdapter, and an explicit migration policy."
-format: "html"
+lead: "Move from a dependency declaration to a production host by providing trusted identity context, shared storage, PostgreSQL schema ownership, and separated runtime roles."
+format: "markdown"
 ---
 
-<h2 data-step="01">Supply trust context</h2>
-<p>Implement <code>TenantProvider</code>, <code>UserRealmProvider</code> and <code>AuthorizationProvider</code> from data already authenticated by your host. Controllers must never accept tenant IDs, user IDs, roles or permission results as business parameters.</p><aside class="callout" data-mark="ID"><div><strong>User IDs are opaque safe strings</strong><p>Long, Int, UUID and external directory identifiers must be converted to one permanently stable string format by the host. IDs are case-sensitive, at most 256 UTF-16 code units, have no leading or trailing Unicode whitespace, and exclude control and FileWeft-rejected format characters.</p></div></aside>
+## What this page covers
 
-<h2 data-step="02">Choose storage and database ownership</h2>
-<p>Multi-node deployments need a shared persistent <code>StorageAdapter</code>. For PostgreSQL, set the DataSource current schema and the FileWeft schema assertion to the same value.</p><div class="code-block"><div class="code-label"><span>YAML</span></div><pre><code>spring:
+Adding FileWeft to your classpath is not enough. A production host must answer three questions on every request:
+
+1. Which tenant is this?
+2. Who is the user?
+3. Are they allowed to do this?
+
+This page shows how to wire the three SPI beans FileWeft expects, how to align PostgreSQL and storage ownership, and how to split API and worker nodes so background leases do not stall HTTP requests.
+
+## Step 1: Supply trusted identity context
+
+FileWeft never reads tenant, user, role, or permission results from HTTP parameters. You provide three beans from data already authenticated by your host.
+
+```kotlin
+import ai.icen.fw.core.context.TenantContext
+import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.tenant.TenantProvider
+import ai.icen.fw.spi.identity.UserIdentity
+import ai.icen.fw.spi.identity.UserRealmProvider
+import ai.icen.fw.spi.authorization.AuthorizationDecision
+import ai.icen.fw.spi.authorization.AuthorizationProvider
+import ai.icen.fw.spi.authorization.AuthorizationRequest
+import org.springframework.stereotype.Component
+
+@Component
+class HostTenantProvider : TenantProvider {
+    override fun currentTenant(): TenantContext {
+        // Resolve from your host's authenticated context: JWT claim, header, path, etc.
+        val tenantId = resolveTenantIdFromHost()
+        return TenantContext(Identifier(tenantId))
+    }
+}
+
+@Component
+class HostUserRealmProvider : UserRealmProvider {
+    override fun currentUser(): UserIdentity? {
+        val userId = resolveCurrentUserIdFromHost()
+            ?: return null
+        return UserIdentity(id = Identifier(userId), displayName = userId)
+    }
+
+    override fun findUser(userId: Identifier): UserIdentity? {
+        // Look up the user in your host directory, or return currentUser() if it matches.
+        return currentUser()?.takeIf { it.id == userId }
+    }
+}
+
+@Component
+class HostAuthorizationProvider : AuthorizationProvider {
+    override fun authorize(request: AuthorizationRequest): AuthorizationDecision {
+        // Delegate to your ACL / policy engine.
+        val allowed = checkHostPolicy(request)
+        return AuthorizationDecision(allowed = allowed)
+    }
+}
+```
+
+> [!WARNING]
+> Controllers must not accept tenant IDs, user IDs, roles, or permission results as business parameters. Trust only what your host has already authenticated and authorized.
+
+## Step 2: Respect user ID safety rules
+
+User IDs cross FileWeft boundaries as opaque strings. Convert Long, Int, UUID, or external directory identifiers to one permanently stable string format in your host.
+
+A valid FileWeft user ID:
+
+- is case-sensitive,
+- contains at most 256 UTF-16 code units,
+- has no leading or trailing Unicode whitespace,
+- contains no ISO control or FileWeft-rejected format characters.
+
+> [!NOTE]
+> Do not trim, lowercase, or normalize IDs inside FileWeft. Do it once, consistently, in the host layer before converting to `Identifier`.
+
+## Step 3: Choose storage and database ownership
+
+Multi-node deployments need a shared, persistent `StorageAdapter`. Do not rely on the local filesystem fallback across pods or machines.
+
+For PostgreSQL, set the DataSource current schema and the FileWeft schema assertion to the same value:
+
+```yaml
+spring:
   datasource:
     url: jdbc:postgresql://db:5432/app?currentSchema=fileweft
 
 fileweft:
   persistence:
-    migration-mode: validate
+    migration-mode: validate # migrate | validate | disabled
     schema: fileweft
-    create-schema: false</code></pre></div>
+    create-schema: false
+```
 
-<h2 data-step="03">Separate runtime roles</h2>
-<p>Run API nodes without queue consumption. Run separate Worker nodes against the same database and storage with only the processors they need. This keeps HTTP latency and background leases independent.</p>
+| Mode | When to use |
+| --- | --- |
+| `migrate` | Development or when FileWeft owns the schema lifecycle. |
+| `validate` | Production: verify that the schema matches Flyway migrations on startup. |
+| `disabled` | You manage schema changes externally; FileWeft skips migration checks. |
+
+> [!TIP]
+> In production, create the schema with your own DDL pipeline or a dedicated migration user, then run FileWeft with `validate` and `create-schema: false`.
+
+## Step 4: Separate runtime roles
+
+FileWeft has two runtime personalities. Run them as separate process groups in production:
+
+| Role | Handles | Typical config |
+| --- | --- | --- |
+| **API node** | HTTP requests | Web starter enabled; workers disabled or read-only. |
+| **Worker node** | Outbox events, task queues, upload cleanup | Runtime starter; `process-outbox: true`; no HTTP surface. |
+
+Example worker-only node:
+
+```yaml
+fileweft:
+  worker:
+    enabled: true
+    process-outbox: true
+    process-tasks: true
+    process-upload-cleanup: true
+```
+
+This keeps HTTP latency independent of background lease contention and retry storms.
+
+## FAQ
+
+**Q: Can I run a single node with both API and workers enabled?**
+
+Yes, for local development or very small deployments. In production, split them so you can scale, deploy, and restart each role independently.
+
+**Q: Does FileWeft provide a default tenant provider?**
+
+There is a development-only fallback (`fileweft.default-tenant-enabled=true`), but it is not a production multi-tenant solution. Always implement `TenantProvider` from your host's authentication context.
+
+**Q: Where do catalog folders live?**
+
+Folder topology is owned by your host through the `DocumentCatalogProvider` SPI. FileWeft writes a reserved `catalog.folder-id` metadata key on the asset, but storage paths never contain folder IDs.
+
+## Next steps
+
+- [Run the 5-minute quickstart on your laptop](quickstart.md)
+- [Implement a storage adapter](../guides/storage-adapter.md)
+- [Read the configuration reference](../reference/configuration.md)

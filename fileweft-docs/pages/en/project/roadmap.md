@@ -9,23 +9,124 @@ lead: "This backlog is the hand-off contract for future FileWeft development. A 
 format: "html"
 ---
 
-<h2 data-step="01">How to read the roadmap</h2>
-<table class="comparison-table"><thead><tr><th>State</th><th>Meaning</th></tr></thead><tbody><tr><td>Planned</td><td>Scope is agreed, but no completion claim is allowed.</td></tr><tr><td>In progress</td><td>Some implementation or evidence exists; every unchecked acceptance item remains release-blocking.</td></tr><tr><td>Complete</td><td>All acceptance evidence is reproducible from a clean environment and the completion boundary is satisfied.</td></tr></tbody></table><aside class="callout warning" data-mark="!"><div><strong>Evidence is version-specific</strong><p>Do not copy a success from another database, Boot generation, vendor emulator or earlier release into a completion claim. If evidence cannot be reproduced, the item remains open.</p></div></aside>
+<h2>How to read the roadmap</h2>
 
-<h2 data-step="02">0.0.2 · close the current development line</h2>
-<table class="comparison-table"><thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead><tbody><tr><td>Runtime-closure SBOM; SNAPSHOT release verifier; formal resumable-upload, catalog and agent HTTP resources.</td><td>The SBOM verifier derives every published module's actual runtime closure and rejects test, compiler and build-tool leakage; the release verifier proves SNAPSHOT/stable version rules; Boot 2 and Boot 3 contract, context and MVC tests plus browser E2E prove tenant, permission, cursor, error and redaction behavior for all three HTTP families.</td><td>Do not publish 0.0.2 while the SBOM is only a dependency dump, while a verifier can accept the wrong release identity, or while any resource exists only as an internal service, dev-only route or one-Boot-generation controller.</td></tr></tbody></table><aside class="callout" data-mark="IN PROGRESS"><div><strong>Current hand-off status</strong><p>Runtime-closure SBOM, metadata-driven timestamped SNAPSHOT verification, and the five-operation formal resumable-upload contract, runtime, mirrored Boot 2/3 MVC adapters, and formal browser-path acceptance are implemented. Still open: release/SNAPSHOT fixture tests and corrupt, duplicate, XXE, path-traversal and mixed-build negatives; exact repository inventory, artifact-level metadata/checksum and dangerous JAR-entry checks; formal catalog and agent HTTP resources with dual-Boot/browser acceptance; then the final clean release gate.</p></div></aside>
+<p>Each line below names a version, the concrete deliverables, the evidence required to claim completion, and the boundary that must not be crossed. Treat every unchecked item as release-blocking.</p>
 
-<h2 data-step="03">0.1.0 · production supply chain</h2>
-<table class="comparison-table"><thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead><tbody><tr><td>CNB CI using confirmed official syntax; OSV vulnerability policy; artifact signing and provenance; remote cold-cache consumption; one release identity from source to registry.</td><td>A clean CNB runner executes the full gate with the syntax verified against current CNB documentation; a pinned OSV scan enforces an explicit severity/exception policy; consumers verify signatures and provenance; a clean machine with empty Gradle caches resolves and runs the published artifacts from CNB; tag, commit, POM, module metadata, SBOM and provenance all report the same version and source revision.</td><td>Local publication, a warm developer cache, an unsigned checksum, an unverified sample YAML or a registry page screenshot cannot be used to claim a production release pipeline.</td></tr></tbody></table>
+<table class="comparison-table">
+<thead><tr><th>State</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Planned</td><td>Scope is agreed, but no completion claim is allowed.</td></tr>
+<tr><td>In progress</td><td>Some implementation or evidence exists; every unchecked acceptance item remains release-blocking.</td></tr>
+<tr><td>Complete</td><td>All acceptance evidence is reproducible from a clean environment and the completion boundary is satisfied.</td></tr>
+</tbody>
+</table>
 
-<h2 data-step="04">0.2.0 · databases and host integration</h2>
-<table class="comparison-table"><thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead><tbody><tr><td>MySQL 8 support; wider reusable TestKit coverage for host SPIs; structured logging and OpenTelemetry integration.</td><td>Fresh-install, supported-version upgrade, concurrency, tenant-isolation and rollback-safe migration suites pass against real MySQL 8 as well as PostgreSQL; external sample hosts run identity, authorization, tenant, catalog, workflow, storage, connector and agent contract kits; an OpenTelemetry Collector test asserts trace/metric/log correlation, redaction and bounded cardinality.</td><td>H2 compatibility, SQL parsing, mocks, a single happy-path adapter test or visually inspected logs do not prove MySQL, SPI or observability support.</td></tr></tbody></table>
+<aside class="callout warning" data-mark="!"><div><strong>Evidence is version-specific</strong><p>Do not copy a success from another database, Boot generation, vendor emulator or earlier release into a completion claim. If evidence cannot be reproduced, the item remains open.</p></div></aside>
 
-<h2 data-step="05">0.3.0 · operations at scale</h2>
-<table class="comparison-table"><thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead><tbody><tr><td>Retention and legal-hold rules; partition lifecycle; capacity envelopes; declared RPO/RTO; backup and restore procedures; measurable SLOs.</td><td>Time-controlled retention and hold tests prove safe deletion; partition create/rotate/archive/drop tests preserve tenant and audit invariants; repeatable load reports publish tested document, version, object and queue limits; fault drills restore database and object storage into a clean environment within the declared RPO/RTO; dashboards and alerts are exercised against agreed availability, latency and backlog SLOs.</td><td>Configuration examples, an untested runbook, synthetic throughput without bottleneck disclosure, or a backup that has never been restored cannot be described as production-scale readiness.</td></tr></tbody></table>
+<h2>0.0.2 · close the current development line</h2>
 
-<h2 data-step="06">0.4.0 · official vendor adapters</h2>
-<table class="comparison-table"><thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead><tbody><tr><td>Maintained adapters for OSS, Dify, ESE and AppBuilder against their official services.</td><td>Credential-isolated contract environments prove the documented vendor API versions, authentication, timeout, retry classification, idempotent delivery, safe repeated removal, pagination or upload limits, redacted failures, health checks and recovery; compatibility and ownership are documented per adapter.</td><td>A generic S3 implementation, WireMock response, reverse-engineered payload or dev simulator does not establish official vendor support. An adapter without repeatable real-service evidence remains experimental and must not be advertised as supported.</td></tr></tbody></table>
+<p>The 0.0.2 line finishes what 0.0.1 started: a clean HTTP surface, trustworthy release metadata and reproducible verification.</p>
 
-<h2 data-step="07">1.0.0 · stable compatibility line</h2>
-<table class="comparison-table"><thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead><tbody><tr><td>Public API and ABI freeze; supported migration and upgrade matrix; security audit; complete operator, integrator and compatibility documentation.</td><td>Binary and source compatibility gates compare every public artifact with the declared baseline; clean installs and every supported version-to-version upgrade pass across the published JDK, Spring Boot and database matrix; threat models, dependency findings, tenant/authorization/storage abuse cases and remediation are reviewed; every documented command and example is executable; the support and deprecation policy names exact versions and dates.</td><td>Do not label the project 1.0 while a public contract is still provisional, a supported upgrade path is untested, a high-severity security finding is unresolved, or compatibility claims exceed the verified matrix.</td></tr></tbody></table><aside class="callout" data-mark="1.0"><div><strong>Stability is a maintained obligation</strong><p>Passing the 1.0 gate freezes the declared contracts; later removals require the published deprecation window, migration guidance and compatibility evidence. A tag alone does not create stability.</p></div></aside>
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>Runtime-closure SBOM; SNAPSHOT release verifier; formal resumable-upload, catalog and agent HTTP resources.</td>
+<td>The SBOM verifier derives every published module's actual runtime closure and rejects test, compiler and build-tool leakage; the release verifier proves SNAPSHOT/stable version rules; Boot 2 and Boot 3 contract, context and MVC tests plus browser E2E prove tenant, permission, cursor, error and redaction behavior for all three HTTP families.</td>
+<td>Do not publish 0.0.2 while the SBOM is only a dependency dump, while a verifier can accept the wrong release identity, or while any resource exists only as an internal service, dev-only route or one-Boot-generation controller.</td>
+</tr>
+</tbody>
+</table>
+
+<aside class="callout" data-mark="IN PROGRESS"><div><strong>Current hand-off status</strong><p>Runtime-closure SBOM, metadata-driven timestamped SNAPSHOT verification, and the five-operation formal resumable-upload contract, runtime, mirrored Boot 2/3 MVC adapters, and formal browser-path acceptance are implemented. Still open: release/SNAPSHOT fixture tests and corrupt, duplicate, XXE, path-traversal and mixed-build negatives; exact repository inventory, artifact-level metadata/checksum and dangerous JAR-entry checks; formal catalog and agent HTTP resources with dual-Boot/browser acceptance; then the final clean release gate.</p></div></aside>
+
+<h2>0.1.0 · production supply chain</h2>
+
+<p>0.1.0 is about proving that published artifacts can be consumed, verified and traced from source to registry.</p>
+
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>CNB CI using confirmed official syntax; OSV vulnerability policy; artifact signing and provenance; remote cold-cache consumption; one release identity from source to registry.</td>
+<td>A clean CNB runner executes the full gate with the syntax verified against current CNB documentation; a pinned OSV scan enforces an explicit severity/exception policy; consumers verify signatures and provenance; a clean machine with empty Gradle caches resolves and runs the published artifacts from CNB; tag, commit, POM, module metadata, SBOM and provenance all report the same version and source revision.</td>
+<td>Local publication, a warm developer cache, an unsigned checksum, an unverified sample YAML or a registry page screenshot cannot be used to claim a production release pipeline.</td>
+</tr>
+</tbody>
+</table>
+
+<h2>0.2.0 · databases and host integration</h2>
+
+<p>0.2.0 widens the supported persistence layer and gives host authors reusable test kits.</p>
+
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>MySQL 8 support; wider reusable TestKit coverage for host SPIs; structured logging and OpenTelemetry integration.</td>
+<td>Fresh-install, supported-version upgrade, concurrency, tenant-isolation and rollback-safe migration suites pass against real MySQL 8 as well as PostgreSQL; external sample hosts run identity, authorization, tenant, catalog, workflow, storage, connector and agent contract kits; an OpenTelemetry Collector test asserts trace/metric/log correlation, redaction and bounded cardinality.</td>
+<td>H2 compatibility, SQL parsing, mocks, a single happy-path adapter test or visually inspected logs do not prove MySQL, SPI or observability support.</td>
+</tr>
+</tbody>
+</table>
+
+<h2>0.3.0 · operations at scale</h2>
+
+<p>0.3.0 makes FileWeft operable in high-volume, regulated environments with clear recovery objectives.</p>
+
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>Retention and legal-hold rules; partition lifecycle; capacity envelopes; declared RPO/RTO; backup and restore procedures; measurable SLOs.</td>
+<td>Time-controlled retention and hold tests prove safe deletion; partition create/rotate/archive/drop tests preserve tenant and audit invariants; repeatable load reports publish tested document, version, object and queue limits; fault drills restore database and object storage into a clean environment within the declared RPO/RTO; dashboards and alerts are exercised against agreed availability, latency and backlog SLOs.</td>
+<td>Configuration examples, an untested runbook, synthetic throughput without bottleneck disclosure, or a backup that has never been restored cannot be described as production-scale readiness.</td>
+</tr>
+</tbody>
+</table>
+
+<h2>0.4.0 · official vendor adapters</h2>
+
+<p>0.4.0 ships maintained adapters for named vendor services, each backed by real-service evidence.</p>
+
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>Maintained adapters for OSS, Dify, ESE and AppBuilder against their official services.</td>
+<td>Credential-isolated contract environments prove the documented vendor API versions, authentication, timeout, retry classification, idempotent delivery, safe repeated removal, pagination or upload limits, redacted failures, health checks and recovery; compatibility and ownership are documented per adapter.</td>
+<td>A generic S3 implementation, WireMock response, reverse-engineered payload or dev simulator does not establish official vendor support. An adapter without repeatable real-service evidence remains experimental and must not be advertised as supported.</td>
+</tr>
+</tbody>
+</table>
+
+<h2>1.0.0 · stable compatibility line</h2>
+
+<p>1.0.0 freezes public contracts and commits to a supported upgrade path.</p>
+
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>Public API and ABI freeze; supported migration and upgrade matrix; security audit; complete operator, integrator and compatibility documentation.</td>
+<td>Binary and source compatibility gates compare every public artifact with the declared baseline; clean installs and every supported version-to-version upgrade pass across the published JDK, Spring Boot and database matrix; threat models, dependency findings, tenant/authorization/storage abuse cases and remediation are reviewed; every documented command and example is executable; the support and deprecation policy names exact versions and dates.</td>
+<td>Do not label the project 1.0 while a public contract is still provisional, a supported upgrade path is untested, a high-severity security finding is unresolved, or compatibility claims exceed the verified matrix.</td>
+</tr>
+</tbody>
+</table>
+
+<aside class="callout" data-mark="1.0"><div><strong>Stability is a maintained obligation</strong><p>Passing the 1.0 gate freezes the declared contracts; later removals require the published deprecation window, migration guidance and compatibility evidence. A tag alone does not create stability.</p></div></aside>
+
+<h2>FAQ</h2>
+
+<p><strong>Can a planned item slip into a later version?</strong> Yes. If acceptance evidence is missing, the item stays open and may be reassigned to the next line.</p>
+
+<p><strong>Who decides when an item is complete?</strong> The maintainers, based on reproducible evidence in the repository or the named real environment, not on a single green test or written intention.</p>
+
+<h2>Next steps</h2>
+
+<ul>
+<li>Read the <a href="#/project/release-0-0-2-development">0.0.2 development</a> page for the current hand-off status.</li>
+<li>See <a href="#/project/contributing">Contributing</a> if you want to help close an open item.</li>
+</ul>

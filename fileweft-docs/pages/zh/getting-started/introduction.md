@@ -5,15 +5,64 @@ order: 1
 locale: "zh"
 nav: "介绍"
 title: "为必须长久运行的文件系统打地基"
-lead: "FileWeft 是可扩展的 Kotlin/JVM 企业文件基础设施，覆盖文档生命周期、存储、审批、交付与诊断，但不接管宿主的身份、目录树和业务规则。"
-format: "html"
+lead: "了解 FileWeft 的定位、边界与三种接入方式，找到适合你团队的起点。"
+format: "markdown"
 ---
 
-<h2 data-step="01">FileWeft 是什么</h2>
-<p>FileWeft 在稳定的 Application 与 SPI 边界后协调可靠文件操作，负责文档版本、生命周期、审计证据、Outbox 交付和可诊断后台任务。</p><table class="comparison-table"><thead><tr><th>FileWeft 负责</th><th>宿主负责</th></tr></thead><tbody><tr><td>文档、版本和交付状态</td><td>认证与用户目录</td></tr><tr><td>Outbox、任务租约和审计证据</td><td>目录拓扑与目录 ACL</td></tr><tr><td>稳定的存储及连接器契约</td><td>业务策略与界面</td></tr></tbody></table>
+## 这页解决什么问题？
 
-<h2 data-step="02">设计立场</h2>
-<p>外部系统默认不可靠。FileWeft 先提交本地业务状态，在同一事务记录持久任务，再在数据库长事务之外调用存储或下游连接器。</p><aside class="callout" data-mark="SPI"><div><strong>优先扩展而不是修改</strong><p>存储、身份、授权、租户、目录、工作流、连接器和 AI 行为都通过契约进入。Core 与 Domain 不依赖 Spring、数据库或厂商 SDK。</p></div></aside>
+大多数团队都是从“简单上传”开始的：一个接口、一个对象存储桶、一条数据库记录。随后需求接踵而至：版本管理、审批流程、审计追溯、生命周期规则、多租户隔离、下游交付。于是业务规则和厂商 SDK 调用越缠越紧，代码也越来越难维护。
 
-<h2 data-step="03">选择接入方式</h2>
-<ul><li><b>仅 SPI：</b>不引入 Spring 运行时，只实现或使用契约。</li><li><b>运行时 Starter：</b>为 Spring Boot 2 或 3 装配持久化、Worker 与应用服务。</li><li><b>Web Starter：</b>为同一 Boot 代际增加稳定的 <code>/fileweft/v1</code> HTTP 接口。</li></ul>
+FileWeft 是一个面向企业的 Kotlin/JVM 文件基础设施框架，为文档生命周期、存储抽象、审批、交付与诊断提供稳定底座，同时不接管你的身份提供商、目录结构或业务策略。
+
+> [!TIP]
+> 把 FileWeft 当成“机舱”，而不是“驾驶舱”。它负责让文件 machinery 可靠运转；你的宿主决定谁能进来、文件代表什么业务含义。
+
+## FileWeft 不是什么
+
+| 不是这个 | 原因 |
+| --- | --- |
+| 简单上传模块 | 它负责版本、生命周期、审计与交付编排。 |
+| 业务文档系统 | 不内置你的审批矩阵或目录分类。 |
+| Dify / ESE 包装器 | 连接器是可插拔 SPI，不是硬编码的厂商集成。 |
+| 云存储 SDK | 存储通过 `StorageAdapter` 抽象，可用 MinIO、S3、OSS 或自实现。 |
+
+## FileWeft 负责什么，宿主负责什么
+
+| FileWeft 负责 | 宿主负责 |
+| --- | --- |
+| 文档、版本和交付状态 | 认证与用户目录 |
+| Outbox、任务租约和审计证据 | 目录拓扑与目录 ACL |
+| 稳定的存储及连接器契约 | 业务策略与展示层 |
+| 租户作用域标识与隔离 | 真实租户解析（Header、JWT、路径等） |
+
+## 设计立场
+
+FileWeft 基于几条不可妥协的假设：
+
+1. **外部系统不可靠。** 存储桶、下游连接器、AI 服务都会超时或报错。FileWeft 先提交本地业务状态，在同一事务记录持久任务，再在长事务之外调用外部系统。
+2. **SPI 优先。** 存储、身份、授权、租户、目录、工作流、连接器、AI 行为都通过契约进入；Core 与 Domain 不依赖 Spring、数据库或厂商 SDK。
+3. **失败关闭。** 缺失租户上下文或歧义 Provider 会让操作不可用，不会静默扩大访问范围。
+4. **Doctor 是一等公民。** 主要组件都暴露诊断能力，让运维在用户之前发现问题。
+
+> [!NOTE]
+> FileWeft 以 JDK 8 为基线，并在 JDK 21 验证。公共 API 保持 Java 友好：SPI 契约中不使用 `suspend`、`Flow`、`value class`、`sealed interface` 或 `data object`。
+
+## 选择接入方式
+
+FileWeft 提供三种接入方式，按你对控制力的需求选择：
+
+| 接入方式 | 适合场景 | 你需要做什么 |
+| --- | --- | --- |
+| **仅 SPI** | 类库或自定义运行时 | 直接实现或使用 `ai.icen.fw.spi` 契约。 |
+| **Runtime Starter** | 需要编程式 API 的 Spring Boot 宿主 | 引入 `fileweft-spring-boot2-starter` 或 `fileweft-spring-boot3-starter`，自动装配持久化、Worker 与应用服务。 |
+| **Web Starter** | 需要 REST API 的宿主 | 引入 `fileweft-web-spring-boot2-starter` 或 `fileweft-web-spring-boot3-starter`，暴露稳定的 `/fileweft/v1` 接口。 |
+
+> [!WARNING]
+> 不要在同一应用混用 Boot 2 与 Boot 3 Starter。选择一个代际，并让所有 FileWeft 制品与之对齐。
+
+## 下一步
+
+- [安装 FileWeft 0.0.1](installation.md)
+- [装配可信宿主](first-integration.md)
+- [5 分钟快速开始](quickstart.md)

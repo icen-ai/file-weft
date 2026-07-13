@@ -22,6 +22,7 @@ const elements = {
   navToggle: document.querySelector("#nav-toggle"),
   navScrim: document.querySelector("#nav-scrim"),
   toast: document.querySelector("#toast"),
+  skillDownload: document.querySelector("#skill-download"),
 };
 
 const routes = orderedRoutes();
@@ -205,6 +206,7 @@ function renderPage(sectionTarget = "") {
   enhanceCodeBlocks();
   renderBreadcrumbs(group, meta);
   renderToc(body);
+  observeTocActive(body);
   renderNavigation();
   closeMobileNav();
 
@@ -226,6 +228,9 @@ function renderBreadcrumbs(group, meta) {
   elements.breadcrumbs.append(home, groupName, current);
 }
 
+let tocObserver = null;
+let tocScrollCleanup = null;
+
 function renderToc(body) {
   const fragment = document.createDocumentFragment();
   body.querySelectorAll("h2").forEach((heading) => {
@@ -235,6 +240,75 @@ function renderToc(body) {
     fragment.append(link);
   });
   elements.toc.replaceChildren(fragment);
+}
+
+function observeTocActive(body) {
+  if (tocObserver) {
+    tocObserver.disconnect();
+    tocObserver = null;
+  }
+  if (tocScrollCleanup) {
+    tocScrollCleanup();
+    tocScrollCleanup = null;
+  }
+
+  const sections = Array.from(body.querySelectorAll("section[id]"));
+  const links = Array.from(elements.toc.querySelectorAll("a"));
+  if (sections.length === 0 || links.length === 0) return;
+
+  const setActive = (activeId) => {
+    links.forEach((link) => {
+      // The section parameter lives inside the hash fragment, not the URL query string.
+      const href = link.getAttribute("href") || "";
+      const match = href.match(/[?&]section=([^&]+)/);
+      const linkSection = match ? decodeURIComponent(match[1]) : "";
+      link.classList.toggle("active", linkSection === activeId);
+    });
+  };
+
+  // The active section is the one whose top has just crossed the offset line
+  // from above. If none has crossed yet, keep the first section active; if we
+  // are near the bottom, keep the last section active.
+  const chooseActive = () => {
+    const offset = 120; // pixels from the top of the viewport
+    let best = null;
+    let bestTop = Number.NEGATIVE_INFINITY;
+    for (const section of sections) {
+      const top = section.getBoundingClientRect().top;
+      if (top <= offset && top > bestTop) {
+        bestTop = top;
+        best = section;
+      }
+    }
+    if (best) return best.id;
+    const nearBottom = (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 50;
+    return nearBottom ? sections[sections.length - 1].id : sections[0].id;
+  };
+
+  const update = () => setActive(chooseActive());
+
+  tocObserver = new IntersectionObserver(update, {
+    root: null,
+    rootMargin: "-120px 0px -60% 0px",
+    threshold: 0,
+  });
+  sections.forEach((section) => tocObserver.observe(section));
+
+  // Scroll listener as a reliable fallback, throttled via requestAnimationFrame.
+  let ticking = false;
+  const onScroll = () => {
+    if (!ticking) {
+      requestAnimationFrame(() => {
+        update();
+        ticking = false;
+      });
+      ticking = true;
+    }
+  };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  tocScrollCleanup = () => window.removeEventListener("scroll", onScroll, { passive: true });
+
+  update();
 }
 
 function enhanceCodeBlocks() {
@@ -277,6 +351,27 @@ function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.classList.add("show");
   toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 1600);
+}
+
+async function downloadSkill() {
+  try {
+    const response = await fetch("./SKILL.md");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const text = await response.text();
+    const blob = new Blob([text], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "SKILL.md";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast(ui[state.locale].skillDownloaded);
+  } catch (error) {
+    console.error("Failed to download SKILL.md:", error);
+    showToast(ui[state.locale].skillDownloadFailed);
+  }
 }
 
 function searchIndex() {
@@ -388,6 +483,7 @@ document.querySelectorAll("[data-locale]").forEach((button) => {
 });
 elements.searchTrigger.addEventListener("click", openSearch);
 elements.mobileSearch.addEventListener("click", openSearch);
+elements.skillDownload.addEventListener("click", downloadSkill);
 elements.searchClose.addEventListener("click", closeSearch);
 elements.searchInput.addEventListener("input", () => runSearch(elements.searchInput.value));
 elements.searchInput.addEventListener("keydown", (event) => {

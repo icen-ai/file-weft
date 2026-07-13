@@ -5,15 +5,30 @@ order: 4
 locale: "en"
 nav: "Storage adapter"
 title: "Implement a storage adapter"
-lead: "Add a new backend by implementing the StorageAdapter SPI. The example below stores objects on the local filesystem."
+lead: "Add a new object backend by implementing the StorageAdapter SPI. FileWeft builds object names and metadata; your adapter only materializes bytes."
 format: "markdown"
 ---
 
-## The storage contract
+FileWeft is storage-agnostic at the core. Whether you store objects on MinIO, Alibaba Cloud OSS, Amazon S3, or a local filesystem, the contract is the same. This page walks through a complete `StorageAdapter` implementation and explains where it plugs in.
 
-A storage adapter is responsible for single-part and multipart uploads, downloads, deletes, existence checks and temporary access URLs. FileWeft builds the object name and metadata; the adapter only needs to materialize bytes.
+## 1. The storage contract
 
-## Local filesystem adapter
+A storage adapter must handle:
+
+| Operation | Method | Typical use |
+| --- | --- | --- |
+| Single-part upload | `upload` | Small files or direct controller uploads. |
+| Multipart upload | `beginMultipartUpload`, `uploadPart`, `completeMultipartUpload`, `abortMultipartUpload` | Resumable upload protocol. |
+| Download | `download` | Serving document content. |
+| Delete | `delete` | Lifecycle removal and cleanup. |
+| Existence check | `exists` | Doctor checks and idempotency. |
+| Temporary URL | `accessUrl` | Connector sync and source access. |
+
+FileWeft constructs the object name, supplies tenant-scoped metadata, and expects a `StorageObjectLocation` back. The adapter is responsible only for durability, concurrency, and cleanup.
+
+## 2. Local filesystem adapter
+
+The example below stores objects under the user's home directory. It is suitable for development and single-node tests, not for production clusters.
 
 ```kotlin
 @Component
@@ -60,7 +75,12 @@ class LocalFileStorageAdapter : StorageAdapter {
         return MultipartUpload(uploadId, location = StorageObjectLocation("local", dir.toString()))
     }
 
-    override fun uploadPart(upload: MultipartUpload, partNumber: Int, content: InputStream, contentLength: Long): MultipartPart {
+    override fun uploadPart(
+        upload: MultipartUpload,
+        partNumber: Int,
+        content: InputStream,
+        contentLength: Long,
+    ): MultipartPart {
         val partPath = Paths.get(upload.location.path, "part-$partNumber")
         Files.copy(content, partPath, StandardCopyOption.REPLACE_EXISTING)
         return MultipartPart(partNumber.toString(), partNumber, contentLength)
@@ -92,3 +112,49 @@ class LocalFileStorageAdapter : StorageAdapter {
 
 > [!NOTE]
 > Multipart uploads are used by the resumable upload resource. Single-part uploads go through `upload()`.
+
+## 3. Register through a plugin
+
+For reusable adapters, package them inside a `FileWeftPlugin` instead of exposing a raw `@Component`.
+
+```kotlin
+class MinioStoragePlugin : FileWeftPlugin {
+
+    override fun id(): String = "minio-storage"
+
+    override fun storageAdapters(): List<StorageAdapter> =
+        listOf(MinioStorageAdapter(minioClient()))
+}
+```
+
+Priority order is: host bean, plugin bean, framework default. This lets operators override a vendor adapter without rebuilding the plugin.
+
+## 4. Production checklist
+
+Before using an adapter in production, verify:
+
+1. Object names include the tenant ID for isolation.
+2. Multipart uploads enforce minimum part sizes required by the backend.
+3. Temporary URLs expire within the configured TTL.
+4. Delete operations are idempotent and do not throw on missing objects.
+5. A `DoctorChecker` reports adapter health.
+
+> [!WARNING]
+> Do not use the local filesystem fallback for production multi-tenant deployments. It is single-node, unshared storage suitable only for development.
+
+## FAQ
+
+**Q: Can one adapter delegate to multiple backends?**
+Yes. An adapter can choose a backend based on tenant, file size, or document type, as long as it exposes a single `StorageAdapter` bean.
+
+**Q: Does FileWeft support presigned URL upload from the browser?**
+No. Browser uploads use the resumable upload resource; storage presigned URLs are an internal adapter concern.
+
+**Q: How are storage upload IDs kept secret?**
+The resumable upload resource returns only a FileWeft `uploadId`. Storage upload IDs and ETags never leave the adapter.
+
+## Next steps
+
+- [Resumable upload protocol](resumable-upload.md) to see how multipart methods are invoked.
+- [Connectors](../extensions/connectors.md) to deliver documents to downstream systems.
+- [Doctor and observability](../operations/doctor-observability.md) to add health checks.

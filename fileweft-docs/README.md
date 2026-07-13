@@ -12,4 +12,6 @@ npm start
 
 Then open `http://127.0.0.1:8090/`. Set `PORT` to use another local port. The production host may serve this directory as ordinary static files; route state stays in the URL hash, so no server rewrite rule is required.
 
+The top-right **SKILL** button downloads `SKILL.md`, the AI integration guide kept at the repository root. `npm start` and `npm test` run `copy-skill.mjs` to copy it into this directory; for a production static host, run `npm run copy-skill` before serving.
+
 The content is a curated public projection of the root `README.md` and documents under `docs/`. Update those authoritative sources first when product behavior changes, then update the corresponding bilingual page in `content.js`.

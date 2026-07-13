@@ -5,17 +5,15 @@ order: 6
 locale: "en"
 nav: "Resumable upload"
 title: "Resumable upload protocol"
-lead: "Resume from server-acknowledged parts over the formal v1 upload resource."
+lead: "Transfer large files over unreliable networks by resuming from server-acknowledged parts through the formal v1 upload resource."
 format: "markdown"
 ---
 
-## Protocol boundary
+The formal resumable upload resource lives at `/fileweft/v1/uploads`. It has the same contract in both Spring Boot 2 and Spring Boot 3 Web Starters. The resource persists bytes as a `FileObject + FileAsset`; it does not create a document, version, catalog entry, or review workflow.
 
-The formal resource lives at `/fileweft/v1/uploads` and has the same contract in the Spring Boot 2 and Spring Boot 3 Web Starters. It persists bytes as a `FileObject + FileAsset`; it does not create a document, version, catalog entry, or review workflow. After completion, a host can pass the returned asset identifier to a separate business command.
+## 1. Protocol boundary
 
-Clients cannot submit a tenant, owner, asset type, object key, storage upload ID, ETag, or arbitrary storage metadata. Tenant and owner always come from trusted host context. Cross-tenant, cross-owner, and absent uploads are all exposed as `404 NOT_FOUND`.
-
-The protocol has five business operations. A servlet container or host may answer `HEAD`/`OPTIONS` using standard HTTP semantics; those are not additional FileWeft state-changing operations:
+The protocol has five business operations:
 
 | Operation | Path | Success |
 | --- | --- | --- |
@@ -25,9 +23,9 @@ The protocol has five business operations. A servlet container or host may answe
 | Complete | `POST /fileweft/v1/uploads/{uploadId}/complete` | `200` |
 | Abort | `DELETE /fileweft/v1/uploads/{uploadId}` | `200` |
 
-Every JSON success and failure uses the FileWeft v1 envelope. A separate `/status` endpoint is unnecessary: inspection already returns state, acknowledged parts, and the stable completion receipt.
+Clients cannot submit a tenant, owner, asset type, object key, storage upload ID, ETag, or arbitrary storage metadata. Tenant and owner always come from the trusted host context. Cross-tenant, cross-owner, and absent uploads are all exposed as `404 NOT_FOUND`.
 
-## Create a session
+## 2. Create a session
 
 Creation requires exactly one `Idempotency-Key`. It may contain ASCII letters, digits, `.`, `_`, `~`, `:`, and `-`, with a length of 1–128. FileWeft hashes it with the trusted tenant using a versioned SHA-256 representation; the raw value is never persisted or reflected in responses or errors.
 
@@ -44,7 +42,7 @@ curl -i -X POST http://localhost:8080/fileweft/v1/uploads \
 
 `contentType` and `contentHash` are optional. A supplied hash must use the exact lowercase form `sha256:<64 lowercase hex characters>`, and the completed object's hash must match. `documentNumber`, `title`, `totalParts`, `assetType`, and `metadata` are not part of this resource.
 
-At the root deployment path the response carries `Location: /fileweft/v1/uploads/{uploadId}`. With a context path or servlet path, `Location` preserves those host prefixes:
+A successful response carries `Location: /fileweft/v1/uploads/{uploadId}` and a JSON envelope:
 
 ```json
 {
@@ -70,7 +68,7 @@ At the root deployment path the response carries `Location: /fileweft/v1/uploads
 
 Replaying the same request with the same key, trusted tenant, and owner returns the original session with its latest checkpoint and does not allocate another remote multipart upload. Changing the request or reusing the key as another owner returns a non-disclosing `409 CONFLICT`.
 
-## Upload a part
+## 3. Upload a part
 
 Parts are raw byte streams, not multipart forms, and do not use another idempotency key. `partNumber` must be 1–10000. `X-FileWeft-Part-Length` must occur exactly once and equal the actual body length.
 
@@ -83,7 +81,7 @@ curl -X PUT "http://localhost:8080/fileweft/v1/uploads/fw-upload-7a8b9c/parts/1"
 
 The acknowledgement contains only the upload ID, part number, length, and acknowledgement time; storage ETags stay private. A client may PUT the same part number again before completion. The durable checkpoint changes only after storage acknowledges the part and the number of bytes actually consumed exactly matches the declared length.
 
-## Resume after a disconnect
+## 4. Resume after a disconnect
 
 Read the resource after reconnecting and treat `uploadedParts` as the sole authoritative checkpoint:
 
@@ -93,7 +91,10 @@ curl http://localhost:8080/fileweft/v1/uploads/fw-upload-7a8b9c
 
 Public states are `UPLOADING`, `FINALIZING`, `COMPLETED`, `FAILED`, `ABORTED`, and `EXPIRED`. Internal staging, abort fencing, and `QUARANTINED` states are not exposed. Before completion, acknowledged part numbers must form a consecutive sequence starting at 1, and their total length must equal the declared whole-file length.
 
-## Complete and recover an unknown outcome
+> [!TIP]
+> Reconnecting clients should PUT only the parts missing from `uploadedParts`. Do not assume local progress is authoritative.
+
+## 5. Complete and recover an unknown outcome
 
 ```bash
 curl -X POST http://localhost:8080/fileweft/v1/uploads/fw-upload-7a8b9c/complete
@@ -116,9 +117,16 @@ A successful completion returns an opaque receipt. Its three resource IDs are st
 }
 ```
 
-Completion is synchronous and replayable. If completion committed but the post-commit checkpoint read failed, this 200 may carry `completedAt: null`; a later GET/replay supplies the persisted time, so clients must not use that field as the idempotency identity. If the response is lost, first GET the same upload. `COMPLETED` includes the same resource IDs in `completion`; for `FINALIZING`, wait and retry completion with the same `uploadId`. When FileWeft cannot safely classify the database or object-storage outcome it returns `503 OUTCOME_UNKNOWN`; do not mint a new key or blindly delete the object. FileWeft non-destructively reconciles stale completion state. If storage definitively rejects the request and guarantees that it did not publish an object, FileWeft atomically clears stale acknowledgements, restores `UPLOADING`, renews a full session-TTL retry window, and returns `409 CONFLICT`; GET again and PUT every part missing from the returned checkpoint. Object-store minimum part sizes remain host policy, so repeated 409 responses require a compliant part size or an abort.
+Completion is synchronous and replayable. If completion committed but the post-commit checkpoint read failed, this 200 may carry `completedAt: null`; a later GET/replay supplies the persisted time, so clients must not use that field as the idempotency identity.
 
-## Abort
+If the response is lost, first GET the same upload. `COMPLETED` includes the same resource IDs in `completion`; for `FINALIZING`, wait and retry completion with the same `uploadId`. When FileWeft cannot safely classify the database or object-storage outcome it returns `503 OUTCOME_UNKNOWN`; do not mint a new key or blindly delete the object. FileWeft non-destructively reconciles stale completion state.
+
+If storage definitively rejects the request and guarantees that it did not publish an object, FileWeft atomically clears stale acknowledgements, restores `UPLOADING`, renews a full session-TTL retry window, and returns `409 CONFLICT`; GET again and PUT every part missing from the returned checkpoint.
+
+> [!WARNING]
+> Object-store minimum part sizes remain host policy. Repeated 409 responses require a compliant part size or an abort.
+
+## 6. Abort
 
 ```bash
 curl -X DELETE http://localhost:8080/fileweft/v1/uploads/fw-upload-7a8b9c
@@ -126,6 +134,22 @@ curl -X DELETE http://localhost:8080/fileweft/v1/uploads/fw-upload-7a8b9c
 
 Abort terminates a remote multipart upload only while doing so is known to be safe. An active session becomes `ABORTED`; a replay against a session that is already terminal returns that unchanged terminal view (for example, `COMPLETED` remains `COMPLETED`). Cleanup never destroys an object protected by an unknown-outcome fence.
 
-## Production gateway
+## 7. Production gateway
 
 Disable request buffering on `/fileweft/v1/uploads/*/parts/*` and allow the selected maximum part size plus small protocol overhead. Body size, timeouts, rate limits, and object-store minimum part sizes remain host policy. Do not substitute a global multipart-form limit for a route-specific streaming policy.
+
+## FAQ
+
+**Q: Should I create one session per file?**
+Yes. The idempotency key identifies one logical file transfer. Reuse it only to resume the same file.
+
+**Q: Can I change the file name after creating the session?**
+No. Changing the request body and reusing the idempotency key returns `409 CONFLICT`.
+
+**Q: How do I turn an uploaded asset into a document?**
+Pass the returned `fileAssetId` to `POST /fileweft/v1/documents` or `POST /documents/{id}/versions`.
+
+## Next steps
+
+- [Workflows and uploads](workflows-uploads.md) to connect uploads with review and publish.
+- [Implement a storage adapter](storage-adapter.md) to customize where multipart parts are assembled.

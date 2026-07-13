@@ -66,6 +66,9 @@ kbd { border: 1px solid #46534c; padding: 3px 5px; color: #77847b; background: v
 .utility-links span { display: flex; align-items: center; gap: 7px; }
 .utility-links i { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--acid-deep); }
 .utility-links a { text-decoration: none; border-bottom: 1px solid var(--line); }
+.skill-button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line); background: transparent; color: var(--muted); font: 800 9px/1 var(--sans); letter-spacing: .08em; cursor: pointer; }
+.skill-button:hover { border-color: var(--acid-deep); color: var(--ink); }
+.skill-button::before { content: "⚡"; font-size: 10px; }
 .article-grid { display: grid; grid-template-columns: minmax(0, 800px) minmax(150px, 210px); justify-content: center; gap: clamp(45px, 7vw, 110px); padding: clamp(48px, 7vw, 94px) clamp(28px, 6vw, 100px) 100px; }
 .doc-article { min-width: 0; }
 .doc-kicker { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; color: var(--acid-deep); font: 900 10px/1 var(--sans); letter-spacing: .17em; text-transform: uppercase; }
