@@ -223,6 +223,62 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     @Test
+    fun `submit rejects every unsafe provider assignee before the write transaction`() {
+        val invalidAssigneeIds = listOf(
+            "u".repeat(257),
+            " reviewer-2",
+            "reviewer-2\u200B",
+            "reviewer-2\u0007",
+            "reviewer-2\uD800",
+        )
+
+        invalidAssigneeIds.forEach { invalidAssigneeId ->
+            val document = draftDocument()
+            val documents = InMemoryDocuments(document)
+            val workflows = InMemoryWorkflows()
+            val transaction = TrackingTransaction()
+            val route = object : DocumentReviewRouteProvider {
+                override fun id(): String = "unsafe-assignee"
+
+                override fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute {
+                    assertTrue(!transaction.active, "Route resolution must stay outside FileWeft's transaction.")
+                    return DocumentReviewRoute(
+                        DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+                        listOf(
+                            DocumentReviewRouteTask(Identifier("reviewer-1")),
+                            DocumentReviewRouteTask(Identifier(invalidAssigneeId)),
+                        ),
+                    )
+                }
+            }
+            val service = service(
+                documents = documents,
+                workflows = workflows,
+                outbox = RecordingOutbox(),
+                identifiers = emptyList(),
+                reviewRoutes = DocumentReviewRouteResolver(listOf(route), route.id()),
+                transaction = transaction,
+                authorization = { AuthorizationDecision(true) },
+            )
+
+            val failure = assertFailsWith<DocumentReviewRouteConfigurationException> {
+                service.submit(document.id, null, route.id())
+            }
+
+            assertEquals(
+                "Document review route unsafe-assignee returned an invalid assignee id at task index 1.",
+                failure.message,
+            )
+            assertTrue(failure.cause is IllegalArgumentException)
+            assertEquals(1, transaction.executeCalls, "Only the read-only route snapshot transaction may run.")
+            assertEquals(LifecycleState.DRAFT, document.lifecycleState)
+            assertEquals(0, documents.saveCalls)
+            assertEquals(0, workflows.saveCalls)
+            assertEquals(null, workflows.workflow)
+        }
+    }
+
+    @Test
     fun `holds publication until every parallel route task approves outside the database transaction`() {
         val document = draftDocument()
         val documents = InMemoryDocuments(document)
@@ -533,9 +589,10 @@ class DocumentReviewWorkflowServiceTest {
         val audits = RecordingAudits()
         val document = pendingReviewDocument()
         val workflow = pendingWorkflow(document.id, operator.id)
+        val workflowRepository = InMemoryWorkflows(workflow)
         val service = service(
             documents = InMemoryDocuments(document),
-            workflows = InMemoryWorkflows(workflow),
+            workflows = workflowRepository,
             outbox = RecordingOutbox(),
             identifiers = emptyList(),
             userRealmProviderOverride = users,
@@ -564,6 +621,11 @@ class DocumentReviewWorkflowServiceTest {
             audit.action,
         )
         assertAuditOperator(audit, operator)
+        val decidedTask = requireNotNull(workflowRepository.workflow).tasks.single { task ->
+            task.id == workflow.tasks.single().id
+        }
+        assertEquals(operator.id, decidedTask.decisionOperatorId)
+        assertEquals(operator.displayName, decidedTask.decisionOperatorName)
     }
 
     private fun assertAuditOperator(audit: AuditRecord, operator: UserIdentity) {
@@ -743,9 +805,12 @@ class DocumentReviewWorkflowServiceTest {
     private class TrackingTransaction : ApplicationTransaction {
         var active = false
             private set
+        var executeCalls = 0
+            private set
 
         override fun <T> execute(action: () -> T): T {
             check(!active) { "Nested transaction is not expected in this fixture." }
+            executeCalls++
             active = true
             return try {
                 action()

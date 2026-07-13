@@ -205,16 +205,18 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   const historicalContent = Buffer.from(`FileWeft 正式 v1 历史字节 ${nonce}\n`, "utf8");
   const currentContent = Buffer.from(`FileWeft 正式 v1 当前字节 ${nonce}\n`, "utf8");
 
-  const [editor, reviewer, viewer, betaEditor] = await Promise.all([
+  const [editor, reviewer, viewer, betaEditor, betaReviewer] = await Promise.all([
     login(request, "editor@alpha", "dev-editor"),
     login(request, "reviewer@alpha", "dev-reviewer"),
     login(request, "viewer@alpha", "dev-viewer"),
     login(request, "editor@beta", "dev-editor"),
+    login(request, "reviewer@beta", "dev-reviewer"),
   ]);
   expect(editor).toMatchObject({ userId: "alpha-editor", tenantId: "alpha", role: "EDITOR" });
   expect(reviewer).toMatchObject({ userId: "alpha-reviewer", tenantId: "alpha", role: "REVIEWER" });
   expect(viewer).toMatchObject({ userId: "alpha-viewer", tenantId: "alpha", role: "VIEWER" });
   expect(betaEditor).toMatchObject({ userId: "beta-editor", tenantId: "beta", role: "EDITOR" });
+  expect(betaReviewer).toMatchObject({ userId: "beta-reviewer", tenantId: "beta", role: "REVIEWER" });
 
   const createdResponse = await createDraft(request, editor.token, traceId, {
     documentNumber,
@@ -426,7 +428,6 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     "FORBIDDEN",
     "Access denied.",
   );
-  const betaReviewer = await login(request, "reviewer@beta", "dev-reviewer");
   await failure(
     await request.get(`/fileweft/v1/documents/${documentId}/logs`, {
       headers: authorization(betaReviewer.token, traceId),
@@ -536,6 +537,15 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   });
   await failure(betaHistory, 404, "NOT_FOUND", "Resource was not found.");
 
+  await failure(
+    await request.get(`/fileweft/v1/documents/${documentId}/workflow-decisions`, {
+      headers: authorization(viewer.token, traceId),
+    }),
+    403,
+    "FORBIDDEN",
+    "Access denied.",
+  );
+
   const workflow = { id: inboxItem.task.workflowId };
   const reviewTask = { id: inboxItem.task.id };
 
@@ -580,6 +590,38 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   const completedWorkflow = historyAfterApproval.items.find((candidate) => candidate.id === workflow.id);
   expect(completedWorkflow).toMatchObject({ state: "APPROVED" });
   expect(completedWorkflow.tasks.find((candidate) => candidate.id === reviewTask.id)).toMatchObject({ state: "APPROVED" });
+  const decisionEvidence = await success(
+    await request.get(`/fileweft/v1/documents/${documentId}/workflow-decisions`, {
+      headers: authorization(reviewer.token, traceId),
+      params: { limit: 100 },
+    }),
+    200,
+  );
+  expect(sortedKeys(decisionEvidence)).toEqual(["items", "nextCursor", "total"]);
+  const decisionWorkflow = decisionEvidence.items.find((candidate) => candidate.id === workflow.id);
+  expect(sortedKeys(decisionWorkflow)).toEqual(["createdTime", "documentId", "id", "state", "tasks", "updatedTime", "workflowType"]);
+  const decisionTask = decisionWorkflow.tasks.find((candidate) => candidate.id === reviewTask.id);
+  expect(sortedKeys(decisionTask)).toEqual([
+    "createdTime", "decidedTime", "decisionEvidenceRecorded", "decisionOperatorId",
+    "decisionOperatorName", "id", "state", "updatedTime",
+  ]);
+  expect(decisionTask).toMatchObject({
+    state: "APPROVED",
+    decisionEvidenceRecorded: true,
+    decisionOperatorId: "alpha-reviewer",
+    decisionOperatorName: "Alpha 审批者",
+  });
+  expect(decisionTask.decidedTime).toEqual(expect.any(Number));
+  expect(sortedKeys(decisionTask)).not.toContain("assigneeId");
+  expect(sortedKeys(decisionTask)).not.toContain("comment");
+  await failure(
+    await request.get(`/fileweft/v1/documents/${documentId}/workflow-decisions`, {
+      headers: authorization(betaReviewer.token, traceId),
+    }),
+    404,
+    "NOT_FOUND",
+    "Resource was not found.",
+  );
   const inboxAfterApproval = await success(
     await request.get("/fileweft/v1/workflows/tasks", {
       headers: authorization(reviewer.token, traceId),

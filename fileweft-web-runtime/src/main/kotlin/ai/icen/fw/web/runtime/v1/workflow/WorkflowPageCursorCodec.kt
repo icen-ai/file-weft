@@ -7,7 +7,9 @@ import java.util.Base64
 
 internal class WorkflowPageCursorCodec(private val kind: Byte) {
     init {
-        require(kind == TASK_KIND || kind == HISTORY_KIND) { "Unsupported workflow cursor kind." }
+        require(kind == TASK_KIND || kind == HISTORY_KIND || kind == EVIDENCE_KIND) {
+            "Unsupported workflow cursor kind."
+        }
     }
 
     fun encode(createdTime: Long, id: Identifier): String = try {
@@ -72,6 +74,7 @@ internal class WorkflowPageCursorCodec(private val kind: Byte) {
     companion object {
         const val TASK_KIND: Byte = 1
         const val HISTORY_KIND: Byte = 2
+        const val EVIDENCE_KIND: Byte = 3
         private const val VERSION: Byte = 1
         private const val HEADER_SIZE: Int = 2 + Long.SIZE_BYTES + Short.SIZE_BYTES
         private const val MAX_ID_LENGTH: Int = 128

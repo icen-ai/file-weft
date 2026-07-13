@@ -257,6 +257,74 @@ class JdbcWorkflowQueryRepositoryIntegrationTest {
     }
 
     @Test
+    fun `decision evidence pages immutable actors while preserving legacy unknown tasks and tenant scope`() {
+        insertDocument("document-evidence", "tenant-a", "finance", "PUBLISHED", 10, 900)
+        insertWorkflow("workflow-new", "tenant-a", "document-evidence", "APPROVED", 700, 710)
+        insertTask("task-new-a", "tenant-a", "workflow-new", "reviewer-a", "APPROVED", 705, 706)
+        insertTask("task-new-b", "tenant-a", "workflow-new", "reviewer-b", "APPROVED", 705, 707)
+        updateDecisionEvidence("task-new-a", "reviewer-a", "审批人甲", 706)
+        updateDecisionEvidence("task-new-b", "reviewer-b", "审批人乙", 707)
+        insertWorkflow("workflow-legacy", "tenant-a", "document-evidence", "REJECTED", 600, 610)
+        insertTask("task-legacy", "tenant-a", "workflow-legacy", "reviewer-old", "REJECTED", 605, 606)
+
+        insertDocument("document-other", "tenant-b", "finance", "PUBLISHED", 10, 900)
+        insertWorkflow("workflow-other", "tenant-b", "document-other", "APPROVED", 800, 810)
+        insertTask("task-other", "tenant-b", "workflow-other", "reviewer-a", "APPROVED", 805, 806)
+        updateDecisionEvidence("task-other", "reviewer-a", "其他租户审批人", 806)
+
+        val repository = JdbcWorkflowQueryRepository()
+        val first = transaction {
+            repository.findDocumentWorkflowDecisionEvidencePage(
+                Identifier("tenant-a"),
+                Identifier("document-evidence"),
+                DocumentWorkflowPageRequest(limit = 1),
+                DocumentFolderReadScope(listOf("finance")),
+            )
+        }
+        val firstPage = requireNotNull(first)
+        val second = transaction {
+            repository.findDocumentWorkflowDecisionEvidencePage(
+                Identifier("tenant-a"),
+                Identifier("document-evidence"),
+                DocumentWorkflowPageRequest(requireNotNull(firstPage.nextCursor), 1),
+                DocumentFolderReadScope(listOf("finance")),
+            )
+        }
+
+        assertEquals(Identifier("document-evidence"), firstPage.documentId)
+        assertEquals(listOf("workflow-new"), firstPage.items.map { workflow -> workflow.id.value })
+        assertEquals(
+            listOf("reviewer-a", "reviewer-b"),
+            firstPage.items.single().tasks.map { task -> task.decisionOperatorId?.value },
+        )
+        assertEquals(
+            listOf("审批人甲", "审批人乙"),
+            firstPage.items.single().tasks.map { task -> task.decisionOperatorName },
+        )
+        assertEquals(listOf(706L, 707L), firstPage.items.single().tasks.map { task -> task.decidedTime })
+        val legacyTask = requireNotNull(second).items.single().tasks.single()
+        assertEquals("task-legacy", legacyTask.id.value)
+        assertNull(legacyTask.decisionOperatorId)
+        assertNull(legacyTask.decisionOperatorName)
+        assertNull(legacyTask.decidedTime)
+        assertNull(second.nextCursor)
+
+        val hidden = transaction {
+            repository.findDocumentWorkflowDecisionEvidencePage(
+                Identifier("tenant-a"), Identifier("document-evidence"), DocumentWorkflowPageRequest(),
+                DocumentFolderReadScope(listOf("operations")),
+            )
+        }
+        val crossTenant = transaction {
+            repository.findDocumentWorkflowDecisionEvidencePage(
+                Identifier("tenant-b"), Identifier("document-evidence"), DocumentWorkflowPageRequest(), null,
+            )
+        }
+        assertNull(hidden)
+        assertNull(crossTenant)
+    }
+
+    @Test
     fun `requires the caller bound JDBC transaction`() {
         val repository = JdbcWorkflowQueryRepository()
 
@@ -267,6 +335,11 @@ class JdbcWorkflowQueryRepositoryIntegrationTest {
         }
         assertFailsWith<IllegalStateException> {
             repository.findDocumentWorkflowPage(
+                Identifier("tenant-a"), Identifier("document-a"), DocumentWorkflowPageRequest(), null,
+            )
+        }
+        assertFailsWith<IllegalStateException> {
+            repository.findDocumentWorkflowDecisionEvidencePage(
                 Identifier("tenant-a"), Identifier("document-a"), DocumentWorkflowPageRequest(), null,
             )
         }
@@ -375,6 +448,25 @@ class JdbcWorkflowQueryRepositoryIntegrationTest {
                 statement.setNullableString(6, comment)
                 statement.setLong(7, createdTime)
                 statement.setLong(8, updatedTime)
+                assertEquals(1, statement.executeUpdate())
+            }
+        }
+    }
+
+    private fun updateDecisionEvidence(
+        taskId: String,
+        operatorId: String,
+        operatorName: String,
+        decidedTime: Long,
+    ) {
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "UPDATE fw_workflow_task SET decision_operator_id = ?, decision_operator_name = ?, decided_time = ? WHERE id = ?",
+            ).use { statement ->
+                statement.setString(1, operatorId)
+                statement.setString(2, operatorName)
+                statement.setLong(3, decidedTime)
+                statement.setString(4, taskId)
                 assertEquals(1, statement.executeUpdate())
             }
         }

@@ -46,6 +46,7 @@ const state = {
   deliveryProfiles: [],
   workflowTasks: [],
   workflowHistory: [],
+  workflowDecisionEvidence: [],
   syncStatus: null,
   selectedFolderId: null,
   selectedId: null,
@@ -233,6 +234,7 @@ function resetSessionState() {
   state.deliveryProfiles = [];
   state.workflowTasks = [];
   state.workflowHistory = [];
+  state.workflowDecisionEvidence = [];
   state.syncStatus = null;
   state.selectedFolderId = null;
   state.selectedId = null;
@@ -503,9 +505,12 @@ async function selectDocument(documentId, refreshPanels = true) {
   const encodedDocumentId = encodeURIComponent(documentId);
   const mayReadAudit = can("document:audit") && can("document:read");
   state.auditLogs = [];
-  const [detail, workflowPage, syncStatus, auditPage] = await Promise.all([
+  const [detail, workflowPage, decisionEvidencePage, syncStatus, auditPage] = await Promise.all([
     api(`/api/documents/${encodedDocumentId}`),
     v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/workflows?limit=100`),
+    mayReadAudit
+      ? v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/workflow-decisions?limit=100`)
+      : Promise.resolve({ items: [], nextCursor: null }),
     v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/sync-status`),
     mayReadAudit
       ? v1Api(`${V1_DOCUMENTS_PATH}/${encodedDocumentId}/logs?limit=100`)
@@ -515,6 +520,7 @@ async function selectDocument(documentId, refreshPanels = true) {
   state.selectedId = documentId;
   state.detail = detail;
   state.workflowHistory = workflowPage?.items || [];
+  state.workflowDecisionEvidence = decisionEvidencePage?.items || [];
   state.syncStatus = syncStatus;
   state.auditLogs = Array.isArray(auditPage?.items) ? auditPage.items : [];
   state.selectedFolderId = state.detail.document.folderId || state.selectedFolderId;
@@ -926,6 +932,7 @@ async function runSystemDoctor() {
 function renderInspector() {
   const detail = state.detail;
   const document = detail.document;
+  const mayReadAudit = can("document:audit") && can("document:read");
   $("#selected-number").textContent = document.documentNumber;
   $("#selected-title").textContent = document.title;
   $("#selected-state").textContent = localizedState(document.lifecycleState);
@@ -941,7 +948,22 @@ function renderInspector() {
     downloadDocument(button.dataset.versionDownload, button.dataset.fileName);
   }));
   $("#workflow-list").innerHTML = state.workflowHistory.map((workflow) => {
-    const tasks = workflow.tasks.map((task) => `${escapeHtml(task.id)} · ${escapeHtml(localizedState(task.state))} · ${escapeHtml(formatTime(task.updatedTime))}`).join("<br />");
+    const evidenceWorkflow = mayReadAudit
+      ? state.workflowDecisionEvidence.find((candidate) => candidate.id === workflow.id)
+      : null;
+    const tasks = workflow.tasks.map((task) => {
+      const evidence = evidenceWorkflow?.tasks?.find((candidate) => candidate.id === task.id);
+      let decision = "";
+      if (task.state !== "PENDING" && mayReadAudit) {
+        if (evidence?.decisionEvidenceRecorded) {
+          const actorName = evidence.decisionOperatorName || t("actor.unnamed");
+          decision = ` · ${escapeHtml(t("workflow.decisionBy"))} ${escapeHtml(actorName)} · ${escapeHtml(evidence.decisionOperatorId)} · ${escapeHtml(formatTime(evidence.decidedTime))}`;
+        } else {
+          decision = ` · ${escapeHtml(t("workflow.decisionUnknown"))}`;
+        }
+      }
+      return `${escapeHtml(task.id)} · ${escapeHtml(localizedState(task.state))} · ${escapeHtml(formatTime(task.updatedTime))}${decision}`;
+    }).join("<br />");
     return evidenceItem(`${localized("workflow.type", workflow.workflowType)} / ${localizedState(workflow.state)}`, tasks);
   }).join("") || emptyEvidence("empty.workflow");
   $("#delivery-list").innerHTML = detail.deliveries.map((delivery) => {
@@ -982,7 +1004,6 @@ function renderInspector() {
     `${localizedState(sync.status)} / ${sync.connectorName}`,
     `${escapeHtml(sync.externalId || "—")}${sync.errorMessage ? ` · ${escapeHtml(sync.errorMessage)}` : ""}`,
   )).join("") || emptyEvidence("empty.sync");
-  const mayReadAudit = can("document:audit") && can("document:read");
   $("#audit-section").classList.toggle("hidden", !mayReadAudit);
   $("#audit-list").innerHTML = (mayReadAudit ? state.auditLogs : []).map((audit) => {
     const actorName = audit.operatorName || (audit.operatorId ? t("actor.unnamed") : t("actor.system"));

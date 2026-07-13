@@ -32,10 +32,14 @@ class WorkflowInstance(
     }
 
     fun approve(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
+        approve(taskId, operatorId, null, comment)
+    }
+
+    fun approve(taskId: Identifier, operatorId: Identifier, operatorName: String?, comment: String?) {
         val candidate = task(taskId)
         candidate.requireAssignedTo(operatorId)
         requirePendingWorkflow("approved")
-        candidate.approve(operatorId, comment)
+        candidate.approve(operatorId, operatorName, comment)
         if (mutableTasks.all { it.state == WorkflowTaskState.APPROVED }) {
             state = WorkflowState.APPROVED
         }
@@ -55,10 +59,14 @@ class WorkflowInstance(
     }
 
     fun reject(taskId: Identifier, operatorId: Identifier, comment: String? = null) {
+        reject(taskId, operatorId, null, comment)
+    }
+
+    fun reject(taskId: Identifier, operatorId: Identifier, operatorName: String?, comment: String?) {
         val candidate = task(taskId)
         candidate.requireAssignedTo(operatorId)
         requirePendingWorkflow("rejected")
-        candidate.reject(operatorId, comment)
+        candidate.reject(operatorId, operatorName, comment)
         state = WorkflowState.REJECTED
     }
 

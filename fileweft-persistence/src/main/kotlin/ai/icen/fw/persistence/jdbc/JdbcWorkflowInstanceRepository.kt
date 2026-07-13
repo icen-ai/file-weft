@@ -78,7 +78,7 @@ class JdbcWorkflowInstanceRepository(
 
     private fun loadTasks(tenantId: Identifier, workflowId: Identifier): List<WorkflowTask> =
         JdbcConnectionContext.requireCurrent().prepareStatement(
-            "SELECT id, tenant_id, workflow_id, assignee_id, task_state, comment_text FROM fw_workflow_task WHERE tenant_id = ? AND workflow_id = ? ORDER BY created_time, id",
+            "SELECT id, tenant_id, workflow_id, assignee_id, task_state, comment_text, decision_operator_id, decision_operator_name FROM fw_workflow_task WHERE tenant_id = ? AND workflow_id = ? ORDER BY created_time, id",
         ).use { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, workflowId.value)
@@ -91,6 +91,8 @@ class JdbcWorkflowInstanceRepository(
                     assigneeId = result.getString("assignee_id")?.let(::Identifier),
                     state = WorkflowTaskState.valueOf(result.getString("task_state")),
                     comment = result.getString("comment_text"),
+                    decisionOperatorId = result.getString("decision_operator_id")?.let(::Identifier),
+                    decisionOperatorName = result.getString("decision_operator_name"),
                 )
                 tasks
             }
@@ -99,13 +101,57 @@ class JdbcWorkflowInstanceRepository(
     private fun saveTask(task: WorkflowTask, now: Long) {
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
-            INSERT INTO fw_workflow_task(id, tenant_id, workflow_id, assignee_id, task_state, comment_text, created_time, updated_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO fw_workflow_task(
+                id, tenant_id, workflow_id, assignee_id, task_state, comment_text,
+                decision_operator_id, decision_operator_name, decided_time, created_time, updated_time
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE
-            SET assignee_id = EXCLUDED.assignee_id,
-                task_state = EXCLUDED.task_state,
+            SET task_state = EXCLUDED.task_state,
                 comment_text = EXCLUDED.comment_text,
-                updated_time = EXCLUDED.updated_time
+                decision_operator_id = CASE
+                    WHEN fw_workflow_task.task_state = 'PENDING'
+                        THEN EXCLUDED.decision_operator_id
+                    ELSE fw_workflow_task.decision_operator_id
+                END,
+                decision_operator_name = CASE
+                    WHEN fw_workflow_task.task_state = 'PENDING'
+                        THEN EXCLUDED.decision_operator_name
+                    ELSE fw_workflow_task.decision_operator_name
+                END,
+                decided_time = CASE
+                    WHEN fw_workflow_task.decided_time IS NOT NULL
+                        THEN fw_workflow_task.decided_time
+                    WHEN fw_workflow_task.task_state = 'PENDING'
+                        THEN EXCLUDED.decided_time
+                    ELSE NULL
+                END,
+                updated_time = CASE
+                    WHEN ROW(
+                        fw_workflow_task.task_state,
+                        fw_workflow_task.comment_text,
+                        fw_workflow_task.decision_operator_id,
+                        fw_workflow_task.decision_operator_name
+                    ) IS DISTINCT FROM ROW(
+                        EXCLUDED.task_state,
+                        EXCLUDED.comment_text,
+                        EXCLUDED.decision_operator_id,
+                        EXCLUDED.decision_operator_name
+                    ) THEN EXCLUDED.updated_time
+                    ELSE fw_workflow_task.updated_time
+                END
+            WHERE fw_workflow_task.tenant_id = EXCLUDED.tenant_id
+              AND fw_workflow_task.workflow_id = EXCLUDED.workflow_id
+              AND fw_workflow_task.assignee_id IS NOT DISTINCT FROM EXCLUDED.assignee_id
+              AND (
+                  fw_workflow_task.task_state = 'PENDING'
+                  OR (
+                      fw_workflow_task.task_state = EXCLUDED.task_state
+                      AND fw_workflow_task.comment_text IS NOT DISTINCT FROM EXCLUDED.comment_text
+                      AND fw_workflow_task.decision_operator_id IS NOT DISTINCT FROM EXCLUDED.decision_operator_id
+                      AND fw_workflow_task.decision_operator_name IS NOT DISTINCT FROM EXCLUDED.decision_operator_name
+                  )
+              )
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, task.id.value)
@@ -114,9 +160,14 @@ class JdbcWorkflowInstanceRepository(
             statement.setString(4, task.assigneeId?.value)
             statement.setString(5, task.state.name)
             statement.setString(6, task.comment)
-            statement.setLong(7, now)
-            statement.setLong(8, now)
-            statement.executeUpdate()
+            statement.setString(7, task.decisionOperatorId?.value)
+            statement.setString(8, task.decisionOperatorName)
+            if (task.decisionOperatorId == null) statement.setNull(9, java.sql.Types.BIGINT) else statement.setLong(9, now)
+            statement.setLong(10, now)
+            statement.setLong(11, now)
+            check(statement.executeUpdate() == 1) {
+                "Workflow task identity or completed decision changed while saving ${task.id.value}."
+            }
         }
     }
 

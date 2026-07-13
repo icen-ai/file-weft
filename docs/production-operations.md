@@ -162,7 +162,7 @@ fileweft:
 
 ## 数据库迁移与查询索引
 
-所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021` 新增待办和审批历史的稳定 keyset 查询索引；`V022` 增加受理人前导的待办部分索引，避免大租户为一个用户取待办时扫描其他用户的任务；`V023` 为每个交付目标建立当前事件、操作类型和单调派发序号围栏。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
+所有数据库变更只能新增版本化 Flyway 脚本，不能改写已发布迁移。`V016` 新增同步记录索引 `(tenant_id, document_id, connector_name, sync_status, updated_time DESC)` 和任务租户状态索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021` 新增待办和审批历史的稳定 keyset 查询索引；`V022` 增加受理人前导的待办部分索引，避免大租户为一个用户取待办时扫描其他用户的任务；`V023` 为每个交付目标建立当前事件、操作类型和单调派发序号围栏；`V026` 统一宿主用户标识宽度并新增工作流决策证据。普通升级以事务内迁移执行，确保业务表结构与运行代码具有单一前进版本。
 
 对于已有大量同步、任务或工作流数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql)、[V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)、[V021 审批查询并发预建脚本](sql/postgresql-v021-concurrent-workflow-query-indexes.sql) 和 [V022 受理人待办并发预建脚本](sql/postgresql-v022-concurrent-workflow-assignee-inbox-index.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
 
@@ -175,6 +175,14 @@ fileweft:
 `current_event_id` 故意不外键关联 Outbox：生产环境可能按保留策略归档终态事件；但任何 Outbox 清理作业都必须排除仍被 `fw_document_delivery_target.current_event_id` 引用的记录。当前事件缺失表示一致性损坏，正式重排必须 fail closed 并交给 Doctor/运营处理。V023 落库后不能回滚到不了解事件围栏的旧 Worker；旧二进制会忽略事件身份，数据库也无法从旧的整行更新推断它正在处理哪个事件。
 
 `V025` 只为正式文档审计 keyset 查询增加 `(tenant_id, resource_type, resource_id, created_time DESC, id DESC)` 复合索引，不修改或回填审计数据。审计表较大的生产库应在升级前以自动提交会话运行 [V025 审计查询并发预建脚本](sql/postgresql-v025-concurrent-audit-log-index.sql)，建议使用 `psql -v ON_ERROR_STOP=1 -f docs/sql/postgresql-v025-concurrent-audit-log-index.sql`，并监控 `pg_stat_progress_create_index`、磁盘和复制延迟。脚本会在创建前后严格核验索引状态和精确定义；若早先失败的并发创建留下无效同名索引，必须按提示先 `DROP INDEX CONCURRENTLY`，不能让 `IF NOT EXISTS` 静默跳过。Flyway V025 也执行同等后置校验，只有索引有效、ready 且五列顺序与排序方向完全一致时才会记录迁移成功。回滚旧应用可以保留该兼容索引；只有确认所有新日志查询节点已下线并核对查询计划后，才可按脚本注释并发删除。无论是否保留索引，审计与操作记录本身都是合规证据，不属于迁移回滚可删除的数据。
+
+`V026` 将 `fw_audit_record.operator_id`、`fw_operation_log.operator_id`、`fw_agent_suggestion_confirmation.confirmed_by` 和 `fw_workflow_task.assignee_id` 扩宽为 `varchar(256)`，并在工作流任务上新增可空的 `decision_operator_id`、`decision_operator_name` 与 `decided_time`。这些列记录新审批或驳回提交时的不可变身份快照和决策时间；显示名仅供证据展示，后续授权仍使用宿主当前可信身份。迁移不会从受理人、当前用户目录或可选审计记录推断既有已完成任务的决策者，因此遗留任务保持空证据；受权 JSON 以 `decisionEvidenceRecorded=false` 和空操作者/时间字段表达 `UNKNOWN`/未记录。
+
+升级前先以只读账号运行 [V026 工作流决策证据预检脚本](sql/postgresql-v026-workflow-decision-evidence-preflight.sql)，建议使用 `psql -v ON_ERROR_STOP=1 -f docs/sql/postgresql-v026-workflow-decision-evidence-preflight.sql`。预检会检查四类既有宿主用户 ID 是否满足固定契约，并报告各任务状态及待审批工作流数量；任何不安全 ID 都必须由拥有该身份映射的宿主先核实并修复，不能截断、trim、归一化或猜测替换。宿主 ID 是区分大小写的不透明字符串，最多 256 个 UTF-16 code unit，首尾不得有 Unicode whitespace，也不得包含 ISO control 或 FileWeft 固定拒绝的 Unicode format 码点；`Long`、`Int`、UUID 或组合主键应在 `UserRealmProvider` 中使用永久稳定格式转换为字符串。
+
+V026 不能与旧审批入口节点滚动混跑：旧节点不了解决策证据列，即使迁移成功也能继续提交“已完成但没有决策者”的新任务。维护窗口中必须先关闭 submit/approve/reject 入口并停止全部旧 API 节点，等待在途决策事务完成，再重新运行预检，执行 Flyway V026，验证约束和列宽，最后一次性启动新节点并做一笔新审批读取 `/fileweft/v1/documents/{id}/workflow-decisions` 验收。`ALTER COLUMN TYPE`、加列以及 `VALIDATE CONSTRAINT` 会取得表锁或扫描历史数据；大表环境应事先检查长事务、锁等待、复制延迟和维护窗口，不能把它当作无锁在线变更。
+
+紧急回滚应用时必须保留 V026 的列、约束以及已经写入的决策证据，不得删除操作者快照、把遗留空证据回填为当前受理人，也不得把 256 宽身份列缩回 64；新版本可能已经写入旧列宽无法容纳的合法用户 ID。若只能启动不认识 V026 的旧二进制，应继续关闭所有审批提交入口，因为旧节点会制造新的证据缺口；恢复到支持 V026 的节点并完成对账后才能重新开放。决策者 ID/名称属于审计和个人信息治理范围，应按宿主已批准的合规保留、访问和归档策略处理，不能进入指标标签、普通错误文案或不受控日志；删除或匿名化策略必须同时满足不可抵赖审计要求，不能由通用 TTL 作业直接清理。
 
 ## 断点续传与对象完整性
 

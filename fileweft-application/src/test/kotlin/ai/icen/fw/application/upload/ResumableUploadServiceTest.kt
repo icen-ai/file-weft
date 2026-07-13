@@ -2,6 +2,7 @@ package ai.icen.fw.application.upload
 
 import ai.icen.fw.application.outbox.OutboxEventRepository
 import ai.icen.fw.application.security.ApplicationForbiddenException
+import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.application.transaction.ApplicationTransactionNestingException
 import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
@@ -600,7 +601,7 @@ class ResumableUploadServiceTest {
             val state = State().apply { currentUser = UserIdentity(Identifier(invalidOwnerId)) }
             val storage = FakeMultipartStorage()
 
-            assertThrows<IllegalArgumentException> {
+            assertThrows<ApplicationUnauthenticatedException> {
                 service(storage, state, MutableClock(100)).start(command())
             }
             assertEquals(0, state.authorizationCalls.get(), "authorization calls for ${invalidOwnerId.length} code units")

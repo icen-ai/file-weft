@@ -10,6 +10,7 @@ import ai.icen.fw.application.lifecycle.DocumentLifecycleMutationTransaction
 import ai.icen.fw.application.lifecycle.ValidatedDocumentLifecycleMutation
 import ai.icen.fw.application.security.ApplicationAuthorization
 import ai.icen.fw.application.security.ApplicationForbiddenException
+import ai.icen.fw.application.security.validatedTrustedUserId
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
@@ -112,12 +113,27 @@ class DocumentReviewWorkflowService(
         }
         // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
         val resolvedRoute = reviewRoutes.resolve(reviewRouteId, routeRequest)
+        validateRouteAssignees(resolvedRoute)
         return DocumentReviewSubmitPreparation(
             lifecycle = context,
             reviewerId = reviewerId,
             routeRequest = routeRequest,
             resolvedRoute = resolvedRoute,
         )
+    }
+
+    private fun validateRouteAssignees(resolvedRoute: ResolvedDocumentReviewRoute) {
+        resolvedRoute.route.tasks.forEachIndexed { taskIndex, routeTask ->
+            val assigneeId = routeTask.assigneeId?.value ?: return@forEachIndexed
+            try {
+                validatedTrustedUserId(assigneeId, "Review route assignee id")
+            } catch (failure: IllegalArgumentException) {
+                throw DocumentReviewRouteConfigurationException(
+                    "Document review route ${resolvedRoute.routeId} returned an invalid assignee id at task index $taskIndex.",
+                    failure,
+                )
+            }
+        }
     }
 
     @JvmSynthetic
@@ -397,13 +413,13 @@ class DocumentReviewWorkflowService(
             throw DocumentReviewDeliveryPreparationRequiredException()
         }
         if (decision.approved) {
-            workflow.approve(decision.taskId, context.operator.id, comment)
+            workflow.approve(decision.taskId, context.operator.id, context.operator.displayName, comment)
             if (workflow.state == ai.icen.fw.domain.workflow.WorkflowState.APPROVED) {
                 document.transition(LifecycleCommand.APPROVE)
                 deliveryPlanner.plan(document, checkNotNull(delivery).preparation)
             }
         } else {
-            workflow.reject(decision.taskId, context.operator.id, comment)
+            workflow.reject(decision.taskId, context.operator.id, context.operator.displayName, comment)
             document.transition(LifecycleCommand.REJECT)
         }
         workflowRepository.save(workflow)

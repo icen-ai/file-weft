@@ -340,6 +340,7 @@ val expectedFileWeftMigrationResources = listOf(
     "V023__fence_document_delivery_dispatch.sql",
     "V024__bind_resumable_upload_session_owner.sql",
     "V025__index_document_audit_log_queries.sql",
+    "V026__persist_workflow_decision_evidence.sql",
 ).map { migration -> "ai/icen/fw/db/migration/$migration" }
 val fileWeftMigrationSourceDirectory = layout.projectDirectory.dir(
     "fileweft-persistence/src/main/resources/ai/icen/fw/db/migration",
@@ -918,7 +919,7 @@ gradle.projectsEvaluated {
                 val missingSources = expectedSourceNames - sourceFiles.keys
                 val unexpectedSources = sourceFiles.keys - expectedSourceNames
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
-                    "FileWeft migration source inputs differ from the reviewed V001-V025 set; " +
+                    "FileWeft migration source inputs differ from the reviewed V001-V026 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
                 }
                 require(archive.isFile) { "FileWeft persistence JAR was not created: ${archive.absolutePath}" }
@@ -941,7 +942,7 @@ gradle.projectsEvaluated {
                     val missing = expected - actual
                     val unexpected = actual - expected
                     require(missing.isEmpty() && unexpected.isEmpty()) {
-                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V025 set; " +
+                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V026 set; " +
                             "missing=$missing, unexpected=$unexpected."
                     }
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }

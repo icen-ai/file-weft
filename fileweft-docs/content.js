@@ -67,7 +67,7 @@ export const pages = {
       nav: "First integration",
       lead: "A production host must provide trusted tenant, identity and authorization context, a shared persistent StorageAdapter, and an explicit migration policy.",
       sections: [
-        { title: "Supply trust context", html: `<p>Implement <code>TenantProvider</code>, <code>UserRealmProvider</code> and <code>AuthorizationProvider</code> from data already authenticated by your host. Controllers must never accept tenant IDs, user IDs, roles or permission results as business parameters.</p>${note("ID", "User IDs are opaque strings", "Long, Int, UUID and external directory identifiers should be converted to stable strings by the host. Audit records preserve both the ID and the display-name snapshot.")}` },
+        { title: "Supply trust context", html: `<p>Implement <code>TenantProvider</code>, <code>UserRealmProvider</code> and <code>AuthorizationProvider</code> from data already authenticated by your host. Controllers must never accept tenant IDs, user IDs, roles or permission results as business parameters.</p>${note("ID", "User IDs are opaque safe strings", "Long, Int, UUID and external directory identifiers must be converted to one permanently stable string format by the host. IDs are case-sensitive, at most 256 UTF-16 code units, have no leading or trailing Unicode whitespace, and exclude control and FileWeft-rejected format characters.")}` },
         { title: "Choose storage and database ownership", html: `<p>Multi-node deployments need a shared persistent <code>StorageAdapter</code>. For PostgreSQL, set the DataSource current schema and the FileWeft schema assertion to the same value.</p>${code("YAML", `spring:\n  datasource:\n    url: jdbc:postgresql://db:5432/app?currentSchema=fileweft\n\nfileweft:\n  persistence:\n    migration-mode: validate\n    schema: fileweft\n    create-schema: false`)}` },
         { title: "Separate runtime roles", html: `<p>Run API nodes without queue consumption. Run separate Worker nodes against the same database and storage with only the processors they need. This keeps HTTP latency and background leases independent.</p>` },
       ],
@@ -77,7 +77,7 @@ export const pages = {
       nav: "首次接入",
       lead: "生产宿主必须提供可信租户、身份与授权上下文、共享持久化 StorageAdapter，以及明确的迁移策略。",
       sections: [
-        { title: "提供可信上下文", html: `<p>从宿主已经认证的数据实现 <code>TenantProvider</code>、<code>UserRealmProvider</code> 与 <code>AuthorizationProvider</code>。Controller 不能把租户 ID、用户 ID、角色或权限结果作为业务参数接收。</p>${note("ID", "用户 ID 是不透明字符串", "Long、Int、UUID 与外部目录 ID 都应由宿主稳定转换为字符串。审计同时保存 ID 与当时的显示名快照。")}` },
+        { title: "提供可信上下文", html: `<p>从宿主已经认证的数据实现 <code>TenantProvider</code>、<code>UserRealmProvider</code> 与 <code>AuthorizationProvider</code>。Controller 不能把租户 ID、用户 ID、角色或权限结果作为业务参数接收。</p>${note("ID", "用户 ID 是不透明安全字符串", "Long、Int、UUID 与外部目录 ID 必须由宿主永久使用同一种格式转为字符串。ID 区分大小写，最多 256 个 UTF-16 code unit，首尾无 Unicode 空白，并排除控制字符和 FileWeft 固定拒绝的 format 字符。")}` },
         { title: "选择存储和数据库所有权", html: `<p>多节点部署需要共享、持久的 <code>StorageAdapter</code>。使用 PostgreSQL 时，DataSource 当前 schema 与 FileWeft schema 安全断言必须一致。</p>${code("YAML", `spring:\n  datasource:\n    url: jdbc:postgresql://db:5432/app?currentSchema=fileweft\n\nfileweft:\n  persistence:\n    migration-mode: validate\n    schema: fileweft\n    create-schema: false`)}` },
         { title: "拆分运行角色", html: `<p>API 节点不消费队列，独立 Worker 使用相同数据库和存储，仅开启所需处理器。这样 HTTP 延迟与后台租约互不干扰。</p>` },
       ],
@@ -171,7 +171,7 @@ export const pages = {
       nav: "Workflow & uploads",
       lead: "Long-running work is explicit, persistent and fenced. Approval routing, multipart upload and AI processing remain replaceable without weakening transaction boundaries.",
       sections: [
-        { title: "Approval routing", html: `<p><code>DocumentReviewRouteProvider</code> returns one or more review tasks outside the database transaction. All tasks must approve for parallel sign-off; one rejection ends the workflow. The final transaction rechecks document state before committing.</p>` },
+        { title: "Approval routing", html: `<p><code>DocumentReviewRouteProvider</code> returns one or more review tasks outside the database transaction. All tasks must approve for parallel sign-off; one rejection ends the workflow. The final transaction rechecks document state before committing.</p><p>On the unreleased <code>0.0.2-SNAPSHOT</code> line, each new decision stores an immutable operator ID, optional safe display-name snapshot and decision time. The normal history remains identity-redacted; the privileged <code>/fileweft/v1/documents/{id}/workflow-decisions</code> view requires both <code>document:audit</code> and <code>document:read</code>. Legacy completed tasks remain <code>UNKNOWN</code> because migration never guesses an actor.</p>` },
         { title: "Resumable upload", html: `<ol><li>Start with a caller-stable idempotency key.</li><li>Upload numbered parts and persist each acknowledgement.</li><li>Inspect the session after reconnecting.</li><li>Complete once to create the object, asset and event; abort when intentionally abandoned.</li></ol><p>Sessions bind to trusted tenant and user identity. Storage upload IDs and object paths never reach the browser.</p>` },
         { title: "Agent work", html: `<p>AI and diagnostic work belong in durable <code>fw_task</code> handlers. Workers use leases and idempotent task IDs. Agent output becomes visible only after the matching task reaches a fenced successful terminal state.</p>` },
       ],
@@ -181,7 +181,7 @@ export const pages = {
       nav: "工作流与上传",
       lead: "长任务必须显式、持久且具备围栏。审批路由、分片上传和 AI 处理都可以替换，但不能削弱事务边界。",
       sections: [
-        { title: "审批路由", html: `<p><code>DocumentReviewRouteProvider</code> 在数据库事务外返回一个或多个审批任务。并行会签要求全部通过，任一驳回结束流程；最终事务在提交前重新检查文档状态。</p>` },
+        { title: "审批路由", html: `<p><code>DocumentReviewRouteProvider</code> 在数据库事务外返回一个或多个审批任务。并行会签要求全部通过，任一驳回结束流程；最终事务在提交前重新检查文档状态。</p><p>尚未发布的 <code>0.0.2-SNAPSHOT</code> 开发线会为每个新决策不可变保存操作者 ID、可选安全显示名快照和决策时间。普通历史继续隐藏身份；受权 <code>/fileweft/v1/documents/{id}/workflow-decisions</code> 同时要求 <code>document:audit</code> 与 <code>document:read</code>。迁移不会猜测遗留完成任务的操作者，因此明确显示为 <code>UNKNOWN</code>。</p>` },
         { title: "断点续传", html: `<ol><li>使用调用方稳定幂等键启动。</li><li>上传编号分片并持久化每次确认。</li><li>重连后从服务端检查会话。</li><li>幂等完成以创建对象、资产与事件；明确放弃时终止。</li></ol><p>会话绑定可信租户和用户，底层 upload ID 与对象路径不会交给浏览器。</p>` },
         { title: "Agent 任务", html: `<p>AI 与诊断任务应进入持久化 <code>fw_task</code> handler。Worker 使用租约和幂等任务 ID，只有匹配任务在围栏下成功终态后，Agent 结果才可见。</p>` },
       ],
@@ -257,7 +257,7 @@ export const pages = {
       nav: "HTTP API v1",
       lead: "The formal surface lives under /fileweft/v1 and returns a stable JSON envelope, except for authorized binary downloads.",
       sections: [
-        { title: "Resource families", html: `<ul><li><code>/fileweft/v1/documents</code> — list, create, inspect, rename, version and lifecycle.</li><li><code>/fileweft/v1/workflows/tasks</code> — trusted-user review inbox and decisions.</li><li><code>/fileweft/v1/documents/{id}/sync-status</code> — safe delivery projection and explicit retry commands.</li><li><code>/fileweft/v1/documents/{id}/doctor</code> and <code>/fileweft/v1/doctor</code> — document and system diagnostics.</li><li><code>/fileweft/v1/plugins</code> and <code>/fileweft/v1/health</code> — safe inventory and process liveness.</li></ul>` },
+        { title: "Resource families", html: `<ul><li><code>/fileweft/v1/documents</code> — list, create, inspect, rename, version and lifecycle.</li><li><code>/fileweft/v1/workflows/tasks</code> — trusted-user review inbox and decisions.</li><li><code>/fileweft/v1/documents/{id}/workflows</code> — identity-redacted review history for readers.</li><li><code>/fileweft/v1/documents/{id}/workflow-decisions</code> — privileged immutable actor evidence requiring both <code>document:audit</code> and <code>document:read</code> (unreleased <code>0.0.2-SNAPSHOT</code>).</li><li><code>/fileweft/v1/documents/{id}/sync-status</code> — safe delivery projection and explicit retry commands.</li><li><code>/fileweft/v1/documents/{id}/doctor</code> and <code>/fileweft/v1/doctor</code> — document and system diagnostics.</li><li><code>/fileweft/v1/plugins</code> and <code>/fileweft/v1/health</code> — safe inventory and process liveness.</li></ul>${note("ACL", "Decision evidence is privileged", "New decisions expose the immutable operator ID, optional safe name snapshot and decided time only through the privileged view. Legacy completed tasks return decisionEvidenceRecorded=false with null evidence fields; FileWeft never infers an actor from assignment or optional audit rows.")}` },
         { title: "Stable envelope", html: code("JSON", `{
   "code": "OK",
   "message": "OK",
@@ -273,7 +273,7 @@ export const pages = {
       nav: "HTTP API v1",
       lead: "正式接口统一位于 /fileweft/v1；除授权二进制下载外，响应使用稳定 JSON 外层。",
       sections: [
-        { title: "资源族", html: `<ul><li><code>/fileweft/v1/documents</code> — 列表、创建、详情、改名、版本与生命周期。</li><li><code>/fileweft/v1/workflows/tasks</code> — 当前可信用户的审批待办与决策。</li><li><code>/fileweft/v1/documents/{id}/sync-status</code> — 安全交付投影与显式重试。</li><li><code>/fileweft/v1/documents/{id}/doctor</code> 和 <code>/fileweft/v1/doctor</code> — 文档与系统诊断。</li><li><code>/fileweft/v1/plugins</code> 与 <code>/fileweft/v1/health</code> — 安全清单与进程存活。</li></ul>` },
+        { title: "资源族", html: `<ul><li><code>/fileweft/v1/documents</code> — 列表、创建、详情、改名、版本与生命周期。</li><li><code>/fileweft/v1/workflows/tasks</code> — 当前可信用户的审批待办与决策。</li><li><code>/fileweft/v1/documents/{id}/workflows</code> — 面向普通读取者的身份脱敏审批历史。</li><li><code>/fileweft/v1/documents/{id}/workflow-decisions</code> — 同时要求 <code>document:audit</code> 与 <code>document:read</code> 的不可变操作者证据（尚未发布的 <code>0.0.2-SNAPSHOT</code>）。</li><li><code>/fileweft/v1/documents/{id}/sync-status</code> — 安全交付投影与显式重试。</li><li><code>/fileweft/v1/documents/{id}/doctor</code> 和 <code>/fileweft/v1/doctor</code> — 文档与系统诊断。</li><li><code>/fileweft/v1/plugins</code> 与 <code>/fileweft/v1/health</code> — 安全清单与进程存活。</li></ul>${note("ACL", "决策证据是受权数据", "新决策只通过受权视图提供不可变操作者 ID、可选安全名称快照和决定时间。遗留完成任务返回 decisionEvidenceRecorded=false 和空证据字段；FileWeft 不会从受理人或可选审计行推断操作者。")}` },
         { title: "稳定外层", html: code("JSON", `{
   "code": "OK",
   "message": "OK",
@@ -476,6 +476,28 @@ export const pages = {
         { title: "已发布地基", html: `<ul><li>Core → SPI → Domain → Application → Persistence → Starter → Adapter 模块链路。</li><li>Boot 2 与 Boot 3 运行时及 Web Starter。</li><li>PostgreSQL 持久化、本地与 S3 兼容存储链路。</li><li>持久 Outbox、任务租约、并行审批与多目标交付。</li><li>正式 v1 HTTP、目录 ACL、审计、Trace 与 Doctor。</li></ul>` },
         { title: "兼容边界", html: `<p>受支持命名空间是 <code>ai.icen:*</code>，JVM 包名为 <code>ai.icen.fw</code>。已撤回 <code>${withdrawnGroup}:*</code> 试推制品及其共享 Flyway 历史不会自动收养。</p>` },
         { title: "许可证", html: `<p>FileWeft 使用 Apache License 2.0 开源，版权主体为 icen.ai。权威条款以仓库 <code>LICENSE</code> 与 <code>NOTICE</code> 为准。</p>` },
+      ],
+    }),
+
+  "project/release-0-0-2-development": page("project", 4,
+    {
+      title: "0.0.2 development line",
+      nav: "0.0.2 development",
+      lead: "0.0.2-SNAPSHOT is an unreleased development line. The stable published version remains ai.icen:*:0.0.1 until release gates and remote artifact verification finish.",
+      sections: [
+        { title: "Workflow decision evidence", html: `<p>New approvals and rejections preserve an immutable operator ID, optional safe display-name snapshot and <code>decidedTime</code>. The privileged <code>GET /fileweft/v1/documents/{id}/workflow-decisions</code> projection requires both <code>document:audit</code> and <code>document:read</code>; ordinary <code>/workflows</code> history remains identity-redacted.</p>${note("?", "Legacy evidence stays unknown", "V026 does not infer an actor from an assignee, current directory entry or optional audit row. Completed legacy tasks remain UNKNOWN.")}` },
+        { title: "Identity contract", html: `<p>Host user IDs are opaque, case-sensitive strings with a 256 UTF-16-code-unit limit and a fixed safe-character contract. Long, Int, UUID and external directory identifiers must be converted by the host using one permanently stable representation.</p>` },
+        { title: "V026 rollout", html: `<ol><li>Run <code>docs/sql/postgresql-v026-workflow-decision-evidence-preflight.sql</code> and repair unsafe host mappings without truncating or guessing.</li><li>Close review commands, stop every old API node and wait for in-flight decisions.</li><li>Rerun preflight, migrate, validate columns and constraints, then start only V026-aware nodes.</li><li>Keep the V026 columns, constraints and evidence during rollback; never shrink identity columns or reopen review writes on an old binary.</li></ol>` },
+      ],
+    },
+    {
+      title: "0.0.2 开发线",
+      nav: "0.0.2 开发中",
+      lead: "0.0.2-SNAPSHOT 是尚未发布的开发线；在发布门禁和远端制品验收完成前，稳定正式版仍是 ai.icen:*:0.0.1。",
+      sections: [
+        { title: "工作流决策证据", html: `<p>新审批和驳回不可变保存操作者 ID、可选安全显示名快照与 <code>decidedTime</code>。受权 <code>GET /fileweft/v1/documents/{id}/workflow-decisions</code> 同时要求 <code>document:audit</code> 与 <code>document:read</code>；普通 <code>/workflows</code> 历史继续隐藏身份。</p>${note("?", "遗留证据保持未知", "V026 不从受理人、当前用户目录或可选审计行推断操作者，既有完成任务保持 UNKNOWN。")}` },
+        { title: "身份契约", html: `<p>宿主用户 ID 是区分大小写的不透明字符串，最多 256 个 UTF-16 code unit，并遵守固定安全字符契约。Long、Int、UUID 和外部目录标识必须由宿主使用永久稳定的格式转成字符串。</p>` },
+        { title: "V026 上线顺序", html: `<ol><li>运行 <code>docs/sql/postgresql-v026-workflow-decision-evidence-preflight.sql</code>，不截断、不猜测地修复不安全宿主映射。</li><li>关闭审批命令，停止全部旧 API 节点并等待在途决策结束。</li><li>重跑预检，执行迁移，核验列和约束，再仅启动理解 V026 的新节点。</li><li>应用回滚也要保留 V026 列、约束和证据；不能缩窄身份列，也不能让旧二进制重新开放审批写入。</li></ol>` },
       ],
     }),
 };

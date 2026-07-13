@@ -12,20 +12,24 @@ class WorkflowInstanceTest {
     fun `approves workflow only after its pending task is approved`() {
         val workflow = workflow()
 
-        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"), "Looks good")
+        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"), "审批人一", "Looks good")
 
         assertEquals(WorkflowState.APPROVED, workflow.state)
         assertEquals(WorkflowTaskState.APPROVED, workflow.tasks.single().state)
         assertEquals("Looks good", workflow.tasks.single().comment)
+        assertEquals(Identifier("reviewer-1"), workflow.tasks.single().decisionOperatorId)
+        assertEquals("审批人一", workflow.tasks.single().decisionOperatorName)
     }
 
     @Test
     fun `rejects workflow and prevents a second decision`() {
         val workflow = workflow()
 
-        workflow.reject(Identifier("task-1"), Identifier("reviewer-1"), "Needs revision")
+        workflow.reject(Identifier("task-1"), Identifier("reviewer-1"), "复核人一", "Needs revision")
 
         assertEquals(WorkflowState.REJECTED, workflow.state)
+        assertEquals(Identifier("reviewer-1"), workflow.tasks.single().decisionOperatorId)
+        assertEquals("复核人一", workflow.tasks.single().decisionOperatorName)
         assertFailsWith<WorkflowDecisionConflictException> {
             workflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
         }
@@ -41,15 +45,20 @@ class WorkflowInstanceTest {
             ),
         )
 
-        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
+        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"), "审批人甲", null)
 
         assertEquals(WorkflowState.PENDING, workflow.state)
         val reloaded = WorkflowInstance(
             workflow.id, workflow.tenantId, workflow.documentId, workflow.workflowType, workflow.state, workflow.tasks,
         )
-        reloaded.approve(Identifier("task-2"), Identifier("reviewer-2"))
+        reloaded.approve(Identifier("task-2"), Identifier("reviewer-2"), "审批人乙", null)
 
         assertEquals(WorkflowState.APPROVED, reloaded.state)
+        assertEquals(
+            listOf(Identifier("reviewer-1"), Identifier("reviewer-2")),
+            reloaded.tasks.map { task -> task.decisionOperatorId },
+        )
+        assertEquals(listOf("审批人甲", "审批人乙"), reloaded.tasks.map { task -> task.decisionOperatorName })
     }
 
     @Test
@@ -138,6 +147,59 @@ class WorkflowInstanceTest {
         assertFailsWith<IllegalArgumentException> {
             workflow().approve(Identifier("task-1"), Identifier("reviewer-1"), " ")
         }
+    }
+
+    @Test
+    fun `loads legacy completed tasks without guessing decision identity`() {
+        val legacy = WorkflowTask(
+            Identifier("task-legacy"),
+            Identifier("tenant-1"),
+            Identifier("workflow-legacy"),
+            Identifier("reviewer-legacy"),
+            WorkflowTaskState.APPROVED,
+            "legacy approval",
+            null,
+            null,
+        )
+        val workflow = WorkflowInstance(
+            Identifier("workflow-legacy"),
+            Identifier("tenant-1"),
+            Identifier("document-1"),
+            "DOCUMENT_REVIEW",
+            WorkflowState.APPROVED,
+            listOf(legacy),
+        )
+
+        assertEquals(WorkflowState.APPROVED, workflow.state)
+        assertEquals(null, workflow.tasks.single().decisionOperatorId)
+        assertEquals(null, workflow.tasks.single().decisionOperatorName)
+    }
+
+    @Test
+    fun `rejects decision evidence on pending tasks and names without an operator id`() {
+        assertFailsWith<IllegalArgumentException> {
+            WorkflowTask(
+                Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), null,
+                WorkflowTaskState.PENDING, null, Identifier("reviewer-1"), "审批人",
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            WorkflowTask(
+                Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), null,
+                WorkflowTaskState.APPROVED, null, null, "审批人",
+            )
+        }
+    }
+
+    @Test
+    fun `old decision overload remains compatible and records the opaque operator id`() {
+        val workflow = workflow()
+
+        workflow.approve(Identifier("task-1"), Identifier("reviewer-1"), "旧调用方备注")
+
+        assertEquals(Identifier("reviewer-1"), workflow.tasks.single().decisionOperatorId)
+        assertEquals(null, workflow.tasks.single().decisionOperatorName)
+        assertEquals("旧调用方备注", workflow.tasks.single().comment)
     }
 
     private fun workflow() = WorkflowInstance(

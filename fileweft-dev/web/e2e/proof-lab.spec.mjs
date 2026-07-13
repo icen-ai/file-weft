@@ -451,6 +451,10 @@ test("holds a dual-control document until both reviewer and administrator approv
     await administratorPage.locator("[data-panel='documents']").click();
     await selectDocument(administratorPage, created.documentId);
     await expect(administratorPage.locator("#selected-state")).not.toHaveAttribute("data-lifecycle-state", "PENDING_REVIEW");
+    await expect(administratorPage.locator("#workflow-list")).toContainText("Alpha 审批者");
+    await expect(administratorPage.locator("#workflow-list")).toContainText("Alpha 管理员");
+    await expect(administratorPage.locator("#workflow-list")).toContainText("alpha-reviewer");
+    await expect(administratorPage.locator("#workflow-list")).toContainText("alpha-admin");
     await administratorPage.locator("[data-panel='platform']").click();
     await expect(administratorPage.locator("#platform-output")).toContainText("targetId");
     await administratorPage.locator("#process-outbox").click();

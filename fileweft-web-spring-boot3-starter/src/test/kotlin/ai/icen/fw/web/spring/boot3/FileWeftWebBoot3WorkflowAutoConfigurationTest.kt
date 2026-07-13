@@ -1,11 +1,14 @@
 package ai.icen.fw.web.spring.boot3
 
 import ai.icen.fw.application.workflow.WorkflowQueryService
+import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryService
 import ai.icen.fw.core.context.TraceContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.workflow.WorkflowApiReadFacade
+import ai.icen.fw.web.runtime.v1.workflow.WorkflowDecisionEvidenceApiReadFacade
+import ai.icen.fw.web.spring.boot3.v1.workflow.V1WorkflowDecisionEvidenceController
 import ai.icen.fw.web.spring.boot3.v1.workflow.V1WorkflowReadController
 import org.junit.jupiter.api.Test
 import org.springframework.boot.autoconfigure.AutoConfigurations
@@ -25,6 +28,8 @@ class FileWeftWebBoot3WorkflowAutoConfigurationTest {
         contextRunner().run { context ->
             assertTrue(context.getBeansOfType(WorkflowApiReadFacade::class.java).isEmpty())
             assertTrue(context.getBeansOfType(V1WorkflowReadController::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(WorkflowDecisionEvidenceApiReadFacade::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(V1WorkflowDecisionEvidenceController::class.java).isEmpty())
             assertTrue(context.getBeansOfType(V1ApiResponseFactory::class.java).isEmpty())
         }
     }
@@ -35,6 +40,21 @@ class FileWeftWebBoot3WorkflowAutoConfigurationTest {
             assertEquals(1, context.getBeansOfType(WorkflowQueryService::class.java).size)
             assertEquals(1, context.getBeansOfType(WorkflowApiReadFacade::class.java).size)
             assertEquals(1, context.getBeansOfType(V1WorkflowReadController::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1ApiResponseFactory::class.java).size)
+            assertTrue(context.getBeansOfType(WorkflowDecisionEvidenceApiReadFacade::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(V1WorkflowDecisionEvidenceController::class.java).isEmpty())
+        }
+    }
+
+    @Test
+    fun `registers privileged evidence web capability without the ordinary workflow query service`() {
+        contextRunner().withUserConfiguration(DecisionEvidenceServiceConfiguration::class.java).run { context ->
+            assertTrue(context.getBeansOfType(WorkflowQueryService::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(WorkflowApiReadFacade::class.java).isEmpty())
+            assertTrue(context.getBeansOfType(V1WorkflowReadController::class.java).isEmpty())
+            assertEquals(1, context.getBeansOfType(WorkflowDecisionEvidenceQueryService::class.java).size)
+            assertEquals(1, context.getBeansOfType(WorkflowDecisionEvidenceApiReadFacade::class.java).size)
+            assertEquals(1, context.getBeansOfType(V1WorkflowDecisionEvidenceController::class.java).size)
             assertEquals(1, context.getBeansOfType(V1ApiResponseFactory::class.java).size)
         }
     }
@@ -108,6 +128,13 @@ class FileWeftWebBoot3WorkflowAutoConfigurationTest {
     internal class SingleServiceConfiguration {
         @Bean
         fun workflowQueryService(): WorkflowQueryService = Boot3WorkflowControllerFixture().service()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    internal class DecisionEvidenceServiceConfiguration {
+        @Bean
+        fun workflowDecisionEvidenceQueryService(): WorkflowDecisionEvidenceQueryService =
+            Boot3WorkflowDecisionEvidenceFixture().service()
     }
 
     @Configuration(proxyBeanMethods = false)

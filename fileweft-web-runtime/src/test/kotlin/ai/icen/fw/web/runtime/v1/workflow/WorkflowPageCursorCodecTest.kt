@@ -13,17 +13,20 @@ import kotlin.test.assertTrue
 class WorkflowPageCursorCodecTest {
     private val taskCodec = WorkflowPageCursorCodec(WorkflowPageCursorCodec.TASK_KIND)
     private val historyCodec = WorkflowPageCursorCodec(WorkflowPageCursorCodec.HISTORY_KIND)
+    private val evidenceCodec = WorkflowPageCursorCodec(WorkflowPageCursorCodec.EVIDENCE_KIND)
 
     @Test
-    fun `round trips both cursor kinds with Unicode and boundary timestamps`() {
+    fun `round trips every cursor kind with Unicode and boundary timestamps`() {
         val unicodeId = Identifier("审批-🚀-流程")
 
         val taskEncoded = taskCodec.encode(0, unicodeId)
         val historyEncoded = historyCodec.encode(Long.MAX_VALUE, unicodeId)
+        val evidenceEncoded = evidenceCodec.encode(42, unicodeId)
         val task = taskCodec.decode(taskEncoded)
         val history = historyCodec.decode(historyEncoded)
+        val evidence = evidenceCodec.decode(evidenceEncoded)
 
-        listOf(taskEncoded, historyEncoded).forEach { encoded ->
+        listOf(taskEncoded, historyEncoded, evidenceEncoded).forEach { encoded ->
             assertTrue(encoded.matches(Regex("[A-Za-z0-9_-]+")))
             assertFalse(encoded.contains('='))
         }
@@ -31,17 +34,22 @@ class WorkflowPageCursorCodecTest {
         assertEquals(unicodeId, task.id)
         assertEquals(Long.MAX_VALUE, history.createdTime)
         assertEquals(unicodeId, history.id)
-        assertFalse(taskEncoded == historyEncoded)
+        assertEquals(42, evidence.createdTime)
+        assertEquals(unicodeId, evidence.id)
+        assertEquals(3, setOf(taskEncoded, historyEncoded, evidenceEncoded).size)
     }
 
     @Test
     fun `rejects a valid cursor belonging to the other workflow page kind`() {
         val taskCursor = taskCodec.encode(10, Identifier("task-1"))
         val historyCursor = historyCodec.encode(20, Identifier("workflow-1"))
+        val evidenceCursor = evidenceCodec.encode(30, Identifier("workflow-1"))
 
         listOf(
             assertFailsWith<IllegalArgumentException> { historyCodec.decode(taskCursor) },
             assertFailsWith<IllegalArgumentException> { taskCodec.decode(historyCursor) },
+            assertFailsWith<IllegalArgumentException> { evidenceCodec.decode(historyCursor) },
+            assertFailsWith<IllegalArgumentException> { historyCodec.decode(evidenceCursor) },
         ).forEach { failure ->
             assertEquals("Invalid workflow page cursor.", failure.message)
             assertFalse(failure.message.orEmpty().contains(taskCursor))
@@ -101,7 +109,7 @@ class WorkflowPageCursorCodecTest {
         failures.forEach { failure ->
             assertEquals("Workflow query returned an invalid page cursor.", failure.message)
         }
-        assertFailsWith<IllegalArgumentException> { WorkflowPageCursorCodec(3) }
+        assertFailsWith<IllegalArgumentException> { WorkflowPageCursorCodec(4) }
     }
 
     private fun payload(

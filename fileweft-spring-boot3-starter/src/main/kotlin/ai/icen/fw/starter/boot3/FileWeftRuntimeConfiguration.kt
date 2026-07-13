@@ -53,6 +53,8 @@ import ai.icen.fw.application.workflow.IdempotentDocumentCatalogReviewWorkflowSe
 import ai.icen.fw.application.workflow.IdempotentDocumentReviewWorkflowService
 import ai.icen.fw.application.workflow.WorkflowQueryRepository
 import ai.icen.fw.application.workflow.WorkflowQueryService
+import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryRepository
+import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryService
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.DocumentRepository
@@ -121,6 +123,11 @@ class FileWeftRuntimeConfiguration {
     @Bean
     @ConditionalOnMissingBean(WorkflowQueryRepository::class)
     fun workflowQueries(): WorkflowQueryRepository = JdbcWorkflowQueryRepository()
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowDecisionEvidenceQueryRepository::class)
+    fun workflowDecisionEvidenceQueries(): WorkflowDecisionEvidenceQueryRepository =
+        JdbcWorkflowDecisionEvidenceQueryRepository()
 
     @Bean
     @ConditionalOnMissingBean(FileObjectRepository::class)
@@ -744,6 +751,24 @@ class FileWeftRuntimeConfiguration {
         transaction: ApplicationTransaction,
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = WorkflowQueryService(
+        tenants,
+        users,
+        authorization,
+        queries,
+        transaction,
+        singleSecurityCandidateOrNull(folderReadAccess, DocumentFolderReadAccess::class.java),
+    )
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowDecisionEvidenceQueryService::class)
+    fun workflowDecisionEvidenceQueryService(
+        tenants: TenantProvider,
+        users: UserRealmProvider,
+        authorization: AuthorizationProvider,
+        queries: WorkflowDecisionEvidenceQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
+    ) = WorkflowDecisionEvidenceQueryService(
         tenants,
         users,
         authorization,

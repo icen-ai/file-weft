@@ -5,6 +5,9 @@ import ai.icen.fw.application.document.DocumentSummaryView
 import ai.icen.fw.application.workflow.DocumentWorkflowPageCursor
 import ai.icen.fw.application.workflow.DocumentWorkflowPageRequest
 import ai.icen.fw.application.workflow.DocumentWorkflowPageResult
+import ai.icen.fw.application.workflow.DocumentWorkflowDecisionEvidencePageResult
+import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceView
+import ai.icen.fw.application.workflow.WorkflowDecisionTaskEvidenceView
 import ai.icen.fw.application.workflow.WorkflowHistoryTaskView
 import ai.icen.fw.application.workflow.WorkflowQueryRepository
 import ai.icen.fw.application.workflow.WorkflowTaskInboxItemView
@@ -61,6 +64,26 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
             connection.prepareStatement(documentHistorySql(request, folderReadScope)).use { statement ->
                 statement.bindDocumentHistory(tenantId, documentId, request, visibilityArray)
                 statement.executeQuery().use { result -> mapDocumentHistory(result, request.limit) }
+            }
+        } finally {
+            visibilityArray?.free()
+        }
+    }
+
+    fun findDocumentWorkflowDecisionEvidencePage(
+        tenantId: Identifier,
+        documentId: Identifier,
+        request: DocumentWorkflowPageRequest,
+        folderReadScope: DocumentFolderReadScope?,
+    ): DocumentWorkflowDecisionEvidencePageResult? {
+        val connection = JdbcConnectionContext.requireCurrent()
+        val visibilityArray = connection.createFolderVisibilityArray(folderReadScope)
+        return try {
+            connection.prepareStatement(documentDecisionEvidenceSql(request, folderReadScope)).use { statement ->
+                statement.bindDocumentHistory(tenantId, documentId, request, visibilityArray)
+                statement.executeQuery().use { result ->
+                    mapDocumentDecisionEvidence(result, documentId, request.limit)
+                }
             }
         } finally {
             visibilityArray?.free()
@@ -142,6 +165,51 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         return DocumentWorkflowPageResult(items, nextCursor)
     }
 
+    private fun mapDocumentDecisionEvidence(
+        result: ResultSet,
+        documentId: Identifier,
+        limit: Int,
+    ): DocumentWorkflowDecisionEvidencePageResult? {
+        var visibleDocument = false
+        val workflows = LinkedHashMap<String, WorkflowDecisionEvidenceAccumulator>()
+        while (result.next()) {
+            visibleDocument = true
+            val workflowId = result.getString("workflow_id") ?: continue
+            val workflow = workflows.getOrPut(workflowId) {
+                WorkflowDecisionEvidenceAccumulator(
+                    id = Identifier(workflowId),
+                    documentId = Identifier(result.getString("workflow_document_id")),
+                    workflowType = result.getString("workflow_type"),
+                    state = WorkflowState.valueOf(result.getString("workflow_state")),
+                    createdTime = result.getLong("workflow_created_time"),
+                    updatedTime = result.getLong("workflow_updated_time"),
+                )
+            }
+            workflow.tasks += WorkflowDecisionTaskEvidenceView(
+                id = Identifier(checkNotNull(result.getString("task_id")) {
+                    "A workflow decision evidence row is missing its task identifier."
+                }),
+                state = WorkflowTaskState.valueOf(result.getString("task_state")),
+                createdTime = result.getLong("task_created_time"),
+                updatedTime = result.getLong("task_updated_time"),
+                decisionOperatorId = result.getString("decision_operator_id")?.let(::Identifier),
+                decisionOperatorName = result.getString("decision_operator_name"),
+                decidedTime = result.getLong("decided_time").takeUnless { result.wasNull() },
+            )
+        }
+        if (!visibleDocument) return null
+
+        val rows = workflows.values.map { workflow -> workflow.toView() }
+        val hasNext = rows.size > limit
+        val items = if (hasNext) ArrayList(rows.subList(0, limit)) else rows
+        val nextCursor = if (hasNext) {
+            items.last().let { workflow -> DocumentWorkflowPageCursor(workflow.createdTime, workflow.id) }
+        } else {
+            null
+        }
+        return DocumentWorkflowDecisionEvidencePageResult(documentId, items, nextCursor)
+    }
+
     private fun PreparedStatement.bindPendingTaskPage(
         tenantId: Identifier,
         currentUserId: Identifier,
@@ -205,6 +273,20 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         append(DOCUMENT_HISTORY_SELECT)
     }
 
+    private fun documentDecisionEvidenceSql(
+        request: DocumentWorkflowPageRequest,
+        folderReadScope: DocumentFolderReadScope?,
+    ): String = buildString {
+        append(DOCUMENT_HISTORY_VISIBLE_CTE)
+        appendFolderVisibility(folderReadScope, FOLDER_ID_SQL)
+        append(DOCUMENT_HISTORY_WORKFLOW_CTE)
+        append(DOCUMENT_DECISION_EVIDENCE_FILTER)
+        request.cursor?.let {
+            append(" AND (workflow.created_time < ? OR (workflow.created_time = ? AND workflow.id < ?))")
+        }
+        append(DOCUMENT_DECISION_EVIDENCE_SELECT)
+    }
+
     private fun StringBuilder.appendFolderVisibility(
         folderReadScope: DocumentFolderReadScope?,
         folderExpression: String,
@@ -234,6 +316,27 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         val tasks = ArrayList<WorkflowHistoryTaskView>()
 
         fun toView(): WorkflowView = WorkflowView(
+            id = id,
+            documentId = documentId,
+            workflowType = workflowType,
+            state = state,
+            createdTime = createdTime,
+            updatedTime = updatedTime,
+            tasks = tasks,
+        )
+    }
+
+    private class WorkflowDecisionEvidenceAccumulator(
+        val id: Identifier,
+        val documentId: Identifier,
+        val workflowType: String,
+        val state: WorkflowState,
+        val createdTime: Long,
+        val updatedTime: Long,
+    ) {
+        val tasks = ArrayList<WorkflowDecisionTaskEvidenceView>()
+
+        fun toView(): WorkflowDecisionEvidenceView = WorkflowDecisionEvidenceView(
             id = id,
             documentId = documentId,
             workflowType = workflowType,
@@ -394,6 +497,68 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                    task.task_state,
                    task.created_time AS task_created_time,
                    task.updated_time AS task_updated_time
+            FROM visible_document document
+            LEFT JOIN workflow_page workflow ON TRUE
+            LEFT JOIN fw_workflow_task task
+              ON task.tenant_id = workflow.tenant_id
+             AND task.workflow_id = workflow.id
+            ORDER BY workflow.created_time DESC NULLS LAST,
+                     workflow.id DESC NULLS LAST,
+                     task.created_time,
+                     task.id
+        """
+
+        const val DOCUMENT_DECISION_EVIDENCE_FILTER = """
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM fw_workflow_task evidence_task
+                      WHERE evidence_task.tenant_id = workflow.tenant_id
+                        AND evidence_task.workflow_id = workflow.id
+                        AND (
+                            (
+                                evidence_task.task_state = 'PENDING'
+                                AND (
+                                    evidence_task.decision_operator_id IS NOT NULL
+                                    OR evidence_task.decision_operator_name IS NOT NULL
+                                    OR evidence_task.decided_time IS NOT NULL
+                                )
+                            )
+                            OR (
+                                evidence_task.decision_operator_name IS NOT NULL
+                                AND evidence_task.decision_operator_id IS NULL
+                            )
+                            OR (
+                                (evidence_task.decision_operator_id IS NULL)
+                                <> (evidence_task.decided_time IS NULL)
+                            )
+                            OR (
+                                evidence_task.decision_operator_id IS NOT NULL
+                                AND evidence_task.task_state NOT IN ('APPROVED', 'REJECTED')
+                            )
+                            OR evidence_task.decided_time < evidence_task.created_time
+                            OR evidence_task.decided_time > evidence_task.updated_time
+                        )
+                  )
+        """
+
+        const val DOCUMENT_DECISION_EVIDENCE_SELECT = """
+                ORDER BY workflow.created_time DESC, workflow.id DESC
+                LIMIT ?
+            )
+            SELECT document.id AS visible_document_id,
+                   workflow.id AS workflow_id,
+                   workflow.document_id AS workflow_document_id,
+                   workflow.workflow_type,
+                   workflow.state AS workflow_state,
+                   workflow.created_time AS workflow_created_time,
+                   workflow.updated_time AS workflow_updated_time,
+                   task.id AS task_id,
+                   task.task_state,
+                   task.created_time AS task_created_time,
+                   task.updated_time AS task_updated_time,
+                   task.decision_operator_id,
+                   task.decision_operator_name,
+                   task.decided_time
             FROM visible_document document
             LEFT JOIN workflow_page workflow ON TRUE
             LEFT JOIN fw_workflow_task task

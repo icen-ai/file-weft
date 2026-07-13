@@ -67,10 +67,18 @@ internal class ApplicationAuthorization(
     }
 
     private fun snapshot(user: UserIdentity): UserIdentity = UserIdentity(
-        id = user.id,
-        displayName = user.displayName,
+        id = try {
+            Identifier(validatedTrustedUserId(user.id.value))
+        } catch (failure: IllegalArgumentException) {
+            throw ApplicationUnauthenticatedException(INVALID_IDENTITY_MESSAGE, failure)
+        },
+        displayName = safeTrustedDisplayName(user.displayName),
         attributes = Collections.unmodifiableMap(LinkedHashMap(user.attributes)),
     )
+
+    private companion object {
+        const val INVALID_IDENTITY_MESSAGE: String = "The trusted current-user identity is invalid."
+    }
 }
 
 /**

@@ -69,7 +69,7 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `applies schema migrations for durable runtime recovery idempotency and workflow queries`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
 
-        assertEquals(25, migrations)
+        assertEquals(26, migrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
             assertTrue(tableExists(connection, "fw_asset"))
@@ -101,6 +101,9 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(columnExists(connection, "fw_agent_result", "result_json"))
             assertTrue(columnExists(connection, "fw_upload_session", "storage_upload_id"))
             assertTrue(columnExists(connection, "fw_upload_session", "owner_id"))
+            assertTrue(columnExists(connection, "fw_workflow_task", "decision_operator_id"))
+            assertTrue(columnExists(connection, "fw_workflow_task", "decision_operator_name"))
+            assertTrue(columnExists(connection, "fw_workflow_task", "decided_time"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_status"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_error_message"))
             assertTrue(columnExists(connection, "fw_document_delivery_target", "removal_retry_count"))
@@ -156,6 +159,21 @@ class FlywayMigrationRunnerIntegrationTest {
             assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_removal_requires_success"))
             assertTrue(constraintExists(connection, "fw_document_delivery_target", "ck_fw_delivery_dispatch_state"))
             assertTrue(constraintExists(connection, "fw_upload_session", "ck_fw_upload_session_owner_id"))
+            assertTrue(constraintExists(connection, "fw_workflow_task", "ck_fw_workflow_task_decision_evidence"))
+            assertTrue(constraintExists(connection, "fw_workflow_task", "ck_fw_workflow_task_assignee_id"))
+            assertTrue(constraintExists(connection, "fw_workflow_task", "ck_fw_workflow_task_decision_operator_id"))
+            assertTrue(constraintExists(connection, "fw_audit_record", "ck_fw_audit_operator_id"))
+            assertTrue(constraintExists(connection, "fw_operation_log", "ck_fw_operation_operator_id"))
+            assertTrue(constraintExists(connection, "fw_agent_suggestion_confirmation", "ck_fw_agent_confirmation_operator_id"))
+            listOf(
+                "fw_audit_record" to "operator_id",
+                "fw_operation_log" to "operator_id",
+                "fw_agent_suggestion_confirmation" to "confirmed_by",
+                "fw_workflow_task" to "assignee_id",
+                "fw_workflow_task" to "decision_operator_id",
+            ).forEach { (table, column) ->
+                assertEquals(256, characterMaximumLength(connection, table, column), "$table.$column")
+            }
         }
     }
 
@@ -172,11 +190,107 @@ class FlywayMigrationRunnerIntegrationTest {
             .filter { it.startsWith("V") }
             .toSet()
 
-        assertEquals(25, packagedScripts.size)
+        assertEquals(26, packagedScripts.size)
         assertTrue("V001__create_file_document_outbox.sql" in packagedScripts)
         assertTrue("V025__index_document_audit_log_queries.sql" in packagedScripts)
+        assertTrue("V026__persist_workflow_decision_evidence.sql" in packagedScripts)
         dataSource.connection.use { connection ->
             assertFalse(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE))
+        }
+    }
+
+    @Test
+    fun `V026 upgrades populated identity columns without inventing legacy decision evidence`() {
+        val historyTable = "v026_upgrade_history"
+        val before = Flyway.configure()
+            .dataSource(dataSource)
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(historyTable)
+            .target("025")
+            .load()
+        assertEquals(25, before.migrate().migrationsExecuted)
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeUpdate(
+                    "INSERT INTO fw_audit_record(id, tenant_id, resource_type, resource_id, action, operator_id, detail_json, created_time, updated_time) " +
+                        "VALUES ('audit-v026', 'tenant-1', 'DOCUMENT', 'document-1', 'document:audit', 'legacy-user', '{}'::jsonb, 100, 100)",
+                )
+                statement.executeUpdate(
+                    "INSERT INTO fw_operation_log(id, tenant_id, resource_type, resource_id, action, operator_id, detail_json, created_time) " +
+                        "VALUES ('operation-v026', 'tenant-1', 'DOCUMENT', 'document-1', 'document:audit', 'legacy-user', '{}'::jsonb, 100)",
+                )
+                statement.executeUpdate(
+                    "INSERT INTO fw_agent_suggestion_confirmation(id, tenant_id, task_id, suggestion_id, confirmed_by, confirmed_time, created_time, updated_time) " +
+                        "VALUES ('confirmation-v026', 'tenant-1', 'agent-task-1', 'suggestion-1', 'legacy-user', 100, 100, 100)",
+                )
+                statement.executeUpdate(
+                    "INSERT INTO fw_workflow_instance(id, tenant_id, document_id, workflow_type, state, created_time, updated_time) " +
+                        "VALUES ('workflow-v026', 'tenant-1', 'document-1', 'DOCUMENT_REVIEW', 'APPROVED', 100, 100)",
+                )
+                statement.executeUpdate(
+                    "INSERT INTO fw_workflow_task(id, tenant_id, workflow_id, assignee_id, task_state, comment_text, created_time, updated_time) " +
+                        "VALUES ('task-v026', 'tenant-1', 'workflow-v026', 'legacy-user', 'APPROVED', 'legacy decision', 100, 100)",
+                )
+            }
+        }
+
+        val upgraded = Flyway.configure()
+            .dataSource(dataSource)
+            .locations(FlywayMigrationRunner.MIGRATION_LOCATION)
+            .table(historyTable)
+            .load()
+        assertEquals(1, upgraded.migrate().migrationsExecuted)
+
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery(
+                    "SELECT assignee_id, decision_operator_id, decision_operator_name, decided_time " +
+                        "FROM fw_workflow_task WHERE id = 'task-v026'",
+                ).use { result ->
+                    assertTrue(result.next())
+                    assertEquals("legacy-user", result.getString("assignee_id"))
+                    assertNull(result.getString("decision_operator_id"))
+                    assertNull(result.getString("decision_operator_name"))
+                    assertNull(result.getObject("decided_time"))
+                }
+            }
+            val maximumIdentity = "u".repeat(256)
+            connection.prepareStatement(
+                "UPDATE fw_workflow_task SET decision_operator_id = ?, decision_operator_name = ?, decided_time = 100 WHERE id = 'task-v026'",
+            ).use { statement ->
+                statement.setString(1, maximumIdentity)
+                statement.setString(2, "升级后审批者")
+                assertEquals(1, statement.executeUpdate())
+            }
+            listOf(99L, 101L).forEach { invalidDecisionTime ->
+                assertFailsWith<SQLException>("decided_time=$invalidDecisionTime must stay within task timestamps") {
+                    connection.prepareStatement(
+                        "UPDATE fw_workflow_task SET decided_time = ? WHERE id = 'task-v026'",
+                    ).use { statement ->
+                        statement.setLong(1, invalidDecisionTime)
+                        statement.executeUpdate()
+                    }
+                }
+            }
+            listOf(
+                "UPDATE fw_audit_record SET operator_id = ? WHERE id = 'audit-v026'",
+                "UPDATE fw_operation_log SET operator_id = ? WHERE id = 'operation-v026'",
+                "UPDATE fw_agent_suggestion_confirmation SET confirmed_by = ? WHERE id = 'confirmation-v026'",
+                "UPDATE fw_workflow_task SET assignee_id = ? WHERE id = 'task-v026'",
+            ).forEach { sql ->
+                connection.prepareStatement(sql).use { statement ->
+                    statement.setString(1, maximumIdentity)
+                    assertEquals(1, statement.executeUpdate())
+                }
+            }
+            assertFailsWith<SQLException> {
+                connection.prepareStatement(
+                    "UPDATE fw_workflow_task SET decision_operator_id = ? WHERE id = 'task-v026'",
+                ).use { statement ->
+                    statement.setString(1, "u".repeat(257))
+                    statement.executeUpdate()
+                }
+            }
         }
     }
 
@@ -194,12 +308,12 @@ class FlywayMigrationRunnerIntegrationTest {
         val fileWeftMigrations = FlywayMigrationRunner(dataSource).migrate()
 
         assertEquals(1, hostMigrations)
-        assertEquals(25, fileWeftMigrations)
+        assertEquals(26, fileWeftMigrations)
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "host_v001_probe"))
             assertTrue(tableExists(connection, "fw_document"))
             assertEquals(1, historyCount(connection, "flyway_schema_history"))
-            assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
             assertEquals(
                 "V001__create_host_probe.sql",
                 historyScript(connection, "flyway_schema_history", "001"),
@@ -219,12 +333,12 @@ class FlywayMigrationRunnerIntegrationTest {
     fun `reuses dedicated history without replay and validates the migrated schema`() {
         val runner = FlywayMigrationRunner(dataSource)
 
-        assertEquals(25, runner.migrate())
+        assertEquals(26, runner.migrate())
         assertEquals(0, runner.migrate())
         runner.validate()
 
         dataSource.connection.use { connection ->
-            assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+            assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
             assertFalse(tableExists(connection, "flyway_schema_history"))
         }
     }
@@ -248,10 +362,10 @@ class FlywayMigrationRunnerIntegrationTest {
             }
 
             val targetDataSource = postgresDataSource(targetSchema)
-            assertEquals(25, FlywayMigrationRunner(targetDataSource, targetSchema).migrate())
+            assertEquals(26, FlywayMigrationRunner(targetDataSource, targetSchema).migrate())
             targetDataSource.connection.use { connection ->
                 assertEquals(
-                    25,
+                    26,
                     versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, targetSchema),
                 )
             }
@@ -268,14 +382,14 @@ class FlywayMigrationRunnerIntegrationTest {
         try {
             val schemaDataSource = postgresDataSource(schema)
 
-            assertEquals(25, FlywayMigrationRunner(schemaDataSource, schema, false).migrate())
+            assertEquals(26, FlywayMigrationRunner(schemaDataSource, schema, false).migrate())
             FlywayMigrationRunner(schemaDataSource, schema, false).validate()
 
             schemaDataSource.connection.use { connection ->
                 assertEquals(schema, currentSchema(connection))
                 assertTrue(tableExists(connection, "fw_document", schema))
                 assertTrue(tableExists(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
-                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+                assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
             }
         } finally {
             dropSchema(schema)
@@ -292,12 +406,12 @@ class FlywayMigrationRunnerIntegrationTest {
                 assertNull(currentSchema(connection))
             }
 
-            assertEquals(25, FlywayMigrationRunner(schemaDataSource, schema, true).migrate())
+            assertEquals(26, FlywayMigrationRunner(schemaDataSource, schema, true).migrate())
 
             schemaDataSource.connection.use { connection ->
                 assertEquals(schema, currentSchema(connection))
                 assertTrue(tableExists(connection, "fw_document", schema))
-                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+                assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
             }
         } finally {
             dropSchema(schema)
@@ -361,7 +475,7 @@ class FlywayMigrationRunnerIntegrationTest {
     @Test
     fun `future applied migration fails both validation and migration`() {
         val runner = FlywayMigrationRunner(dataSource)
-        assertEquals(25, runner.migrate())
+        assertEquals(26, runner.migrate())
         insertFutureFileWeftHistoryRow()
 
         assertFailsWith<FlywayException> { runner.validate() }
@@ -371,7 +485,7 @@ class FlywayMigrationRunnerIntegrationTest {
             connection.createStatement().use { statement ->
                 statement.executeQuery(
                     "SELECT COUNT(*) FROM ${FlywayMigrationRunner.HISTORY_TABLE} " +
-                        "WHERE version = '026' AND script = 'V026__future_fileweft_probe.sql' AND success",
+                        "WHERE version = '027' AND script = 'V027__future_fileweft_probe.sql' AND success",
                 ).use { result ->
                     assertTrue(result.next())
                     assertEquals(1, result.getInt(1))
@@ -436,8 +550,8 @@ class FlywayMigrationRunnerIntegrationTest {
     }
 
     @Test
-    fun `refuses a version 25 baseline without FileWeft business tables`() {
-        baselineFileWeftNamespace(version = "25", description = "unsafe adoption")
+    fun `refuses a version 26 baseline without FileWeft business tables`() {
+        baselineFileWeftNamespace(version = "26", description = "unsafe adoption")
 
         val runner = FlywayMigrationRunner(dataSource)
         listOf<() -> Unit>(
@@ -468,13 +582,13 @@ class FlywayMigrationRunnerIntegrationTest {
             start.countDown()
 
             val executionCounts = results.map { it.get(2, TimeUnit.MINUTES) }
-            assertTrue(executionCounts.all { count -> count in 0..25 })
+            assertTrue(executionCounts.all { count -> count in 0..26 })
             // Flyway locks schema-history changes, not the caller for the whole migrate() method.
             // Concurrent callers may therefore split the pending migrations (for example 1 + 24),
             // but every version must be executed exactly once across the complete result set.
-            assertEquals(25, executionCounts.sum())
+            assertEquals(26, executionCounts.sum())
             dataSource.connection.use { connection ->
-                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+                assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
                 assertTrue(tableExists(connection, "fw_document"))
             }
         } finally {
@@ -500,13 +614,13 @@ class FlywayMigrationRunnerIntegrationTest {
             start.countDown()
 
             val executionCounts = results.map { it.get(2, TimeUnit.MINUTES) }
-            assertTrue(executionCounts.all { count -> count in 0..25 })
-            assertEquals(25, executionCounts.sum())
+            assertTrue(executionCounts.all { count -> count in 0..26 })
+            assertEquals(26, executionCounts.sum())
             FlywayMigrationRunner(schemaDataSource, schema, false).validate()
             schemaDataSource.connection.use { connection ->
                 assertEquals(schema, currentSchema(connection))
                 assertTrue(tableExists(connection, "fw_document", schema))
-                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
+                assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE, schema))
             }
         } finally {
             executor.shutdownNow()
@@ -530,13 +644,13 @@ class FlywayMigrationRunnerIntegrationTest {
             }
             assertTrue(firstHistoryProbeCompleted.await(30, TimeUnit.SECONDS))
 
-            assertEquals(25, FlywayMigrationRunner(dataSource).migrate())
+            assertEquals(26, FlywayMigrationRunner(dataSource).migrate())
             resumeFirstRunner.countDown()
 
             assertEquals(0, delayedResult.get(2, TimeUnit.MINUTES))
             dataSource.connection.use { connection ->
                 assertTrue(tableExists(connection, "fw_document"))
-                assertEquals(25, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
+                assertEquals(26, versionedHistoryCount(connection, FlywayMigrationRunner.HISTORY_TABLE))
             }
         } finally {
             resumeFirstRunner.countDown()
@@ -860,8 +974,8 @@ class FlywayMigrationRunnerIntegrationTest {
                             installed_rank, version, description, type, script, checksum,
                             installed_by, execution_time, success
                         )
-                        SELECT MAX(installed_rank) + 1, '026', 'future FileWeft probe', 'SQL',
-                               'V026__future_fileweft_probe.sql', 260026, current_user, 0, TRUE
+                        SELECT MAX(installed_rank) + 1, '027', 'future FileWeft probe', 'SQL',
+                               'V027__future_fileweft_probe.sql', 270027, current_user, 0, TRUE
                           FROM ${FlywayMigrationRunner.HISTORY_TABLE}
                         """.trimIndent(),
                     ),
@@ -1000,6 +1114,19 @@ class FlywayMigrationRunnerIntegrationTest {
 
     private fun columnExists(connection: Connection, tableName: String, columnName: String): Boolean =
         connection.metaData.getColumns(null, "public", tableName, columnName).use { it.next() }
+
+    private fun characterMaximumLength(connection: Connection, tableName: String, columnName: String): Int =
+        connection.prepareStatement(
+            "SELECT character_maximum_length FROM information_schema.columns " +
+                "WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?",
+        ).use { statement ->
+            statement.setString(1, tableName)
+            statement.setString(2, columnName)
+            statement.executeQuery().use { result ->
+                check(result.next()) { "Missing column $tableName.$columnName." }
+                result.getInt(1)
+            }
+        }
 
     private fun indexExists(connection: Connection, tableName: String, indexName: String): Boolean =
         connection.metaData.getIndexInfo(null, "public", tableName, false, false).use { indexes ->

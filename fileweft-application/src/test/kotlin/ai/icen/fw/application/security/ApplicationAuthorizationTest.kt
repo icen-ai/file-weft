@@ -58,6 +58,58 @@ class ApplicationAuthorizationTest {
         assertEquals("DOCUMENT_CATALOG", policy.lastRequest?.resource?.type)
     }
 
+    @Test
+    fun `accepts the full persisted host identity width without normalizing it`() {
+        val userId = "用户/" + "x".repeat(253)
+        val policy = RecordingAuthorization(AuthorizationDecision(true))
+        val authorization = ApplicationAuthorization(users(UserIdentity(Identifier(userId), "外部审批者")), policy)
+
+        val snapshot = authorization.requireDocumentAction(
+            Identifier("tenant-1"), Identifier("document-1"), "document:audit",
+        )
+
+        assertEquals(256, snapshot.id.value.length)
+        assertEquals(userId, snapshot.id.value)
+        assertEquals("外部审批者", snapshot.displayName)
+        assertEquals(userId, policy.lastRequest?.subject?.id?.value)
+    }
+
+    @Test
+    fun `rejects invalid host identities before consulting authorization policy`() {
+        val invalidIds = listOf(
+            "x".repeat(257),
+            "\u00a0leading",
+            "trailing\u3000",
+            "control\u0001",
+            "format\u200b",
+            "broken\ud800",
+        )
+
+        invalidIds.forEach { userId ->
+            val policy = RecordingAuthorization(AuthorizationDecision(true))
+            val authorization = ApplicationAuthorization(users(UserIdentity(Identifier(userId))), policy)
+
+            val failure = assertThrows<ApplicationUnauthenticatedException>(userId) {
+                authorization.requireCurrentUser()
+            }
+
+            assertEquals("The trusted current-user identity is invalid.", failure.message)
+            assertNull(policy.lastRequest)
+        }
+    }
+
+    @Test
+    fun `omits unsafe optional display names while preserving the trusted user id`() {
+        listOf(" ", "x".repeat(257), "unsafe\nname", "format\u200bname", "broken\ud800").forEach { displayName ->
+            val authorization = ApplicationAuthorization(
+                users(UserIdentity(Identifier("user-safe"), displayName)),
+                RecordingAuthorization(AuthorizationDecision(true)),
+            )
+
+            assertNull(authorization.requireCurrentUser().displayName, displayName)
+        }
+    }
+
     private fun currentUser(): UserRealmProvider = object : UserRealmProvider {
         override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "User One")
         override fun findUser(userId: Identifier): UserIdentity? = null
@@ -65,6 +117,11 @@ class ApplicationAuthorizationTest {
 
     private fun noCurrentUser(): UserRealmProvider = object : UserRealmProvider {
         override fun currentUser(): UserIdentity? = null
+        override fun findUser(userId: Identifier): UserIdentity? = null
+    }
+
+    private fun users(user: UserIdentity): UserRealmProvider = object : UserRealmProvider {
+        override fun currentUser(): UserIdentity = user
         override fun findUser(userId: Identifier): UserIdentity? = null
     }
 

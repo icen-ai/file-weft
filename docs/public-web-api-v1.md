@@ -6,6 +6,8 @@
 
 ## 模块与兼容性
 
+本文包含仓库当前 `0.0.2-SNAPSHOT` 开发线的 V026 决策证据接口；它尚未发布。对外稳定版本仍为 `ai.icen:*:0.0.1`，不能在 0.0.2 完成发布门禁和远端制品验收前假定该新增路由已存在于正式制品。
+
 当前已交付的工件是：
 
 - `fileweft-web-api`：JDK 8 基线的纯契约、响应模型、错误码与 DTO；不依赖 Spring、JDBC、领域实体或任意 FileWeft 运行时模块。
@@ -15,7 +17,7 @@
 
 Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应按自己的 Spring Boot 代际同时选择对应的 `fileweft-spring-boot*-starter` 与 `fileweft-web-spring-boot*-starter`；条件式读取/写入 Controller 在缺少安全应用服务时不会注册，生命周期 Controller 则始终注册并以 `503 FEATURE_UNAVAILABLE` 明确表示缺少对应 flat/catalog-aware 能力。原有 Starter 与 Dev 路由不改变，正式 Web 保持加法兼容。
 
-开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的文档写入、当前/历史版本授权下载、审批待办与历史、生命周期/审批动作、同步状态、失败目标重排、文档审计历史、插件清单、进程存活以及文档/系统 Doctor 已经走正式 `/fileweft/v1`；丰富的 Dev 平台镜像和维护动作仍留在 `/api`，不构成公共兼容承诺。
+开发验收台通过真实 `fileweft-web-spring-boot3-starter` Controller 验收正式路径，而不是复制一套模拟 v1 Controller。UI 的文档写入、当前/历史版本授权下载、审批待办、普通审批历史、受权决策证据、生命周期/审批动作、同步状态、失败目标重排、文档审计历史、插件清单、进程存活以及文档/系统 Doctor 已经走正式 `/fileweft/v1`；丰富的 Dev 平台镜像和维护动作仍留在 `/api`，不构成公共兼容承诺。
 
 ## 信任边界
 
@@ -27,6 +29,8 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - 可选 `TraceContextProvider`
 
 宿主的认证层负责将已验证的请求身份绑定到这些 SPI。默认 Starter 的空用户和拒绝授权实现意味着未接入可信身份时，受保护 API 安全失败。Controller 只做参数校验、DTO 转换和应用服务调用；文档授权、租户过滤、审计和状态机规则仍在 Application/Domain。
+
+宿主用户 ID 是区分大小写、不会 trim、大小写折叠或 Unicode 归一化的不透明字符串。`Long`、`Int`、UUID 和外部目录标识必须由宿主在身份 SPI 中稳定转换为字符串；值必须非空、最多 256 个 UTF-16 code unit、首尾没有 Unicode whitespace，且不含 ISO control 或 FileWeft 固定拒绝表中的 Unicode format 字符。非法可信身份会在授权前安全失败，不能由 Controller 或请求参数补写。
 
 接入 `DocumentCatalogProvider` 时，目录 ACL 不是仅用于 `folderId` 筛选的表面校验：应用层会从可信当前租户和用户派生完整可读目录范围，并将该范围同时约束文档详情、未筛选分页和内容下载；空目录范围一律拒绝回退到无目录条件的查询。下载采用两阶段可见性校验：宿主目录调用在数据库事务外冻结 scope，解析版本和文件的同一个短事务再通过 tenant-scoped 查询端口复核文档仍位于该 scope；隐藏目录统一为 404，且不会访问对象存储或写下载审计。未接入目录 SPI 的宿主保持原有“文档授权 + 租户隔离”兼容行为，但不能宣称提供宿主目录树隔离。
 
@@ -59,6 +63,7 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `GET /fileweft/v1/documents/{documentId}/versions/{versionId}/content`：同一授权边界下显式选择属于该文档的历史版本内容流。
 - `GET /fileweft/v1/workflows/tasks`：当前用户的待审批任务分页；只含分配给当前用户或未分配、且文档与工作流仍待审批的任务。
 - `GET /fileweft/v1/documents/{documentId}/workflows`：当前用户可见文档的审批历史分页；任务投影不含受理人、评论和操作者。
+- `GET /fileweft/v1/documents/{documentId}/workflow-decisions`：同时要求 `document:audit` 与 `document:read` 的受权决策证据分页；新决策返回不可变的操作者 ID/名称快照和 `decidedTime`，不返回受理人、评论、租户或任意 attributes；遗留任务以 `decisionEvidenceRecorded=false` 且操作者/时间为 `null` 表达未知。
 - `GET /fileweft/v1/documents/{documentId}/sync-status`：当前发布代次的脱敏交付状态；只返回目标名称、要求、状态、重试计数及两种安全重排就绪标志。
 - `GET /fileweft/v1/documents/{documentId}/logs`：同时要求 `document:audit` 与 `document:read`，并受当前目录可见范围约束的审计分页；只返回日志 ID、动作、字符串操作者 ID/名称快照、可选 Trace ID 与时间，不返回原始 details。
 - `GET /fileweft/v1/documents/{documentId}/doctor`：即时执行经过双重文档授权与目录可见性复核的脱敏诊断。
@@ -92,13 +97,15 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 状态中的 `deliveryRetryable` / `removalRetryable` 不是单纯由目标 `FAILED` 推断：只有当前事件围栏的操作、事件类型及同租户 Outbox 终态都精确匹配 `FAILED` 时才为 `true`。这也覆盖 Outbox 已提交失败、但进程在本地终态投影前退出而遗留的 `PENDING/RETRYING` 目标；正式恢复命令可安全接管该窗口。命令最终事务固定按 idempotency → document → asset（目录模式）→ delivery target → current Outbox 加锁，并原子推进派发序号、写新事件、审计和幂等回执。旧事件或失租 Worker 的迟到结果无法覆盖新重排状态。公共 DTO 不含 profile/connector/owner、下游外部 ID、错误文本、Outbox ID/payload、事件 ID、租约 token 或派发序号。
 
-审批待办同时要求 `document:audit` 和 `document:read`；文档审批历史作为文档详情的安全投影，只要求 `document:read`。两者都在目录模式下将查询限制在当前用户可浏览的目录范围。待办项的 `assignedToCurrentUser` 与 `actionableByCurrentUser` 均由可信用户快照计算，客户端不能提交用户 ID；不可见或跨租户文档的历史固定表现为 `404`，可见但没有历史则返回空页。首版没有持久化“决策操作者 ID”，因此不会把已完成任务描述为“我的审批”；如需该能力，必须先以新迁移保存决策身份快照。
+审批待办同时要求 `document:audit` 和 `document:read`；普通文档审批历史作为文档详情的身份脱敏投影，只要求 `document:read`。受权决策证据入口 `/workflow-decisions` 则同时要求 `document:audit` 与 `document:read`。三者都在目录模式下将查询限制在当前用户可浏览的目录范围。待办项的 `assignedToCurrentUser` 与 `actionableByCurrentUser` 均由可信用户快照计算，客户端不能提交用户 ID；不可见或跨租户文档固定表现为 `404`，可见但没有记录则返回空页。
+
+从 V026 起，新审批或驳回会在任务上不可变地保存决策时的 `decisionOperatorId`、可选 `decisionOperatorName` 与 `decidedTime`。显示名只是当时的安全快照，不用于重新授权；身份 ID 才是宿主稳定标识。既有已完成任务无法从审计或当前受理人可靠推导真实决策者，因此迁移不会猜测或回填；JSON 以 `decisionEvidenceRecorded=false` 且三个证据字段为 `null` 表达 UNKNOWN/未记录。旧的 `/workflows` 路由继续保持身份脱敏，避免把新增证据意外扩大给只有 `document:read` 的调用者。
 
 Doctor 的文档入口同时要求 `document:doctor` 与 `document:read`，目录模式还会在可能调用远程 checker 的前后两次验证完整可读目录范围；隐藏或跨租户文档表现为 `404`。系统入口使用独立的 `system:doctor:read`，不复用文档权限。公共响应只保留固定组件标识、状态以及按 `(component,status)` 生成的固定文案；插件 checker 名称统一聚合为 `extensions`，原始 reason、repair、evidence、异常、租户、Worker payload/error 和租约信息都不会进入 HTTP。Doctor JSON 响应均带 `Cache-Control: private, no-store` 与 `X-Content-Type-Options: nosniff`；显式 `HEAD` 固定返回 `405` 和对应 `Allow`，不会触发诊断或排队。
 
 异步任务查询以 `fw_task` 状态为唯一权威：`PENDING/RUNNING/RETRY` 即使数据库暂存有旧报告也不会把它宣称为终态，只有已确认的 `SUCCESS` 才附带报告；`FAILED` 只返回安全任务状态，不会误用上一轮失租执行遗留的报告。默认 Starter 的 Worker 使用 owner + 随机 lease token 围栏，并在写 Doctor 报告的同一短本地事务中锁定、复核当前任务租约；失租 Worker 的晚到结果不能覆盖新一轮执行。排队的幂等 claim、任务、审计和稳定回执在同一事务提交，每次重放仍重新执行当前身份、动作和目录 ACL 检查。
 
-分页使用不透明 cursor 而不是让调用方拼接数据库 offset。文档分页 codec 封装 `updatedTime + documentId`；审批待办、审批历史和审计日志使用带查询种类的独立 codec，封装不可变的 `createdTime + id`；插件清单 cursor 只封装稳定插件 ID。审计查询以 `fw_audit_record` 为唯一日志项，并按同租户、同资源、同 ID 左连接镜像 Operation 仅补 Trace，避免同一事件出现两份记录或在翻页边界漏项。审计 cursor 是向后的 keyset 边界而不是数据库快照：首屏之后新增且排序位于边界之前（更新）的正常审计不会插入后续页面，调用方从首屏重新读取即可看到；人为写入旧时间的回填记录若排序位于边界之后，则允许进入后续页面。初始集合不会重复，首版不承诺跨请求的完整快照隔离。版本化 Base64URL 内容不含租户、用户、路径或密钥，也不是加密或签名机制：错种类、篡改或损坏 cursor 会被统一拒绝，而租户过滤与授权仍由应用层负责。每个受保护列表请求仍以可信当前租户作为唯一授权数据域。所有文本输入均限制长度并拒绝控制字符；下载文件名与内容类型则由共享 runtime 策略归一，保证 Boot 2 与 Boot 3 不会各自解释不受信任的持久化 metadata。
+分页使用不透明 cursor 而不是让调用方拼接数据库 offset。文档分页 codec 封装 `updatedTime + documentId`；审批待办、普通审批历史、受权决策证据和审计日志使用带查询种类的独立 codec，封装不可变的 `createdTime + id`，四种查询不能交换 cursor；插件清单 cursor 只封装稳定插件 ID。审计查询以 `fw_audit_record` 为唯一日志项，并按同租户、同资源、同 ID 左连接镜像 Operation 仅补 Trace，避免同一事件出现两份记录或在翻页边界漏项。审计 cursor 是向后的 keyset 边界而不是数据库快照：首屏之后新增且排序位于边界之前（更新）的正常审计不会插入后续页面，调用方从首屏重新读取即可看到；人为写入旧时间的回填记录若排序位于边界之后，则允许进入后续页面。初始集合不会重复，首版不承诺跨请求的完整快照隔离。版本化 Base64URL 内容不含租户、用户、路径或密钥，也不是加密或签名机制：错种类、篡改或损坏 cursor 会被统一拒绝，而租户过滤与授权仍由应用层负责。每个受保护列表请求仍以可信当前租户作为唯一授权数据域。所有文本输入均限制长度并拒绝控制字符；下载文件名与内容类型则由共享 runtime 策略归一，保证 Boot 2 与 Boot 3 不会各自解释不受信任的持久化 metadata。
 
 ## 持久化请求幂等地基
 
@@ -122,6 +129,6 @@ Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 
 
 每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
-本里程碑的 formal-v1 Playwright 用例通过正式 Starter 实际执行缺失/非法 key、submit/approve/Doctor schedule fresh+replay、同 key 异 typed command 冲突，并从正式待办发现审批任务、验证审批历史、审计分页、插件清单、公开 liveness 与 Doctor 脱敏、双租户隔离和任务轮询；其余浏览器用例继续覆盖中英文、角色控件、单人与双人审批、驳回修订以及正式同步状态与人工重排。
+本里程碑的 formal-v1 Playwright 用例通过正式 Starter 实际执行缺失/非法 key、submit/approve/Doctor schedule fresh+replay、同 key 异 typed command 冲突，并从正式待办发现审批任务，验证普通审批历史保持身份脱敏、无 `document:audit` 权限的用户不能读取决策证据、有权限用户可读取准确的不可变决策者快照、遗留任务显示未知，以及审计分页、插件清单、公开 liveness、Doctor 脱敏、双租户隔离和任务轮询；其余浏览器用例继续覆盖中英文、角色控件、单人与双人审批的不同决策者、驳回修订以及正式同步状态与人工重排。
 
 首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 只作为可运行示例；仍留在 `/api` 的验收能力不构成正式协议。

@@ -79,6 +79,7 @@ import ai.icen.fw.persistence.jdbc.JdbcDocumentQueryRepository
 import ai.icen.fw.persistence.jdbc.JdbcDocumentDoctorTaskQueryRepository
 import ai.icen.fw.persistence.jdbc.JdbcRequestIdempotencyRepository
 import ai.icen.fw.persistence.jdbc.JdbcWorkflowQueryRepository
+import ai.icen.fw.persistence.jdbc.JdbcWorkflowDecisionEvidenceQueryRepository
 import ai.icen.fw.application.workflow.DocumentReviewRouteResolver
 import ai.icen.fw.application.workflow.DocumentReviewWorkflowService
 import ai.icen.fw.application.workflow.DocumentWorkflowPageRequest
@@ -87,6 +88,8 @@ import ai.icen.fw.application.workflow.IdempotentDocumentCatalogReviewWorkflowSe
 import ai.icen.fw.application.workflow.IdempotentDocumentReviewWorkflowService
 import ai.icen.fw.application.workflow.WorkflowQueryRepository
 import ai.icen.fw.application.workflow.WorkflowQueryService
+import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryRepository
+import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryService
 import ai.icen.fw.application.workflow.WorkflowTaskPageRequest
 import ai.icen.fw.application.workflow.WorkflowTaskPageResult
 import ai.icen.fw.core.context.TenantContext
@@ -679,6 +682,12 @@ class FileWeftAutoConfigurationTest {
             assertTrue(context.getBean(WorkflowQueryRepository::class.java) is JdbcWorkflowQueryRepository)
             assertTrue(context.getBean(WorkflowQueryService::class.java) != null)
             assertNull(privateField(context.getBean(WorkflowQueryService::class.java), "folderReadAccess"))
+            assertTrue(
+                context.getBean(WorkflowDecisionEvidenceQueryRepository::class.java) is
+                    JdbcWorkflowDecisionEvidenceQueryRepository,
+            )
+            assertTrue(context.getBean(WorkflowDecisionEvidenceQueryService::class.java) != null)
+            assertNull(privateField(context.getBean(WorkflowDecisionEvidenceQueryService::class.java), "folderReadAccess"))
             assertTrue(context.getBean(WorkflowInstanceRepository::class.java) != null)
             assertTrue(context.getBean(UploadApplicationService::class.java) != null)
             assertTrue(context.getBean(ResumableUploadService::class.java) != null)
@@ -845,6 +854,10 @@ class FileWeftAutoConfigurationTest {
                 assertSame(
                     context.getBean(DocumentCatalogAccessService::class.java),
                     privateField(context.getBean(WorkflowQueryService::class.java), "folderReadAccess"),
+                )
+                assertSame(
+                    context.getBean(DocumentCatalogAccessService::class.java),
+                    privateField(context.getBean(WorkflowDecisionEvidenceQueryService::class.java), "folderReadAccess"),
                 )
                 assertSame(
                     context.getBean(DocumentCatalogAccessService::class.java),
