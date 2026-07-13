@@ -1,4 +1,5 @@
-import { defaultRoute, groups, orderedRoutes, pages, ui } from "./content.js";
+import { defaultRoute, groups, pages, ui } from "./content.js";
+import { escapeHtml, markdownToHtml, parseFrontmatter, stripHtml } from "./markdown.js";
 
 const state = {
   locale: readLocale(),
@@ -25,6 +26,7 @@ const elements = {
 
 const routes = orderedRoutes();
 const groupById = new Map(groups.map((group) => [group.id, group]));
+const pageCache = {};
 
 function readLocale() {
   try {
@@ -40,6 +42,17 @@ function saveLocale(locale) {
   } catch {
     // Preferences remain session-local when storage is unavailable.
   }
+}
+
+function orderedRoutes() {
+  return Object.keys(pages).sort((a, b) => {
+    const pa = pages[a];
+    const pb = pages[b];
+    const ga = groups.findIndex((g) => g.id === pa.group);
+    const gb = groups.findIndex((g) => g.id === pb.group);
+    if (ga !== gb) return ga - gb;
+    return pa.order - pb.order;
+  });
 }
 
 function parseHash() {
@@ -58,10 +71,25 @@ function slug(value) {
     .replace(/^-|-$/g, "") || "section";
 }
 
-function stripHtml(value) {
-  const template = document.createElement("template");
-  template.innerHTML = value;
-  return template.content.textContent?.replace(/\s+/g, " ").trim() || "";
+async function loadPage(route, locale) {
+  const file = pages[route][locale].file;
+  const response = await fetch(file);
+  if (!response.ok) {
+    throw new Error(`Failed to load documentation page: ${file}`);
+  }
+  const source = await response.text();
+  const { meta, body } = parseFrontmatter(source);
+  const html = meta.format === "markdown" ? markdownToHtml(body) : body;
+  return { meta, html, text: stripHtml(html) };
+}
+
+async function loadAllPages() {
+  await Promise.all(
+    routes.flatMap((route) => ["en", "zh"].map(async (locale) => {
+      pageCache[route] = pageCache[route] || {};
+      pageCache[route][locale] = await loadPage(route, locale);
+    })),
+  );
 }
 
 function setLocale(locale) {
@@ -115,9 +143,14 @@ function renderNavigation() {
 
 function renderPage(sectionTarget = "") {
   const entry = pages[state.route];
-  const content = entry[state.locale];
+  const cache = pageCache[state.route]?.[state.locale];
+  if (!cache) {
+    elements.article.innerHTML = `<p>Loading…</p>`;
+    return;
+  }
+  const meta = entry[state.locale];
   const group = groupById.get(entry.group);
-  document.title = `${content.nav} — FileWeft`;
+  document.title = `${meta.nav} — FileWeft`;
 
   const kicker = document.createElement("div");
   kicker.className = "doc-kicker";
@@ -125,23 +158,29 @@ function renderPage(sectionTarget = "") {
   kicker.textContent = group[state.locale];
 
   const heading = document.createElement("h1");
-  heading.textContent = content.title;
+  heading.textContent = meta.title;
   const lead = document.createElement("p");
   lead.className = "lead";
-  lead.textContent = content.lead;
+  lead.textContent = meta.lead;
   const body = document.createElement("div");
   body.className = "article-body";
+  body.innerHTML = cache.html;
 
-  content.sections.forEach((item, index) => {
+  // Wrap each h2 and its following content into a section with a stable id.
+  const headings = Array.from(body.querySelectorAll("h2"));
+  headings.forEach((h2, index) => {
+    h2.setAttribute("data-step", String(index + 1).padStart(2, "0"));
     const section = document.createElement("section");
-    section.id = slug(item.title);
-    const title = document.createElement("h2");
-    title.dataset.step = String(index + 1).padStart(2, "0");
-    title.textContent = item.title;
-    const sectionContent = document.createElement("div");
-    sectionContent.innerHTML = item.html;
-    section.append(title, sectionContent);
-    body.append(section);
+    section.id = slug(h2.textContent);
+    const parent = h2.parentNode;
+    parent.insertBefore(section, h2);
+    section.appendChild(h2);
+    let sibling = section.nextSibling;
+    while (sibling && !(sibling.nodeType === 1 && sibling.tagName === "H2")) {
+      const next = sibling.nextSibling;
+      section.appendChild(sibling);
+      sibling = next;
+    }
   });
 
   const currentIndex = routes.indexOf(state.route);
@@ -164,8 +203,8 @@ function renderPage(sectionTarget = "") {
 
   elements.article.replaceChildren(kicker, heading, lead, body);
   enhanceCodeBlocks();
-  renderBreadcrumbs(group, content);
-  renderToc(content);
+  renderBreadcrumbs(group, meta);
+  renderToc(body);
   renderNavigation();
   closeMobileNav();
 
@@ -176,23 +215,23 @@ function renderPage(sectionTarget = "") {
   });
 }
 
-function renderBreadcrumbs(group, content) {
+function renderBreadcrumbs(group, meta) {
   elements.breadcrumbs.replaceChildren();
   const home = document.createElement("a");
   home.href = `#/${defaultRoute}`;
   home.textContent = "FileWeft";
   const groupName = document.createTextNode(` / ${group[state.locale]} / `);
   const current = document.createElement("b");
-  current.textContent = content.nav;
+  current.textContent = meta.nav;
   elements.breadcrumbs.append(home, groupName, current);
 }
 
-function renderToc(content) {
+function renderToc(body) {
   const fragment = document.createDocumentFragment();
-  content.sections.forEach((section) => {
+  body.querySelectorAll("h2").forEach((heading) => {
     const link = document.createElement("a");
-    link.href = `#/${state.route}?section=${encodeURIComponent(slug(section.title))}`;
-    link.textContent = section.title;
+    link.href = `#/${state.route}?section=${encodeURIComponent(slug(heading.textContent))}`;
+    link.textContent = heading.textContent;
     fragment.append(link);
   });
   elements.toc.replaceChildren(fragment);
@@ -243,12 +282,14 @@ function showToast(message) {
 function searchIndex() {
   return routes.map((route) => {
     const entry = pages[route];
-    const content = entry[state.locale];
+    const meta = entry[state.locale];
+    const cache = pageCache[route]?.[state.locale];
+    const text = cache?.text || "";
     return {
       route,
-      title: content.nav,
+      title: meta.nav,
       group: groupById.get(entry.group)[state.locale],
-      text: `${content.title} ${content.lead} ${content.sections.map((section) => `${section.title} ${stripHtml(section.html)}`).join(" ")}`.toLocaleLowerCase(state.locale === "zh" ? "zh-CN" : "en-US"),
+      text: `${meta.title} ${meta.lead} ${text}`.toLocaleLowerCase(state.locale === "zh" ? "zh-CN" : "en-US"),
     };
   });
 }
@@ -375,4 +416,9 @@ window.addEventListener("keydown", (event) => {
 });
 
 setLocale(state.locale);
-handleRoute();
+loadAllPages().then(() => {
+  handleRoute();
+}).catch((error) => {
+  elements.article.innerHTML = `<p class="lead">Failed to load documentation: ${escapeHtml(error.message)}</p>`;
+  console.error(error);
+});
