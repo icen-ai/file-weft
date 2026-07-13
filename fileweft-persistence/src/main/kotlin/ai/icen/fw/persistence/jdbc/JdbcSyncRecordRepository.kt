@@ -35,17 +35,22 @@ class JdbcSyncRecordRepository(
 
     override fun save(record: SyncRecord) {
         val now = clock.millis()
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_sync_record(id, tenant_id, document_id, source_event_id, connector_name, external_id, sync_status, error_message, retry_count, created_time, updated_time)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, source_event_id, connector_name) DO UPDATE
-            SET document_id = EXCLUDED.document_id,
-                external_id = EXCLUDED.external_id,
-                sync_status = EXCLUDED.sync_status,
-                error_message = EXCLUDED.error_message,
-                retry_count = EXCLUDED.retry_count,
-                updated_time = EXCLUDED.updated_time
+            ${dialect.upsertClause(
+                listOf("tenant_id", "source_event_id", "connector_name"),
+                listOf(
+                    "document_id = ${dialect.excludedColumnReference("document_id")}",
+                    "external_id = ${dialect.excludedColumnReference("external_id")}",
+                    "sync_status = ${dialect.excludedColumnReference("sync_status")}",
+                    "error_message = ${dialect.excludedColumnReference("error_message")}",
+                    "retry_count = ${dialect.excludedColumnReference("retry_count")}",
+                    "updated_time = ${dialect.excludedColumnReference("updated_time")}",
+                ),
+            )}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, record.id.value)

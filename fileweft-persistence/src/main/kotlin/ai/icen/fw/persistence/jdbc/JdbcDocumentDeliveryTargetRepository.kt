@@ -50,7 +50,26 @@ class JdbcDocumentDeliveryTargetRepository(
         val fence = requireNotNull(target.currentDispatchFence) {
             "Delivery target must bind a durable dispatch event before it is persisted."
         }
-        JdbcConnectionContext.requireCurrent().prepareStatement(
+        val connection = JdbcConnectionContext.requireCurrent()
+        val dialect = JdbcConnectionContext.requireDialect()
+
+        // MySQL's ON DUPLICATE KEY UPDATE has no WHERE clause, so enforce the
+        // identity guard explicitly before attempting the upsert.
+        connection.prepareStatement(IDENTITY_GUARD_SQL).use { statement ->
+            statement.setString(1, target.tenantId.value)
+            statement.setString(2, target.documentId.value)
+            statement.setString(3, target.targetId)
+            statement.setInt(4, target.deliveryGeneration)
+            statement.executeQuery().use { result ->
+                if (result.next()) {
+                    check(result.getString("id") == target.id.value) {
+                        "Delivery target business identity is already bound to a different persisted id."
+                    }
+                }
+            }
+        }
+
+        val updated = connection.prepareStatement(
             """
             INSERT INTO fw_document_delivery_target(
                 id, tenant_id, document_id, profile_id, target_id, target_name, connector_id,
@@ -58,24 +77,27 @@ class JdbcDocumentDeliveryTargetRepository(
                 retry_count, removal_status, removal_error_message, removal_retry_count, delivery_generation,
                 current_event_id, current_operation, dispatch_sequence, created_time, updated_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, document_id, target_id, delivery_generation) DO UPDATE
-            SET profile_id = EXCLUDED.profile_id,
-                target_name = EXCLUDED.target_name,
-                connector_id = EXCLUDED.connector_id,
-                delivery_requirement = EXCLUDED.delivery_requirement,
-                owner_ref = EXCLUDED.owner_ref,
-                delivery_status = EXCLUDED.delivery_status,
-                external_id = EXCLUDED.external_id,
-                error_message = EXCLUDED.error_message,
-                retry_count = EXCLUDED.retry_count,
-                removal_status = EXCLUDED.removal_status,
-                removal_error_message = EXCLUDED.removal_error_message,
-                removal_retry_count = EXCLUDED.removal_retry_count,
-                current_event_id = EXCLUDED.current_event_id,
-                current_operation = EXCLUDED.current_operation,
-                dispatch_sequence = EXCLUDED.dispatch_sequence,
-                updated_time = EXCLUDED.updated_time
-            WHERE fw_document_delivery_target.id = EXCLUDED.id
+            ${dialect.upsertClause(
+                listOf("tenant_id", "document_id", "target_id", "delivery_generation"),
+                listOf(
+                    "profile_id = ${dialect.excludedColumnReference("profile_id")}",
+                    "target_name = ${dialect.excludedColumnReference("target_name")}",
+                    "connector_id = ${dialect.excludedColumnReference("connector_id")}",
+                    "delivery_requirement = ${dialect.excludedColumnReference("delivery_requirement")}",
+                    "owner_ref = ${dialect.excludedColumnReference("owner_ref")}",
+                    "delivery_status = ${dialect.excludedColumnReference("delivery_status")}",
+                    "external_id = ${dialect.excludedColumnReference("external_id")}",
+                    "error_message = ${dialect.excludedColumnReference("error_message")}",
+                    "retry_count = ${dialect.excludedColumnReference("retry_count")}",
+                    "removal_status = ${dialect.excludedColumnReference("removal_status")}",
+                    "removal_error_message = ${dialect.excludedColumnReference("removal_error_message")}",
+                    "removal_retry_count = ${dialect.excludedColumnReference("removal_retry_count")}",
+                    "current_event_id = ${dialect.excludedColumnReference("current_event_id")}",
+                    "current_operation = ${dialect.excludedColumnReference("current_operation")}",
+                    "dispatch_sequence = ${dialect.excludedColumnReference("dispatch_sequence")}",
+                    "updated_time = ${dialect.excludedColumnReference("updated_time")}",
+                ),
+            )}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, target.id.value)
@@ -100,9 +122,10 @@ class JdbcDocumentDeliveryTargetRepository(
             statement.setLong(20, fence.sequence)
             statement.setLong(21, now)
             statement.setLong(22, now)
-            check(statement.executeUpdate() == 1) {
-                "Delivery target business identity is already bound to a different persisted id."
-            }
+            statement.executeUpdate()
+        }
+        check(updated == 1) {
+            "Delivery target business identity is already bound to a different persisted id."
         }
     }
 
@@ -135,5 +158,7 @@ class JdbcDocumentDeliveryTargetRepository(
 
     private companion object {
         const val SELECT_COLUMNS = "SELECT id, tenant_id, document_id, profile_id, target_id, target_name, connector_id, delivery_requirement, owner_ref, delivery_status, external_id, error_message, retry_count, removal_status, removal_error_message, removal_retry_count, delivery_generation, current_event_id, current_operation, dispatch_sequence"
+        const val IDENTITY_GUARD_SQL =
+            "SELECT id FROM fw_document_delivery_target WHERE tenant_id = ? AND document_id = ? AND target_id = ? AND delivery_generation = ?"
     }
 }

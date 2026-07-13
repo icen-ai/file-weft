@@ -48,7 +48,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                 statement.executeQuery().use { result -> mapPendingTaskPage(result, request.limit) }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -66,7 +66,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                 statement.executeQuery().use { result -> mapDocumentHistory(result, request.limit) }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -86,7 +86,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                 }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -214,13 +214,13 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         tenantId: Identifier,
         currentUserId: Identifier,
         request: WorkflowTaskPageRequest,
-        visibilityArray: JdbcArray?,
+        visibilityArray: Any?,
     ) {
         var index = 1
         setString(index++, currentUserId.value)
         setString(index++, tenantId.value)
         setString(index++, currentUserId.value)
-        visibilityArray?.let { setArray(index++, it) }
+        setFolderVisibilityParameter(index++, visibilityArray)
         request.cursor?.let { cursor ->
             setLong(index++, cursor.createdTime)
             setLong(index++, cursor.createdTime)
@@ -233,12 +233,12 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         tenantId: Identifier,
         documentId: Identifier,
         request: DocumentWorkflowPageRequest,
-        visibilityArray: JdbcArray?,
+        visibilityArray: Any?,
     ) {
         var index = 1
         setString(index++, tenantId.value)
         setString(index++, documentId.value)
-        visibilityArray?.let { setArray(index++, it) }
+        setFolderVisibilityParameter(index++, visibilityArray)
         setString(index++, tenantId.value)
         request.cursor?.let { cursor ->
             setLong(index++, cursor.createdTime)
@@ -252,8 +252,9 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         request: WorkflowTaskPageRequest,
         folderReadScope: DocumentFolderReadScope?,
     ): String = buildString {
-        append(PENDING_TASK_SELECT)
-        appendFolderVisibility(folderReadScope, FOLDER_ID_SQL)
+        val folderExpression = folderIdExpression()
+        append(pendingTaskSelect(folderExpression))
+        appendFolderVisibility(folderReadScope, folderExpression)
         request.cursor?.let {
             append(" AND (task.created_time < ? OR (task.created_time = ? AND task.id < ?))")
         }
@@ -264,27 +265,29 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         request: DocumentWorkflowPageRequest,
         folderReadScope: DocumentFolderReadScope?,
     ): String = buildString {
-        append(DOCUMENT_HISTORY_VISIBLE_CTE)
-        appendFolderVisibility(folderReadScope, FOLDER_ID_SQL)
+        val folderExpression = folderIdExpression()
+        append(documentHistoryVisibleCte(folderExpression))
+        appendFolderVisibility(folderReadScope, folderExpression)
         append(DOCUMENT_HISTORY_WORKFLOW_CTE)
         request.cursor?.let {
             append(" AND (workflow.created_time < ? OR (workflow.created_time = ? AND workflow.id < ?))")
         }
-        append(DOCUMENT_HISTORY_SELECT)
+        append(documentHistorySelect())
     }
 
     private fun documentDecisionEvidenceSql(
         request: DocumentWorkflowPageRequest,
         folderReadScope: DocumentFolderReadScope?,
     ): String = buildString {
-        append(DOCUMENT_HISTORY_VISIBLE_CTE)
-        appendFolderVisibility(folderReadScope, FOLDER_ID_SQL)
+        val folderExpression = folderIdExpression()
+        append(documentHistoryVisibleCte(folderExpression))
+        appendFolderVisibility(folderReadScope, folderExpression)
         append(DOCUMENT_HISTORY_WORKFLOW_CTE)
         append(DOCUMENT_DECISION_EVIDENCE_FILTER)
         request.cursor?.let {
             append(" AND (workflow.created_time < ? OR (workflow.created_time = ? AND workflow.id < ?))")
         }
-        append(DOCUMENT_DECISION_EVIDENCE_SELECT)
+        append(documentDecisionEvidenceSelect())
     }
 
     private fun StringBuilder.appendFolderVisibility(
@@ -295,15 +298,27 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         if (folderReadScope.isEmpty) {
             append(" AND 1 = 0")
         } else {
-            append(" AND ").append(folderExpression).append(" = ANY (?)")
+            append(" AND ").append(JdbcConnectionContext.requireDialect().arrayContainsAny(folderExpression, "?"))
         }
     }
 
+    private fun folderIdExpression(): String =
+        "COALESCE(NULLIF(${JdbcConnectionContext.requireDialect().jsonExtractText("asset.metadata_json", "catalog.folder-id")}, ''), 'inbox')"
+
     private fun java.sql.Connection.createFolderVisibilityArray(
         folderReadScope: DocumentFolderReadScope?,
-    ): JdbcArray? = folderReadScope
+    ): Any? = folderReadScope
         ?.takeIf { scope -> !scope.isEmpty }
-        ?.let { scope -> createArrayOf("text", scope.folderIds.toTypedArray()) }
+        ?.let { scope -> JdbcConnectionContext.requireDialect().createStringArrayParameter(this, scope.folderIds) }
+
+    private fun PreparedStatement.setFolderVisibilityParameter(index: Int, parameter: Any?) {
+        when (parameter) {
+            is JdbcArray -> setArray(index, parameter)
+            is String -> setString(index, parameter)
+            null -> Unit
+            else -> throw IllegalArgumentException("Unsupported folder visibility parameter type ${parameter.javaClass.name}")
+        }
+    }
 
     private class WorkflowAccumulator(
         val id: Identifier,
@@ -348,71 +363,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
     }
 
     private companion object {
-        const val FOLDER_ID_SQL = "COALESCE(NULLIF(asset.metadata_json ->> 'catalog.folder-id', ''), 'inbox')"
-
-        const val PENDING_TASK_SELECT = """
-            SELECT task.id AS task_id,
-                   task.workflow_id,
-                   task.created_time AS task_created_time,
-                   task.updated_time AS task_updated_time,
-                   (task.assignee_id = ?) AS assigned_to_current_user,
-                   workflow.workflow_type,
-                   document.id AS document_id,
-                   document.doc_no AS document_number,
-                   document.title AS document_title,
-                   document.current_version_id,
-                   document.created_time AS document_created_time,
-                   document.updated_time AS document_updated_time,
-                   $FOLDER_ID_SQL AS folder_id
-            FROM fw_workflow_task task
-            JOIN fw_workflow_instance workflow
-              ON workflow.tenant_id = task.tenant_id
-             AND workflow.id = task.workflow_id
-            JOIN fw_document document
-              ON document.tenant_id = workflow.tenant_id
-             AND document.id = workflow.document_id
-            JOIN fw_asset asset
-              ON asset.tenant_id = document.tenant_id
-             AND asset.id = document.asset_id
-            WHERE task.tenant_id = ?
-              AND task.task_state = 'PENDING'
-              AND workflow.state = 'PENDING'
-              AND document.lifecycle_state = 'PENDING_REVIEW'
-              AND (task.assignee_id IS NULL OR task.assignee_id = ?)
-              AND task.created_time >= 0
-              AND task.updated_time >= task.created_time
-              AND workflow.created_time >= 0
-              AND workflow.updated_time >= workflow.created_time
-              AND document.created_time >= 0
-              AND document.updated_time >= document.created_time
-              AND btrim(workflow.workflow_type) <> ''
-              AND btrim(document.doc_no) <> ''
-              AND btrim(document.title) <> ''
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM fw_workflow_task sibling
-                  WHERE sibling.tenant_id = workflow.tenant_id
-                    AND sibling.workflow_id = workflow.id
-                    AND (
-                        sibling.task_state NOT IN ('PENDING', 'APPROVED')
-                        OR sibling.created_time < 0
-                        OR sibling.updated_time < sibling.created_time
-                    )
-              )
-        """
-
-        const val DOCUMENT_HISTORY_VISIBLE_CTE = """
-            WITH visible_document AS (
-                SELECT document.id
-                FROM fw_document document
-                JOIN fw_asset asset
-                  ON asset.tenant_id = document.tenant_id
-                 AND asset.id = document.asset_id
-                WHERE document.tenant_id = ?
-                  AND document.id = ?
-        """
-
-        const val DOCUMENT_HISTORY_WORKFLOW_CTE = """
+        private val DOCUMENT_HISTORY_WORKFLOW_CTE = """
             ), workflow_page AS (
                 SELECT workflow.id,
                        workflow.tenant_id,
@@ -427,7 +378,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                   AND workflow.state IN ('PENDING', 'APPROVED', 'REJECTED')
                   AND workflow.created_time >= 0
                   AND workflow.updated_time >= workflow.created_time
-                  AND btrim(workflow.workflow_type) <> ''
+                  AND ${dialectTrim("workflow.workflow_type")} <> ''
                   AND EXISTS (
                       SELECT 1
                       FROM fw_workflow_task task
@@ -482,32 +433,6 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                   )
         """
 
-        const val DOCUMENT_HISTORY_SELECT = """
-                ORDER BY workflow.created_time DESC, workflow.id DESC
-                LIMIT ?
-            )
-            SELECT document.id AS visible_document_id,
-                   workflow.id AS workflow_id,
-                   workflow.document_id AS workflow_document_id,
-                   workflow.workflow_type,
-                   workflow.state AS workflow_state,
-                   workflow.created_time AS workflow_created_time,
-                   workflow.updated_time AS workflow_updated_time,
-                   task.id AS task_id,
-                   task.task_state,
-                   task.created_time AS task_created_time,
-                   task.updated_time AS task_updated_time
-            FROM visible_document document
-            LEFT JOIN workflow_page workflow ON TRUE
-            LEFT JOIN fw_workflow_task task
-              ON task.tenant_id = workflow.tenant_id
-             AND task.workflow_id = workflow.id
-            ORDER BY workflow.created_time DESC NULLS LAST,
-                     workflow.id DESC NULLS LAST,
-                     task.created_time,
-                     task.id
-        """
-
         const val DOCUMENT_DECISION_EVIDENCE_FILTER = """
                   AND NOT EXISTS (
                       SELECT 1
@@ -541,7 +466,100 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                   )
         """
 
-        const val DOCUMENT_DECISION_EVIDENCE_SELECT = """
+        private fun pendingTaskSelect(folderExpression: String): String = """
+            SELECT task.id AS task_id,
+                   task.workflow_id,
+                   task.created_time AS task_created_time,
+                   task.updated_time AS task_updated_time,
+                   (task.assignee_id = ?) AS assigned_to_current_user,
+                   workflow.workflow_type,
+                   document.id AS document_id,
+                   document.doc_no AS document_number,
+                   document.title AS document_title,
+                   document.current_version_id,
+                   document.created_time AS document_created_time,
+                   document.updated_time AS document_updated_time,
+                   $folderExpression AS folder_id
+            FROM fw_workflow_task task
+            JOIN fw_workflow_instance workflow
+              ON workflow.tenant_id = task.tenant_id
+             AND workflow.id = task.workflow_id
+            JOIN fw_document document
+              ON document.tenant_id = workflow.tenant_id
+             AND document.id = workflow.document_id
+            JOIN fw_asset asset
+              ON asset.tenant_id = document.tenant_id
+             AND asset.id = document.asset_id
+            WHERE task.tenant_id = ?
+              AND task.task_state = 'PENDING'
+              AND workflow.state = 'PENDING'
+              AND document.lifecycle_state = 'PENDING_REVIEW'
+              AND (task.assignee_id IS NULL OR task.assignee_id = ?)
+              AND task.created_time >= 0
+              AND task.updated_time >= task.created_time
+              AND workflow.created_time >= 0
+              AND workflow.updated_time >= workflow.created_time
+              AND document.created_time >= 0
+              AND document.updated_time >= document.created_time
+              AND ${dialectTrim("workflow.workflow_type")} <> ''
+              AND ${dialectTrim("document.doc_no")} <> ''
+              AND ${dialectTrim("document.title")} <> ''
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM fw_workflow_task sibling
+                  WHERE sibling.tenant_id = workflow.tenant_id
+                    AND sibling.workflow_id = workflow.id
+                    AND (
+                        sibling.task_state NOT IN ('PENDING', 'APPROVED')
+                        OR sibling.created_time < 0
+                        OR sibling.updated_time < sibling.created_time
+                    )
+              )
+        """
+
+        private fun documentHistoryVisibleCte(folderExpression: String): String = """
+            WITH visible_document AS (
+                SELECT document.id
+                FROM fw_document document
+                JOIN fw_asset asset
+                  ON asset.tenant_id = document.tenant_id
+                 AND asset.id = document.asset_id
+                WHERE document.tenant_id = ?
+                  AND document.id = ?
+        """
+
+        private fun documentHistorySelect(): String {
+            val dialect = JdbcConnectionContext.requireDialect()
+            return """
+                ORDER BY workflow.created_time DESC, workflow.id DESC
+                LIMIT ?
+            )
+            SELECT document.id AS visible_document_id,
+                   workflow.id AS workflow_id,
+                   workflow.document_id AS workflow_document_id,
+                   workflow.workflow_type,
+                   workflow.state AS workflow_state,
+                   workflow.created_time AS workflow_created_time,
+                   workflow.updated_time AS workflow_updated_time,
+                   task.id AS task_id,
+                   task.task_state,
+                   task.created_time AS task_created_time,
+                   task.updated_time AS task_updated_time
+            FROM visible_document document
+            LEFT JOIN workflow_page workflow ON TRUE
+            LEFT JOIN fw_workflow_task task
+              ON task.tenant_id = workflow.tenant_id
+             AND task.workflow_id = workflow.id
+            ORDER BY ${dialect.nullsLastOrderBy("workflow.created_time")},
+                     ${dialect.nullsLastOrderBy("workflow.id")},
+                     task.created_time,
+                     task.id
+            """
+        }
+
+        private fun documentDecisionEvidenceSelect(): String {
+            val dialect = JdbcConnectionContext.requireDialect()
+            return """
                 ORDER BY workflow.created_time DESC, workflow.id DESC
                 LIMIT ?
             )
@@ -564,10 +582,13 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
             LEFT JOIN fw_workflow_task task
               ON task.tenant_id = workflow.tenant_id
              AND task.workflow_id = workflow.id
-            ORDER BY workflow.created_time DESC NULLS LAST,
-                     workflow.id DESC NULLS LAST,
+            ORDER BY ${dialect.nullsLastOrderBy("workflow.created_time")},
+                     ${dialect.nullsLastOrderBy("workflow.id")},
                      task.created_time,
                      task.id
-        """
+            """
+        }
+
+        private fun dialectTrim(expression: String): String = JdbcConnectionContext.requireDialect().trim(expression)
     }
 }

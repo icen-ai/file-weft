@@ -99,8 +99,9 @@ class JdbcDocumentRepository(
 
     private fun saveVersion(version: DocumentVersion, now: Long) {
         val connection = JdbcConnectionContext.requireCurrent()
+        val dialect = JdbcConnectionContext.requireDialect()
         connection.prepareStatement(
-            "INSERT INTO fw_document_version(id, tenant_id, document_id, version_no, file_id, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?) ON CONFLICT (id) DO NOTHING",
+            "INSERT INTO fw_document_version(id, tenant_id, document_id, version_no, file_id, status, created_time, updated_time) VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?) ${dialect.upsertClause(listOf("id"), emptyList())}",
         ).use { statement ->
             statement.setString(1, version.id.value)
             statement.setString(2, version.tenantId.value)

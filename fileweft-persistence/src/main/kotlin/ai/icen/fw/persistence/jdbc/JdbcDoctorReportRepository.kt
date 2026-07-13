@@ -16,14 +16,19 @@ class JdbcDoctorReportRepository(
         require(report.tenantId == tenantId) { "Doctor report tenant must match record tenant." }
         require(report.documentId == documentId) { "Doctor report document must match record document." }
         val now = clock.millis()
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_doctor_record(id, tenant_id, document_id, task_id, doctor_status, report_json, created_time, updated_time)
-            VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?)
-            ON CONFLICT (tenant_id, task_id) DO UPDATE
-            SET doctor_status = EXCLUDED.doctor_status,
-                report_json = EXCLUDED.report_json,
-                updated_time = EXCLUDED.updated_time
+            VALUES (?, ?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?, ?)
+            ${dialect.upsertClause(
+                listOf("tenant_id", "task_id"),
+                listOf(
+                    "doctor_status = ${dialect.excludedColumnReference("doctor_status")}",
+                    "report_json = ${dialect.excludedColumnReference("report_json")}",
+                    "updated_time = ${dialect.excludedColumnReference("updated_time")}",
+                ),
+            )}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, taskId.value)

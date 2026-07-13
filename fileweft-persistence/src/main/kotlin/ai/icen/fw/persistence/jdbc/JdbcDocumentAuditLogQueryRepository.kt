@@ -8,6 +8,7 @@ import ai.icen.fw.application.audit.DocumentAuditLogView
 import ai.icen.fw.application.document.DocumentFolderReadScope
 import ai.icen.fw.core.id.Identifier
 import java.sql.Array as JdbcArray
+import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 
@@ -29,7 +30,7 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
                 statement.executeQuery().use { result -> map(result, request.limit) }
             }
         } finally {
-            visibilityArray?.free()
+            (visibilityArray as? JdbcArray)?.free()
         }
     }
 
@@ -67,12 +68,12 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
         tenantId: Identifier,
         documentId: Identifier,
         request: DocumentAuditLogPageRequest,
-        visibilityArray: JdbcArray?,
+        visibilityArray: Any?,
     ) {
         var index = 1
         setString(index++, tenantId.value)
         setString(index++, documentId.value)
-        visibilityArray?.let { setArray(index++, it) }
+        setFolderVisibilityParameter(index++, visibilityArray)
         setString(index++, tenantId.value)
         request.cursor?.let { cursor ->
             setLong(index++, cursor.createdTime)
@@ -86,23 +87,40 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
         request: DocumentAuditLogPageRequest,
         folderReadScope: DocumentFolderReadScope?,
     ): String = buildString {
-        append(VISIBLE_DOCUMENT_CTE)
+        val dialect = JdbcConnectionContext.requireDialect()
+        val folderExpression = folderIdExpression()
+        append(visibleDocumentCte(folderExpression))
         when {
             folderReadScope == null -> Unit
             folderReadScope.isEmpty -> append(" AND 1 = 0")
-            else -> append(" AND $FOLDER_ID_SQL = ANY (?)")
+            else -> append(" AND ").append(dialect.arrayContainsAny(folderExpression, "?"))
         }
-        append(AUDIT_PAGE_CTE)
+        append(auditPageCte())
         request.cursor?.let {
             append(" AND (audit.created_time < ? OR (audit.created_time = ? AND audit.id < ?))")
         }
-        append(AUDIT_PAGE_SELECT)
+        append(auditPageSelect())
+    }
+
+    private fun folderIdExpression(): String =
+        "COALESCE(NULLIF(${JdbcConnectionContext.requireDialect().jsonExtractText("asset.metadata_json", "catalog.folder-id")}, ''), 'inbox')"
+
+    private fun Connection.createFolderVisibilityArray(folderReadScope: DocumentFolderReadScope?): Any? =
+        folderReadScope
+            ?.takeIf { scope -> !scope.isEmpty }
+            ?.let { scope -> JdbcConnectionContext.requireDialect().createStringArrayParameter(this, scope.folderIds) }
+
+    private fun PreparedStatement.setFolderVisibilityParameter(index: Int, parameter: Any?) {
+        when (parameter) {
+            is JdbcArray -> setArray(index, parameter)
+            is String -> setString(index, parameter)
+            null -> Unit
+            else -> throw IllegalArgumentException("Unsupported folder visibility parameter type ${parameter.javaClass.name}")
+        }
     }
 
     private companion object {
-        const val FOLDER_ID_SQL = "COALESCE(NULLIF(asset.metadata_json ->> 'catalog.folder-id', ''), 'inbox')"
-
-        const val VISIBLE_DOCUMENT_CTE = """
+        private fun visibleDocumentCte(folderExpression: String): String = """
             WITH visible_document AS (
                 SELECT document.id
                 FROM fw_document document
@@ -113,7 +131,9 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
                   AND document.id = ?
         """
 
-        const val AUDIT_PAGE_CTE = """
+        private fun auditPageCte(): String {
+            val dialect = JdbcConnectionContext.requireDialect()
+            return """
             ), audit_page AS (
                 SELECT audit.id,
                        audit.action,
@@ -131,11 +151,14 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
                 WHERE audit.tenant_id = ?
                   AND audit.resource_type = 'DOCUMENT'
                   AND audit.created_time >= 0
-                  AND btrim(audit.action) <> ''
-                  AND (audit.operator_name IS NULL OR btrim(audit.operator_name) <> '')
+                  AND ${dialect.trim("audit.action")} <> ''
+                  AND (audit.operator_name IS NULL OR ${dialect.trim("audit.operator_name")} <> '')
         """
+        }
 
-        const val AUDIT_PAGE_SELECT = """
+        private fun auditPageSelect(): String {
+            val dialect = JdbcConnectionContext.requireDialect()
+            return """
                 ORDER BY audit.created_time DESC, audit.id DESC
                 LIMIT ?
             )
@@ -148,7 +171,8 @@ class JdbcDocumentAuditLogQueryRepository : DocumentAuditLogQueryRepository {
                    audit.created_time AS audit_created_time
             FROM visible_document document
             LEFT JOIN audit_page audit ON TRUE
-            ORDER BY audit.created_time DESC NULLS LAST, audit.id DESC NULLS LAST
-        """
+            ORDER BY ${dialect.nullsLastOrderBy("audit.created_time")}, ${dialect.nullsLastOrderBy("audit.id")}
+            """
+        }
     }
 }

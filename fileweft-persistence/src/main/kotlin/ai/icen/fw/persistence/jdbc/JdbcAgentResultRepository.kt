@@ -20,19 +20,24 @@ class JdbcAgentResultRepository(
 ) : AgentResultRepository {
     override fun save(result: PersistedAgentResult) {
         val now = clock.millis()
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_agent_result(
                 id, tenant_id, task_id, capability, source_event_id, source_event_type,
                 result_status, result_json, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?)
-            ON CONFLICT (tenant_id, task_id) DO UPDATE
-            SET capability = EXCLUDED.capability,
-                source_event_id = EXCLUDED.source_event_id,
-                source_event_type = EXCLUDED.source_event_type,
-                result_status = EXCLUDED.result_status,
-                result_json = EXCLUDED.result_json,
-                updated_time = EXCLUDED.updated_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?, ?)
+            ${dialect.upsertClause(
+                listOf("tenant_id", "task_id"),
+                listOf(
+                    "capability = ${dialect.excludedColumnReference("capability")}",
+                    "source_event_id = ${dialect.excludedColumnReference("source_event_id")}",
+                    "source_event_type = ${dialect.excludedColumnReference("source_event_type")}",
+                    "result_status = ${dialect.excludedColumnReference("result_status")}",
+                    "result_json = ${dialect.excludedColumnReference("result_json")}",
+                    "updated_time = ${dialect.excludedColumnReference("updated_time")}",
+                ),
+            )}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, result.id.value)
@@ -65,12 +70,13 @@ class JdbcAgentResultRepository(
     override fun saveConfirmation(
         confirmation: PersistedAgentSuggestionConfirmation,
     ): PersistedAgentSuggestionConfirmation {
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_agent_suggestion_confirmation(
                 id, tenant_id, task_id, suggestion_id, confirmed_by, confirmed_time, created_time, updated_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, task_id, suggestion_id) DO NOTHING
+            ${dialect.upsertClause(listOf("tenant_id", "task_id", "suggestion_id"), emptyList())}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, confirmation.id.value)

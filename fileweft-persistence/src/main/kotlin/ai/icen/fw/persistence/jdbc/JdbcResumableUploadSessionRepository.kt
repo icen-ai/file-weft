@@ -20,13 +20,14 @@ class JdbcResumableUploadSessionRepository(
         val ownerId = requireNotNull(session.ownerId) {
             "New resumable upload sessions must have a trusted owner id."
         }
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_upload_session(
                 id, tenant_id, owner_id, idempotency_key, storage_upload_id, storage_type, storage_path,
                 file_object_id, file_asset_id, file_name, content_length, asset_type, content_type, content_hash,
                 metadata_json, session_status, expires_at, last_error, completed_time, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, session.id.value)
@@ -120,13 +121,20 @@ class JdbcResumableUploadSessionRepository(
             session.setLong(4, part.updatedTime)
             require(session.executeUpdate() == 1) { "Upload session is not active while acknowledging a multipart part." }
         }
+        val dialect = JdbcConnectionContext.requireDialect()
         connection.prepareStatement(
             """
             INSERT INTO fw_upload_session_part(
                 id, tenant_id, session_id, part_number, part_etag, content_length, created_time, updated_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, session_id, part_number) DO UPDATE
-            SET part_etag = EXCLUDED.part_etag, content_length = EXCLUDED.content_length, updated_time = EXCLUDED.updated_time
+            ${dialect.upsertClause(
+                listOf("tenant_id", "session_id", "part_number"),
+                listOf(
+                    "part_etag = ${dialect.excludedColumnReference("part_etag")}",
+                    "content_length = ${dialect.excludedColumnReference("content_length")}",
+                    "updated_time = ${dialect.excludedColumnReference("updated_time")}",
+                ),
+            )}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, part.id.value)
@@ -141,18 +149,22 @@ class JdbcResumableUploadSessionRepository(
         }
     }
 
-    override fun claimForCompletion(tenantId: Identifier, sessionId: Identifier, now: Long): ResumableUploadSession? = transitionReturning(
-        """
-        UPDATE fw_upload_session
-        SET session_status = 'COMPLETING', last_error = NULL, updated_time = ?
-        WHERE tenant_id = ? AND id = ? AND session_status = 'ACTIVE' AND expires_at > ?
-        RETURNING $SESSION_COLUMNS
-        """.trimIndent(),
-    ) { statement ->
-        statement.setLong(1, now)
-        statement.setString(2, tenantId.value)
-        statement.setString(3, sessionId.value)
-        statement.setLong(4, now)
+    override fun claimForCompletion(tenantId: Identifier, sessionId: Identifier, now: Long): ResumableUploadSession? {
+        val connection = JdbcConnectionContext.requireCurrent()
+        val updated = connection.prepareStatement(
+            """
+            UPDATE fw_upload_session
+            SET session_status = 'COMPLETING', last_error = NULL, updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND session_status = 'ACTIVE' AND expires_at > ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setLong(1, now)
+            statement.setString(2, tenantId.value)
+            statement.setString(3, sessionId.value)
+            statement.setLong(4, now)
+            statement.executeUpdate()
+        }
+        return if (updated == 1) findById(tenantId, sessionId) else null
     }
 
     override fun reactivateAfterCompletionFailure(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean =
@@ -164,15 +176,17 @@ class JdbcResumableUploadSessionRepository(
             message, updatedAt, tenantId.value, sessionId.value,
         )
 
-    override fun markFailed(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean =
-        transition(
+    override fun markFailed(tenantId: Identifier, sessionId: Identifier, message: String, updatedAt: Long): Boolean {
+        val dialect = JdbcConnectionContext.requireDialect()
+        return transition(
             """
             UPDATE fw_upload_session SET session_status = 'FAILED', last_error = ?, updated_time = ?
             WHERE tenant_id = ? AND id = ? AND session_status IN ('COMPLETING', 'ABORTING')
-              AND (session_status <> 'ABORTING' OR last_error IS DISTINCT FROM ?)
+              AND (session_status <> 'ABORTING' OR ${dialect.isDistinctFrom("last_error", "?")})
             """.trimIndent(),
             message, updatedAt, tenantId.value, sessionId.value, CREATION_STAGING_MARKER,
         )
+    }
 
     override fun markQuarantined(
         tenantId: Identifier,
@@ -212,31 +226,38 @@ class JdbcResumableUploadSessionRepository(
             completedAt, completedAt, tenantId.value, sessionId.value,
         )
 
-    override fun claimForAbort(tenantId: Identifier, sessionId: Identifier, updatedAt: Long): ResumableUploadSession? = transitionReturning(
-        """
-        UPDATE fw_upload_session
-        SET session_status = 'ABORTING', updated_time = ?
-        WHERE tenant_id = ? AND id = ? AND session_status IN ('ACTIVE', 'ABORTING', 'FAILED')
-        RETURNING $SESSION_COLUMNS
-        """.trimIndent(),
-    ) { statement ->
-        statement.setLong(1, updatedAt)
-        statement.setString(2, tenantId.value)
-        statement.setString(3, sessionId.value)
+    override fun claimForAbort(tenantId: Identifier, sessionId: Identifier, updatedAt: Long): ResumableUploadSession? {
+        val connection = JdbcConnectionContext.requireCurrent()
+        val updated = connection.prepareStatement(
+            """
+            UPDATE fw_upload_session
+            SET session_status = 'ABORTING', updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND session_status IN ('ACTIVE', 'ABORTING', 'FAILED')
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setLong(1, updatedAt)
+            statement.setString(2, tenantId.value)
+            statement.setString(3, sessionId.value)
+            statement.executeUpdate()
+        }
+        return if (updated == 1) findById(tenantId, sessionId) else null
     }
 
-    override fun markAborted(tenantId: Identifier, sessionId: Identifier, expired: Boolean, updatedAt: Long): Boolean = transition(
-        """
-        UPDATE fw_upload_session SET session_status = ?, updated_time = ?
-        WHERE tenant_id = ? AND id = ? AND session_status = 'ABORTING'
-          AND last_error IS DISTINCT FROM ?
-        """.trimIndent(),
-        if (expired) ResumableUploadSessionStatus.EXPIRED.name else ResumableUploadSessionStatus.ABORTED.name,
-        updatedAt,
-        tenantId.value,
-        sessionId.value,
-        CREATION_STAGING_MARKER,
-    )
+    override fun markAborted(tenantId: Identifier, sessionId: Identifier, expired: Boolean, updatedAt: Long): Boolean {
+        val dialect = JdbcConnectionContext.requireDialect()
+        return transition(
+            """
+            UPDATE fw_upload_session SET session_status = ?, updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND session_status = 'ABORTING'
+              AND ${dialect.isDistinctFrom("last_error", "?")}
+            """.trimIndent(),
+            if (expired) ResumableUploadSessionStatus.EXPIRED.name else ResumableUploadSessionStatus.ABORTED.name,
+            updatedAt,
+            tenantId.value,
+            sessionId.value,
+            CREATION_STAGING_MARKER,
+        )
+    }
 
     override fun findExpired(now: Long, limit: Int): List<ResumableUploadSession> =
         JdbcConnectionContext.requireCurrent().prepareStatement(
@@ -297,12 +318,6 @@ class JdbcResumableUploadSessionRepository(
         }
 
     private fun querySession(sql: String, bind: (java.sql.PreparedStatement) -> Unit): ResumableUploadSession? =
-        JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
-            bind(statement)
-            statement.executeQuery().use { result -> if (result.next()) mapSession(result) else null }
-        }
-
-    private fun transitionReturning(sql: String, bind: (java.sql.PreparedStatement) -> Unit): ResumableUploadSession? =
         JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
             bind(statement)
             statement.executeQuery().use { result -> if (result.next()) mapSession(result) else null }

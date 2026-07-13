@@ -3,6 +3,8 @@ package ai.icen.fw.persistence.jdbc
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
 import ai.icen.fw.application.transaction.ApplicationTransactionState
+import ai.icen.fw.persistence.jdbc.dialect.SqlDialect
+import ai.icen.fw.persistence.jdbc.dialect.SqlDialects
 import java.sql.Connection
 import java.util.ArrayDeque
 import java.util.logging.Level
@@ -116,7 +118,9 @@ object JdbcConnectionContext {
     private data class Binding(
         val dataSource: DataSource?,
         val connection: Connection,
-    )
+    ) {
+        val dialect: SqlDialect by lazy { SqlDialects.detect(connection) }
+    }
 
     private val local = ThreadLocal<ArrayDeque<Binding>>()
 
@@ -137,6 +141,11 @@ object JdbcConnectionContext {
     }
 
     fun requireCurrent(): Connection = current()
+        ?: throw IllegalStateException("No JDBC transaction connection is bound to the current thread.")
+
+    fun dialect(): SqlDialect? = local.get()?.peekLast()?.dialect
+
+    fun requireDialect(): SqlDialect = dialect()
         ?: throw IllegalStateException("No JDBC transaction connection is bound to the current thread.")
 
     /**

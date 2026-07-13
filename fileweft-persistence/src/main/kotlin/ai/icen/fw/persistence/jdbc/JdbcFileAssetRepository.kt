@@ -45,8 +45,9 @@ class JdbcFileAssetRepository(
     override fun save(fileAsset: FileAsset) {
         val now = clock.millis()
         val metadata = objectMapper.writeValueAsString(fileAsset.metadata)
+        val dialect = JdbcConnectionContext.requireDialect()
         val updated = JdbcConnectionContext.requireCurrent().prepareStatement(
-            "UPDATE fw_asset SET file_id = ?, asset_type = ?, metadata_json = ?::jsonb, updated_time = ? WHERE tenant_id = ? AND id = ?",
+            "UPDATE fw_asset SET file_id = ?, asset_type = ?, metadata_json = ${dialect.jsonParameterBinding()}, updated_time = ? WHERE tenant_id = ? AND id = ?",
         ).use { statement ->
             statement.setString(1, fileAsset.fileObjectId.value)
             statement.setString(2, fileAsset.assetType)
@@ -58,7 +59,7 @@ class JdbcFileAssetRepository(
         }
         if (updated == 0) {
             JdbcConnectionContext.requireCurrent().prepareStatement(
-                "INSERT INTO fw_asset(id, tenant_id, file_id, asset_type, metadata_json, created_time, updated_time) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)",
+                "INSERT INTO fw_asset(id, tenant_id, file_id, asset_type, metadata_json, created_time, updated_time) VALUES (?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?, ?)",
             ).use { statement ->
                 statement.setString(1, fileAsset.id.value)
                 statement.setString(2, fileAsset.tenantId.value)

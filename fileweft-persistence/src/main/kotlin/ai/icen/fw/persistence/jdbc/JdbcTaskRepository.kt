@@ -24,13 +24,14 @@ class JdbcTaskRepository(
 ) : TaskRepository, LeasedTaskProcessingRepository, TaskMutationRepository {
     override fun enqueue(task: BackgroundTask) {
         val now = clock.millis()
+        val dialect = JdbcConnectionContext.requireDialect()
         JdbcConnectionContext.requireCurrent().prepareStatement(
             """
             INSERT INTO fw_task(
                 id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status,
                 retry_count, next_attempt_time, lease_owner, lease_expire_time, last_error, created_time, updated_time
-            ) VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, ?, ?, ?, NULL, 0, ?, ?, ?)
-            ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+            ) VALUES (?, ?, ?, ?, ${dialect.jsonParameterBinding()}, ?, ?, ?, ?, NULL, 0, ?, ?, ?)
+            ${dialect.upsertClause(listOf("tenant_id", "idempotency_key"), emptyList())}
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, task.id.value)
@@ -107,15 +108,39 @@ class JdbcTaskRepository(
         require(now >= 0) { "Task claim time must not be negative." }
         require(claim.leaseExpiresAt > now) { "Task lease expiry must be after claim time." }
         require(claim.legacyRunningBefore <= now) { "Task legacy running cutoff must not be after claim time." }
-        return JdbcConnectionContext.requireCurrent().prepareStatement(CLAIM_SQL).use { statement ->
+        val dialect = JdbcConnectionContext.requireDialect()
+        val connection = JdbcConnectionContext.requireCurrent()
+
+        val candidateIds = connection.prepareStatement(CANDIDATE_SELECT_SQL + " " + dialect.forUpdateSkipLocked()).use { statement ->
             statement.setLong(1, now)
             statement.setLong(2, now)
             statement.setLong(3, claim.legacyRunningBefore)
             statement.setInt(4, limit)
-            statement.setString(5, claim.leaseOwner)
-            statement.setString(6, claim.leaseToken)
-            statement.setLong(7, claim.leaseExpiresAt)
-            statement.setLong(8, now)
+            statement.executeQuery().use { result ->
+                buildList {
+                    while (result.next()) add(result.getString("id"))
+                }
+            }
+        }
+        if (candidateIds.isEmpty()) return emptyList()
+
+        val placeholders = candidateIds.joinToString(",") { "?" }
+        val updated = connection.prepareStatement(
+            "UPDATE fw_task SET task_status = 'RUNNING', lease_owner = ?, lease_token = ?, lease_expire_time = ?, updated_time = ?, last_error = NULL WHERE id IN ($placeholders)",
+        ).use { statement ->
+            statement.setString(1, claim.leaseOwner)
+            statement.setString(2, claim.leaseToken)
+            statement.setLong(3, claim.leaseExpiresAt)
+            statement.setLong(4, now)
+            candidateIds.forEachIndexed { index, id -> statement.setString(index + 5, id) }
+            statement.executeUpdate()
+        }
+        if (updated == 0) return emptyList()
+
+        return connection.prepareStatement(
+            "$SELECT_COLUMNS FROM fw_task WHERE id IN ($placeholders) AND task_status = 'RUNNING'",
+        ).use { statement ->
+            candidateIds.forEachIndexed { index, id -> statement.setString(index + 1, id) }
             statement.executeQuery().use { result ->
                 val leases = ArrayList<BackgroundTaskLease>()
                 while (result.next()) leases += mapLease(result)
@@ -218,26 +243,15 @@ class JdbcTaskRepository(
         val STRING_MAP_TYPE = object : TypeReference<Map<String, String>>() {}
         const val LEGACY_RUNNING_GRACE_MILLIS = 300_000L
         const val SELECT_COLUMNS = "SELECT id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status, retry_count, next_attempt_time, last_error"
-        const val CLAIM_SQL = """
-            WITH candidates AS (
-                SELECT id
-                FROM fw_task
-                WHERE (task_status IN ('PENDING', 'RETRY') AND next_attempt_time <= ?)
-                   OR (task_status = 'RUNNING' AND (
-                        (lease_token IS NOT NULL AND lease_expire_time <= ?)
-                        OR (lease_token IS NULL AND updated_time <= ?)
-                   ))
-                ORDER BY created_time, id
-                FOR UPDATE SKIP LOCKED
-                LIMIT ?
-            )
-            UPDATE fw_task AS task
-            SET task_status = 'RUNNING', lease_owner = ?, lease_token = ?, lease_expire_time = ?, updated_time = ?, last_error = NULL
-            FROM candidates
-            WHERE task.id = candidates.id
-            RETURNING task.id, task.tenant_id, task.task_type, task.business_id, task.payload_json,
-                      task.idempotency_key, task.task_status, task.retry_count, task.next_attempt_time, task.last_error,
-                      task.lease_owner, task.lease_token
+        const val CANDIDATE_SELECT_SQL = """
+            SELECT id
+            FROM fw_task
+            WHERE (task_status IN ('PENDING', 'RETRY') AND next_attempt_time <= ?)
+               OR (task_status = 'RUNNING' AND (
+                    (lease_token IS NOT NULL AND lease_expire_time <= ?)
+                    OR (lease_token IS NULL AND updated_time <= ?)
+               ))
+            ORDER BY created_time, id
         """
     }
 }
