@@ -1,6 +1,7 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2AutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2WriteAutoConfiguration,\
+ai.icen.fw.web.spring.boot2.FileWeftWebBoot2ResumableUploadAutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2ContentAutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2LifecycleAutoConfiguration,\
 ai.icen.fw.web.spring.boot2.FileWeftWebBoot2WorkflowAutoConfiguration,\

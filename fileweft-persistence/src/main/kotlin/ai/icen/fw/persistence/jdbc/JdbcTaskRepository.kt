@@ -111,7 +111,9 @@ class JdbcTaskRepository(
         val dialect = JdbcConnectionContext.requireDialect()
         val connection = JdbcConnectionContext.requireCurrent()
 
-        val candidateIds = connection.prepareStatement(CANDIDATE_SELECT_SQL + " " + dialect.forUpdateSkipLocked()).use { statement ->
+        val candidateIds = connection.prepareStatement(
+            "$CANDIDATE_SELECT_SQL ${dialect.limitClause()} ${dialect.forUpdateSkipLocked()}",
+        ).use { statement ->
             statement.setLong(1, now)
             statement.setLong(2, now)
             statement.setLong(3, claim.legacyRunningBefore)
@@ -242,7 +244,7 @@ class JdbcTaskRepository(
     private companion object {
         val STRING_MAP_TYPE = object : TypeReference<Map<String, String>>() {}
         const val LEGACY_RUNNING_GRACE_MILLIS = 300_000L
-        const val SELECT_COLUMNS = "SELECT id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status, retry_count, next_attempt_time, last_error"
+        const val SELECT_COLUMNS = "SELECT id, tenant_id, task_type, business_id, payload_json, idempotency_key, task_status, retry_count, next_attempt_time, last_error, lease_owner, lease_token"
         const val CANDIDATE_SELECT_SQL = """
             SELECT id
             FROM fw_task

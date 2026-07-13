@@ -15,10 +15,13 @@ class ApiErrorCodes private constructor() {
         const val FORBIDDEN: String = "FORBIDDEN"
         const val NOT_FOUND: String = "NOT_FOUND"
         const val METHOD_NOT_ALLOWED: String = "METHOD_NOT_ALLOWED"
+        const val NOT_ACCEPTABLE: String = "NOT_ACCEPTABLE"
+        const val UNSUPPORTED_MEDIA_TYPE: String = "UNSUPPORTED_MEDIA_TYPE"
         const val RANGE_NOT_SUPPORTED: String = "RANGE_NOT_SUPPORTED"
         const val CONFLICT: String = "CONFLICT"
         const val FEATURE_UNAVAILABLE: String = "FEATURE_UNAVAILABLE"
         const val CONTENT_UNAVAILABLE: String = "CONTENT_UNAVAILABLE"
+        const val OUTCOME_UNKNOWN: String = "OUTCOME_UNKNOWN"
         const val INTERNAL_ERROR: String = "INTERNAL_ERROR"
     }
 }

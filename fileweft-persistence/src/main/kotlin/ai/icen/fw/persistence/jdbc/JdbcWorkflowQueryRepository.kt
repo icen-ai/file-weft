@@ -220,7 +220,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         setString(index++, currentUserId.value)
         setString(index++, tenantId.value)
         setString(index++, currentUserId.value)
-        setFolderVisibilityParameter(index++, visibilityArray)
+        if (visibilityArray != null) setFolderVisibilityParameter(index++, visibilityArray)
         request.cursor?.let { cursor ->
             setLong(index++, cursor.createdTime)
             setLong(index++, cursor.createdTime)
@@ -238,7 +238,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         var index = 1
         setString(index++, tenantId.value)
         setString(index++, documentId.value)
-        setFolderVisibilityParameter(index++, visibilityArray)
+        if (visibilityArray != null) setFolderVisibilityParameter(index++, visibilityArray)
         setString(index++, tenantId.value)
         request.cursor?.let { cursor ->
             setLong(index++, cursor.createdTime)
@@ -268,7 +268,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         val folderExpression = folderIdExpression()
         append(documentHistoryVisibleCte(folderExpression))
         appendFolderVisibility(folderReadScope, folderExpression)
-        append(DOCUMENT_HISTORY_WORKFLOW_CTE)
+        append(documentHistoryWorkflowCte())
         request.cursor?.let {
             append(" AND (workflow.created_time < ? OR (workflow.created_time = ? AND workflow.id < ?))")
         }
@@ -282,7 +282,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
         val folderExpression = folderIdExpression()
         append(documentHistoryVisibleCte(folderExpression))
         appendFolderVisibility(folderReadScope, folderExpression)
-        append(DOCUMENT_HISTORY_WORKFLOW_CTE)
+        append(documentHistoryWorkflowCte())
         append(DOCUMENT_DECISION_EVIDENCE_FILTER)
         request.cursor?.let {
             append(" AND (workflow.created_time < ? OR (workflow.created_time = ? AND workflow.id < ?))")
@@ -363,7 +363,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
     }
 
     private companion object {
-        private val DOCUMENT_HISTORY_WORKFLOW_CTE = """
+        private fun documentHistoryWorkflowCte(): String = """
             ), workflow_page AS (
                 SELECT workflow.id,
                        workflow.tenant_id,

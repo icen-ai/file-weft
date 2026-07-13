@@ -81,14 +81,23 @@ class JdbcResumableUploadSessionRepositoryIntegrationTest {
         assertEquals("owner-1", claimed?.ownerId)
         assertNull(transaction.execute { repository.claimForAbort(Identifier("tenant-1"), Identifier("session-1"), 101) })
         assertTrue(transaction.execute {
-            repository.reactivateAfterCompletionFailure(Identifier("tenant-1"), Identifier("session-1"), "network reset", 102)
+            repository.resetAfterCompletionRejection(
+                Identifier("tenant-1"),
+                Identifier("session-1"),
+                "completion rejected",
+                10_102,
+                102,
+            )
         })
-        assertEquals(ResumableUploadSessionStatus.ACTIVE, transaction.execute {
+        val reset = transaction.execute {
             repository.findById(Identifier("tenant-1"), Identifier("session-1"))
-        }?.status)
-        assertEquals("owner-1", transaction.execute {
-            repository.findById(Identifier("tenant-1"), Identifier("session-1"))
-        }?.ownerId)
+        }
+        assertEquals(ResumableUploadSessionStatus.ACTIVE, reset?.status)
+        assertEquals("owner-1", reset?.ownerId)
+        assertEquals(10_102, reset?.expiresAt)
+        assertTrue(transaction.execute {
+            repository.findParts(Identifier("tenant-1"), Identifier("session-1"))
+        }.isEmpty())
 
         val aborting = transaction.execute { repository.claimForAbort(Identifier("tenant-1"), Identifier("session-1"), 103) }
         assertEquals("owner-1", aborting?.ownerId)
@@ -98,7 +107,7 @@ class JdbcResumableUploadSessionRepositoryIntegrationTest {
         }
         assertEquals(ResumableUploadSessionStatus.EXPIRED, expired?.status)
         assertEquals("owner-1", expired?.ownerId)
-        assertEquals("network reset", expired?.lastError)
+        assertEquals("completion rejected", expired?.lastError)
     }
 
     @Test

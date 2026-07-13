@@ -8,6 +8,9 @@ import ai.icen.fw.application.offline.DocumentRestoreConflictException
 import ai.icen.fw.application.publish.ActiveDocumentReviewWorkflowException
 import ai.icen.fw.application.security.ApplicationForbiddenException
 import ai.icen.fw.application.security.ApplicationUnauthenticatedException
+import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
+import ai.icen.fw.application.upload.ResumableUploadStateException
+import ai.icen.fw.application.upload.ResumableUploadUnavailableException
 import ai.icen.fw.domain.document.DocumentConflictException
 import ai.icen.fw.domain.workflow.WorkflowConflictException
 import ai.icen.fw.web.api.ApiError
@@ -33,6 +36,16 @@ class V1ApiResponseFactory {
                 ApiErrorCodes.METHOD_NOT_ALLOWED,
                 "Method is not allowed.",
             )
+            is V1NotAcceptableException -> MappedFailure(
+                ApiHttpStatus.NOT_ACCEPTABLE,
+                ApiErrorCodes.NOT_ACCEPTABLE,
+                "The requested response representation is not acceptable.",
+            )
+            is V1UnsupportedMediaTypeException -> MappedFailure(
+                ApiHttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                ApiErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                "The request media type is not supported.",
+            )
             is V1RangeNotSupportedException -> MappedFailure(
                 ApiHttpStatus.RANGE_NOT_SATISFIABLE,
                 ApiErrorCodes.RANGE_NOT_SUPPORTED,
@@ -54,6 +67,16 @@ class V1ApiResponseFactory {
                 ApiErrorCodes.CONTENT_UNAVAILABLE,
                 "Document content is unavailable.",
             )
+            is ApplicationTransactionOutcomeUnknownException -> MappedFailure(
+                ApiHttpStatus.SERVICE_UNAVAILABLE,
+                ApiErrorCodes.OUTCOME_UNKNOWN,
+                "Request outcome is unknown; inspect the resource state before retrying.",
+            )
+            is ResumableUploadUnavailableException -> MappedFailure(
+                ApiHttpStatus.SERVICE_UNAVAILABLE,
+                ApiErrorCodes.FEATURE_UNAVAILABLE,
+                "The requested feature is unavailable.",
+            )
             is DocumentFolderReadAccessUnavailableException,
             is V1FeatureUnavailableException,
             -> MappedFailure(
@@ -66,6 +89,7 @@ class V1ApiResponseFactory {
             is ActiveDocumentReviewWorkflowException,
             is IdempotencyConflictException,
             is DocumentRestoreConflictException,
+            is ResumableUploadStateException,
             -> MappedFailure(
                 ApiHttpStatus.CONFLICT,
                 ApiErrorCodes.CONFLICT,
@@ -116,6 +140,8 @@ enum class ApiHttpStatus(val statusCode: Int) {
     RANGE_NOT_SATISFIABLE(416),
     SERVICE_UNAVAILABLE(503),
     INTERNAL_SERVER_ERROR(500),
+    NOT_ACCEPTABLE(406),
+    UNSUPPORTED_MEDIA_TYPE(415),
 }
 
 /** A public-safe response plus the status selected by an outer HTTP adapter. */

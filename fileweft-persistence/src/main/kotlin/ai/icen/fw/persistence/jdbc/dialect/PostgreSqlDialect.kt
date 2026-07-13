@@ -21,6 +21,7 @@ object PostgreSqlDialect : SqlDialect {
 
     override fun upsertClause(conflictColumns: List<String>, updateAssignments: List<String>): String {
         val conflictTarget = conflictColumns.joinToString(", ")
+        if (updateAssignments.isEmpty()) return "ON CONFLICT ($conflictTarget) DO NOTHING"
         val assignments = updateAssignments.joinToString(", ")
         return "ON CONFLICT ($conflictTarget) DO UPDATE SET $assignments"
     }

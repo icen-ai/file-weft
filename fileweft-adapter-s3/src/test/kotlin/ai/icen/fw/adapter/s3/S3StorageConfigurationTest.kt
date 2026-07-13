@@ -1,8 +1,12 @@
 package ai.icen.fw.adapter.s3
 
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails
+import software.amazon.awssdk.services.s3.model.S3Exception
 import java.net.URI
 
 class S3StorageConfigurationTest {
@@ -44,4 +48,18 @@ class S3StorageConfigurationTest {
             )
         }
     }
+
+    @Test
+    fun `classifies only definitive S3 multipart completion rejections as safe to reopen`() {
+        listOf("EntityTooSmall", "InvalidPart", "InvalidPartOrder").forEach { code ->
+            assertTrue(isDefinitiveMultipartCompletionRejection(s3Failure(code)), code)
+        }
+        assertFalse(isDefinitiveMultipartCompletionRejection(s3Failure("NoSuchUpload")))
+        assertFalse(isDefinitiveMultipartCompletionRejection(s3Failure("InternalError")))
+    }
+
+    private fun s3Failure(code: String): S3Exception = S3Exception.builder()
+        .statusCode(400)
+        .awsErrorDetails(AwsErrorDetails.builder().errorCode(code).build())
+        .build() as S3Exception
 }

@@ -11,6 +11,9 @@ import ai.icen.fw.application.workflow.DocumentReviewConflictException
 import ai.icen.fw.application.upload.StoredObjectIntegrityException
 import ai.icen.fw.application.security.ApplicationForbiddenException
 import ai.icen.fw.application.security.ApplicationUnauthenticatedException
+import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
+import ai.icen.fw.application.upload.ResumableUploadStateException
+import ai.icen.fw.application.upload.ResumableUploadUnavailableException
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
 import ai.icen.fw.domain.workflow.WorkflowDecisionConflictException
@@ -30,6 +33,16 @@ class V1ApiResponseFactoryTest {
     fun `maps trusted authorization and document failures to stable statuses without exposing causes`() {
         val cases = listOf(
             V1MethodNotAllowedException() to Triple(405, ApiErrorCodes.METHOD_NOT_ALLOWED, "Method is not allowed."),
+            V1NotAcceptableException() to Triple(
+                406,
+                ApiErrorCodes.NOT_ACCEPTABLE,
+                "The requested response representation is not acceptable.",
+            ),
+            V1UnsupportedMediaTypeException() to Triple(
+                415,
+                ApiErrorCodes.UNSUPPORTED_MEDIA_TYPE,
+                "The request media type is not supported.",
+            ),
             V1RangeNotSupportedException() to Triple(416, ApiErrorCodes.RANGE_NOT_SUPPORTED, "Range requests are not supported."),
             ApplicationUnauthenticatedException("host identity is unavailable") to Triple(401, ApiErrorCodes.UNAUTHENTICATED, "Authentication is required."),
             ApplicationForbiddenException("policy=restricted-folder") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
@@ -75,6 +88,21 @@ class V1ApiResponseFactoryTest {
                 ApiErrorCodes.CONTENT_UNAVAILABLE,
                 "Document content is unavailable.",
             ),
+            ApplicationTransactionOutcomeUnknownException(IllegalStateException("private commit detail")) to Triple(
+                503,
+                ApiErrorCodes.OUTCOME_UNKNOWN,
+                "Request outcome is unknown; inspect the resource state before retrying.",
+            ),
+            ResumableUploadUnavailableException(IllegalStateException("s3://private-bucket")) to Triple(
+                503,
+                ApiErrorCodes.FEATURE_UNAVAILABLE,
+                "The requested feature is unavailable.",
+            ),
+            ResumableUploadStateException("private upload state detail") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
             IllegalArgumentException("cursor=secret-token") to Triple(400, ApiErrorCodes.INVALID_REQUEST, "Request is invalid."),
             StoredObjectIntegrityException("storage acknowledged a private path") to Triple(
                 500,
@@ -98,7 +126,12 @@ class V1ApiResponseFactoryTest {
             assertEquals(expected.second, result.response.error?.code)
             assertEquals(expected.third, result.response.error?.message)
             assertEquals("trace-1", result.response.traceId)
-            if (failure is V1MethodNotAllowedException || failure is V1RangeNotSupportedException) {
+            if (
+                failure is V1MethodNotAllowedException ||
+                failure is V1NotAcceptableException ||
+                failure is V1UnsupportedMediaTypeException ||
+                failure is V1RangeNotSupportedException
+            ) {
                 assertEquals(failure.message, result.response.message)
             } else {
                 assertFalse(result.response.message.contains(failure.message.orEmpty()))

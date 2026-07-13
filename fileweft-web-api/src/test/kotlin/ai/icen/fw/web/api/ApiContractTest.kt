@@ -54,6 +54,8 @@ class ApiContractTest {
         assertEquals("UNAUTHENTICATED", ApiErrorCodes.UNAUTHENTICATED)
         assertEquals("FORBIDDEN", ApiErrorCodes.FORBIDDEN)
         assertEquals("METHOD_NOT_ALLOWED", ApiErrorCodes.METHOD_NOT_ALLOWED)
+        assertEquals("NOT_ACCEPTABLE", ApiErrorCodes.NOT_ACCEPTABLE)
+        assertEquals("UNSUPPORTED_MEDIA_TYPE", ApiErrorCodes.UNSUPPORTED_MEDIA_TYPE)
         assertEquals("RANGE_NOT_SUPPORTED", ApiErrorCodes.RANGE_NOT_SUPPORTED)
         assertEquals("CONFLICT", ApiErrorCodes.CONFLICT)
         assertEquals("FEATURE_UNAVAILABLE", ApiErrorCodes.FEATURE_UNAVAILABLE)

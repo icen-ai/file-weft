@@ -1,6 +1,7 @@
 package ai.icen.fw.testkit.storage
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.spi.storage.MultipartCompletionRejectedException
 import ai.icen.fw.spi.storage.MultipartUpload
 import ai.icen.fw.spi.storage.StorageAdapter
 import ai.icen.fw.spi.storage.StorageObjectLocation
@@ -189,6 +190,16 @@ abstract class StorageAdapterContractTest {
                 assertEquals(partNumber, acknowledgement.partNumber)
                 acknowledgements += acknowledgement
             }
+
+            val staleAcknowledgements = ArrayList(acknowledgements)
+            staleAcknowledgements[0] = originalAcknowledgement
+            org.junit.jupiter.api.assertThrows<MultipartCompletionRejectedException> {
+                storageAdapter.completeMultipartUpload(upload, staleAcknowledgements)
+            }
+            assertFalse(
+                storageAdapter.exists(upload.location),
+                "A stale part acknowledgement must be rejected without publishing a final object.",
+            )
 
             stored = storageAdapter.completeMultipartUpload(upload, acknowledgements)
 

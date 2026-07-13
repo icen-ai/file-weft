@@ -179,6 +179,16 @@ data class ResumableUploadSessionView(
     val parts: List<ResumableUploadPart>,
 )
 
+/** Durable completion identifiers plus the best-effort completion timestamp from one trusted identity snapshot. */
+class ResumableUploadCompletionResult(
+    val result: UploadFileResult,
+    val completedAt: Long?,
+) {
+    init {
+        require(completedAt == null || completedAt >= 0) { "Upload completion time must not be negative." }
+    }
+}
+
 data class ExpiredResumableUploadCleanupResult(
     val inspected: Int,
     val expired: Int,
@@ -207,7 +217,17 @@ class ResumableUploadNotFoundException(sessionId: Identifier) : NoSuchElementExc
     "Upload session ${sessionId.value} was not found in the current tenant.",
 )
 
-class ResumableUploadStateException(message: String) : IllegalStateException(message)
+class ResumableUploadStateException @JvmOverloads constructor(
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)
+
+/** A retryable upload dependency failure whose remote outcome is known not to have completed the command. */
+class ResumableUploadUnavailableException(cause: Throwable) : IllegalStateException(DEFAULT_MESSAGE, cause) {
+    companion object {
+        const val DEFAULT_MESSAGE: String = "The resumable upload dependency is temporarily unavailable."
+    }
+}
 
 internal const val MAX_RESUMABLE_UPLOAD_OWNER_ID_LENGTH: Int = MAX_TRUSTED_USER_ID_LENGTH
 

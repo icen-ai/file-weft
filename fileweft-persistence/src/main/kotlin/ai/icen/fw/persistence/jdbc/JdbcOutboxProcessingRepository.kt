@@ -49,7 +49,9 @@ class JdbcOutboxProcessingRepository(
         val dialect = JdbcConnectionContext.requireDialect()
         val connection = JdbcConnectionContext.requireCurrent()
 
-        val candidateIds = connection.prepareStatement(CANDIDATE_SELECT_SQL + " " + dialect.forUpdateSkipLocked()).use { statement ->
+        val candidateIds = connection.prepareStatement(
+            "$CANDIDATE_SELECT_SQL ${dialect.limitClause()} ${dialect.forUpdateSkipLocked()}",
+        ).use { statement ->
             statement.setLong(1, now)
             statement.setLong(2, now)
             statement.setLong(3, claim.legacyRunningBefore)
