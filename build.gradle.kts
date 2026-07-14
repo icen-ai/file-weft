@@ -392,13 +392,19 @@ val verifyCnbPathPolicy = tasks.register<Exec>("verifyCnbPathPolicy") {
     inputs.files(
         rootProject.file(".cnb.yml"),
         rootProject.file(".cnb/settings.yml"),
+        rootProject.file(".cnb/web_trigger.yml"),
         rootProject.file(".ci/.shared.yml"),
+        rootProject.file(".ci/code-knowledge-acceptance.json"),
+        rootProject.file(".ci/codewiki-sparse-checkout"),
+        rootProject.file(".ci/codewiki.yml"),
         rootProject.file(".ci/knowledge.yml"),
         rootProject.file(".ci/main.yml"),
         rootProject.file(".ci/pr.yml"),
         rootProject.file(".ci/release.yml"),
         rootProject.file(".ci/scripts/prepare-kingbase-image.ps1"),
         rootProject.file(".ci/scripts/prepare-kingbase-image.sh"),
+        rootProject.file(".ci/scripts/codewiki-evidence.mjs"),
+        rootProject.file(".ci/scripts/verify-codewiki-knowledge.mjs"),
         rootProject.file(".ci/test/path-policy.test.mjs"),
         rootProject.file(".docker/docker-compose.dev.yaml"),
     ).withPropertyName("cnbPathPolicySources")
@@ -559,7 +565,7 @@ val verifyReleaseCredentialHygiene = tasks.register("verifyReleaseCredentialHygi
 
 val verifyCnbReleaseIdentity = tasks.register("verifyCnbReleaseIdentity") {
     group = "verification"
-    description = "Verifies that the CNB Tag, commit, and Gradle release version identify the same immutable release."
+    description = "Verifies that the CNB Tag, remote main HEAD, commit, and Gradle version identify one release."
     notCompatibleWithConfigurationCache("CNB release identity verification reads the checked-out Git commit at execution time.")
     inputs.property("cnbEvent", providers.environmentVariable("CNB_EVENT").orElse(""))
     inputs.property("cnbTag", providers.environmentVariable("CNB_BRANCH").orElse(""))
@@ -608,6 +614,34 @@ val verifyCnbReleaseIdentity = tasks.register("verifyCnbReleaseIdentity") {
         }
         require(checkedOutCommit == cnbCommit) {
             "Checked-out commit '$checkedOutCommit' does not match CNB_COMMIT '$cnbCommit'."
+        }
+
+        val remoteMainProcess = ProcessBuilder(
+            "git",
+            "ls-remote",
+            "--exit-code",
+            "origin",
+            "refs/heads/main",
+        )
+            .directory(rootProject.projectDir)
+            .redirectErrorStream(true)
+            .apply { environment()["GIT_TERMINAL_PROMPT"] = "0" }
+            .start()
+        val remoteMainOutput = remoteMainProcess.inputStream.bufferedReader(Charsets.UTF_8)
+            .use { reader -> reader.readText().trim() }
+        require(remoteMainProcess.waitFor() == 0) {
+            "Could not resolve the remote main HEAD without prompting: $remoteMainOutput"
+        }
+        val remoteMainFields = remoteMainOutput.split(Regex("\\s+")).filter(String::isNotEmpty)
+        require(remoteMainFields.size == 2 && remoteMainFields[1] == "refs/heads/main") {
+            "Remote main lookup returned an unexpected response: $remoteMainOutput"
+        }
+        val remoteMainCommit = remoteMainFields[0]
+        require(remoteMainCommit.matches(Regex("[0-9a-fA-F]{40}"))) {
+            "Remote main HEAD must be a full 40-character Git commit SHA."
+        }
+        require(remoteMainCommit == cnbCommit) {
+            "Release commit '$cnbCommit' is not the current remote main HEAD '$remoteMainCommit'."
         }
     }
 }

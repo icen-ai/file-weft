@@ -53,7 +53,7 @@
 - PR：文档只运行文档契约；代码运行 `fastCheck`；受影响的 Java 8/17、PostgreSQL、MySQL、KingbaseES、RustFS、Dev 验收和制品契约 lane 按精确路径并行触发。制品契约只覆盖发布构建逻辑、依赖锁、独立消费者及 LICENSE/NOTICE 等制品边界；相同 PR 的旧流水线会被新提交取消。
 - `main` push：文档契约、快速门禁、五条 JDK、五个外部套件和制品契约均按精确路径触发；Build Logic 测试夹具只进入快速门禁，Build Logic 主代码才扩大到运行时、外部套件和制品契约。
 - 夜间：北京时间以仓库所配置时区解释的 `30 2 * * *` 定时任务运行完整质量、制品、五条 JDK 和全部外部验收，用于发现工具链、镜像和依赖环境漂移。
-- `vX.Y.Z` 标签：十一条验证流水线并行；发布流水线必须等待全部 resolve 信号后才获得发布阶段。制品验证与上传保留在同一个发布 runner 上只执行一次，避免另开 lane 后重复构建或搬运未验证的 Maven 仓库。发布任务复核标签、版本、40 位提交 SHA、当前 `HEAD` 与已验证提交完全一致，并用全局锁防止两个版本同时写 Maven 仓库。
+- `vX.Y.Z` 标签：十一条验证流水线并行；发布流水线必须等待全部 resolve 信号后才获得发布阶段。制品验证与上传保留在同一个发布 runner 上只执行一次，避免另开 lane 后重复构建或搬运未验证的 Maven 仓库。发布任务复核标签、版本、40 位提交 SHA、当前 `HEAD`、全部已验证提交与实时远端 `main` HEAD 完全一致，并用全局锁防止两个版本同时写 Maven 仓库。正式发布前还必须在 CNB 启用 `main` 分支保护；CNB 当前没有可替代该约束的标签保护规则，因此文档只称“受发布门禁约束的标签”，不得把标签名称本身视为受保护证据。
 
 `.ci/test/path-policy.test.mjs` 把代表性 changed path 映射到预期 lane，并由 `verifyCnbPathPolicy` 纳入 `fastCheck`。发布消费者、法律文件、Docker context 和影响全图的 Gradle 锁文件还带有“不得选择零 lane”的回归断言。修改路径组时必须先补或更新代表性用例，再修改 YAML。CNB `ifModify` 在 PR 与非新建分支 push 中按 glob 判断，最多统计 300 个变更文件；超过 300 个文件或新分支 push 时不得只依赖按需结果，必须人工选择完整相关门禁。参见 [CNB `ifModify` 语法](https://docs.cnb.cool/zh/build/grammar.html#ifmodify)。
 
@@ -130,11 +130,45 @@ docker compose -f $compose rm --force fileweft-dev-web fileweft-dev-worker filew
 
 ## 仓库知识库与“织澜”
 
-`.ci/knowledge.yml` 在 `main` push 后按 `.fileweft-knowledge-paths` 增量更新 CNB 仓库知识库。它只索引 `README.md`、`AGENTS.md`、`SECURITY.md`、本文件、`docs/**/*.md` 和中文文档站，不把 `.ai/**` 历史蓝图、英文重复页面、测试夹具、构建产物或给 AI 执行的 `SKILL.md` 混入产品事实。普通源码改动不会触发知识库任务，PR 也不会写主干知识库；任务固定使用 1 CPU，并以仓库锁合并等待中的重复更新。
+`.ci/knowledge.yml` 在 `main` push 后按 `.fileweft-knowledge-paths` 增量更新 CNB 仓库知识库。它只索引 `README.md`、`AGENTS.md`、`SECURITY.md`、本文件、`docs/**/*.md` 和中文文档站，不把 `.ai/**` 历史蓝图、英文重复页面、测试夹具、构建产物或给 AI 执行的 `SKILL.md` 混入产品事实。普通源码改动不会触发知识库任务，PR 也不会写主干知识库；任务固定使用 1 CPU。
 
 Issue 同步目前保持关闭。只有建立明确的 Issue 关闭状态和 `knowledge` 标签治理后，才可以考虑同步已关闭的结论型 Issue；不能让开放问题或过期讨论覆盖默认分支文档。知识源、排除规则或人格配置发生变化时，必须同时更新 `.ci/test/path-policy.test.mjs`。
 
-`.cnb/settings.yml` 定义仓库助手“织澜”和仓库页的“问织澜”入口。她是基于默认分支知识库回答架构、接入、测试、运维和发布问题的仓库助手，不是 FileWeft Agent 产品能力。人格可以温暖、直接并带少量幽默，但技术事实、来源路径、安全边界和“不知道”声明始终优先。CNB 从默认分支读取 NPC 设置，因此 PR 中只能预览配置；合并且知识库流水线成功后仓库入口才使用新配置和新知识。
+`.cnb/settings.yml` 定义仓库助手“织澜”和仓库页的“问织澜”入口。她是仓库助手，不是 FileWeft Agent 产品能力。仓库首页问答只能使用检索到的文档和 CodeWiki；Issue/PR 中的 NPC 工作模式拥有真实 checkout 时，必须先核对 SHA，再用 `rg`、精确源码、直接测试和装配配置回答具体实现。CodeWiki 是 AI 生成摘要，不能覆盖 `AGENTS.md` 或源码事实。人格可以温暖、直接并带少量幽默，但技术事实、来源路径、安全边界和“不知道”声明始终优先。CNB 从默认分支读取 NPC 设置，因此 PR 中只能预览配置；合并且知识库流水线成功后仓库入口才使用新配置和新知识。
+
+### 按需刷新源码知识
+
+`.ci/codewiki.yml` 只响应 `main` 的 `web_trigger_codewiki`，不响应 PR、普通 push、定时任务或标签，因此不会增加日常开发和稳定版发布的等待时间。需要刷新时，在 CNB 的「代码 → 分支 → `main` 分支详情页」点击「刷新源码知识」；按钮由 `.cnb/web_trigger.yml` 定义，仅向仓库负责人和管理员展示，触发者仍必须具有仓库写权限。CNB 的 `permissions.roles` 只在页面检查，不是服务端授权边界，不能拿它保护密钥或高风险发布动作；本任务本身不接收输入、不发布制品。CodeWiki 首次拉取的固定镜像较大，仓库生成也可能超过一小时，这是低频维护任务而不是发布门禁。
+
+流水线固定使用 CodeWiki `v1.12.0` 的 amd64 镜像 digest。插件没有 include/exclude 参数，因此生成前用 `.ci/codewiki-sparse-checkout` 在本次临时 checkout 中隐藏 `.ai/**` 历史蓝图、`fileweft-agent/**` 兼容实现、测试源码、英文重复文档和 Web 夹具；这不会删除或改写 Git 中的任何文件。正式文档知识更新和 CodeWiki 入库共用 `fileweft-knowledge-base` 锁并按顺序等待，不能互相取消或并发改写同一知识库。
+
+CodeWiki 插件目前不会把 Wiki 入库子进程的退出码传给主进程，而且删除旧 CodeWiki 或单个文档最终上传失败都可能只写日志；它上传的 metadata 也没有 commit 字段。为此准备阶段先证明 checkout HEAD 精确等于 `CNB_COMMIT` 且不存在遗留 `codewiki/` 目录，流水线最后再运行 `.ci/scripts/verify-codewiki-knowledge.mjs`：本次生成状态必须成功，知识库的 `last_commit_sha` 必须等于本次 `CNB_COMMIT`，每个命中片段的 SHA-256 必须自洽且其去除插件合成标题后的完整 token 序列必须来自本次 `codewiki/` 生成物，并且 `.ci/code-knowledge-acceptance.json` 中每个具体类问题都必须包含约定的精确符号。只有这样才能排除旧 CodeWiki 片段误绿；仅有 HTTP 200、高相似度、全局 SHA 或普通 `metadata.type=code` 文档都不算源码知识验收成功。
+
+没有 CNB Skill 时也可以只读检查。先按下一节取得 `web_trigger_codewiki` 的精确 SHA、事件和 SN，再查询知识库信息和三个黄金问题；不得为了查看状态而重新触发任务，也不要设置 `NODE_TLS_REJECT_UNAUTHORIZED=0`。`last_commit_sha` 必须与按钮所针对的 `main` SHA 完全一致，返回片段还要人工确认 `metadata.type` 为 `codewiki`。
+
+```powershell
+$repo = "china.ai/file-weft"
+$sha = (git rev-parse origin/main).Trim()
+Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED -ErrorAction SilentlyContinue
+
+cnb knowledge-base get-knowledge-base-info --repo $repo --verbose
+
+$queries = @(
+  "JdbcResumableUploadSessionRepository 具体实现了哪些续传仓储能力？",
+  "S3StorageAdapter 的 multipart 完成和确定拒绝如何实现？",
+  "ResumableUploadReconciler 如何处理完成结果未知？"
+)
+foreach ($query in $queries) {
+  cnb knowledge-base query-knowledge-base-get `
+    --repo $repo `
+    --query $query `
+    --top-k 20 `
+    --score-threshold 0 `
+    --verbose
+}
+```
+
+源码更新后是否需要刷新由维护者按需判断：涉及模块边界、核心实现、公开 SPI、Starter 装配或跨模块调用链时刷新；只改拼写、测试数据或不影响理解的局部实现时不刷新。不要把全量源码复制为 `.txt`/Markdown 塞进文档知识库。若首页问答无法核实某个具体类，在 Issue/PR 中 `@china.ai/file-weft(织澜)` 请求她基于真实 checkout 核验。
 
 首次合并后，在 CNB 构建中确认 `Main FileWeft knowledge base` 成功。随后可用只读 CLI 做一次最小检索验证；查询返回 404 通常表示默认分支还没有一条成功的知识库构建，不应为了查看状态而触发、停止或重跑构建。
 
