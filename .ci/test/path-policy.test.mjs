@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sharedConfiguration = readFileSync(new URL("../.shared.yml", import.meta.url), "utf8");
-const lines = sharedConfiguration.split(/\r?\n/u);
+const knowledgeConfiguration = readFileSync(new URL("../knowledge.yml", import.meta.url), "utf8");
+const repositoryConfiguration = readFileSync(new URL("../../.cnb.yml", import.meta.url), "utf8");
+const repositorySettings = readFileSync(new URL("../../.cnb/settings.yml", import.meta.url), "utf8");
+const lines = `${sharedConfiguration}\n${knowledgeConfiguration}`.split(/\r?\n/u);
 const prConfiguration = readFileSync(new URL("../pr.yml", import.meta.url), "utf8");
 const mainConfiguration = readFileSync(new URL("../main.yml", import.meta.url), "utf8");
 const releaseConfiguration = readFileSync(new URL("../release.yml", import.meta.url), "utf8");
@@ -22,6 +25,7 @@ const kingbasePowerShell = readFileSync(
 
 const groupNames = [
   ".fileweft-docs-paths",
+  ".fileweft-knowledge-paths",
   ".fileweft-fast-paths",
   ".fileweft-jvm8-paths",
   ".fileweft-jvm17-paths",
@@ -99,10 +103,35 @@ function expectGroups(path, expected) {
   assert.deepEqual(matchingGroups(path), expected, `unexpected CNB lanes for ${path}`);
 }
 
-test("documentation changes do not expand JVM or external suites", () => {
-  expectGroups("fileweft-docs/pages/zh/project/roadmap.md", [".fileweft-docs-paths"]);
-  expectGroups("docs/implementation-status.md", [".fileweft-docs-paths"]);
-  expectGroups(".ci/README.md", [".fileweft-docs-paths"]);
+test("curated documentation selects only documentation and knowledge lanes", () => {
+  const expected = [".fileweft-docs-paths", ".fileweft-knowledge-paths"];
+  expectGroups("fileweft-docs/pages/zh/project/roadmap.md", expected);
+  expectGroups("docs/implementation-status.md", expected);
+  expectGroups(".ci/README.md", expected);
+  expectGroups("README.md", expected);
+  expectGroups("AGENTS.md", expected);
+  expectGroups("SECURITY.md", expected);
+});
+
+test("knowledge indexing excludes historical blueprints and duplicate English pages", () => {
+  expectGroups(".ai/FileWeft_Ultimate_Implementation_Manual_COMPLETE/13_AI_AGENT.md", [
+    ".fileweft-docs-paths",
+  ]);
+  expectGroups("fileweft-docs/pages/en/project/roadmap.md", [".fileweft-docs-paths"]);
+  expectGroups(".cnb/settings.yml", [
+    ".fileweft-knowledge-paths",
+    ".fileweft-fast-paths",
+  ]);
+  expectGroups(".ci/knowledge.yml", [
+    ".fileweft-knowledge-paths",
+    ".fileweft-fast-paths",
+  ]);
+  assert.ok(
+    !matchingGroups("fileweft-core/src/main/kotlin/Identifier.kt").includes(
+      ".fileweft-knowledge-paths",
+    ),
+    "ordinary source changes must not rebuild the repository knowledge base",
+  );
 });
 
 test("repository attributes select every lane whose checked-out bytes they can change", () => {
@@ -285,6 +314,63 @@ test("PR and main expose the path-scoped release artifact lane", () => {
       ),
       `${name} must execute the release artifact contract`,
     );
+  }
+});
+
+test("the repository knowledge base is main-only, curated, and fail-closed", () => {
+  assert.ok(
+    repositoryConfiguration.includes("- .ci/knowledge.yml"),
+    "the root CNB configuration must include the knowledge pipeline",
+  );
+  assert.match(knowledgeConfiguration, /^main:\r?\n  push:\r?\n/mu);
+  assert.doesNotMatch(
+    knowledgeConfiguration,
+    /pull_request/u,
+    "PR content must never update the canonical repository knowledge base",
+  );
+  assert.match(knowledgeConfiguration, /type: knowledge:update/u);
+  assert.match(
+    knowledgeConfiguration,
+    /ifModify: !reference \[\.fileweft-knowledge-paths\]/u,
+  );
+  assert.match(knowledgeConfiguration, /issueSyncEnabled: false/u);
+  assert.match(knowledgeConfiguration, /forceRebuild: false/u);
+  assert.match(knowledgeConfiguration, /ignoreProcessFailures: false/u);
+  for (const source of [
+    "README.md",
+    "AGENTS.md",
+    "SECURITY.md",
+    ".ci/README.md",
+    "docs/**/*.md",
+    "fileweft-docs/pages/zh/**/*.md",
+  ]) {
+    assert.ok(knowledgeConfiguration.includes(`- ${source}`), `missing knowledge source ${source}`);
+  }
+  for (const excluded of [
+    ".ai/**",
+    "fileweft-docs/pages/en/**",
+    "SKILL.md",
+    "fileweft-docs/SKILL.md",
+  ]) {
+    assert.ok(
+      knowledgeConfiguration.includes(`- ${excluded}`),
+      `missing knowledge exclusion ${excluded}`,
+    );
+  }
+});
+
+test("the default repository NPC keeps personality subordinate to evidence", () => {
+  for (const expected of [
+    "name: 织澜",
+    "defaultRepo: \"china.ai/file-weft\"",
+    "defaultRole: 织澜",
+    "name: 问织澜",
+    "你不是 FileWeft Agent 产品能力",
+    "AGENTS.md",
+    "仓库中暂无依据",
+    "专业性和事实永远优先于人设",
+  ]) {
+    assert.ok(repositorySettings.includes(expected), `missing NPC guardrail: ${expected}`);
   }
 });
 

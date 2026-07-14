@@ -390,8 +390,17 @@ val verifyCnbPathPolicy = tasks.register<Exec>("verifyCnbPathPolicy") {
     workingDir(rootProject.projectDir)
     commandLine("node", "--test", ".ci/test/path-policy.test.mjs")
     inputs.files(
+        rootProject.file(".cnb.yml"),
+        rootProject.file(".cnb/settings.yml"),
         rootProject.file(".ci/.shared.yml"),
+        rootProject.file(".ci/knowledge.yml"),
+        rootProject.file(".ci/main.yml"),
+        rootProject.file(".ci/pr.yml"),
+        rootProject.file(".ci/release.yml"),
+        rootProject.file(".ci/scripts/prepare-kingbase-image.ps1"),
+        rootProject.file(".ci/scripts/prepare-kingbase-image.sh"),
         rootProject.file(".ci/test/path-policy.test.mjs"),
+        rootProject.file(".docker/docker-compose.dev.yaml"),
     ).withPropertyName("cnbPathPolicySources")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 }

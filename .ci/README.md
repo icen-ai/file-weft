@@ -128,6 +128,25 @@ docker compose -f $compose stop fileweft-dev-web fileweft-dev-worker fileweft-de
 docker compose -f $compose rm --force fileweft-dev-web fileweft-dev-worker fileweft-dev-api fileweft-dev-platform rustfs
 ```
 
+## 仓库知识库与“织澜”
+
+`.ci/knowledge.yml` 在 `main` push 后按 `.fileweft-knowledge-paths` 增量更新 CNB 仓库知识库。它只索引 `README.md`、`AGENTS.md`、`SECURITY.md`、本文件、`docs/**/*.md` 和中文文档站，不把 `.ai/**` 历史蓝图、英文重复页面、测试夹具、构建产物或给 AI 执行的 `SKILL.md` 混入产品事实。普通源码改动不会触发知识库任务，PR 也不会写主干知识库；任务固定使用 1 CPU，并以仓库锁合并等待中的重复更新。
+
+Issue 同步目前保持关闭。只有建立明确的 Issue 关闭状态和 `knowledge` 标签治理后，才可以考虑同步已关闭的结论型 Issue；不能让开放问题或过期讨论覆盖默认分支文档。知识源、排除规则或人格配置发生变化时，必须同时更新 `.ci/test/path-policy.test.mjs`。
+
+`.cnb/settings.yml` 定义仓库助手“织澜”和仓库页的“问织澜”入口。她是基于默认分支知识库回答架构、接入、测试、运维和发布问题的仓库助手，不是 FileWeft Agent 产品能力。人格可以温暖、直接并带少量幽默，但技术事实、来源路径、安全边界和“不知道”声明始终优先。CNB 从默认分支读取 NPC 设置，因此 PR 中只能预览配置；合并且知识库流水线成功后仓库入口才使用新配置和新知识。
+
+首次合并后，在 CNB 构建中确认 `Main FileWeft knowledge base` 成功。随后可用只读 CLI 做一次最小检索验证；查询返回 404 通常表示默认分支还没有一条成功的知识库构建，不应为了查看状态而触发、停止或重跑构建。
+
+```powershell
+$repo = "china.ai/file-weft"
+Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED -ErrorAction SilentlyContinue
+cnb knowledge-base query-knowledge-base-get `
+  --repo $repo `
+  --query "FileWeft 0.0.3 是否提供 Agent 产品能力？" `
+  --top-k 5
+```
+
 ## CNB 构建结果闭环
 
 CNB 证据只对精确提交和精确事件有效。完成判据是：
