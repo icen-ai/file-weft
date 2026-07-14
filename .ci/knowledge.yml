@@ -1,0 +1,46 @@
+.fileweft-knowledge-paths:
+  - .gitattributes
+  - .ci/knowledge.yml
+  - .cnb/settings.yml
+  - README.md
+  - AGENTS.md
+  - SECURITY.md
+  - .ci/README.md
+  - docs/**/*.md
+  - fileweft-docs/pages/zh/**/*.md
+
+main:
+  push:
+    knowledge:
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 1
+      name: Main FileWeft knowledge base
+      ifModify: !reference [.fileweft-knowledge-paths]
+      lock:
+        key: fileweft-knowledge-base
+        wait: true
+        cancel-in-wait: true
+      stages:
+        - name: update-fileweft-knowledge-base
+          type: knowledge:update
+          options:
+            include:
+              - README.md
+              - AGENTS.md
+              - SECURITY.md
+              - .ci/README.md
+              - docs/**/*.md
+              - fileweft-docs/pages/zh/**/*.md
+            exclude:
+              - .ai/**
+              - fileweft-docs/pages/en/**
+              - fileweft-dev/web/fixtures/**
+              - "**/build/**"
+              - SKILL.md
+              - fileweft-docs/SKILL.md
+            chunkSize: 1500
+            chunkOverlap: 100
+            issueSyncEnabled: false
+            forceRebuild: false
+            ignoreProcessFailures: false

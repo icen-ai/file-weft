@@ -107,9 +107,11 @@
 .fileweft-fast-paths:
   - .gitattributes
   - .cnb.yml
+  - .cnb/settings.yml
   - .ci/.shared.yml
   - .ci/pr.yml
   - .ci/main.yml
+  - .ci/knowledge.yml
   - .ci/nightly.yml
   - .ci/release.yml
   - .ci/Dockerfile.jvm
