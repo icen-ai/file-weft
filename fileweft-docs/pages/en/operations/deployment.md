@@ -11,7 +11,7 @@ format: "markdown"
 
 ## What this page solves
 
-Production FileWeft is not a single jar with every capability turned on. This page shows how to deploy the same verified `ai.icen:*:0.0.2` artifact as separate runtime roles that share database and object storage but never share privileges they do not need.
+Production FileWeft is not a single jar with every capability turned on. This page shows how to deploy the same remotely verified `ai.icen:*:0.0.3` artifact as separate runtime roles that share database and object storage but never share privileges they do not need. Do not treat the coordinate as consumable until the guarded-tag and protected-main gates plus anonymous cold-cache readback in the [installation guide](../getting-started/installation.md) have succeeded.
 
 ## Recommended topology
 
@@ -104,13 +104,13 @@ fileweft:
 FileWeft's startup initializer runs the migration, but it does not automatically terminate the Spring process after success. Adding these flags to an ordinary long-running Web host therefore does not make it a one-shot migration job. Provide a host-owned non-Web executable or dedicated profile that explicitly closes the Spring context and exits with status 0 after initialization succeeds, for example:
 
 ```bash
-java -jar fileweft-migration-job-0.0.2.jar \
+java -jar fileweft-migration-job-0.0.3.jar \
   --spring.main.web-application-type=none \
   --fileweft.persistence.migration-mode=migrate \
   --fileweft.worker.enabled=false
 ```
 
-`fileweft-migration-job-0.0.2.jar` is an illustrative host-provided executable, not a standalone application published by FileWeft. The command is a true one-shot job only when the host implements that explicit post-migration exit.
+`fileweft-migration-job-0.0.3.jar` is an illustrative host-provided executable, not a standalone application published by FileWeft. The command is a true one-shot job only when the host implements that explicit post-migration exit.
 
 ## Health and readiness checks
 

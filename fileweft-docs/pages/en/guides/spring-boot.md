@@ -25,8 +25,8 @@ Install exactly one generation. The Web starter exposes `/fileweft/v1/**` contro
 dependencies {
     // The host owns its DataSource and pool; an equivalent host JDBC stack may replace this.
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
 }
 ```
 

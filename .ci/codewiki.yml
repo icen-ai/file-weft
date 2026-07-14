@@ -1,0 +1,35 @@
+.fileweft-codewiki: &fileweft-codewiki
+  name: Refresh FileWeft Code Wiki
+  runner: !reference [.fileweft-runner-4]
+  docker: !reference [.fileweft-jvm-docker]
+  lock:
+    key: fileweft-knowledge-base
+    wait: true
+  stages:
+    - name: prepare-codewiki-input
+      script: |
+        git sparse-checkout init --no-cone
+        git sparse-checkout set --no-cone --stdin < .ci/codewiki-sparse-checkout
+        test "$(git rev-parse HEAD)" = "${CNB_COMMIT}"
+        test -f AGENTS.md
+        test -f .ci/scripts/verify-codewiki-knowledge.mjs
+        test ! -e .ai
+        test ! -e fileweft-agent
+        test ! -e codewiki
+        test -n "$(find fileweft-* -path '*/src/main/*' -type f -print -quit)"
+    - name: generate-and-ingest-codewiki
+      timeout: 4h
+      image: docker.cnb.cool/cnb/plugins/cnbcool/codewiki:v1.12.0@sha256:961271592768c7baa914d247ad4f2f37a7f795d386428ffef6684754fd4a7819
+      settings:
+        git_doc_dir: /${CNB_BUILD_WORKSPACE}/${CNB_REPO_SLUG}/codewiki
+        knowledge_enabled: true
+        knowledge_embedding_model: hunyuan
+        knowledge_chunk_size: 1500
+        knowledge_chunk_overlap: 100
+    - name: verify-codewiki-knowledge
+      timeout: 10m
+      script: node .ci/scripts/verify-codewiki-knowledge.mjs
+
+main:
+  web_trigger_codewiki:
+    codewiki: *fileweft-codewiki

@@ -51,7 +51,7 @@ If your organization stores files on a proprietary object store, create a new ad
 ```kotlin
 // fileweft-adapter-acme/build.gradle.kts
 dependencies {
-    implementation("ai.icen:fileweft-spi:0.0.2")
+    implementation("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 

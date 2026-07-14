@@ -12,7 +12,7 @@ format: "markdown"
 并不是每个文件操作都能放进 HTTP 请求里。OCR、机器学习推理、病毒扫描和批量同步可能耗时数秒甚至数分钟。FileWeft 把这些工作推入持久化 `fw_task` 记录，由后台 Worker 处理。
 
 > [!CAUTION]
-> 本页讲的是通用 `FileWeftTaskHandler`，不是 FileWeft Agent 产品能力。0.0.2 默认不注册、宣传或暴露 Agent；兼容制品中的 Agent SPI/ABI 不应用于新集成。
+> 本页讲的是通用 `FileWeftTaskHandler`，不是 FileWeft Agent 产品能力。0.0.2 与 0.0.3 默认都不注册、宣传或暴露 Agent；兼容制品中的 Agent SPI/ABI 不应用于新集成。
 
 ## 1. 任务 Handler 契约
 

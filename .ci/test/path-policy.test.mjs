@@ -1,15 +1,46 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
+import {
+  isBoundToGeneratedWiki,
+  sha256Text,
+} from "../scripts/codewiki-evidence.mjs";
 
 const sharedConfiguration = readFileSync(new URL("../.shared.yml", import.meta.url), "utf8");
 const knowledgeConfiguration = readFileSync(new URL("../knowledge.yml", import.meta.url), "utf8");
+const codeWikiConfiguration = readFileSync(new URL("../codewiki.yml", import.meta.url), "utf8");
+const codeWikiSparseCheckout = readFileSync(
+  new URL("../codewiki-sparse-checkout", import.meta.url),
+  "utf8",
+);
+const codeKnowledgeAcceptance = JSON.parse(
+  readFileSync(new URL("../code-knowledge-acceptance.json", import.meta.url), "utf8"),
+);
+const codeKnowledgeVerifier = readFileSync(
+  new URL("../scripts/verify-codewiki-knowledge.mjs", import.meta.url),
+  "utf8",
+);
 const repositoryConfiguration = readFileSync(new URL("../../.cnb.yml", import.meta.url), "utf8");
 const repositorySettings = readFileSync(new URL("../../.cnb/settings.yml", import.meta.url), "utf8");
+const webTriggerConfiguration = readFileSync(
+  new URL("../../.cnb/web_trigger.yml", import.meta.url),
+  "utf8",
+);
 const lines = `${sharedConfiguration}\n${knowledgeConfiguration}`.split(/\r?\n/u);
 const prConfiguration = readFileSync(new URL("../pr.yml", import.meta.url), "utf8");
 const mainConfiguration = readFileSync(new URL("../main.yml", import.meta.url), "utf8");
 const releaseConfiguration = readFileSync(new URL("../release.yml", import.meta.url), "utf8");
+const buildConfiguration = readFileSync(new URL("../../build.gradle.kts", import.meta.url), "utf8");
 const composeConfiguration = readFileSync(
   new URL("../../.docker/docker-compose.dev.yaml", import.meta.url),
   "utf8",
@@ -103,6 +134,19 @@ function expectGroups(path, expected) {
   assert.deepEqual(matchingGroups(path), expected, `unexpected CNB lanes for ${path}`);
 }
 
+function runGit(workingDirectory, arguments_, options = {}) {
+  const result = spawnSync("git", arguments_, {
+    cwd: workingDirectory,
+    encoding: "utf8",
+    ...options,
+  });
+  assert.equal(
+    result.status,
+    0,
+    `git ${arguments_.join(" ")} failed:\n${result.stderr || result.stdout}`,
+  );
+}
+
 test("curated documentation selects only documentation and knowledge lanes", () => {
   const expected = [".fileweft-docs-paths", ".fileweft-knowledge-paths"];
   expectGroups("fileweft-docs/pages/zh/project/roadmap.md", expected);
@@ -126,6 +170,15 @@ test("knowledge indexing excludes historical blueprints and duplicate English pa
     ".fileweft-knowledge-paths",
     ".fileweft-fast-paths",
   ]);
+  for (const path of [
+    ".ci/codewiki.yml",
+    ".ci/codewiki-sparse-checkout",
+    ".ci/code-knowledge-acceptance.json",
+    ".ci/scripts/verify-codewiki-knowledge.mjs",
+    ".cnb/web_trigger.yml",
+  ]) {
+    expectGroups(path, [".fileweft-fast-paths"]);
+  }
   assert.ok(
     !matchingGroups("fileweft-core/src/main/kotlin/Identifier.kt").includes(
       ".fileweft-knowledge-paths",
@@ -359,6 +412,172 @@ test("the repository knowledge base is main-only, curated, and fail-closed", () 
   }
 });
 
+test("CodeWiki is manual, source-curated, pinned, serialized, and verified", () => {
+  assert.ok(
+    repositoryConfiguration.includes("- .ci/codewiki.yml"),
+    "the root CNB configuration must include the manual CodeWiki pipeline",
+  );
+  assert.match(codeWikiConfiguration, /^main:\r?\n  web_trigger_codewiki:/mu);
+  assert.doesNotMatch(codeWikiConfiguration, /\b(?:push|pull_request|tag_push|api_trigger):/u);
+  assert.match(codeWikiConfiguration, /runner: !reference \[\.fileweft-runner-4\]/u);
+  assert.match(codeWikiConfiguration, /timeout: 4h/u);
+  assert.match(
+    codeWikiConfiguration,
+    /codewiki:v1\.12\.0@sha256:961271592768c7baa914d247ad4f2f37a7f795d386428ffef6684754fd4a7819/u,
+  );
+  for (const expected of [
+    "git sparse-checkout set --no-cone --stdin < .ci/codewiki-sparse-checkout",
+    'test "$(git rev-parse HEAD)" = "${CNB_COMMIT}"',
+    "test -f AGENTS.md",
+    "test -f .ci/scripts/verify-codewiki-knowledge.mjs",
+    "test ! -e .ai",
+    "test ! -e fileweft-agent",
+    "test ! -e codewiki",
+    "knowledge_enabled: true",
+    "knowledge_embedding_model: hunyuan",
+    "knowledge_chunk_size: 1500",
+    "knowledge_chunk_overlap: 100",
+    "node .ci/scripts/verify-codewiki-knowledge.mjs",
+  ]) {
+    assert.ok(codeWikiConfiguration.includes(expected), `missing CodeWiki contract: ${expected}`);
+  }
+  assert.match(codeWikiConfiguration, /key: fileweft-knowledge-base/u);
+  assert.match(knowledgeConfiguration, /key: fileweft-knowledge-base/u);
+  assert.doesNotMatch(codeWikiConfiguration, /cancel-in-(?:wait|progress)/u);
+  assert.doesNotMatch(knowledgeConfiguration, /cancel-in-(?:wait|progress)/u);
+
+  for (const excluded of [
+    "!/.ai/",
+    "!/fileweft-agent/",
+    "!/*/src/test/",
+    "!/fileweft-docs/pages/en/",
+    "!/fileweft-dev/web/fixtures/",
+  ]) {
+    assert.ok(codeWikiSparseCheckout.includes(excluded), `missing CodeWiki exclusion ${excluded}`);
+  }
+
+  assert.equal(codeKnowledgeAcceptance.repository, "china.ai/file-weft");
+  assert.ok(codeKnowledgeAcceptance.cases.length >= 3);
+  for (const acceptanceCase of codeKnowledgeAcceptance.cases) {
+    assert.ok(acceptanceCase.query.length > 0, `${acceptanceCase.id} needs a query`);
+    assert.ok(
+      acceptanceCase.requiredAnchors.length >= 2,
+      `${acceptanceCase.id} needs exact-symbol anchors`,
+    );
+  }
+  assert.ok(codeKnowledgeVerifier.includes("isBoundToGeneratedWiki(result, generatedDocuments)"));
+  assert.ok(codeKnowledgeVerifier.includes('from "./codewiki-evidence.mjs"'));
+  assert.ok(codeKnowledgeVerifier.includes('status.status !== "success"'));
+  assert.ok(codeKnowledgeVerifier.includes("knowledgeBase.last_commit_sha !== expectedSha"));
+  assert.ok(codeKnowledgeVerifier.includes("const maximumAttempts = 12"));
+  assert.ok(codeKnowledgeVerifier.includes("const retryDelayMilliseconds = 30_000"));
+});
+
+test("CodeWiki query evidence must be a hashed token sequence from this run", () => {
+  const generatedDocument = `# Resumable uploads
+
+## Reconciliation
+
+ResumableUploadReconciler reads a stable checkpoint before it calls
+reconcileCompleting and records an unknown completion result for a later retry.
+
+## Completion rejection
+
+MultipartCompletionRejectedException is retained as deterministic evidence and
+must not be collapsed into an ambiguous transport failure.
+`;
+  const currentChunk = `## Resumable uploads - Reconciliation
+
+ResumableUploadReconciler reads a stable checkpoint before it calls reconcileCompleting
+and records an unknown completion result for a later retry.
+
+## Resumable uploads - Completion rejection
+
+MultipartCompletionRejectedException is retained as deterministic evidence and must not
+be collapsed into an ambiguous transport failure.`;
+  const result = {
+    chunk: currentChunk,
+    metadata: { type: "codewiki", hash: sha256Text(currentChunk) },
+  };
+
+  assert.equal(isBoundToGeneratedWiki(result, [generatedDocument]), true);
+  assert.equal(
+    isBoundToGeneratedWiki(result, [generatedDocument.replace("stable checkpoint", "mutable state")]),
+    false,
+  );
+  assert.equal(isBoundToGeneratedWiki({ ...result, metadata: { ...result.metadata, hash: "0" } }, [generatedDocument]), false);
+  assert.equal(isBoundToGeneratedWiki({ ...result, metadata: { ...result.metadata, type: "code" } }, [generatedDocument]), false);
+});
+
+test("the CodeWiki sparse rules retain production evidence and remove superseded input", () => {
+  const repository = mkdtempSync(join(tmpdir(), "fileweft-codewiki-sparse-"));
+  const files = {
+    "AGENTS.md": "current decisions\n",
+    ".ci/scripts/verify-codewiki-knowledge.mjs": "// verifier\n",
+    ".ai/manual.md": "historical blueprint\n",
+    "fileweft-agent/src/main/kotlin/LegacyAgent.kt": "class LegacyAgent\n",
+    "fileweft-core/src/main/kotlin/Identifier.kt": "class Identifier\n",
+    "fileweft-core/src/test/kotlin/IdentifierTest.kt": "class IdentifierTest\n",
+    "fileweft-docs/pages/en/guide.md": "duplicate English guide\n",
+    "fileweft-docs/pages/zh/guide.md": "current Chinese guide\n",
+    "fileweft-dev/web/fixtures/data.json": "{}\n",
+  };
+  try {
+    for (const [path, content] of Object.entries(files)) {
+      const absolutePath = join(repository, path);
+      mkdirSync(dirname(absolutePath), { recursive: true });
+      writeFileSync(absolutePath, content, "utf8");
+    }
+    runGit(repository, ["init", "--initial-branch=main"]);
+    runGit(repository, ["add", "."]);
+    runGit(repository, [
+      "-c",
+      "user.name=FileWeft CI",
+      "-c",
+      "user.email=ci@invalid.example",
+      "commit",
+      "-m",
+      "fixture",
+    ]);
+    runGit(repository, ["sparse-checkout", "init", "--no-cone"]);
+    runGit(repository, ["sparse-checkout", "set", "--no-cone", "--stdin"], {
+      input: codeWikiSparseCheckout,
+    });
+
+    for (const retained of [
+      "AGENTS.md",
+      ".ci/scripts/verify-codewiki-knowledge.mjs",
+      "fileweft-core/src/main/kotlin/Identifier.kt",
+      "fileweft-docs/pages/zh/guide.md",
+    ]) {
+      assert.ok(existsSync(join(repository, retained)), `sparse checkout removed ${retained}`);
+    }
+    for (const excluded of [
+      ".ai/manual.md",
+      "fileweft-agent/src/main/kotlin/LegacyAgent.kt",
+      "fileweft-core/src/test/kotlin/IdentifierTest.kt",
+      "fileweft-docs/pages/en/guide.md",
+      "fileweft-dev/web/fixtures/data.json",
+    ]) {
+      assert.ok(!existsSync(join(repository, excluded)), `sparse checkout retained ${excluded}`);
+    }
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test("the source-knowledge button is main-only and restricted to repository administrators", () => {
+  assert.match(webTriggerConfiguration, /reg: "\^main\$"/u);
+  assert.match(webTriggerConfiguration, /event: web_trigger_codewiki/u);
+  assert.match(webTriggerConfiguration, /groupName: 仓库 AI/u);
+  assert.match(webTriggerConfiguration, /roles:\r?\n\s+- owner\r?\n\s+- master/u);
+  assert.ok(
+    readFileSync(new URL("../README.md", import.meta.url), "utf8").includes(
+      "permissions.roles` 只在页面检查，不是服务端授权边界",
+    ),
+  );
+});
+
 test("the default repository NPC keeps personality subordinate to evidence", () => {
   for (const expected of [
     "name: 织澜",
@@ -369,6 +588,11 @@ test("the default repository NPC keeps personality subordinate to evidence", () 
     "AGENTS.md",
     "仓库中暂无依据",
     "专业性和事实永远优先于人设",
+    "git rev-parse HEAD",
+    "相对路径:行号",
+    "CodeWiki 不能覆盖源码事实",
+    "默认只读",
+    "没有执行就不得声称",
   ]) {
     assert.ok(repositorySettings.includes(expected), `missing NPC guardrail: ${expected}`);
   }
@@ -415,6 +639,14 @@ test("release publication destroys its token on both success and failure paths",
     normalCleanup < coldConsumer,
     "the normal publication token must be destroyed before anonymous remote resolution",
   );
+});
+
+test("verified release publication is restricted to the current remote main HEAD", () => {
+  assert.ok(buildConfiguration.includes('"ls-remote",'));
+  assert.ok(buildConfiguration.includes('"refs/heads/main",'));
+  assert.ok(buildConfiguration.includes('environment()["GIT_TERMINAL_PROMPT"] = "0"'));
+  assert.ok(buildConfiguration.includes("remoteMainCommit == cnbCommit"));
+  assert.ok(buildConfiguration.includes("is not the current remote main HEAD"));
 });
 
 test("every tag pipeline rejects non-stable tags before expensive work", () => {

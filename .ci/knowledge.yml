@@ -20,7 +20,6 @@ main:
       lock:
         key: fileweft-knowledge-base
         wait: true
-        cancel-in-wait: true
       stages:
         - name: update-fileweft-knowledge-base
           type: knowledge:update

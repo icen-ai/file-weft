@@ -1,0 +1,11 @@
+branch:
+  - reg: "^main$"
+    buttons:
+      - name: 刷新源码知识
+        description: 为当前 main 提交重建 Code Wiki 并更新织澜的源码知识
+        event: web_trigger_codewiki
+        groupName: 仓库 AI
+        permissions:
+          roles:
+            - owner
+            - master

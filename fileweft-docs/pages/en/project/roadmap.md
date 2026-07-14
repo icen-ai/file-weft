@@ -1,7 +1,7 @@
 ---
 route: "project/roadmap"
 group: "project"
-order: 5
+order: 6
 locale: "en"
 nav: "Roadmap"
 title: "Roadmap with proof, not promises"
@@ -24,7 +24,29 @@ format: "html"
 
 <aside class="callout warning" data-mark="!"><div><strong>Evidence is version-specific</strong><p>Do not copy a success from another database, Boot generation, vendor emulator or earlier release into a completion claim. If evidence cannot be reproduced, the item remains open.</p></div></aside>
 
-<h2>0.0.2 · release contract</h2>
+<h2>0.0.3 · current candidate contract</h2>
+
+<p>The 0.0.3 line adds typed metadata schemas and a complete pending-review withdrawal path without weakening the compatibility and release evidence established by 0.0.2.</p>
+
+<table class="comparison-table">
+<thead><tr><th>Deliverables</th><th>Acceptance evidence</th><th>Completion boundary</th></tr></thead>
+<tbody>
+<tr>
+<td>Java-friendly metadata API/runtime modules, exact-version schema resolution, validation, safe public projection and Doctor coverage.</td>
+<td>The 19-module publication inventory contains both metadata artifacts; focused unit/contract tests, both Boot generations, public API projection tests, artifact metadata/SBOM checks and anonymous consumers all resolve the same exact release identity.</td>
+<td>A Kotlin-only API, unversioned schema selection, internal-only validation, an unsafe projection, a missing published module or a warm local cache cannot prove completion.</td>
+</tr>
+<tr>
+<td>Idempotent withdrawal for pending document review plus V029 workflow-submitter evidence for PostgreSQL, MySQL and KingbaseES.</td>
+<td>Application, persistence, Boot 2/3 and formal HTTP tests cover authorization, trusted submitter identity, idempotent replay and terminal-state rejection; every database runs the immutable V001–V029 chain in its own real integration lane.</td>
+<td>Do not infer submitter identity from a request, rewrite V001–V028, reuse one dialect's result for another, expose Agent, or claim publication from source, a tag name or partial green evidence.</td>
+</tr>
+</tbody>
+</table>
+
+<aside class="callout" data-mark="CANDIDATE"><div><strong>0.0.3 consumption rule</strong><p>This is a candidate contract, not proof of publication. Consume <code>ai.icen:*:0.0.3</code> only after the guarded <code>v0.0.3</code> tag matches the protected remote <code>main</code> HEAD, every required CNB lane matches that exact commit, and a fresh anonymous consumer resolves all 19 coordinates plus Boot 2, Boot 3 and pure-SPI scenarios.</p></div></aside>
+
+<h2>0.0.2 · previous immutable boundary</h2>
 
 <p>The 0.0.2 line finishes what 0.0.1 started: a clean HTTP surface, trustworthy release metadata and reproducible verification.</p>
 
@@ -50,7 +72,7 @@ format: "html"
 
 <h2>Agent product-capability decision</h2>
 
-<aside class="callout warning" data-mark="DEFERRED"><div><strong>0.0.2 does not provide Agent product capability</strong><p>The <code>fileweft-agent</code> artifact, Agent SPI/public ABI, and the Agent-related tables, columns and constraints in V012/V026 remain only for source, binary and database compatibility. The default 0.0.2 runtime, Starters, Doctor inventory, plugin inventory, public HTTP API and <code>fileweft-dev</code> do not register, advertise or expose Agent. Any explicit legacy compatibility switch is likewise not a 0.0.2 feature.</p><p>Agent requires a future redesign and is deferred indefinitely. It may be reassessed only after 1.0.0 has been released, and that is not a commitment to 1.x, the next release or any other version.</p></div></aside>
+<aside class="callout warning" data-mark="DEFERRED"><div><strong>0.0.2 and 0.0.3 do not provide Agent product capability</strong><p>The <code>fileweft-agent</code> artifact, Agent SPI/public ABI, and the Agent-related tables, columns and constraints in V012/V026 remain only for source, binary and database compatibility. The default 0.0.2 and 0.0.3 runtime, Starters, Doctor inventory, plugin inventory, public HTTP API and <code>fileweft-dev</code> do not register, advertise or expose Agent. Any explicit legacy compatibility switch is likewise not a product feature.</p><p>Agent requires a future redesign and is deferred indefinitely. It may be reassessed only after 1.0.0 has been released, and that is not a commitment to 1.x, the next release or any other version.</p></div></aside>
 
 <h2>0.1.0 · production supply chain</h2>
 
@@ -138,6 +160,7 @@ format: "html"
 <h2>Next steps</h2>
 
 <ul>
-<li>Read the <a href="#/project/release-0-0-2-development">Release 0.0.2</a> page for the exact scope and remote-consumption rule.</li>
+<li>Read the <a href="#/project/release-0-0-3">Release 0.0.3 contract</a> for the current scope and remote-consumption rule.</li>
+<li>Retain <a href="#/project/release-0-0-2-development">Release 0.0.2</a> as the previous immutable upgrade boundary.</li>
 <li>See <a href="#/project/contributing">Contributing</a> if you want to help close an open item.</li>
 </ul>

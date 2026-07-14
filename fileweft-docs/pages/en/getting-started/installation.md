@@ -4,14 +4,14 @@ group: "getting-started"
 order: 2
 locale: "en"
 nav: "Installation"
-title: "Install the 0.0.2 line"
+title: "Install the 0.0.3 line"
 lead: "Add FileWeft to your build, align Spring Boot generations, and verify the dependency tree."
 format: "markdown"
 ---
 
 ## What this page covers
 
-This page shows the exact Maven coordinates for the `v0.0.2` release contract, the JDK and Spring Boot constraints, and a quick command to confirm that the right artifacts landed in your classpath. Use those coordinates only after the protected tag pipeline and anonymous remote cold-cache resolution succeed.
+This page shows the exact Maven coordinates for the `v0.0.3` release contract, the JDK and Spring Boot constraints, and a quick command to confirm that the right artifacts landed in your classpath. This page is not publication evidence. Use these coordinates only after the guarded `v0.0.3` tag matches the protected remote `main` HEAD and every required lane for that exact commit succeeds, followed by anonymous cold-cache resolution of all 19 coordinates and the Boot 2, Boot 3, and pure-SPI consumers.
 
 ## Before you begin
 
@@ -40,11 +40,11 @@ repositories {
 dependencies {
     // Spring Boot 3 host with REST API
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
 
     // If you only need the SPI contracts
-    // implementation("ai.icen:fileweft-spi:0.0.2")
+    // implementation("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 
@@ -59,12 +59,12 @@ dependencies {
     <dependency>
         <groupId>ai.icen</groupId>
         <artifactId>fileweft-spring-boot3-starter</artifactId>
-        <version>0.0.2</version>
+        <version>0.0.3</version>
     </dependency>
     <dependency>
         <groupId>ai.icen</groupId>
         <artifactId>fileweft-web-spring-boot3-starter</artifactId>
-        <version>0.0.2</version>
+        <version>0.0.3</version>
     </dependency>
 </dependencies>
 
@@ -84,8 +84,8 @@ dependencies {
 
 | Boot generation | Runtime starter | Web starter | JVM baseline |
 | --- | --- | --- | --- |
-| Spring Boot 2 | `ai.icen:fileweft-spring-boot2-starter:0.0.2` | `ai.icen:fileweft-web-spring-boot2-starter:0.0.2` | Java 8 |
-| Spring Boot 3 | `ai.icen:fileweft-spring-boot3-starter:0.0.2` | `ai.icen:fileweft-web-spring-boot3-starter:0.0.2` | Java 17 |
+| Spring Boot 2 | `ai.icen:fileweft-spring-boot2-starter:0.0.3` | `ai.icen:fileweft-web-spring-boot2-starter:0.0.3` | Java 8 |
+| Spring Boot 3 | `ai.icen:fileweft-spring-boot3-starter:0.0.3` | `ai.icen:fileweft-web-spring-boot3-starter:0.0.3` | Java 17 |
 
 > [!NOTE]
 > The runtime starter bundles persistence, workers, application services, and observability adapters. The web starter adds the formal `/fileweft/v1` HTTP surface. Add both if you want a runnable REST API. `spring-boot-starter-jdbc` is a host dependency whose version is managed by the host's Spring Boot Gradle plugin, parent, or BOM; FileWeft does not transitively select HikariCP or another pool.
@@ -96,7 +96,7 @@ Boot 2.7's BOM manages Kotlin at 1.6.21, below FileWeft's 2.1.21; Java-only host
 
 ## Verify the dependency
 
-After remote publication is verified, run Gradle's dependency insight to confirm that `0.0.2` is selected, the host JDBC starter is present at runtime, and no withdrawn `com.fileweft` artifacts leaked in:
+After remote publication is verified, run Gradle's dependency insight to confirm that `0.0.3` is selected, the host JDBC starter is present at runtime, and no withdrawn `com.fileweft` artifacts leaked in:
 
 ```bash
 # Linux / macOS
@@ -108,13 +108,13 @@ After remote publication is verified, run Gradle's dependency insight to confirm
 .\gradlew.bat dependencyInsight --dependency spring-boot-starter-jdbc --configuration runtimeClasspath
 ```
 
-You should see both `ai.icen:fileweft-spi:0.0.2` and a host-managed `org.springframework.boot:spring-boot-starter-jdbc`. If `com.fileweft` appears anywhere, remove that dependency.
+You should see both `ai.icen:fileweft-spi:0.0.3` and a host-managed `org.springframework.boot:spring-boot-starter-jdbc`. If `com.fileweft` appears anywhere, remove that dependency.
 
 ## FAQ
 
-**Q: When may I use `0.0.2` in production?**
+**Q: When may I use `0.0.3` in production?**
 
-Only after the protected `v0.0.2` tag pipeline is successful and an anonymous consumer can resolve the exact remote artifacts from a cold cache. A source checkout, local Maven publication, tag name or SNAPSHOT is not equivalent evidence.
+Only after the guarded `v0.0.3` tag matches the protected remote `main` HEAD, every required lane for that exact commit is successful, and an anonymous consumer resolves all 19 coordinates plus the Boot 2, Boot 3, and pure-SPI consumers from a fresh isolated cache. A source checkout, this page, local Maven publication, tag name, partial green build, or SNAPSHOT is not equivalent evidence.
 
 **Q: Do I need both the runtime starter and the web starter?**
 

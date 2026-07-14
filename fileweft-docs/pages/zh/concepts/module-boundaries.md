@@ -51,7 +51,7 @@ adapter → spi
 ```kotlin
 // fileweft-adapter-acme/build.gradle.kts
 dependencies {
-    implementation("ai.icen:fileweft-spi:0.0.2")
+    implementation("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 

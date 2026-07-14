@@ -45,7 +45,7 @@ fileweft:
 
 ## 当前迁移与 Flyway 矩阵
 
-`v0.0.2` 对应源码为 PostgreSQL、MySQL 与 KingbaseES 各自提供完整的 28 个迁移，即 V001–V028。受保护标签成功发布后，三套 V001–V028 都成为不可改写的发布资源。作为历史边界，`v0.0.1` 只包含 PostgreSQL V001–V025；MySQL、KingbaseES 与 V026–V028 首次进入 `v0.0.2` 发布合同。
+当前 0.0.3 版本线为 PostgreSQL、MySQL 与 KingbaseES 各自提供完整的 29 个迁移，即 V001–V029。V029 只追加可空的工作流提交者证据，不改写任何既有资源或 checksum；`v0.0.2` 的三套 V001–V028 继续作为不可改写的发布资源。作为历史边界，`v0.0.1` 只包含 PostgreSQL V001–V025；MySQL、KingbaseES 与 V026–V028 首次进入 `v0.0.2` 发布合同。
 
 `FlywayMigrationRunner` 已验证三套由宿主最终解析的运行时：
 
@@ -145,11 +145,11 @@ curl -sf -X POST \
 **可以让 API 节点在启动时自动迁移，而不用迁移 Job 吗？**
 不可以。长期运行的 API 节点必须以 `validate` 模式运行。schema 变更必须通过受控的一次性迁移 Job 执行。
 
-**什么时候可以安全消费 0.0.2？**
-只有受保护标签流水线成功，且匿名冷缓存能够解析精确远端 `ai.icen:*:0.0.2` 制品后才可以。不能从源码或标签名称推断远端已经可用。
+**什么时候可以安全消费 0.0.3？**
+只有受发布门禁约束的 `v0.0.3` 标签匹配受保护远端 `main` HEAD、精确提交的全部必需门禁成功，且匿名消费者以全新隔离缓存回读全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 消费者后，才可使用 `ai.icen:*:0.0.3`。不能从源码、本文、标签名称或部分绿灯推断远端已经可用。
 
 ## 下一步
 
 - 按角色部署：[生产部署](deployment)
 - 发布后监控：[Doctor 与可观测性](doctor-observability)
-- 阅读当前发布合同：[0.0.2 正式版](../project/release-0-0-2-development)，并保留 [0.0.1 正式版](../project/release-0-0-1) 作为历史升级边界。
+- 阅读当前发布合同：[0.0.3 发布合同](../project/release-0-0-3)，并保留 [0.0.2 正式版](../project/release-0-0-2-development) 与 [0.0.1 正式版](../project/release-0-0-1) 作为历史升级边界。

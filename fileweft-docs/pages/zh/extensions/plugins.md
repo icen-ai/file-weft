@@ -32,10 +32,10 @@ FileWeft 插件是若干现有 SPI 贡献的聚合包。它不会形成新的架
 | `outboxEventHandlers()` | 异步响应 | 在请求线程外响应生命周期事件 |
 | `taskHandlers()` | 后台任务 | 批量迁移、清理或导入任务 |
 | `reviewRouteProviders()` | 审批路由 | 租户特定的审批工作流 |
-| `agents()` / `agentTaskTriggers()` | 仅兼容保留 | 0.0.2 默认不注册或加入插件清单 |
+| `agents()` / `agentTaskTriggers()` | 仅兼容保留 | 0.0.2 与 0.0.3 默认都不注册或加入插件清单 |
 
 > [!CAUTION]
-> Agent getter 仍存在只是为了保持 `FileWeftPlugin` 的源码和二进制兼容。0.0.2 不提供 Agent 产品能力，也不应基于这些 getter 开发新插件。最早只能在 1.0.0 已发布后重新评估未来设计，且不承诺任何交付版本。
+> Agent getter 仍存在只是为了保持 `FileWeftPlugin` 的源码和二进制兼容。0.0.2 与 0.0.3 都不提供 Agent 产品能力，也不应基于这些 getter 开发新插件。最早只能在 1.0.0 已发布后重新评估未来设计，且不承诺任何交付版本。
 
 > **NOTE**  
 > 贡献 getter 在注册表构造期间被调用。不要在其中执行网络调用、数据库写入或其他业务副作用。网络调用应放在 FileWeft 随后调用的连接器、Handler 或 Doctor 方法中。
@@ -47,7 +47,7 @@ FileWeft 插件是若干现有 SPI 贡献的聚合包。它不会形成新的架
 ```kotlin
 // build.gradle.kts
 dependencies {
-    compileOnly("ai.icen:fileweft-spi:0.0.2")
+    compileOnly("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 

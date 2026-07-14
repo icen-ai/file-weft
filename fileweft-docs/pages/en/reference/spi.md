@@ -32,10 +32,10 @@ Your host application implements the SPI, FileWeft calls your beans, and your ve
 | Connector | `FileConnector` | Idempotent downstream sync, removal, and health |
 | Doctor | `DoctorChecker` | Bounded, side-effect-free diagnostics |
 | Task | `FileWeftTaskHandler` | Generic durable task handlers |
-| Legacy Agent ABI | `FileWeftAgent`, `AgentTaskTrigger` | Compatibility only; not registered or exposed by default in 0.0.2 |
+| Legacy Agent ABI | `FileWeftAgent`, `AgentTaskTrigger` | Compatibility only; not registered or exposed by default in 0.0.2 or 0.0.3 |
 
 > [!CAUTION]
-> The presence of `fileweft-agent` and Agent SPI types does not mean that 0.0.2 provides Agent product capability. They exist only for source/binary compatibility. New integrations should use current generic SPIs such as `FileWeftTaskHandler` and `FileConnector`, not the legacy Agent ABI.
+> The presence of `fileweft-agent` and Agent SPI types does not mean that 0.0.2 or 0.0.3 provides Agent product capability. They exist only for source/binary compatibility. New integrations should use current generic SPIs such as `FileWeftTaskHandler` and `FileConnector`, not the legacy Agent ABI.
 
 ## Identity and tenant
 

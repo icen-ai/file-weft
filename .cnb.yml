@@ -3,5 +3,6 @@ include:
   - .ci/pr.yml
   - .ci/main.yml
   - .ci/knowledge.yml
+  - .ci/codewiki.yml
   - .ci/nightly.yml
   - .ci/release.yml

@@ -81,7 +81,7 @@ curl -i -X POST http://localhost:8080/fileweft/v1/uploads \
 OCR、病毒扫描、宿主自有抽取和自定义诊断都应放入持久化 `fw_task` handler。它们在请求线程外执行，并通过租约重试。
 
 > [!CAUTION]
-> `FileWeftTaskHandler` 是 0.0.2 的通用持久任务能力，不是 FileWeft Agent。`fileweft-agent`、Agent SPI/ABI 和相关迁移仅为兼容保留；默认产品面不注册或暴露 Agent。
+> `FileWeftTaskHandler` 是当前通用持久任务能力，不是 FileWeft Agent。`fileweft-agent`、Agent SPI/ABI 和相关迁移仅为兼容保留；0.0.2 与 0.0.3 的默认产品面都不注册或暴露 Agent。
 
 ```kotlin
 @Component

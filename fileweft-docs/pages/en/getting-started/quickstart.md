@@ -14,7 +14,7 @@ format: "markdown"
 This page walks you through a self-contained local setup:
 
 1. Start PostgreSQL in Docker.
-2. Add the verified FileWeft 0.0.2 coordinates to a Spring Boot 3 project.
+2. Add the remotely verified FileWeft 0.0.3 coordinates to a Spring Boot 3 project.
 3. Provide the three required SPI beans.
 4. Enable the development fallbacks.
 5. Upload your first file through the formal `/fileweft/v1/documents` endpoint.
@@ -56,8 +56,8 @@ plugins {
 dependencies {
     // The host owns its DataSource and pool; this lets Boot create them from spring.datasource.*.
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```

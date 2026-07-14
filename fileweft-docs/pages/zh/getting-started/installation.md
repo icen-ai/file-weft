@@ -4,14 +4,14 @@ group: "getting-started"
 order: 2
 locale: "zh"
 nav: "安装"
-title: "安装 0.0.2 正式版"
+title: "安装 0.0.3 版本线"
 lead: "将 FileWeft 加入构建，对齐 Spring Boot 代际，并验证依赖树。"
 format: "markdown"
 ---
 
 ## 这页讲什么
 
-这页给出 `v0.0.2` 发布合同的 Maven 坐标、JDK 与 Spring Boot 约束，以及一个快速命令来确认正确的 artifacts 已进入你的 classpath。只有受保护标签流水线和远端匿名冷缓存解析成功后，才能使用这些坐标。
+这页给出 `v0.0.3` 发布合同的 Maven 坐标、JDK 与 Spring Boot 约束，以及一个快速命令来确认正确的 artifacts 已进入你的 classpath。本文不是发布证据；只有受发布门禁约束的 `v0.0.3` 标签匹配受保护远端 `main` HEAD、精确提交的全部必需门禁成功，且匿名消费者以全新隔离缓存回读全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 消费者后，才能使用这些稳定坐标。
 
 ## 开始之前
 
@@ -40,11 +40,11 @@ repositories {
 dependencies {
     // 带 REST API 的 Spring Boot 3 宿主
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
 
     // 若只需要 SPI 契约
-    // implementation("ai.icen:fileweft-spi:0.0.2")
+    // implementation("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 
@@ -59,12 +59,12 @@ dependencies {
     <dependency>
         <groupId>ai.icen</groupId>
         <artifactId>fileweft-spring-boot3-starter</artifactId>
-        <version>0.0.2</version>
+        <version>0.0.3</version>
     </dependency>
     <dependency>
         <groupId>ai.icen</groupId>
         <artifactId>fileweft-web-spring-boot3-starter</artifactId>
-        <version>0.0.2</version>
+        <version>0.0.3</version>
     </dependency>
 </dependencies>
 
@@ -84,8 +84,8 @@ dependencies {
 
 | Boot 代际 | Runtime starter | Web starter | JVM 基线 |
 | --- | --- | --- | --- |
-| Spring Boot 2 | `ai.icen:fileweft-spring-boot2-starter:0.0.2` | `ai.icen:fileweft-web-spring-boot2-starter:0.0.2` | Java 8 |
-| Spring Boot 3 | `ai.icen:fileweft-spring-boot3-starter:0.0.2` | `ai.icen:fileweft-web-spring-boot3-starter:0.0.2` | Java 17 |
+| Spring Boot 2 | `ai.icen:fileweft-spring-boot2-starter:0.0.3` | `ai.icen:fileweft-web-spring-boot2-starter:0.0.3` | Java 8 |
+| Spring Boot 3 | `ai.icen:fileweft-spring-boot3-starter:0.0.3` | `ai.icen:fileweft-web-spring-boot3-starter:0.0.3` | Java 17 |
 
 > [!NOTE]
 > Runtime starter 是便利包，包含持久化、Worker、应用服务与观测适配器。Web starter 额外暴露正式的 `/fileweft/v1` HTTP 接口。若需要可运行的 REST API，两者都加。`spring-boot-starter-jdbc` 属于宿主依赖，其版本应由宿主的 Spring Boot Gradle 插件、Parent 或 BOM 管理；FileWeft 不传递选择 HikariCP 或其他连接池。
@@ -96,7 +96,7 @@ Boot 2.7 BOM 默认把 Kotlin 管理为 1.6.21，低于 FileWeft 使用的 2.1.2
 
 ## 验证依赖
 
-远端发布完成验证后，运行 Gradle 依赖洞察，确认选中的是 `0.0.2`、宿主 JDBC Starter 已进入运行时 classpath，且没有已撤回的 `com.fileweft` artifacts 混入：
+远端发布完成验证后，运行 Gradle 依赖洞察，确认选中的是 `0.0.3`、宿主 JDBC Starter 已进入运行时 classpath，且没有已撤回的 `com.fileweft` artifacts 混入：
 
 ```bash
 # Linux / macOS
@@ -108,13 +108,13 @@ Boot 2.7 BOM 默认把 Kotlin 管理为 1.6.21，低于 FileWeft 使用的 2.1.2
 .\gradlew.bat dependencyInsight --dependency spring-boot-starter-jdbc --configuration runtimeClasspath
 ```
 
-应当同时看到 `ai.icen:fileweft-spi:0.0.2` 与宿主管理版本的 `org.springframework.boot:spring-boot-starter-jdbc`。如果任何位置出现 `com.fileweft`，请移除该依赖。
+应当同时看到 `ai.icen:fileweft-spi:0.0.3` 与宿主管理版本的 `org.springframework.boot:spring-boot-starter-jdbc`。如果任何位置出现 `com.fileweft`，请移除该依赖。
 
 ## 常见问题
 
-**Q: 什么时候可以在生产环境使用 `0.0.2`？**
+**Q: 什么时候可以在生产环境使用 `0.0.3`？**
 
-只有受保护 `v0.0.2` 标签流水线成功，且匿名消费者能从空缓存解析精确远端制品后才可以。源码检出、本地 Maven 发布、标签名称或 SNAPSHOT 都不是等价证据。
+只有受发布门禁约束的 `v0.0.3` 标签匹配受保护远端 `main` HEAD、精确提交的全部必需门禁成功，且匿名消费者以全新隔离缓存回读全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 消费者后才可以。源码检出、本文、本地 Maven 发布、标签名称、部分绿灯或 SNAPSHOT 都不是等价证据。
 
 **Q: 是否必须同时引入 runtime starter 和 web starter？**
 

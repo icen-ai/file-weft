@@ -1,7 +1,7 @@
 ---
 route: "project/faq"
 group: "project"
-order: 6
+order: 7
 locale: "en"
 nav: "FAQ"
 title: "Frequently asked questions"
@@ -80,15 +80,15 @@ FileWeft does not expose presigned storage URLs through the public HTTP API. Aut
 
 ### Which release contract is current?
 
-The current release contract is `ai.icen:*:0.0.2`. Consume it only when the protected `v0.0.2` tag pipeline is successful and an anonymous cold-cache consumer can resolve the exact remote artifacts; otherwise use the most recent version with that completed evidence.
+The current release contract is `ai.icen:*:0.0.3`. Consume it only when the guarded `v0.0.3` tag matches the protected remote `main` HEAD, every required lane for that exact commit succeeds, and an anonymous cold-cache consumer resolves all 19 coordinates plus the Boot 2, Boot 3, and pure-SPI consumers; otherwise use the most recent version with equivalent completed evidence.
 
 ### Can I still use `com.fileweft:*` artifacts?
 
-No. Those trial artifacts have been withdrawn. Use the verified `ai.icen:*:0.0.2` coordinates instead.
+No. Those trial artifacts have been withdrawn. Use an `ai.icen:*` version only after its complete remote evidence is available.
 
-### How do I know 0.0.2 is consumable?
+### How do I know 0.0.3 is consumable?
 
-Require every matching lane for the exact commit, the protected tag publication, and anonymous resolution of the remote artifacts from a cold cache. A source checkout or tag name alone is insufficient.
+Require the guarded `v0.0.3` tag to match the protected remote `main` HEAD, every matching lane for that exact commit, and anonymous resolution of all 19 coordinates and the three consumer shapes from a fresh isolated cache. A source checkout, this page, tag name, or partial green evidence is insufficient.
 
 ## HTTP API
 

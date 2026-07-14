@@ -63,6 +63,6 @@ FileWeft 提供三种接入方式，按你对控制力的需求选择：
 
 ## 下一步
 
-- [安装 FileWeft 0.0.2](installation.md)
+- [安装 FileWeft 0.0.3](installation.md)
 - [接入生产宿主](first-integration.md)
 - [5 分钟快速开始](quickstart.md)
