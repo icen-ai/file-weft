@@ -24,7 +24,7 @@ format: "html"
 
 <aside class="callout warning" data-mark="!"><div><strong>证据只对被验证版本有效</strong><p>不能把另一种数据库、另一个 Boot 代际、厂商模拟器或旧版本的成功结果挪用为本版本的完成声明。证据不能复现时，该项仍是待办。</p></div></aside>
 
-<h2>0.0.3 · 当前候选合同</h2>
+<h2>0.0.3 · 当前稳定版</h2>
 
 <p>0.0.3 在不削弱 0.0.2 已建立的兼容与发布证据前提下，新增强类型 metadata schema 与完整的待审流程撤回链路。</p>
 
@@ -44,7 +44,7 @@ format: "html"
 </tbody>
 </table>
 
-<aside class="callout" data-mark="候选"><div><strong>0.0.3 消费规则</strong><p>这是候选合同，不是发布成功证据。只有受发布门禁约束的 <code>v0.0.3</code> 标签匹配受保护远端 <code>main</code> HEAD、全部必需 CNB lane 匹配该精确提交，并且全新匿名消费者解析全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 场景后，才能消费 <code>ai.icen:*:0.0.3</code>。</p></div></aside>
+<aside class="callout" data-mark="稳定"><div><strong>0.0.3 已可消费</strong><p><code>v0.0.3</code> 固定提交为 <code>dbf2a50fbca41e2ac5b5cf18bb44f9287c153637</code>；CNB 构建 <code>cnb-cl8-1jtgih45j</code> 已完成 12/12 发布流水线，全部 19 个坐标的 POM、主 JAR 与校验和也已独立匿名回读。后续主干提交不改变这一稳定发布身份。</p></div></aside>
 
 <h2>0.0.2 · 上一条不可改写边界</h2>
 
@@ -160,7 +160,7 @@ format: "html"
 <h2>下一步</h2>
 
 <ul>
-<li>阅读 <a href="#/project/release-0-0-3">0.0.3 发布合同</a>，了解当前范围与远端消费规则。</li>
+<li>阅读 <a href="#/project/release-0-0-3">0.0.3 发布说明</a>，了解稳定范围、升级边界与远端证据。</li>
 <li>保留 <a href="#/project/release-0-0-2-development">0.0.2 发布说明</a>，作为上一条不可改写升级边界。</li>
 <li>想帮忙关闭待办项，参见 <a href="#/project/contributing">参与贡献</a>。</li>
 </ul>

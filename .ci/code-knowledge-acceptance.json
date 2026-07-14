@@ -3,27 +3,27 @@
   "repository": "china.ai/file-weft",
   "cases": [
     {
-      "id": "jdbc-resumable-session-repository",
-      "query": "JdbcResumableUploadSessionRepository 具体实现了哪些续传仓储能力，事务和 owner 边界需要注意什么？",
+      "id": "resumable-session-cleanup",
+      "query": "续传会话清理机制的关键类和数据库仓储是什么？",
       "requiredAnchors": [
         "JdbcResumableUploadSessionRepository",
-        "CompletionRejectionResettableResumableUploadSessionRepository"
+        "ResumableUploadSessionRepository"
       ]
     },
     {
-      "id": "s3-storage-adapter",
-      "query": "S3StorageAdapter 的 multipart 完成、确定拒绝和内容完整性实现在哪里，分别怎么处理？",
+      "id": "s3-deterministic-rejection",
+      "query": "S3 multipart 确定拒绝如何识别和恢复？",
       "requiredAnchors": [
-        "S3StorageAdapter",
-        "MultipartCompletionRejectedException"
+        "MultipartCompletionRejectedException",
+        "EntityTooSmall"
       ]
     },
     {
-      "id": "resumable-upload-reconciler",
-      "query": "ResumableUploadReconciler 如何读取稳定检查点并处理完成结果未知？请说明具体类和关键方法。",
+      "id": "unknown-completion-quarantine",
+      "query": "断点续传完成结果未知和隔离状态应该如何处理？",
       "requiredAnchors": [
-        "ResumableUploadReconciler",
-        "reconcileCompleting"
+        "COMPLETING",
+        "QUARANTINED"
       ]
     }
   ]

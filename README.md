@@ -13,7 +13,7 @@ FileWeft 是面向企业的 Kotlin/JVM 文件智能基础设施。
 
 `.ai` 手册的基础能力对照、验证命令以及开源发布前仍需由项目所有者决定的事项见[实现对照与发布门槛](docs/implementation-status.md)。
 
-当前 0.0.3 候选边界、升级约束和可消费条件见[0.0.3 发布合同](docs/releases/0.0.3.md)；该文档本身不代表远端发布已经完成。
+当前稳定版为 `0.0.3`；发布证据、升级约束和兼容边界见[0.0.3 发布说明](docs/releases/0.0.3.md)。
 
 FileWeft 采用 [Apache License 2.0](LICENSE) 开源。安全漏洞请按[安全策略](SECURITY.md)私密报告至 `support@icen.ai`。
 
@@ -21,7 +21,7 @@ FileWeft 采用 [Apache License 2.0](LICENSE) 开源。安全漏洞请按[安全
 
 ## 项目接入
 
-FileWeft 的正式 Maven group 为 `ai.icen`，JVM 包名为 `ai.icen.fw`。当前版本线使用 `0.0.3`；只有受发布门禁约束的 `v0.0.3` 标签匹配受保护远端 `main` HEAD、全部必需门禁成功，且公开 CNB Maven 仓库完成全部 19 个坐标的匿名冷缓存回读后，下面的稳定坐标才可消费：
+FileWeft 的正式 Maven group 为 `ai.icen`，JVM 包名为 `ai.icen.fw`。`0.0.3` 已完成受发布门禁约束的稳定标签、12/12 CNB 发布流水线和全部 19 个坐标的匿名远端回读，下面的稳定坐标可以消费：
 
 ```xml
 <dependency>
@@ -46,7 +46,7 @@ FileWeft Starter 不会传递引入 `spring-boot-starter-jdbc`、HikariCP 或其
 
 Boot 2.7 BOM 默认把 Kotlin 管理为 1.6.21，低于 FileWeft 使用的 2.1.21；即使宿主全部用 Java 编写，也必须对齐运行时。使用 Spring Dependency Management 时设置 `extra["kotlin.version"] = "2.1.21"`，Maven 设置 `<kotlin.version>2.1.21</kotlin.version>`；使用原生 Gradle platform 时同时导入 `org.jetbrains.kotlin:kotlin-bom:2.1.21` 或采用等价的显式解析规则。不要期待普通 Kotlin BOM 覆盖 Boot 2 的 `enforcedPlatform`，并用 `dependencyInsight` 确认 `kotlin-stdlib` 最终为 2.1.21。
 
-本仓库的 `v0.0.3` 发布身份对应 Maven 坐标 `ai.icen:*:0.0.3`。只有受发布门禁约束的 `v0.0.3` 标签匹配受保护远端 `main` HEAD、流水线全部成功，且公开 CNB Maven 仓库能够用全新隔离缓存匿名回读全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 消费者后，才应消费这些稳定坐标；不能仅凭源码、本文、标签、本地制品或部分绿灯推断远端发布已经完成。本机验证仍可先执行 `.\gradlew.bat installReleaseToMavenLocal`，并在消费项目中启用 `mavenLocal()`。
+本仓库的 `v0.0.3` 发布身份和 Maven 坐标 `ai.icen:*:0.0.3` 固定对应提交 `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637`。CNB 构建 `cnb-cl8-1jtgih45j` 已完成 12/12 流水线、发布令牌销毁、冷缓存消费者及 19/19 个 POM/JAR/`.sha256` 的独立匿名回读；后续默认分支继续前进不改变该稳定发布身份。本机验证仍可先执行 `.\gradlew.bat installReleaseToMavenLocal`，并在消费项目中启用 `mavenLocal()`。
 
 完整本地发版入口是 `.\gradlew.bat releaseCheck --no-configuration-cache`；兼容入口 `releaseBundle` 保持相同的完整门禁语义。它们要求 `FILEWEFT_RUN_POSTGRES_TESTS`、`FILEWEFT_RUN_MYSQL_TESTS`、`FILEWEFT_RUN_KINGBASE_TESTS`、`FILEWEFT_RUN_RUSTFS_TESTS`、`FILEWEFT_RUN_DEV_E2E`、`FILEWEFT_RUN_DEV_UI_E2E` 全部为 `true`，且 `fw-dev` 已使用同一 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 启动；成功后完整 Maven 仓库与发布压缩包分别位于 `build/repository/` 和 `build/release/`。仅 `releaseArtifactCheck` 会在不重复 JVM 和外部验收的情况下重建、验证制品，它只供同一提交已取得独立验证证据的流水线使用。CNB 在稳定标签事件中并行完成重型门禁，再由唯一发布流水线等待所有结果、发布并从远端冷缓存回读。任务分层和流水线维护方式见 [`.ci/README.md`](.ci/README.md)。
 

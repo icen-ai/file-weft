@@ -85,7 +85,7 @@ DRAFT → PENDING_REVIEW → PUBLISHED → OFFLINE → ARCHIVED
 
 ## 已知限制
 
-- 在这份历史发布说明对应的时间点，`0.0.1` 是稳定线，`0.0.2-SNAPSHOT` 尚未发布。当前消费规则请查看 0.0.3 发布合同。
+- 在这份历史发布说明对应的时间点，`0.0.1` 是稳定线，`0.0.2-SNAPSHOT` 尚未发布。当前消费规则请查看 0.0.3 发布说明。
 - 本地文件存储 fallback 与默认租户 fallback 仅用于开发，不是生产多租户方案。
 - OSS、Dify、ESE、AppBuilder 官方厂商适配器在路线图中；0.0.1 中由 S3 兼容适配器覆盖类 S3 存储。
 - 仅开发使用的 `/api/**` 端点不属于正式公共 HTTP 协议。

@@ -11,7 +11,7 @@ format: "markdown"
 
 ## What this page covers
 
-This page shows the exact Maven coordinates for the `v0.0.3` release contract, the JDK and Spring Boot constraints, and a quick command to confirm that the right artifacts landed in your classpath. This page is not publication evidence. Use these coordinates only after the guarded `v0.0.3` tag matches the protected remote `main` HEAD and every required lane for that exact commit succeeds, followed by anonymous cold-cache resolution of all 19 coordinates and the Boot 2, Boot 3, and pure-SPI consumers.
+This page shows the exact Maven coordinates for stable `v0.0.3`, the JDK and Spring Boot constraints, and a quick command to confirm that the right artifacts landed in your classpath. Commit `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637` completed all 12/12 CNB release pipelines in build `cnb-cl8-1jtgih45j`, followed by anonymous readback of all 19 coordinates, so these stable coordinates are ready to use.
 
 ## Before you begin
 
@@ -114,7 +114,7 @@ You should see both `ai.icen:fileweft-spi:0.0.3` and a host-managed `org.springf
 
 **Q: When may I use `0.0.3` in production?**
 
-Only after the guarded `v0.0.3` tag matches the protected remote `main` HEAD, every required lane for that exact commit is successful, and an anonymous consumer resolves all 19 coordinates plus the Boot 2, Boot 3, and pure-SPI consumers from a fresh isolated cache. A source checkout, this page, local Maven publication, tag name, partial green build, or SNAPSHOT is not equivalent evidence.
+Now. Stable `v0.0.3` is fixed at `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637`; CNB build `cnb-cl8-1jtgih45j` completed 12/12 pipelines and anonymous readback verified all 19 coordinates. Continue to follow the V029 upgrade boundary below rather than treating artifact availability as permission for an unsafe rolling migration.
 
 **Q: Do I need both the runtime starter and the web starter?**
 

@@ -78,9 +78,9 @@ FileWeft does not expose presigned storage URLs through the public HTTP API. Aut
 
 ## Releases
 
-### Which release contract is current?
+### Which stable release is current?
 
-The current release contract is `ai.icen:*:0.0.3`. Consume it only when the guarded `v0.0.3` tag matches the protected remote `main` HEAD, every required lane for that exact commit succeeds, and an anonymous cold-cache consumer resolves all 19 coordinates plus the Boot 2, Boot 3, and pure-SPI consumers; otherwise use the most recent version with equivalent completed evidence.
+The current stable release is `ai.icen:*:0.0.3`, fixed at commit `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637`. CNB `tag_push` build `cnb-cl8-1jtgih45j` completed 12/12 pipelines, and independent anonymous readback verified the POM, main JAR, and checksum for all 19 coordinates.
 
 ### Can I still use `com.fileweft:*` artifacts?
 
@@ -88,7 +88,7 @@ No. Those trial artifacts have been withdrawn. Use an `ai.icen:*` version only a
 
 ### How do I know 0.0.3 is consumable?
 
-Require the guarded `v0.0.3` tag to match the protected remote `main` HEAD, every matching lane for that exact commit, and anonymous resolution of all 19 coordinates and the three consumer shapes from a fresh isolated cache. A source checkout, this page, tag name, or partial green evidence is insufficient.
+Verify the immutable release identity above: tag `v0.0.3`, commit `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637`, build `cnb-cl8-1jtgih45j`, 12/12 successful pipelines, and 19/19 anonymous artifact readbacks. Later default-branch commits do not change that release identity.
 
 ## HTTP API
 

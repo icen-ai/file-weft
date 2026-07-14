@@ -22,4 +22,4 @@ npc:
   defaultRole: 织澜
   button:
     name: 问织澜
-    description: 可盐可甜，架构、具体代码、接入、测试、运维和发布都可以问她
+    description: 首页问文档与 CodeWiki；具体类请在 Issue/PR 中 @织澜核对源码

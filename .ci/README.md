@@ -130,7 +130,7 @@ docker compose -f $compose rm --force fileweft-dev-web fileweft-dev-worker filew
 
 ## 仓库知识库与“织澜”
 
-`.ci/knowledge.yml` 在 `main` push 后按 `.fileweft-knowledge-paths` 增量更新 CNB 仓库知识库。它只索引 `README.md`、`AGENTS.md`、`SECURITY.md`、本文件、`docs/**/*.md` 和中文文档站，不把 `.ai/**` 历史蓝图、英文重复页面、测试夹具、构建产物或给 AI 执行的 `SKILL.md` 混入产品事实。普通源码改动不会触发知识库任务，PR 也不会写主干知识库；任务固定使用 1 CPU。
+`.ci/knowledge.yml` 在 `main` push 后按 `.fileweft-knowledge-paths` 增量更新 CNB 仓库知识库。CNB `knowledge:update` 只接受 `.md`、`.mdx`、`.docx`、`.txt` 和 `.pdf`，不能直接索引 Kotlin；本任务因此只索引 `README.md`、`AGENTS.md`、`SECURITY.md`、本文件、`docs/**/*.md` 和中文文档站，不把 `.ai/**` 历史蓝图、英文重复页面、测试夹具、构建产物或给 AI 执行的 `SKILL.md` 混入产品事实。普通源码改动不会触发知识库任务，PR 也不会写主干知识库；任务固定使用 1 CPU。
 
 Issue 同步目前保持关闭。只有建立明确的 Issue 关闭状态和 `knowledge` 标签治理后，才可以考虑同步已关闭的结论型 Issue；不能让开放问题或过期讨论覆盖默认分支文档。知识源、排除规则或人格配置发生变化时，必须同时更新 `.ci/test/path-policy.test.mjs`。
 
@@ -138,31 +138,51 @@ Issue 同步目前保持关闭。只有建立明确的 Issue 关闭状态和 `kn
 
 ### 按需刷新源码知识
 
-`.ci/codewiki.yml` 只响应 `main` 的 `web_trigger_codewiki`，不响应 PR、普通 push、定时任务或标签，因此不会增加日常开发和稳定版发布的等待时间。需要刷新时，在 CNB 的「代码 → 分支 → `main` 分支详情页」点击「刷新源码知识」；按钮由 `.cnb/web_trigger.yml` 定义，仅向仓库负责人和管理员展示，触发者仍必须具有仓库写权限。CNB 的 `permissions.roles` 只在页面检查，不是服务端授权边界，不能拿它保护密钥或高风险发布动作；本任务本身不接收输入、不发布制品。CodeWiki 首次拉取的固定镜像较大，仓库生成也可能超过一小时，这是低频维护任务而不是发布门禁。
+`.ci/codewiki.yml` 只响应 `main` 的 `web_trigger_codewiki`，不响应 PR、普通 push、定时任务或标签，因此不会增加日常开发和稳定版发布的等待时间。需要刷新时，在 CNB 的「代码 → 分支 → `main` 分支详情页」点击「刷新源码知识」；按钮由 `.cnb/web_trigger.yml` 定义，仅向仓库负责人和管理员展示，触发者仍必须具有仓库写权限。当前来源证明会匿名读取公开 Wiki，因此仓库和 Wiki 保持公开是此门禁的前置条件；若以后改回私有，必须先改成经过审查的等价平台 provenance API，不能静默跳过。CNB 的 `permissions.roles` 只在页面检查，不是服务端授权边界，不能拿它保护密钥或高风险发布动作；本任务本身不接收输入、不发布制品。CodeWiki 首次拉取的固定镜像较大，仓库生成也可能超过一小时，这是低频维护任务而不是发布门禁。
 
 流水线固定使用 CodeWiki `v1.12.0` 的 amd64 镜像 digest。插件没有 include/exclude 参数，因此生成前用 `.ci/codewiki-sparse-checkout` 在本次临时 checkout 中隐藏 `.ai/**` 历史蓝图、`fileweft-agent/**` 兼容实现、测试源码、英文重复文档和 Web 夹具；这不会删除或改写 Git 中的任何文件。正式文档知识更新和 CodeWiki 入库共用 `fileweft-knowledge-base` 锁并按顺序等待，不能互相取消或并发改写同一知识库。
 
-CodeWiki 插件目前不会把 Wiki 入库子进程的退出码传给主进程，而且删除旧 CodeWiki 或单个文档最终上传失败都可能只写日志；它上传的 metadata 也没有 commit 字段。为此准备阶段先证明 checkout HEAD 精确等于 `CNB_COMMIT` 且不存在遗留 `codewiki/` 目录，流水线最后再运行 `.ci/scripts/verify-codewiki-knowledge.mjs`：本次生成状态必须成功，知识库的 `last_commit_sha` 必须等于本次 `CNB_COMMIT`，每个命中片段的 SHA-256 必须自洽且其去除插件合成标题后的完整 token 序列必须来自本次 `codewiki/` 生成物，并且 `.ci/code-knowledge-acceptance.json` 中每个具体类问题都必须包含约定的精确符号。只有这样才能排除旧 CodeWiki 片段误绿；仅有 HTTP 200、高相似度、全局 SHA 或普通 `metadata.type=code` 文档都不算源码知识验收成功。
+CodeWiki 插件目前不会把 Wiki 入库子进程的退出码传给主进程，而且删除旧 CodeWiki 或单个文档最终上传失败都可能只写日志；它上传的 chunk metadata 也没有 commit/build 字段。为此准备阶段先证明 checkout HEAD 精确等于 `CNB_COMMIT` 且不存在遗留 `codewiki/` 目录，流水线最后再运行 `.ci/scripts/verify-codewiki-knowledge.mjs`：本次生成状态必须成功，公开 Wiki 页的精确 commit 链接和平台 `pipelineMeta` 必须同时匹配本次 `CNB_BUILD_ID`、分支与 40 位 `CNB_COMMIT`；前五个检索结果中的每个 CodeWiki 片段都必须通过 SHA-256 自洽检查，且其去除插件合成标题后的完整 token 序列必须来自本次 `codewiki/` 生成物；`.ci/code-knowledge-acceptance.json` 中每个摘要主题还必须包含约定锚点。只有这样才能排除可观察到的旧 CodeWiki 片段误绿；仅有 HTTP 200、高相似度或普通 `metadata.type=code` 文档都不算源码知识验收成功。知识库整体的 `last_commit_sha` 由独立的文档 `knowledge:update` 维护，可以合法停在最近一次文档提交，不能拿它证明或否定 CodeWiki 的来源提交。受限于当前插件不写逐片段 build metadata，字节完全相同的遗留片段仍无法与本轮重传片段区分；需要更强逐片段 provenance 时必须先升级插件协议。
 
-没有 CNB Skill 时也可以只读检查。先按下一节取得 `web_trigger_codewiki` 的精确 SHA、事件和 SN，再查询知识库信息和三个黄金问题；不得为了查看状态而重新触发任务，也不要设置 `NODE_TLS_REJECT_UNAUTHORIZED=0`。`last_commit_sha` 必须与按钮所针对的 `main` SHA 完全一致，返回片段还要人工确认 `metadata.type` 为 `codewiki`。
+没有 CNB Skill 时也可以只读检查。先按下一节取得 `web_trigger_codewiki` 的精确 SHA、事件和 SN，再核对公开 Wiki 页的来源提交与 pipeline metadata，并查询三个黄金问题；不得为了查看状态而重新触发任务，也不要设置 `NODE_TLS_REJECT_UNAUTHORIZED=0`。返回片段还要人工确认 `metadata.type` 为 `codewiki`，不能把文档知识游标当作 CodeWiki 提交证据。
 
 ```powershell
 $repo = "china.ai/file-weft"
 $sha = (git rev-parse origin/main).Trim()
+$sn = "<web_trigger_codewiki SN>"
 Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED -ErrorAction SilentlyContinue
 
-cnb knowledge-base get-knowledge-base-info --repo $repo --verbose
+$wiki = Invoke-WebRequest -Uri "https://cnb.cool/$repo/-/wiki" -UseBasicParsing
+$commitHref = "href=`"/$repo/-/commits/$sha`""
+$nextDataMatch = [regex]::Match(
+  $wiki.Content,
+  '<script\b[^>]*\bid=["'']__NEXT_DATA__["''][^>]*>(?<json>[\s\S]*?)</script>'
+)
+if (-not $nextDataMatch.Success) {
+  throw "Published CodeWiki has no platform pipeline metadata."
+}
+$pipelineMeta = (
+  $nextDataMatch.Groups['json'].Value | ConvertFrom-Json
+).props.pageProps.pipelineMeta
+if (
+  -not $wiki.Content.Contains($commitHref) -or
+  $pipelineMeta.buildId -ne $sn -or
+  $pipelineMeta.ref -ne "main" -or
+  $pipelineMeta.sha -ne $sha
+) {
+  throw "Published CodeWiki does not match build $sn, ref main, and commit $sha."
+}
 
 $queries = @(
-  "JdbcResumableUploadSessionRepository 具体实现了哪些续传仓储能力？",
-  "S3StorageAdapter 的 multipart 完成和确定拒绝如何实现？",
-  "ResumableUploadReconciler 如何处理完成结果未知？"
+  "续传会话清理机制的关键类和数据库仓储是什么？",
+  "S3 multipart 确定拒绝如何识别和恢复？",
+  "断点续传完成结果未知和隔离状态应该如何处理？"
 )
 foreach ($query in $queries) {
   cnb knowledge-base query-knowledge-base-get `
     --repo $repo `
     --query $query `
-    --top-k 20 `
+    --top-k 5 `
     --score-threshold 0 `
     --verbose
 }
