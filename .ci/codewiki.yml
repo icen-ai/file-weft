@@ -8,7 +8,6 @@
   stages:
     - name: prepare-codewiki-input
       script: |
-        git sparse-checkout init --no-cone
         git sparse-checkout set --no-cone --stdin < .ci/codewiki-sparse-checkout
         test "$(git rev-parse HEAD)" = "${CNB_COMMIT}"
         test -f AGENTS.md
