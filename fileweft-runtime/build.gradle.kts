@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     api(project(":fileweft-application"))
+    api(project(":fileweft-metadata-runtime"))
     implementation(project(":fileweft-persistence"))
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

@@ -143,6 +143,13 @@ test("Gradle lock files select every environment whose build graph they can chan
 });
 
 test("database, storage, and Boot generations select their real dependency closures", () => {
+  expectGroups("fileweft-metadata-runtime/src/main/kotlin/MetadataValidator.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-e2e-paths",
+  ]);
   expectGroups("fileweft-persistence/src/main/kotlin/JdbcDocumentRepository.kt", [
     ".fileweft-fast-paths",
     ".fileweft-jvm8-paths",

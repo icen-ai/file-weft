@@ -4,6 +4,7 @@ import ai.icen.fw.application.document.DocumentFolderReadAccessUnavailableExcept
 import ai.icen.fw.application.document.DocumentContentUnavailableException
 import ai.icen.fw.application.document.DocumentNotFoundException
 import ai.icen.fw.application.idempotency.IdempotencyConflictException
+import ai.icen.fw.application.metadata.DocumentMetadataWriteUnavailableException
 import ai.icen.fw.application.offline.DocumentRestoreConflictException
 import ai.icen.fw.application.publish.ActiveDocumentReviewWorkflowException
 import ai.icen.fw.application.security.ApplicationForbiddenException
@@ -77,6 +78,7 @@ class V1ApiResponseFactory {
                 ApiErrorCodes.FEATURE_UNAVAILABLE,
                 "The requested feature is unavailable.",
             )
+            is DocumentMetadataWriteUnavailableException,
             is DocumentFolderReadAccessUnavailableException,
             is V1FeatureUnavailableException,
             -> MappedFailure(

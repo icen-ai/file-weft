@@ -51,7 +51,6 @@ private const val LEGACY_AGENT_AUTOCONFIGURATION_PROPERTY =
 @Import(
     FileWeftMigrationConfiguration::class,
     FileWeftRuntimeConfiguration::class,
-    FileWeftDoctorConfiguration::class,
     FileWeftWorkerSchedulingConfiguration::class,
 )
 class FileWeftAutoConfiguration {

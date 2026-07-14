@@ -101,6 +101,82 @@ class ArchitectureGuardPluginTest {
     }
 
     @Test
+    fun `metadata contracts and runtime stay pure JVM and Java friendly`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-metadata-api/src/main/kotlin/ai/icen/fw/metadata/api/ForbiddenMetadataContract.kt",
+            """
+            package ai.icen.fw.metadata.api
+
+            import org.springframework.context.ApplicationContext
+
+            internal suspend fun forbiddenMetadataContract(context: ApplicationContext) = context
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "fileweft-metadata-runtime/src/main/kotlin/ai/icen/fw/metadata/runtime/ForbiddenMetadataRuntime.kt",
+            """
+            package ai.icen.fw.metadata.runtime
+
+            import java.sql.Connection
+
+            internal value class ForbiddenMetadataRuntime(val connection: Connection)
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("fileweft-metadata-api/ai/icen/fw/metadata/api/ForbiddenMetadataContract.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("fileweft-metadata-runtime/ai/icen/fw/metadata/runtime/ForbiddenMetadataRuntime.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+    }
+
+    @Test
+    fun `guard scopes linear regex imports to metadata runtime`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "fileweft-metadata-runtime/src/main/kotlin/ai/icen/fw/metadata/runtime/LinearFormat.kt",
+            """
+            package ai.icen.fw.metadata.runtime
+
+            import com.google.re2j.Pattern
+
+            internal class LinearFormat(pattern: String) {
+                val compiled: Pattern = Pattern.compile(pattern)
+            }
+            """.trimIndent(),
+        )
+
+        val accepted = runner(projectDir, "verifyFileWeftArchitecture").build()
+        assertEquals(TaskOutcome.SUCCESS, accepted.task(":verifyFileWeftArchitecture")?.outcome)
+
+        writeFile(
+            projectDir,
+            "fileweft-metadata-api/src/main/kotlin/ai/icen/fw/metadata/api/ForbiddenLinearFormat.kt",
+            """
+            package ai.icen.fw.metadata.api
+
+            import com.google.re2j.Pattern
+
+            internal class ForbiddenLinearFormat(val compiled: Pattern)
+            """.trimIndent(),
+        )
+
+        val rejected = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+        assertTrue(
+            rejected.output.contains(
+                "com.google.re2j.Pattern (not approved for fileweft-metadata-api)",
+            ),
+        )
+    }
+
+    @Test
     fun `guard rejects servlet references from Java web API sources without imports`() = withTestProject { projectDir ->
         writeProject(projectDir)
         writeFile(

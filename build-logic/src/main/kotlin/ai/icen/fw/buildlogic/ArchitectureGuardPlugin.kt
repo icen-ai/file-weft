@@ -23,14 +23,22 @@ class ArchitectureGuardPlugin : Plugin<Project> {
             ),
             "fileweft-application" to listOf(
                 "ai.icen.fw.application.", "ai.icen.fw.core.", "ai.icen.fw.domain.", "ai.icen.fw.spi.",
+                "ai.icen.fw.metadata.api.",
                 "java.", "javax.", "kotlin.",
+            ),
+            "fileweft-metadata-api" to listOf(
+                "ai.icen.fw.metadata.api.", "java.", "kotlin.",
+            ),
+            "fileweft-metadata-runtime" to listOf(
+                "ai.icen.fw.metadata.api.", "ai.icen.fw.metadata.runtime.",
+                "com.google.re2j.", "java.", "kotlin.",
             ),
             "fileweft-web-api" to listOf(
                 "ai.icen.fw.web.api.", "java.", "kotlin.",
             ),
             "fileweft-web-runtime" to listOf(
                 "ai.icen.fw.web.runtime.", "ai.icen.fw.web.api.", "ai.icen.fw.application.",
-                "ai.icen.fw.core.", "ai.icen.fw.domain.", "java.", "kotlin.",
+                "ai.icen.fw.core.", "ai.icen.fw.domain.", "ai.icen.fw.metadata.api.", "java.", "kotlin.",
             ),
             "fileweft-web-spring-boot2-starter" to listOf(
                 "ai.icen.fw.web.spring.boot2.", "ai.icen.fw.web.api.", "ai.icen.fw.web.runtime.",
@@ -77,6 +85,8 @@ class ArchitectureGuardPlugin : Plugin<Project> {
                 mapOf(
                     "fileweft-core" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                     "fileweft-spi" to listOf("suspend fun", "value class", "sealed interface", "data object"),
+                    "fileweft-metadata-api" to listOf("suspend fun", "value class", "sealed interface", "data object"),
+                    "fileweft-metadata-runtime" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                     "fileweft-web-api" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                     "fileweft-web-runtime" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                 ),

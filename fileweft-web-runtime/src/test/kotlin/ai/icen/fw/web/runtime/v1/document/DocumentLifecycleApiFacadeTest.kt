@@ -53,6 +53,7 @@ class DocumentLifecycleApiFacadeTest {
             RejectWorkflowTaskCommand("revise"),
             "reject-key",
         )
+        val withdraw = facade.withdrawReview("workflow-withdraw", "withdraw-key")
 
         assertEquals(
             listOf(
@@ -69,6 +70,7 @@ class DocumentLifecycleApiFacadeTest {
                 "submit:document-submit:dual-control:submit-key",
                 "approve:workflow-approve:task-approve:approved:regulated:approve-key",
                 "reject:workflow-reject:task-reject:revise:reject-key",
+                "withdraw:workflow-withdraw:withdraw-key",
             ),
             reviews.calls,
         )
@@ -86,6 +88,9 @@ class DocumentLifecycleApiFacadeTest {
         assertEquals("result-reject-document", reject.documentId)
         assertEquals("result-reject-workflow", reject.workflowId)
         assertEquals("result-reject-task", reject.taskId)
+        assertEquals("result-withdraw-document", withdraw.documentId)
+        assertEquals("result-withdraw-workflow", withdraw.workflowId)
+        assertNull(withdraw.taskId)
     }
 
     @Test
@@ -263,6 +268,7 @@ class DocumentLifecycleApiFacadeTest {
         submitForReview = reviews?.let { it::submitForReview },
         approve = reviews?.let { it::approve },
         reject = reviews?.let { it::reject },
+        withdrawReview = reviews?.let { it::withdrawReview },
     )
 
     private class RecordingLifecycles {
@@ -335,6 +341,14 @@ class DocumentLifecycleApiFacadeTest {
                 Identifier("result-reject-document"),
                 Identifier("result-reject-workflow"),
                 Identifier("result-reject-task"),
+            )
+        }
+
+        fun withdrawReview(workflowId: Identifier, key: String): DocumentLifecycleReceipt {
+            calls += "withdraw:${workflowId.value}:$key"
+            return DocumentLifecycleReceipt(
+                Identifier("result-withdraw-document"),
+                Identifier("result-withdraw-workflow"),
             )
         }
     }

@@ -262,10 +262,15 @@ test("0.0.2 release identity is conditional on protected remote evidence without
   }
 });
 
-test("migration documentation pins the complete V001-V028 database contract", async () => {
+test("migration documentation pins the released V001-V028 and current V001-V029 contracts", async () => {
   for (const page of migrationBoundaryPages) {
     const source = await read(page);
-    assert.match(source, /28[^\n]{0,40}V001–V028|V001–V028[^\n]{0,40}28/u, `${page} migration count`);
+    if (/V001–V029/u.test(source)) {
+      assert.match(source, /29[^\n]{0,40}V001–V029|V001–V029[^\n]{0,40}29/u, `${page} current migration count`);
+      assert.match(source, /V029/u, `${page} workflow submitter migration`);
+    } else {
+      assert.match(source, /28[^\n]{0,40}V001–V028|V001–V028[^\n]{0,40}28/u, `${page} released migration count`);
+    }
     assert.doesNotMatch(source, /V001(?:–|-)V02[67]/u, `${page} must not publish a stale range`);
     assert.match(source, /PostgreSQL V001–V025/u, `${page} historical 0.0.1 immutability boundary`);
     assert.match(
@@ -309,11 +314,9 @@ test("migration operations document the Flyway and Kingbase host boundary", asyn
   }
 });
 
-test("KingbaseES 0.0.2 onboarding is copyable and fail-closed", async () => {
-  const requiredTokens = [
+test("KingbaseES onboarding is version-accurate, copyable and fail-closed", async () => {
+  const sharedRequiredTokens = [
     "https://maven.cnb.cool/china.ai/maven/-/packages/",
-    "ai.icen:fileweft-spring-boot2-starter:0.0.2",
-    "ai.icen:fileweft-spring-boot3-starter:0.0.2",
     "cn.com.kingbase:kingbase8:8.6.1",
     "com.kingbase8.Driver",
     "jdbc:kingbase8://",
@@ -331,6 +334,12 @@ test("KingbaseES 0.0.2 onboarding is copyable and fail-closed", async () => {
 
   for (const page of kingbaseOnboardingPages) {
     const source = await read(page);
+    const fileWeftVersion = page === "../docs/production-operations.md" ? "0.0.3" : "0.0.2";
+    const requiredTokens = [
+      ...sharedRequiredTokens,
+      `ai.icen:fileweft-spring-boot2-starter:${fileWeftVersion}`,
+      `ai.icen:fileweft-spring-boot3-starter:${fileWeftVersion}`,
+    ];
     for (const token of requiredTokens) {
       assert.ok(source.includes(token), `${page} must include ${token}`);
     }
@@ -349,6 +358,7 @@ test("KingbaseES 0.0.2 onboarding is copyable and fail-closed", async () => {
   const operations = await read("../docs/production-operations.md");
   assert.match(operations, /SET search_path TO fileweft/u);
   assert.match(operations, /V001–V028/u);
+  assert.match(operations, /V001–V029/u);
 });
 
 test("publish examples use the actual PublishDocumentRequest field", async () => {

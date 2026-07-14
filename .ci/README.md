@@ -26,7 +26,7 @@
 | 纯文档或文档站 | `node --test fileweft-docs/test/site.test.mjs` | 同一条文档契约；不运行 JVM 与外部系统套件 |
 | 单个模块内部实现 | `:模块:test --tests "完整测试类名"`，随后 `:模块:test` | 一批代码改完后运行一次 `fastCheck` |
 | Build Logic 测试夹具 | `verifyFileWeftBuildLogic` | `fastCheck`；不展开 JVM 或外部系统 lane |
-| Build Logic 主代码、Core、SPI、公共 API | 聚焦测试 | `fastCheck`，再由 CNB 运行受影响的 Java 8/17 或完整 JVM lane |
+| Build Logic 主代码、Core、SPI、Metadata API/runtime、公共 API | 聚焦测试 | `fastCheck`，再由 CNB 运行受影响的 Java 8/17 或完整 JVM lane |
 | JDBC、仓储、Flyway、PostgreSQL 方言 | 聚焦 Persistence 测试 | `fastCheck` + `postgresIntegrationCheck` |
 | MySQL 或 Kingbase 方言/迁移 | 聚焦 Persistence 测试 | `fastCheck` + 对应 `mysqlIntegrationCheck` 或 `kingbaseIntegrationCheck` |
 | S3/RustFS | S3 Adapter 聚焦测试 | `fastCheck` + `rustFsIntegrationCheck` |
@@ -59,7 +59,7 @@
 
 PR 缓存从 `main` 以 copy-on-write read-only 方式读取，不能污染主干缓存；主干、夜间和标签任务可写自己的 copy-on-write 层。CI 镜像固定基础镜像 digest，JVM 镜像包含 JDK 25、Docker CLI 与 Compose；E2E 镜像额外固定 Playwright/Chromium 版本。
 
-标签发布使用 CNB 仅在受信事件提供的 `CNB_TOKEN` 写入 `https://maven.cnb.cool/china.ai/maven/-/packages/`。写入后立即销毁流水线 token，再用全新、隔离且先清空的 Gradle User Home 从公开仓库回读精确 17 个坐标并编译 Boot 2、Boot 3 和纯 SPI 消费者；发布流水线任何正常 stage 失败时也会进入失败清理并销毁 token。远端仓库短暂最终一致时最多重试三次；验证失败不会被转成成功。
+标签发布使用 CNB 仅在受信事件提供的 `CNB_TOKEN` 写入 `https://maven.cnb.cool/china.ai/maven/-/packages/`。写入后立即销毁流水线 token，再用全新、隔离且先清空的 Gradle User Home 从公开仓库回读精确 19 个坐标（含 `fileweft-metadata-api` 与 `fileweft-metadata-runtime`），并编译 Boot 2、Boot 3 和纯 SPI 消费者；发布流水线任何正常 stage 失败时也会进入失败清理并销毁 token。远端仓库短暂最终一致时最多重试三次；验证失败不会被转成成功。
 
 CI 中的 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 只是隔离 Compose 网络内模拟平台的公开测试夹具值，不授予 CNB、Maven 或任何生产系统权限。真实发布凭据只来自 CNB 事件 token，禁止写入仓库、Gradle properties、缓存或测试报告。
 
@@ -193,6 +193,6 @@ Get-Content -LiteralPath $response.data -Tail 300
 
 1. 提交 `.cnb.yml`、本目录和对应 Gradle 改动后，让首个 PR 验证所有分支和路径条件。
 2. 在 CNB 仓库保护规则中配置按路径所需的文档、fast feedback、最低 Java 8/17 和外部检查；不得让文档-only PR 因缺少未触发的 JVM lane 永久等待，也不得让命中代码路径的失败 lane 被忽略。
-3. 仅创建与稳定版本完全一致的标签，例如 `v0.0.2`；不得用标签流水线发布 `-SNAPSHOT`。
+3. 仅创建与稳定版本完全一致的标签，例如 `v0.0.3`；不得用标签流水线发布 `-SNAPSHOT`。
 4. 修改任何 `.cnb.yml` 或 `.ci/*.yml` 后运行 CNB Pipeline skill 的 YAML、语义和 Schema 三层校验；修改 Dockerfile 后至少构建对应镜像。
 5. 不要在验证流水线外直接调用 `publishVerifiedCnbArtifacts`。该入口有提交身份保护，但它的设计前提仍是同一标签事件中的十一条 CNB await 已全部成功。

@@ -1,13 +1,13 @@
 # FileWeft 插件开发
 
-> **Agent 兼容边界：** `0.0.2` 不提供 Agent 产品能力。现有 Agent
+> **Agent 兼容边界：** `0.0.2` 与 `0.0.3` 均不提供 Agent 产品能力。现有 Agent
 > SPI/getter 仅为源码与二进制兼容保留，默认运行时和插件清单不会注册或宣传
 > 它们。Agent 重新设计无限期延后，最早只能在 `1.0.0` 发布后重新评估，且
 > 没有承诺版本。本文保留的 Agent 示例均为历史 ABI 说明，不是当前接入教程。
 
 FileWeft 的插件优先级固定为：客户显式 Spring Bean、插件贡献、框架默认实现。客户已经注册的 `StorageAdapter`、连接器或其他 SPI 不会被插件覆盖。
 
-插件实现 `FileWeftPlugin`，并只通过 SPI 贡献能力。`0.0.2` 插件可以提供一个存储适配器、以稳定连接器 ID 命名的多个下游连接器、Doctor 检查器、Outbox 处理器、后台任务处理器和审批路由。插件不得修改 Core，也不得把厂商 SDK 类型泄漏到 SPI。历史 Agent/Agent 事件触发器 getter 继续存在，但本版本默认不消费，插件不得依赖它们形成产品能力。
+插件实现 `FileWeftPlugin`，并只通过 SPI 贡献能力。`0.0.3` 插件可以提供一个存储适配器、以稳定连接器 ID 命名的多个下游连接器、Doctor 检查器、Outbox 处理器、后台任务处理器和审批路由。插件不得修改 Core，也不得把厂商 SDK 类型泄漏到 SPI。历史 Agent/Agent 事件触发器 getter 继续存在，但本版本默认不消费，插件不得依赖它们形成产品能力。
 
 插件是与宿主应用运行在同一 JVM、共享同一进程权限和依赖类路径的可信代码，不是安全沙箱。Spring Bean 与 `ServiceLoader` 发现只解决装载方式，不提供文件、网络、凭据或租户数据隔离。正式环境只能安装经过代码审查、依赖与制品来源校验的插件；需要运行不可信扩展时，应把扩展放入独立进程，通过受鉴权、限流和审计的协议与 FileWeft 通信。
 
@@ -99,7 +99,7 @@ class ArchivePlugin : FileWeftPlugin {
         "archive" to archiveConnector,
     )
 
-    // Historical ABI only; do not contribute these in the 0.0.2 default runtime:
+    // Historical ABI only; do not contribute these in the 0.0.3 default runtime:
     // override fun agents(): List<FileWeftAgent> = listOf(ClassificationAgent())
     // override fun agentTaskTriggers(): List<AgentTaskTrigger> = listOf(DocumentCreatedTrigger())
 
@@ -115,7 +115,7 @@ META-INF/services/ai.icen.fw.spi.plugin.FileWeftPlugin
 
 文件内容为实现类的完整类名。ServiceLoader 发现的插件与 Spring Bean 插件可以共存；同一实现同时以两种方式出现时以 Spring Bean 为准。不同实现不得使用相同插件 ID，插件连接器 ID 也不得和客户 Bean 或另一插件冲突，应用会在启动时给出明确错误。
 
-连接器必须自行做到超时、重试、幂等和健康检查。事件及任务处理器会被重试，因此必须以事件 ID 或任务 ID 实现幂等。`FileConnector.remove` 会在文档下线或归档后的独立 Outbox 事件中调用；实现必须以 `ConnectorInvocation.idempotencyKey` 幂等删除，接受框架传入的外部 ID（历史同步没有外部 ID 时可能是稳定的业务文档 ID），并把可恢复故障返回为 `RETRYABLE_FAILURE`。审批路由实现 `DocumentReviewRouteProvider`，以稳定 `id()` 返回一份非空任务列表；路由解析在 FileWeft 的数据库事务之外执行，若实现需要查询宿主的组织或策略服务，必须自行设定超时、重试、错误记录和诊断。一个路由的所有任务通过后才会发布，任一任务驳回则结束审批。历史 `ConfirmAgentSuggestionService` 及 `agent:suggestion:confirm` 权限仅为兼容保留；`0.0.2` 的默认运行时与正式 HTTP 不提供 Agent 建议确认产品流程。
+连接器必须自行做到超时、重试、幂等和健康检查。事件及任务处理器会被重试，因此必须以事件 ID 或任务 ID 实现幂等。`FileConnector.remove` 会在文档下线或归档后的独立 Outbox 事件中调用；实现必须以 `ConnectorInvocation.idempotencyKey` 幂等删除，接受框架传入的外部 ID（历史同步没有外部 ID 时可能是稳定的业务文档 ID），并把可恢复故障返回为 `RETRYABLE_FAILURE`。审批路由实现 `DocumentReviewRouteProvider`，以稳定 `id()` 返回一份非空任务列表；路由解析在 FileWeft 的数据库事务之外执行，若实现需要查询宿主的组织或策略服务，必须自行设定超时、重试、错误记录和诊断。一个路由的所有任务通过后才会发布，任一任务驳回则结束审批。历史 `ConfirmAgentSuggestionService` 及 `agent:suggestion:confirm` 权限仅为兼容保留；`0.0.3` 的默认运行时与正式 HTTP 不提供 Agent 建议确认产品流程。
 
 发布插件前至少运行对应的 `fileweft-testkit` 合约测试：存储适配器使用 `StorageAdapterContractTest`（对象版本与租户隔离、长度/类型、幂等删除、访问 URL、multipart 重传与取消），连接器使用 `FileConnectorContractTest`（健康协议、顺序和并发幂等同步、稳定外部 ID、撤回幂等），授权实现使用 `AuthorizationProviderContractTest`。多下游配置实现可使用 `DocumentDeliveryProfileProviderContractTest`，校验租户档案列表、默认档案和 target 路由的一致性。若对象存储对非末片有最小大小限制，适配器测试可覆写 `multipartParts()` 和 `replacementMultipartPart()` 提供符合该服务约束的分片；若下游测试环境限制并发，可覆写连接器合约的并发度和等待时长。
 

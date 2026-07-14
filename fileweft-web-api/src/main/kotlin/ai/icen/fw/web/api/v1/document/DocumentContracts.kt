@@ -4,6 +4,8 @@ import ai.icen.fw.web.api.immutableList
 import ai.icen.fw.web.api.optionalText
 import ai.icen.fw.web.api.requiredFileName
 import ai.icen.fw.web.api.requiredText
+import java.util.Collections
+import java.util.LinkedHashMap
 
 /** Immutable public representation of a document; it never exposes a domain aggregate. */
 class DocumentDto @JvmOverloads constructor(
@@ -115,6 +117,55 @@ class PublishDocumentCommand @JvmOverloads constructor(deliveryProfileId: String
  */
 class PublishDocumentRequest {
     var deliveryProfileId: String? = null
+}
+
+/**
+ * Schema-qualified metadata accepted by multipart document mutations.
+ *
+ * HTTP adapters encode each value as a string and the metadata runtime owns
+ * all declared-type validation and canonicalization. This contract only puts
+ * defensive bounds around the untrusted transport representation.
+ */
+class DocumentMetadataCommand @JvmOverloads constructor(
+    schemaId: String,
+    values: Map<String, String> = emptyMap(),
+) {
+    val schemaId: String = requiredText(schemaId, "Metadata schema id", 128)
+    val values: Map<String, String>
+
+    init {
+        require(values.size <= MAX_FIELDS) { "Document metadata contains too many fields." }
+        val copy = LinkedHashMap<String, String>(values.size)
+        var totalLength = 0L
+        values.entries.forEach { entry ->
+            val key: String? = entry.key
+            val value: String? = entry.value
+            require(key != null) { "Document metadata field name must not be null." }
+            require(value != null) { "Document metadata field value must not be null." }
+            val safeKey = requiredText(key, "Document metadata field name", 128)
+            val safeValue = metadataValue(value)
+            totalLength += safeKey.length.toLong() + safeValue.length.toLong()
+            require(totalLength <= MAX_TOTAL_LENGTH) { "Document metadata input is too large." }
+            require(copy.put(safeKey, safeValue) == null) { "Document metadata field names must be unique." }
+        }
+        this.values = Collections.unmodifiableMap(copy)
+    }
+
+    private fun metadataValue(value: String): String {
+        require(value.length <= MAX_VALUE_LENGTH) {
+            "Document metadata field value must not exceed $MAX_VALUE_LENGTH characters."
+        }
+        require(value.none { character -> Character.isISOControl(character) }) {
+            "Document metadata field value must not contain control characters."
+        }
+        return value
+    }
+
+    private companion object {
+        const val MAX_FIELDS: Int = 128
+        const val MAX_VALUE_LENGTH: Int = 16_384
+        const val MAX_TOTAL_LENGTH: Long = 65_536
+    }
 }
 
 /**

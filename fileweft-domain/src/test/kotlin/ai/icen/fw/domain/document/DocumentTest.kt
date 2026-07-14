@@ -90,6 +90,32 @@ class DocumentTest {
     }
 
     @Test
+    fun `pending review can be withdrawn to the same editable draft without changing its version`() {
+        val document = draft()
+        document.addVersion(version(document))
+        document.transition(LifecycleCommand.SUBMIT)
+        val currentVersionId = document.currentVersionId
+
+        document.transition(LifecycleCommand.WITHDRAW_REVIEW)
+
+        assertEquals(LifecycleState.DRAFT, document.lifecycleState)
+        assertEquals(currentVersionId, document.currentVersionId)
+        assertEquals(listOf("1.0"), document.versions.map { it.versionNumber })
+        assertEquals(0, document.deliveryGeneration)
+    }
+
+    @Test
+    fun `review withdrawal is rejected outside pending review`() {
+        val document = draft()
+
+        assertThrows<InvalidLifecycleTransitionException> {
+            document.transition(LifecycleCommand.WITHDRAW_REVIEW)
+        }
+
+        assertEquals(LifecycleState.DRAFT, document.lifecycleState)
+    }
+
+    @Test
     fun `offline document returns to a draft without reusing its publication generation`() {
         val document = draft()
         document.addVersion(version(document))

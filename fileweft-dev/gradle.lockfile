@@ -16,6 +16,7 @@ com.fasterxml.jackson.module:jackson-module-parameter-names:2.21.4=compileClassp
 com.fasterxml.jackson:jackson-bom:2.21.4=compileClasspath,implementationDependenciesMetadata,runtimeClasspath,testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 com.google.code.gson:gson:2.10.1=compileClasspath,implementationDependenciesMetadata,testCompileClasspath,testImplementationDependenciesMetadata
 com.google.protobuf:protobuf-java:3.21.9=runtimeClasspath,testRuntimeClasspath
+com.google.re2j:re2j:1.8=runtimeClasspath,testRuntimeClasspath
 com.jayway.jsonpath:json-path:2.9.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
 com.mysql:mysql-connector-j:8.0.33=runtimeClasspath,testRuntimeClasspath
 com.vaadin.external.google:android-json:0.0.20131108.vaadin1=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath

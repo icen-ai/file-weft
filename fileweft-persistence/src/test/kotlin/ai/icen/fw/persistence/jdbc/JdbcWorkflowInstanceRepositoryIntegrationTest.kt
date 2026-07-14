@@ -4,6 +4,7 @@ import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.workflow.WorkflowInstance
 import ai.icen.fw.domain.workflow.WorkflowState
 import ai.icen.fw.domain.workflow.WorkflowTask
+import ai.icen.fw.domain.workflow.WorkflowWithdrawalConflictException
 import ai.icen.fw.persistence.migration.FlywayMigrationRunner
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -51,6 +52,7 @@ class JdbcWorkflowInstanceRepositoryIntegrationTest {
         val active = transaction.execute { repository.findActiveByDocument(Identifier("tenant-1"), Identifier("document-1")) }
         requireNotNull(active)
         assertEquals(WorkflowState.PENDING, active.state)
+        assertEquals(Identifier("submitter-1"), active.submittedBy)
         assertEquals(Identifier("reviewer-1"), active.tasks.single().assigneeId)
         assertNull(transaction.execute { repository.findActiveByDocument(Identifier("tenant-2"), Identifier("document-1")) })
 
@@ -60,6 +62,7 @@ class JdbcWorkflowInstanceRepositoryIntegrationTest {
 
         requireNotNull(restored)
         assertEquals(WorkflowState.APPROVED, restored.state)
+        assertEquals(Identifier("submitter-1"), restored.submittedBy)
         assertEquals("approved", restored.tasks.single().comment)
         assertEquals(Identifier("reviewer-1"), restored.tasks.single().decisionOperatorId)
         assertEquals("审批者一", restored.tasks.single().decisionOperatorName)
@@ -67,15 +70,45 @@ class JdbcWorkflowInstanceRepositoryIntegrationTest {
     }
 
     @Test
-    fun `locks one workflow decision so a second reviewer cannot read a stale aggregate`() {
+    fun `round trips a withdrawn workflow with immutable submitter and unfinished task evidence`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcWorkflowInstanceRepository(Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC))
+        transaction.execute { repository.save(workflow()) }
+
+        val pending = transaction.execute {
+            requireNotNull(repository.findForDecision(Identifier("tenant-1"), Identifier("workflow-1")))
+        }
+        pending.withdraw()
+        transaction.execute { repository.save(pending) }
+
+        val restored = transaction.execute {
+            requireNotNull(repository.findById(Identifier("tenant-1"), Identifier("workflow-1")))
+        }
+        assertEquals(WorkflowState.WITHDRAWN, restored.state)
+        assertEquals(Identifier("submitter-1"), restored.submittedBy)
+        assertEquals(ai.icen.fw.domain.workflow.WorkflowTaskState.PENDING, restored.tasks.single().state)
+        assertNull(
+            transaction.execute {
+                repository.findActiveByDocument(Identifier("tenant-1"), Identifier("document-1"))
+            },
+        )
+    }
+
+    @Test
+    fun `serializes concurrent withdrawals so the loser cannot read a stale pending aggregate`() {
         val repository = JdbcWorkflowInstanceRepository(Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC))
         JdbcApplicationTransaction(dataSource).execute { repository.save(workflow()) }
 
         dataSource.connection.use { firstConnection ->
             firstConnection.autoCommit = false
+            var committed = false
             try {
                 JdbcConnectionContext.withConnection(firstConnection) {
-                    requireNotNull(repository.findForDecision(Identifier("tenant-1"), Identifier("workflow-1")))
+                    val firstWithdrawal = requireNotNull(
+                        repository.findForDecision(Identifier("tenant-1"), Identifier("workflow-1")),
+                    )
+                    firstWithdrawal.withdraw()
+                    repository.save(firstWithdrawal)
                 }
 
                 dataSource.connection.use { secondConnection ->
@@ -94,10 +127,18 @@ class JdbcWorkflowInstanceRepositoryIntegrationTest {
                         secondConnection.rollback()
                     }
                 }
+                firstConnection.commit()
+                committed = true
             } finally {
-                firstConnection.rollback()
+                if (!committed) firstConnection.rollback()
             }
         }
+
+        val losingWithdrawal = JdbcApplicationTransaction(dataSource).execute {
+            requireNotNull(repository.findForDecision(Identifier("tenant-1"), Identifier("workflow-1")))
+        }
+        assertEquals(WorkflowState.WITHDRAWN, losingWithdrawal.state)
+        assertFailsWith<WorkflowWithdrawalConflictException> { losingWithdrawal.withdraw() }
     }
 
     @Test
@@ -195,11 +236,13 @@ class JdbcWorkflowInstanceRepositoryIntegrationTest {
         val repository = JdbcWorkflowInstanceRepository(Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC))
         val workflow = WorkflowInstance(
             Identifier("workflow-long"), Identifier("tenant-1"), Identifier("document-1"), "DOCUMENT_REVIEW",
+            WorkflowState.PENDING,
             tasks = listOf(
                 WorkflowTask(
                     Identifier("task-long"), Identifier("tenant-1"), Identifier("workflow-long"), Identifier(externalId),
                 ),
             ),
+            submittedBy = Identifier(externalId),
         )
         transaction.execute { repository.save(workflow) }
         val pending = transaction.execute {
@@ -213,11 +256,14 @@ class JdbcWorkflowInstanceRepositoryIntegrationTest {
         }
         assertEquals(externalId, restored.tasks.single().assigneeId?.value)
         assertEquals(externalId, restored.tasks.single().decisionOperatorId?.value)
+        assertEquals(externalId, restored.submittedBy?.value)
     }
 
     private fun workflow() = WorkflowInstance(
         Identifier("workflow-1"), Identifier("tenant-1"), Identifier("document-1"), "DOCUMENT_REVIEW",
+        WorkflowState.PENDING,
         tasks = listOf(WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-1"))),
+        submittedBy = Identifier("submitter-1"),
     )
 
     private fun reset(connection: Connection) = connection.use {

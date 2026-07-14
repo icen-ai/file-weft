@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
 
 class V1DocumentLifecycleControllerTest {
     @Test
-    fun `exposes all eight lifecycle routes and nullable bodies select immutable command defaults`() {
+    fun `exposes all nine lifecycle routes and nullable bodies select immutable command defaults`() {
         val calls = mutableListOf<LifecycleCall>()
         val mvc = mockMvc(recordingFacade(calls))
 
@@ -50,20 +50,42 @@ class V1DocumentLifecycleControllerTest {
             .andExpectLifecycleSuccess("document-1")
         mvc.perform(post("$WORKFLOWS/workflow-1/tasks/task-1/approve").header(IDEMPOTENCY_KEY, "approve-1"))
             .andExpectLifecycleSuccess("document-1")
+        mvc.perform(post("$WORKFLOWS/workflow-1/withdraw").header(IDEMPOTENCY_KEY, "withdraw-1"))
+            .andExpectLifecycleSuccess("document-1")
         mvc.perform(post("$WORKFLOWS/workflow-1/tasks/task-1/reject").header(IDEMPOTENCY_KEY, "reject-1"))
             .andExpectLifecycleSuccess("document-1")
 
         assertEquals(
-            listOf("revise", "publish", "offline", "restore", "archive", "submitForReview", "approve", "reject"),
+            listOf(
+                "revise",
+                "publish",
+                "offline",
+                "restore",
+                "archive",
+                "submitForReview",
+                "approve",
+                "withdrawReview",
+                "reject",
+            ),
             calls.map { call -> call.method },
         )
         assertNull(assertIs<PublishDocumentCommand>(calls[1].arguments[1]).deliveryProfileId)
         assertNull(assertIs<SubmitDocumentReviewCommand>(calls[5].arguments[1]).reviewRouteId)
         assertNull(assertIs<ApproveWorkflowTaskCommand>(calls[6].arguments[2]).comment)
         assertNull(assertIs<ApproveWorkflowTaskCommand>(calls[6].arguments[2]).deliveryProfileId)
-        assertNull(assertIs<RejectWorkflowTaskCommand>(calls[7].arguments[2]).comment)
+        assertNull(assertIs<RejectWorkflowTaskCommand>(calls[8].arguments[2]).comment)
         assertEquals(
-            listOf("revise-1", "publish-1", "offline-1", "restore-1", "archive-1", "submit-1", "approve-1", "reject-1"),
+            listOf(
+                "revise-1",
+                "publish-1",
+                "offline-1",
+                "restore-1",
+                "archive-1",
+                "submit-1",
+                "approve-1",
+                "withdraw-1",
+                "reject-1",
+            ),
             calls.map { call -> call.arguments.last() },
         )
     }
@@ -178,7 +200,9 @@ class V1DocumentLifecycleControllerTest {
                 calls += LifecycleCall(invocation.method.name, invocation.arguments.toList())
                 DocumentLifecycleCommandResultDto(
                     documentId = "document-1",
-                    workflowId = if (invocation.method.name in setOf("submitForReview", "approve", "reject")) {
+                    workflowId = if (
+                        invocation.method.name in setOf("submitForReview", "approve", "withdrawReview", "reject")
+                    ) {
                         "workflow-1"
                     } else {
                         null

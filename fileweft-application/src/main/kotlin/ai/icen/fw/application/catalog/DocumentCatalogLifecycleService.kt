@@ -85,6 +85,8 @@ class DocumentCatalogLifecycleService(
     fun rejectReview(workflowId: Identifier, taskId: Identifier, comment: String?): Document =
         reviews.reject(workflowId, taskId, comment, guard)
 
+    fun withdrawReview(workflowId: Identifier): Document = reviews.withdraw(workflowId, guard)
+
     fun publish(documentId: Identifier): Document = publishService.publish(documentId, null, guard)
 
     fun publish(documentId: Identifier, deliveryProfileId: String?): Document =

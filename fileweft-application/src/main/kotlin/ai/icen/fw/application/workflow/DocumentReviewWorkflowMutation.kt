@@ -24,6 +24,14 @@ internal class DocumentReviewDecisionContext(
     val workflowSnapshot: WorkflowInstance,
 )
 
+/** Authorization, catalog evidence and immutable workflow identity for one withdrawal. */
+internal class DocumentReviewWithdrawalContext(
+    val lifecycle: DocumentLifecycleMutationContext,
+    val workflowId: Identifier,
+    val submittedBySnapshot: Identifier?,
+    val authorizedAsSubmitter: Boolean,
+)
+
 /** Local result returned before the enclosing idempotency record is completed. */
 internal class DocumentReviewMutationResult(
     val document: Document,

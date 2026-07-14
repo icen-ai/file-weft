@@ -1,6 +1,8 @@
 package ai.icen.fw.application.document
 
 import ai.icen.fw.application.audit.AuditTrail
+import ai.icen.fw.application.security.ApplicationForbiddenException
+import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.application.transaction.ApplicationTransactionNestingException
 import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
@@ -52,6 +54,155 @@ import java.time.ZoneOffset
 import kotlin.test.assertTrue
 
 class DocumentDraftServiceTest {
+    @Test
+    fun `schema metadata provider runs only after authentication and authorization`() {
+        listOf(
+            null to AuthorizationDecision(true),
+            UserIdentity(Identifier("user-1"), "测试编辑者") to AuthorizationDecision(false, "denied"),
+        ).forEach { (currentUser, decision) ->
+            var providerCalls = 0
+            val storage = RecordingStorage()
+            val service = service(
+                storage = storage,
+                identifiers = listOf("document-1"),
+                userRealmProvider = object : UserRealmProvider {
+                    override fun currentUser(): UserIdentity? = currentUser
+                    override fun findUser(userId: Identifier): UserIdentity? = null
+                },
+                authorization = { decision },
+            )
+
+            val failure = assertThrows(SecurityException::class.java) {
+                service.createWithMetadata(createCommand(), ByteArrayInputStream("content".toByteArray())) {
+                    providerCalls++
+                    mapOf("amount" to "12.5")
+                }
+            }
+
+            if (currentUser == null) {
+                assertTrue(failure is ApplicationUnauthenticatedException)
+            } else {
+                assertTrue(failure is ApplicationForbiddenException)
+            }
+            assertEquals(0, providerCalls)
+            assertTrue(storage.uploads.isEmpty())
+        }
+    }
+
+    @Test
+    fun `schema create uses one trusted tenant snapshot persists asset metadata and omits storage metadata`() {
+        val tenantCalls = mutableListOf<Identifier>()
+        val tenantProvider = object : TenantProvider {
+            private var calls = 0
+            override fun currentTenant(): TenantContext {
+                calls++
+                return TenantContext(Identifier(if (calls == 1) "tenant-1" else "tenant-drift"))
+            }
+        }
+        val storage = RecordingStorage()
+        val assets = RecordingAssets()
+        val service = service(
+            storage = storage,
+            assets = assets,
+            identifiers = listOf("document-1", "file-1", "asset-1", "version-1"),
+            tenantProvider = tenantProvider,
+        )
+
+        service.createWithMetadata(createCommand(), ByteArrayInputStream("content".toByteArray())) { tenantId ->
+            tenantCalls += tenantId
+            mapOf("amount" to "12.5", "metadata.schema-id" to "invoice")
+        }
+
+        assertEquals(listOf(Identifier("tenant-1")), tenantCalls)
+        assertEquals(Identifier("tenant-1"), storage.uploads.single().tenantId)
+        assertTrue(storage.uploads.single().metadata.isEmpty())
+        assertEquals("12.5", assets.saved.single().metadata["amount"])
+        assertEquals("invoice", assets.saved.single().metadata["metadata.schema-id"])
+    }
+
+    @Test
+    fun `schema add-version completely replaces document metadata while preserving host namespaces`() {
+        val existing = draftDocument()
+        val original = FileAsset(
+            existing.assetId,
+            existing.tenantId,
+            Identifier("file-1"),
+            DocumentDraftService.DOCUMENT_ASSET_TYPE,
+            linkedMapOf(
+                DocumentCatalogBinding.METADATA_KEY to "finance",
+                "fileweft.retention" to "legal",
+                "metadata.schema-id" to "legacy-schema",
+                "metadata.schema-version" to "1",
+                "amount" to "10",
+                "obsolete" to "remove-me",
+            ),
+        )
+        val assets = RecordingAssets(original)
+        val storage = RecordingStorage()
+        val service = service(
+            storage = storage,
+            documents = RecordingDocuments(existing),
+            assets = assets,
+            identifiers = listOf("file-2", "version-2"),
+        )
+
+        service.addVersionWithMetadata(
+            existing.id,
+            AddDocumentVersionCommand("2.0", "revised.txt", 7, "text/plain"),
+            ByteArrayInputStream("content".toByteArray()),
+            null,
+        ) { tenantId ->
+            assertEquals(existing.tenantId, tenantId)
+            linkedMapOf(
+                "metadata.schema-id" to "invoice",
+                "metadata.schema-version" to "2",
+                "amount" to "13",
+            )
+        }
+
+        assertTrue(storage.uploads.single().metadata.isEmpty())
+        assertEquals(
+            linkedMapOf(
+                DocumentCatalogBinding.METADATA_KEY to "finance",
+                "fileweft.retention" to "legal",
+                "metadata.schema-id" to "invoice",
+                "metadata.schema-version" to "2",
+                "amount" to "13",
+            ),
+            assets.current?.metadata,
+        )
+    }
+
+    @Test
+    fun `legacy add-version still sends command metadata to storage without mutating the asset`() {
+        val existing = draftDocument()
+        val original = FileAsset(
+            existing.assetId,
+            existing.tenantId,
+            Identifier("file-1"),
+            DocumentDraftService.DOCUMENT_ASSET_TYPE,
+            mapOf("persisted" to "unchanged"),
+        )
+        val assets = RecordingAssets(original)
+        val storage = RecordingStorage()
+        val service = service(
+            storage = storage,
+            documents = RecordingDocuments(existing),
+            assets = assets,
+            identifiers = listOf("file-2", "version-2"),
+        )
+
+        service.addVersion(
+            existing.id,
+            AddDocumentVersionCommand("2.0", "revised.txt", 7, "text/plain", mapOf("request" to "legacy")),
+            ByteArrayInputStream("content".toByteArray()),
+        )
+
+        assertEquals(mapOf("request" to "legacy"), storage.uploads.single().metadata)
+        assertEquals(mapOf("persisted" to "unchanged"), assets.current?.metadata)
+        assertTrue(assets.saved.isEmpty())
+    }
+
     @Test
     fun `rejects create and add-version inside an active transaction before all side effects`() {
         val storage = RecordingStorage()
@@ -713,12 +864,16 @@ class DocumentDraftServiceTest {
         metrics: FileWeftMetrics? = null,
         authorization: (AuthorizationRequest) -> AuthorizationDecision = { AuthorizationDecision(true) },
         identifierGenerator: IdentifierGenerator = SequentialIdentifiers(identifiers),
-    ): DocumentDraftService = DocumentDraftService(
-        tenantProvider = object : TenantProvider { override fun currentTenant() = TenantContext(Identifier("tenant-1")) },
-        userRealmProvider = object : UserRealmProvider {
+        tenantProvider: TenantProvider = object : TenantProvider {
+            override fun currentTenant() = TenantContext(Identifier("tenant-1"))
+        },
+        userRealmProvider: UserRealmProvider = object : UserRealmProvider {
             override fun currentUser() = UserIdentity(Identifier("user-1"), "测试编辑者")
             override fun findUser(userId: Identifier): UserIdentity? = null
         },
+    ): DocumentDraftService = DocumentDraftService(
+        tenantProvider = tenantProvider,
+        userRealmProvider = userRealmProvider,
         authorizationProvider = object : AuthorizationProvider {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = authorization(request)
         },

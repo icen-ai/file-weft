@@ -4,6 +4,7 @@ enum class WorkflowState {
     PENDING,
     APPROVED,
     REJECTED,
+    WITHDRAWN,
 }
 
 enum class WorkflowTaskState {

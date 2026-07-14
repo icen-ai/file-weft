@@ -2,6 +2,7 @@ package ai.icen.fw.application.catalog
 
 import ai.icen.fw.application.document.CreateDocumentDraftCommand
 import ai.icen.fw.application.document.DocumentDraftService
+import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
 import ai.icen.fw.spi.catalog.DocumentCatalogBinding
 import java.io.InputStream
@@ -40,6 +41,31 @@ class DocumentCatalogDraftService(
         metadata[DocumentCatalogBinding.METADATA_KEY] = folder.id
         validateStoredMetadata(metadata)
         return drafts.create(command.copy(metadata = metadata), content)
+    }
+
+    /**
+     * Schema-aware creation keeps both authorization boundaries ahead of
+     * schema resolution: the host folder ACL is checked here and the base
+     * document action is checked by [DocumentDraftService] before invoking the
+     * provider. The verified folder binding is then added to the normalized
+     * metadata in the same persistence operation as the draft.
+     */
+    @JvmSynthetic
+    internal fun createInFolderWithMetadata(
+        command: CreateDocumentDraftCommand,
+        folderId: String,
+        content: InputStream,
+        metadataProvider: (Identifier) -> Map<String, String>,
+    ): Document {
+        val folder = catalogAccess.requireFolderForDocumentCreation(folderId)
+        return drafts.createWithMetadata(command, content) { tenantId ->
+            val metadata = LinkedHashMap(metadataProvider(tenantId))
+            require(metadata.keys.none(::isReservedMetadataKey)) {
+                "Schema metadata must not use a FileWeft-reserved namespace."
+            }
+            metadata[DocumentCatalogBinding.METADATA_KEY] = folder.id
+            metadata
+        }
     }
 
     private fun sanitizeCallerMetadata(source: Map<String, String>): LinkedHashMap<String, String> {

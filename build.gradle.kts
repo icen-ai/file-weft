@@ -21,13 +21,15 @@ plugins {
 }
 
 group = "ai.icen"
-version = providers.gradleProperty("fileweftVersion").orElse("0.0.2-SNAPSHOT").get()
+version = providers.gradleProperty("fileweftVersion").orElse("0.0.3-SNAPSHOT").get()
 
 val publishableModuleNames = setOf(
     "fileweft-core",
     "fileweft-spi",
     "fileweft-domain",
     "fileweft-application",
+    "fileweft-metadata-api",
+    "fileweft-metadata-runtime",
     "fileweft-web-api",
     "fileweft-web-runtime",
     "fileweft-web-spring-boot2-starter",
@@ -424,6 +426,7 @@ val expectedFileWeftMigrationResources = listOf(
     "V026__persist_workflow_decision_evidence.sql",
     "V027__stabilize_worker_claim_order.sql",
     "V028__enforce_binary_identifier_collation.sql",
+    "V029__persist_workflow_submitter.sql",
 ).flatMap { migration ->
     fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
 }
@@ -1187,7 +1190,7 @@ gradle.projectsEvaluated {
                 val missingSources = expected - sourceFiles.keys
                 val unexpectedSources = sourceFiles.keys - expected
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
-                    "FileWeft migration source inputs differ from the reviewed V001-V028 set; " +
+                        "FileWeft migration source inputs differ from the reviewed V001-V029 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
                 }
                 require(archive.isFile) { "FileWeft persistence JAR was not created: ${archive.absolutePath}" }
@@ -1210,7 +1213,7 @@ gradle.projectsEvaluated {
                     val missing = expected - actual
                     val unexpected = actual - expected
                     require(missing.isEmpty() && unexpected.isEmpty()) {
-                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V028 set; " +
+                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V029 set; " +
                             "missing=$missing, unexpected=$unexpected."
                     }
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }

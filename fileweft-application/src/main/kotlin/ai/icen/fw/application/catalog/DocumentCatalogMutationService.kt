@@ -33,6 +33,14 @@ class DocumentCatalogMutationService(
         content: InputStream,
     ): Document = drafts.addVersion(documentId, command, content, guard)
 
+    @JvmSynthetic
+    internal fun addVersionWithMetadata(
+        documentId: Identifier,
+        command: AddDocumentVersionCommand,
+        content: InputStream,
+        metadataProvider: (Identifier) -> Map<String, String>,
+    ): Document = drafts.addVersionWithMetadata(documentId, command, content, guard, metadataProvider)
+
     fun rename(documentId: Identifier, title: String): Document =
         drafts.rename(documentId, title, guard)
 }

@@ -36,6 +36,54 @@ class WorkflowInstanceTest {
     }
 
     @Test
+    fun `withdraws an unfinished workflow while retaining submitter and task decision evidence`() {
+        val submittedBy = Identifier("submitter-1")
+        val original = WorkflowInstance(
+            Identifier("workflow-1"), Identifier("tenant-1"), Identifier("document-1"), "DUAL_REVIEW",
+            tasks = listOf(
+                WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-1")),
+                WorkflowTask(Identifier("task-2"), Identifier("tenant-1"), Identifier("workflow-1"), Identifier("reviewer-2")),
+            ),
+        )
+        original.approve(Identifier("task-1"), Identifier("reviewer-1"), "审批人甲", "approved")
+        val workflow = WorkflowInstance(
+            original.id,
+            original.tenantId,
+            original.documentId,
+            original.workflowType,
+            original.state,
+            original.tasks,
+            submittedBy,
+        )
+
+        workflow.withdraw()
+
+        assertEquals(WorkflowState.WITHDRAWN, workflow.state)
+        assertEquals(submittedBy, workflow.submittedBy)
+        assertEquals(
+            listOf(WorkflowTaskState.APPROVED, WorkflowTaskState.PENDING),
+            workflow.tasks.map { it.state },
+        )
+        assertEquals(Identifier("reviewer-1"), workflow.tasks.first().decisionOperatorId)
+        assertEquals("approved", workflow.tasks.first().comment)
+        assertFailsWith<WorkflowWithdrawalConflictException> { workflow.withdraw() }
+    }
+
+    @Test
+    fun `completed workflows cannot be withdrawn and legacy constructor keeps an unknown submitter`() {
+        val approved = workflow().also {
+            it.approve(Identifier("task-1"), Identifier("reviewer-1"))
+        }
+        val rejected = workflow().also {
+            it.reject(Identifier("task-1"), Identifier("reviewer-1"))
+        }
+
+        assertEquals(null, approved.submittedBy)
+        assertFailsWith<WorkflowWithdrawalConflictException> { approved.withdraw() }
+        assertFailsWith<WorkflowWithdrawalConflictException> { rejected.withdraw() }
+    }
+
+    @Test
     fun `keeps a parallel workflow pending until every task is approved including after reload`() {
         val workflow = WorkflowInstance(
             Identifier("workflow-1"), Identifier("tenant-1"), Identifier("document-1"), "DUAL_REVIEW",

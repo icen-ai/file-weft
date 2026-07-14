@@ -150,6 +150,8 @@ class JdbcWorkflowQueryRepositoryIntegrationTest {
         insertTask("task-a", "tenant-a", "workflow-z", null, "APPROVED", 705, 706, "secret-a")
         insertWorkflow("workflow-y", "tenant-a", "document-history", "APPROVED", 700, 710)
         insertTask("task-y", "tenant-a", "workflow-y", null, "APPROVED", 705, 706)
+        insertWorkflow("workflow-withdrawn", "tenant-a", "document-history", "WITHDRAWN", 650, 660)
+        insertTask("task-withdrawn", "tenant-a", "workflow-withdrawn", "reviewer-a", "PENDING", 655, 656)
         insertWorkflow("workflow-old", "tenant-a", "document-history", "REJECTED", 600, 610)
         insertTask("task-old", "tenant-a", "workflow-old", "reviewer-a", "REJECTED", 605, 606, "private comment")
 
@@ -188,6 +190,14 @@ class JdbcWorkflowQueryRepositoryIntegrationTest {
                 scope,
             )
         }
+        val fourth = transaction {
+            repository.findDocumentWorkflowPage(
+                Identifier("tenant-a"),
+                Identifier("document-history"),
+                DocumentWorkflowPageRequest(requireNotNull(third).nextCursor, 1),
+                scope,
+            )
+        }
         val firstPage = requireNotNull(first)
         val secondPage = requireNotNull(second)
 
@@ -197,9 +207,12 @@ class JdbcWorkflowQueryRepositoryIntegrationTest {
         assertEquals(700, firstPage.nextCursor?.createdTime)
         assertEquals("workflow-z", firstPage.nextCursor?.id?.value)
         assertEquals(listOf("workflow-y"), secondPage.items.map { it.id.value })
-        assertEquals(listOf("workflow-old"), third?.items?.map { it.id.value })
-        assertEquals(WorkflowState.REJECTED, third?.items?.single()?.state)
-        assertNull(third?.nextCursor)
+        assertEquals(listOf("workflow-withdrawn"), third?.items?.map { it.id.value })
+        assertEquals(WorkflowState.WITHDRAWN, third?.items?.single()?.state)
+        assertEquals(listOf("task-withdrawn"), third?.items?.single()?.tasks?.map { it.id.value })
+        assertEquals(listOf("workflow-old"), fourth?.items?.map { it.id.value })
+        assertEquals(WorkflowState.REJECTED, fourth?.items?.single()?.state)
+        assertNull(fourth?.nextCursor)
     }
 
     @Test

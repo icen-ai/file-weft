@@ -59,13 +59,14 @@ internal class DocumentLifecycleMutationContext private constructor(
             documentId: Identifier,
             action: String,
             guard: DocumentLifecycleMutationGuard?,
+            guardAction: String = action,
         ): DocumentLifecycleMutationContext = DocumentLifecycleMutationContext(
             tenantId = tenantId,
             operator = operator,
             documentId = documentId,
             action = action,
             guard = guard,
-            permit = guard?.prepareLifecycle(tenantId, operator, documentId, action),
+            permit = guard?.prepareLifecycle(tenantId, operator, documentId, guardAction),
         )
     }
 

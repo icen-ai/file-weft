@@ -53,6 +53,75 @@ import kotlin.test.assertTrue
 
 class DocumentCatalogMutationServiceTest {
     @Test
+    fun `schema add-version replaces document metadata in the locked asset and preserves host namespaces`() {
+        val fixture = Fixture(
+            initialMetadata = linkedMapOf(
+                DocumentCatalogBinding.METADATA_KEY to SOURCE_FOLDER_ID,
+                "fileweft.retention" to "legal",
+                "metadata.schema-id" to "legacy",
+                "metadata.schema-version" to "1",
+                "amount" to "10",
+                "obsolete" to "remove-me",
+            ),
+        )
+        val providerTenants = mutableListOf<Identifier>()
+
+        val updated = fixture.service.addVersionWithMetadata(
+            fixture.document.id,
+            versionCommand(),
+            content(),
+        ) { tenantId ->
+            providerTenants += tenantId
+            linkedMapOf(
+                "metadata.schema-id" to "invoice",
+                "metadata.schema-version" to "2",
+                "amount" to "13",
+            )
+        }
+
+        assertEquals("1.1", updated.versions.last().versionNumber)
+        assertEquals(listOf(TENANT_ID), providerTenants)
+        assertTrue(fixture.storage.uploads.single().metadata.isEmpty())
+        assertEquals(
+            linkedMapOf(
+                DocumentCatalogBinding.METADATA_KEY to SOURCE_FOLDER_ID,
+                "fileweft.retention" to "legal",
+                "metadata.schema-id" to "invoice",
+                "metadata.schema-version" to "2",
+                "amount" to "13",
+            ),
+            fixture.assets.asset.metadata,
+        )
+        assertEquals(fixture.assets.asset, fixture.assets.saved.single())
+    }
+
+    @Test
+    fun `schema add-version does not invoke metadata for forbidden or catalog-invisible callers`() {
+        listOf(
+            Fixture(authorized = false),
+            Fixture(visibleFolderIds = emptySet()),
+            Fixture(authenticated = false),
+        ).forEach { fixture ->
+            var providerCalls = 0
+
+            assertThrows<RuntimeException> {
+                fixture.service.addVersionWithMetadata(
+                    fixture.document.id,
+                    versionCommand(),
+                    content(),
+                ) {
+                    providerCalls++
+                    mapOf("amount" to "private")
+                }
+            }
+
+            assertEquals(0, providerCalls)
+            assertTrue(fixture.storage.uploads.isEmpty())
+            assertNoMutationWasPersisted(fixture)
+        }
+    }
+
+    @Test
     fun `rejects an invisible source before upload or mutation persistence`() {
         val fixture = Fixture(visibleFolderIds = emptySet())
 
@@ -409,12 +478,17 @@ class DocumentCatalogMutationServiceTest {
         authorized: Boolean = true,
         authenticated: Boolean = true,
         mutationCapable: Boolean = true,
+        initialMetadata: Map<String, String>? = null,
     ) {
         val events = mutableListOf<String>()
         val transaction = TrackingTransaction(events)
         val document = document()
         val documents = RecordingDocuments(document, transaction, events)
-        val assets = RecordingAssets(asset(document, rawFolderId), transaction, events)
+        val assets = RecordingAssets(
+            initialMetadata?.let { metadata -> asset(document, metadata) } ?: asset(document, rawFolderId),
+            transaction,
+            events,
+        )
         private val assetRepository: FileAssetRepository = if (mutationCapable) {
             assets
         } else {
@@ -710,6 +784,14 @@ class DocumentCatalogMutationServiceTest {
             assetType = "DOCUMENT",
             metadata = rawFolderId?.let { folderId -> mapOf(DocumentCatalogBinding.METADATA_KEY to folderId) }
                 ?: emptyMap(),
+        )
+
+        fun asset(document: Document, metadata: Map<String, String>): FileAsset = FileAsset(
+            id = document.assetId,
+            tenantId = document.tenantId,
+            fileObjectId = Identifier("file-1"),
+            assetType = "DOCUMENT",
+            metadata = metadata,
         )
     }
 }

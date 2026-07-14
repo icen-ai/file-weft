@@ -78,6 +78,8 @@ class Document(
                 LifecycleState.PENDING_REVIEW
             }
 
+            LifecycleCommand.WITHDRAW_REVIEW ->
+                nextState(command, LifecycleState.PENDING_REVIEW, LifecycleState.DRAFT)
             LifecycleCommand.APPROVE -> nextState(command, LifecycleState.PENDING_REVIEW, LifecycleState.PUBLISHING).also {
                 deliveryGeneration++
             }

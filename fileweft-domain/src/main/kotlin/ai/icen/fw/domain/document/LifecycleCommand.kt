@@ -11,4 +11,5 @@ enum class LifecycleCommand {
     ARCHIVE,
     OFFLINE,
     RESTORE_DRAFT,
+    WITHDRAW_REVIEW,
 }
