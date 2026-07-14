@@ -441,6 +441,11 @@ test("CodeWiki is manual, source-curated, pinned, serialized, and verified", () 
   ]) {
     assert.ok(codeWikiConfiguration.includes(expected), `missing CodeWiki contract: ${expected}`);
   }
+  assert.doesNotMatch(
+    codeWikiConfiguration,
+    /git sparse-checkout init\b/u,
+    "sparse-checkout set must bootstrap before the .ci rules file can be pruned",
+  );
   assert.match(codeWikiConfiguration, /key: fileweft-knowledge-base/u);
   assert.match(knowledgeConfiguration, /key: fileweft-knowledge-base/u);
   assert.doesNotMatch(codeWikiConfiguration, /cancel-in-(?:wait|progress)/u);
@@ -513,6 +518,7 @@ test("the CodeWiki sparse rules retain production evidence and remove superseded
   const repository = mkdtempSync(join(tmpdir(), "fileweft-codewiki-sparse-"));
   const files = {
     "AGENTS.md": "current decisions\n",
+    ".ci/codewiki-sparse-checkout": codeWikiSparseCheckout,
     ".ci/scripts/verify-codewiki-knowledge.mjs": "// verifier\n",
     ".ai/manual.md": "historical blueprint\n",
     "fileweft-agent/src/main/kotlin/LegacyAgent.kt": "class LegacyAgent\n",
@@ -539,13 +545,13 @@ test("the CodeWiki sparse rules retain production evidence and remove superseded
       "-m",
       "fixture",
     ]);
-    runGit(repository, ["sparse-checkout", "init", "--no-cone"]);
     runGit(repository, ["sparse-checkout", "set", "--no-cone", "--stdin"], {
-      input: codeWikiSparseCheckout,
+      input: readFileSync(join(repository, ".ci/codewiki-sparse-checkout"), "utf8"),
     });
 
     for (const retained of [
       "AGENTS.md",
+      ".ci/codewiki-sparse-checkout",
       ".ci/scripts/verify-codewiki-knowledge.mjs",
       "fileweft-core/src/main/kotlin/Identifier.kt",
       "fileweft-docs/pages/zh/guide.md",
