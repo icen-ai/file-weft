@@ -32,10 +32,10 @@ The `FileWeftPlugin` interface exposes every extension point. FileWeft calls eac
 | `outboxEventHandlers()` | Async reactions | React to lifecycle events outside the request thread |
 | `taskHandlers()` | Background jobs | Bulk migration, cleanup, or import tasks |
 | `reviewRouteProviders()` | Approval routing | Tenant-specific review workflows |
-| `agents()` / `agentTaskTriggers()` | Compatibility only | Not registered or included in the default 0.0.2 plugin inventory |
+| `agents()` / `agentTaskTriggers()` | Compatibility only | Not registered or included in the default 0.0.2 or 0.0.3 plugin inventory |
 
 > [!CAUTION]
-> The Agent getters remain only to preserve `FileWeftPlugin` source and binary compatibility. 0.0.2 does not provide Agent product capability, and new plugins must not build on these getters. A future design may be reassessed only after 1.0.0 has been released, with no promised delivery version.
+> The Agent getters remain only to preserve `FileWeftPlugin` source and binary compatibility. Neither 0.0.2 nor 0.0.3 provides Agent product capability, and new plugins must not build on these getters. A future design may be reassessed only after 1.0.0 has been released, with no promised delivery version.
 
 > **NOTE**  
 > Contribution getters are called during registry construction. Do not perform network calls, database writes, or other business side effects inside them. Network calls belong in the connector, handler, or Doctor method that FileWeft invokes later.
@@ -47,7 +47,7 @@ Add the SPI dependency:
 ```kotlin
 // build.gradle.kts
 dependencies {
-    compileOnly("ai.icen:fileweft-spi:0.0.2")
+    compileOnly("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 

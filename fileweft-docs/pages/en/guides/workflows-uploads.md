@@ -81,7 +81,7 @@ The completion receipt's `fileAssetId` identifies the persisted asset. The curre
 OCR, virus scanning, host-owned extraction, and custom diagnostics belong in durable `fw_task` handlers. They run outside the request thread and are retried with leases.
 
 > [!CAUTION]
-> `FileWeftTaskHandler` is the generic durable-task capability in 0.0.2; it is not FileWeft Agent. The `fileweft-agent` artifact, Agent SPI/ABI and related migrations remain only for compatibility, and the default product surface does not register or expose Agent.
+> `FileWeftTaskHandler` is the current generic durable-task capability; it is not FileWeft Agent. The `fileweft-agent` artifact, Agent SPI/ABI and related migrations remain only for compatibility, and the 0.0.2 and 0.0.3 default product surfaces do not register or expose Agent.
 
 ```kotlin
 @Component

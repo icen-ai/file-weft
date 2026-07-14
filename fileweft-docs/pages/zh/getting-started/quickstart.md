@@ -14,7 +14,7 @@ format: "markdown"
 这页带你完成一个自包含的本地环境：
 
 1. 用 Docker 启动 PostgreSQL；
-2. 在 Spring Boot 3 项目中引入已完成远端验证的 FileWeft 0.0.2 坐标；
+2. 在 Spring Boot 3 项目中引入已完成远端验证的 FileWeft 0.0.3 坐标；
 3. 提供 FileWeft 要求的三个 SPI bean；
 4. 启用开发 fallback；
 5. 通过正式的 `/fileweft/v1/documents` 端点上传第一个文件。
@@ -56,8 +56,8 @@ plugins {
 dependencies {
     // 宿主持有 DataSource 与连接池；此依赖让 Boot 从 spring.datasource.* 自动创建它们。
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```

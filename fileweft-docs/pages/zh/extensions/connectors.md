@@ -117,7 +117,7 @@ fileweft:
 ```kotlin
 // build.gradle.kts
 dependencies {
-    compileOnly("ai.icen:fileweft-spi:0.0.2")
+    compileOnly("ai.icen:fileweft-spi:0.0.3")
 }
 ```
 

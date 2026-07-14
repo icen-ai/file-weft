@@ -39,9 +39,9 @@ Runner 已验证 Spring Boot 2 管理的 Flyway 8.5.13、FileWeft 自身的 Flyw
 
 `fileweft.persistence.kingbase-flyway-compatibility-enabled` 默认 `true`（上方 YAML 使用嵌套形式），只适配 Spring Boot 已选择给 Flyway 的 DataSource；应用主 DataSource 仍是真实 Kingbase DataSource。只有宿主提供并验证了等价 Kingbase/Flyway 集成时才可关闭。Spring Boot 2 的 Kingbase 宿主必须为 `spring.flyway.locations` 配置明确路径，不要使用会在 FileWeft customizer 前按原始 JDBC URL 解析的 `{vendor}` 占位符。
 
-## KingbaseES 0.0.2 快速接入
+## KingbaseES 0.0.3 快速接入
 
-FileWeft `0.0.2` 可从 CNB 公共 Maven 仓库匿名解析。Kingbase JDBC 驱动使用 Maven Central（或企业受控镜像）中的锁定版本；Spring Boot 2 与 3 只能选择其中一条：
+只有[安装文档](../getting-started/installation.md)要求的标签发布门禁、受保护主干约束和匿名冷缓存回读成功后，才可从 CNB 公共 Maven 仓库消费 FileWeft `0.0.3`。Kingbase JDBC 驱动使用 Maven Central（或企业受控镜像）中的锁定版本；Spring Boot 2 与 3 只能选择其中一条：
 
 > [!IMPORTANT]
 > Spring Boot 2 宿主还必须按[安装文档](../getting-started/installation.md)把 Kotlin 对齐到 `2.1.21`；Boot 2 BOM 默认的 `1.6.21` 不是 FileWeft 运行时合同。
@@ -55,8 +55,8 @@ repositories {
 // Spring Boot 2 宿主
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot2-starter:0.0.2")
-    // implementation("ai.icen:fileweft-web-spring-boot2-starter:0.0.2") // 需要正式 HTTP API 时启用
+    implementation("ai.icen:fileweft-spring-boot2-starter:0.0.3")
+    // implementation("ai.icen:fileweft-web-spring-boot2-starter:0.0.3") // 需要正式 HTTP API 时启用
     runtimeOnly("cn.com.kingbase:kingbase8:8.6.1")
 }
 ```
@@ -70,8 +70,8 @@ repositories {
 // Spring Boot 3 宿主
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    // implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2") // 需要正式 HTTP API 时启用
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    // implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3") // 需要正式 HTTP API 时启用
     runtimeOnly("cn.com.kingbase:kingbase8:8.6.1")
 }
 ```
@@ -124,7 +124,8 @@ fileweft:
 
 - JDBC 驱动是 `cn.com.kingbase:kingbase8:8.6.1`，驱动类是 `com.kingbase8.Driver`；
 - schema 已预建，迁移账号与运行账号执行 `SELECT current_schema()` 都精确返回 `fileweft`；
-- `fileweft_schema_history` 已记录成功的 V001–V028 链，随后运行节点能以 `validate` 启动；
+- `fileweft_schema_history` 已记录成功的 V001–V029 链，随后运行节点能以 `validate` 启动；
+- V029 前已经关闭审批写入并停止旧节点；回滚时保留 V029 列和已记录的提交者证据；
 - 迁移与运行权限分离，运行账号只获得业务 DML 和校验读取所需权限；
 - `KINGBASE_USERNAME`、`KINGBASE_PASSWORD` 来自部署密钥系统。禁止把数据库密码写入 YAML、Gradle 文件或版本库。
 

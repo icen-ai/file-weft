@@ -93,8 +93,8 @@ FileWeft does not choose the host's connection pool. This is the minimal recomme
 ```kotlin
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```

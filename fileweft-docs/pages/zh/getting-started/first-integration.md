@@ -93,8 +93,8 @@ FileWeft 不选择宿主连接池。下面是 Boot 3 单 DataSource 宿主的最
 ```kotlin
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.2")
-    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.2")
+    implementation("ai.icen:fileweft-spring-boot3-starter:0.0.3")
+    implementation("ai.icen:fileweft-web-spring-boot3-starter:0.0.3")
     runtimeOnly("org.postgresql:postgresql")
 }
 ```

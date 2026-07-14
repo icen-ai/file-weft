@@ -28,15 +28,19 @@ const releaseScopePages = [
   "../docs/implementation-status.md",
   "../docs/releases/0.0.2.md",
 ];
-const releaseIdentityPages = [
-  "../README.md",
+const historicalReleaseIdentityPages = [
   "../docs/implementation-status.md",
   "../docs/public-web-api-v1.md",
   "../docs/releases/0.0.2.md",
-  "pages/en/getting-started/installation.md",
-  "pages/zh/getting-started/installation.md",
   "pages/en/project/release-0-0-2-development.md",
   "pages/zh/project/release-0-0-2-development.md",
+];
+const currentReleaseIdentityPages = [
+  "../README.md",
+  "pages/en/getting-started/installation.md",
+  "pages/zh/getting-started/installation.md",
+  "pages/en/project/release-0-0-3.md",
+  "pages/zh/project/release-0-0-3.md",
   "pages/en/project/faq.md",
   "pages/zh/project/faq.md",
 ];
@@ -99,6 +103,8 @@ test("every navigation group has ordered bilingual pages with markdown sources",
       const source = await read(meta.file);
       const frontmatter = parseFrontmatter(source);
       assert.equal(frontmatter.route, route, `${route} ${locale} frontmatter route`);
+      assert.equal(frontmatter.group, entry.group, `${route} ${locale} frontmatter group`);
+      assert.equal(Number(frontmatter.order), entry.order, `${route} ${locale} frontmatter order`);
       assert.equal(frontmatter.locale, locale, `${route} ${locale} frontmatter locale`);
       assert.equal(frontmatter.nav, meta.nav, `${route} ${locale} frontmatter nav`);
       assert.equal(frontmatter.title, meta.title, `${route} ${locale} frontmatter title`);
@@ -124,6 +130,9 @@ test("site shell uses local assets and exposes accessible controls", async () =>
   const externalAsset = /(?:src|href)="https?:\/\//gi;
   assert.doesNotMatch(html, externalAsset, "runtime assets must not use a CDN");
   assert.doesNotMatch(html, /javascript:/i);
+  assert.match(html, /DOCUMENTATION \/ 0\.0\.3/u);
+  const packageJson = JSON.parse(await read("package.json"));
+  assert.equal(packageJson.version, "0.0.3");
 });
 
 test("interaction script includes hash routing, search shortcuts and copy support", async () => {
@@ -239,8 +248,8 @@ test("0.0.2 scope defers catalog HTTP and Agent without a promised version", asy
   }
 });
 
-test("0.0.2 release identity is conditional on protected remote evidence without stale development status", async () => {
-  for (const page of releaseIdentityPages) {
+test("0.0.2 historical release identity retains its protected remote evidence", async () => {
+  for (const page of historicalReleaseIdentityPages) {
     const source = await read(page);
     assert.match(source, /0\.0\.2/u, `${page} release identity`);
     assert.match(source, /(?:protected[^\n]{0,40}tag|受保护[^\n]{0,40}标签)/iu, `${page} protected tag evidence`);
@@ -258,6 +267,26 @@ test("0.0.2 release identity is conditional on protected remote evidence without
       source,
       /0\.0\.2-SNAPSHOT[^\n]{0,80}(?:unreleased|under development|not a release|尚未发布|正在开发|不是正式版)/iu,
       `${page} must not advertise 0.0.2 as an unreleased development line`,
+    );
+  }
+});
+
+test("0.0.3 current release identity remains conditional on guarded-tag and protected-main evidence", async () => {
+  for (const page of currentReleaseIdentityPages) {
+    const source = await read(page);
+    assert.match(source, /0\.0\.3/u, `${page} release identity`);
+    assert.match(source, /(?:guarded[^\n]{0,40}tag|受发布门禁约束[^\n]{0,40}标签)/iu, `${page} guarded tag evidence`);
+    assert.match(source, /(?:protected[^\n]{0,40}main|受保护[^\n]{0,40}(?:main|主干))/iu, `${page} protected main evidence`);
+    assert.match(
+      source,
+      /(?:anonymous[^\n]{0,80}(?:cold-cache|cold cache|resolution|resolves)|匿名[^\n]{0,80}(?:冷缓存|解析|回读))/iu,
+      `${page} anonymous remote evidence`,
+    );
+    assert.match(source, /19/u, `${page} complete 19-coordinate inventory`);
+    assert.doesNotMatch(
+      source,
+      /0\.0\.3-SNAPSHOT[^\n]{0,80}(?:released|stable|正式版|稳定版)/iu,
+      `${page} must not advertise a SNAPSHOT as released`,
     );
   }
 });
@@ -334,7 +363,7 @@ test("KingbaseES onboarding is version-accurate, copyable and fail-closed", asyn
 
   for (const page of kingbaseOnboardingPages) {
     const source = await read(page);
-    const fileWeftVersion = page === "../docs/production-operations.md" ? "0.0.3" : "0.0.2";
+    const fileWeftVersion = "0.0.3";
     const requiredTokens = [
       ...sharedRequiredTokens,
       `ai.icen:fileweft-spring-boot2-starter:${fileWeftVersion}`,

@@ -32,10 +32,10 @@ starter → application → domain → core
 | 连接器 | `FileConnector` | 幂等的下游同步、撤回与健康检查 |
 | Doctor | `DoctorChecker` | 有界、无副作用的诊断 |
 | 任务 | `FileWeftTaskHandler` | 通用持久任务 Handler |
-| 遗留 Agent ABI | `FileWeftAgent`、`AgentTaskTrigger` | 仅兼容保留；0.0.2 默认不注册或暴露 |
+| 遗留 Agent ABI | `FileWeftAgent`、`AgentTaskTrigger` | 仅兼容保留；0.0.2 与 0.0.3 默认都不注册或暴露 |
 
 > [!CAUTION]
-> `fileweft-agent` 和 Agent SPI 类型的存在不代表 0.0.2 提供 Agent 产品能力。它们只用于源码/二进制兼容；新集成应使用当前通用 SPI（例如 `FileWeftTaskHandler`、`FileConnector`），而不是遗留 Agent ABI。
+> `fileweft-agent` 和 Agent SPI 类型的存在不代表 0.0.2 或 0.0.3 提供 Agent 产品能力。它们只用于源码/二进制兼容；新集成应使用当前通用 SPI（例如 `FileWeftTaskHandler`、`FileConnector`），而不是遗留 Agent ABI。
 
 ## 身份与租户
 

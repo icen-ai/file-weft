@@ -45,7 +45,7 @@ fileweft:
 
 ## Current migration and Flyway matrix
 
-The `v0.0.2` source contains all 28 migrations, V001–V028, for PostgreSQL, MySQL and KingbaseES. Once the protected tag publication succeeds, all three V001–V028 sets are immutable release resources. Historically, `v0.0.1` contained only PostgreSQL V001–V025; MySQL, KingbaseES and V026–V028 first enter the release contract in `v0.0.2`.
+The current 0.0.3 line contains all 29 migrations, V001–V029, for PostgreSQL, MySQL and KingbaseES. V029 only appends nullable workflow submitter evidence; it does not rewrite an earlier resource or checksum. The `v0.0.2` V001–V028 sets remain immutable release resources. Historically, `v0.0.1` contained only PostgreSQL V001–V025; MySQL, KingbaseES and V026–V028 first entered the release contract in `v0.0.2`.
 
 `FlywayMigrationRunner` is verified against three host-resolved runtime sets:
 
@@ -145,11 +145,11 @@ curl -sf -X POST \
 **Can I skip the migration job and let API nodes migrate on startup?**
 No. Long-running API nodes must run in `validate` mode. Schema changes require a controlled, one-shot migration job.
 
-**When is 0.0.2 safe to consume?**
-Use `ai.icen:*:0.0.2` only after the protected tag pipeline and anonymous cold-cache resolution of the exact remote artifacts succeed. Do not infer remote availability from source or a tag name.
+**When is 0.0.3 safe to consume?**
+Use `ai.icen:*:0.0.3` only after the guarded `v0.0.3` tag matches the protected remote `main` HEAD, every required lane for that exact commit succeeds, and anonymous cold-cache readback covers all 19 coordinates plus the Boot 2, Boot 3, and pure-SPI consumers. Do not infer remote availability from source, this page, a tag name, or partial green evidence.
 
 ## Next steps
 
 - Deploy with separate runtime roles: [Production deployment](deployment)
 - Monitor after release: [Doctor & observability](doctor-observability)
-- Read the current release contract: [Release 0.0.2](../project/release-0-0-2-development), and retain [Release 0.0.1](../project/release-0-0-1) for historical upgrade boundaries.
+- Read the current release contract: [Release 0.0.3](../project/release-0-0-3), and retain [Release 0.0.2](../project/release-0-0-2-development) and [Release 0.0.1](../project/release-0-0-1) for historical upgrade boundaries.

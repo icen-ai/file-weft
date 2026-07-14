@@ -1,7 +1,7 @@
 ---
 route: "project/roadmap"
 group: "project"
-order: 5
+order: 6
 locale: "zh"
 nav: "开发待办"
 title: "用证据推进的开发路线图"
@@ -24,7 +24,29 @@ format: "html"
 
 <aside class="callout warning" data-mark="!"><div><strong>证据只对被验证版本有效</strong><p>不能把另一种数据库、另一个 Boot 代际、厂商模拟器或旧版本的成功结果挪用为本版本的完成声明。证据不能复现时，该项仍是待办。</p></div></aside>
 
-<h2>0.0.2 · 发布合同</h2>
+<h2>0.0.3 · 当前候选合同</h2>
+
+<p>0.0.3 在不削弱 0.0.2 已建立的兼容与发布证据前提下，新增强类型 metadata schema 与完整的待审流程撤回链路。</p>
+
+<table class="comparison-table">
+<thead><tr><th>交付内容</th><th>验收证据</th><th>禁止冒充完成的边界</th></tr></thead>
+<tbody>
+<tr>
+<td>Java 友好的 metadata API/runtime 模块、精确版本 schema 解析、校验、安全公开投影与 Doctor 覆盖。</td>
+<td>19 模块发布库存同时包含两个 metadata 制品；聚焦单元/契约测试、两代 Boot、公开 API 投影测试、制品 metadata/SBOM 校验和匿名消费者都解析同一精确发布身份。</td>
+<td>Kotlin-only API、无版本 schema 选择、仅内部校验、不安全投影、缺少发布模块或开发者热缓存都不能证明完成。</td>
+</tr>
+<tr>
+<td>待审文档流程的幂等撤回，以及 PostgreSQL、MySQL、KingbaseES 的 V029 工作流提交者证据。</td>
+<td>Application、Persistence、Boot 2/3 和正式 HTTP 测试覆盖授权、可信提交者身份、幂等重放与终态拒绝；每种数据库都在独立真实集成 lane 运行不可改写的 V001–V029 链。</td>
+<td>不得从请求推断提交者、改写 V001–V028、用一种方言结果代替另一种、暴露 Agent，或用源码、标签名及部分绿灯宣称发布完成。</td>
+</tr>
+</tbody>
+</table>
+
+<aside class="callout" data-mark="候选"><div><strong>0.0.3 消费规则</strong><p>这是候选合同，不是发布成功证据。只有受发布门禁约束的 <code>v0.0.3</code> 标签匹配受保护远端 <code>main</code> HEAD、全部必需 CNB lane 匹配该精确提交，并且全新匿名消费者解析全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 场景后，才能消费 <code>ai.icen:*:0.0.3</code>。</p></div></aside>
+
+<h2>0.0.2 · 上一条不可改写边界</h2>
 
 <p>0.0.2 完成 0.0.1 未尽之事：干净的 HTTP 表面、可信的发布元数据与可复现的校验。</p>
 
@@ -50,7 +72,7 @@ format: "html"
 
 <h2>Agent 产品能力决策</h2>
 
-<aside class="callout warning" data-mark="延期"><div><strong>0.0.2 不提供 Agent 产品能力</strong><p><code>fileweft-agent</code> 制品、Agent SPI/公共 ABI，以及 V012/V026 中与 Agent 有关的表、列和约束仅为源码、二进制和数据库兼容而保留。0.0.2 默认 Runtime、Starter、Doctor 清单、插件清单、公共 HTTP API 与 <code>fileweft-dev</code> 都不注册、宣传或暴露 Agent。任何显式遗留兼容开关也不是 0.0.2 功能。</p><p>Agent 将来需要重新设计，但无限期延期；最早只能在 1.0.0 已发布之后重新评估，而且这不承诺 1.x、下一版本或任何其他版本会交付。</p></div></aside>
+<aside class="callout warning" data-mark="延期"><div><strong>0.0.2 与 0.0.3 都不提供 Agent 产品能力</strong><p><code>fileweft-agent</code> 制品、Agent SPI/公共 ABI，以及 V012/V026 中与 Agent 有关的表、列和约束仅为源码、二进制和数据库兼容而保留。0.0.2 与 0.0.3 的默认 Runtime、Starter、Doctor 清单、插件清单、公共 HTTP API 与 <code>fileweft-dev</code> 都不注册、宣传或暴露 Agent。任何显式遗留兼容开关也不是产品功能。</p><p>Agent 将来需要重新设计，但无限期延期；最早只能在 1.0.0 已发布之后重新评估，而且这不承诺 1.x、下一版本或任何其他版本会交付。</p></div></aside>
 
 <h2>0.1.0 · 生产供应链</h2>
 
@@ -138,6 +160,7 @@ format: "html"
 <h2>下一步</h2>
 
 <ul>
-<li>阅读 <a href="#/project/release-0-0-2-development">0.0.2 发布说明</a>，了解精确范围与远端消费规则。</li>
+<li>阅读 <a href="#/project/release-0-0-3">0.0.3 发布合同</a>，了解当前范围与远端消费规则。</li>
+<li>保留 <a href="#/project/release-0-0-2-development">0.0.2 发布说明</a>，作为上一条不可改写升级边界。</li>
 <li>想帮忙关闭待办项，参见 <a href="#/project/contributing">参与贡献</a>。</li>
 </ul>

@@ -54,7 +54,7 @@ export const defaultRoute = "getting-started/introduction";
 export const ui = {
   "en": {
     "search": "Search documentation",
-    "stable": "Stable line",
+    "stable": "Release contract",
     "version": "Version",
     "support": "Support",
     "skill": "SKILL",
@@ -83,7 +83,7 @@ export const ui = {
   },
   "zh": {
     "search": "搜索文档",
-    "stable": "稳定版本",
+    "stable": "发布合同",
     "version": "版本",
     "support": "支持",
     "skill": "SKILL",
@@ -134,13 +134,13 @@ export const pages = {
     "order": 2,
     "en": {
       "nav": "Installation",
-      "title": "Install the 0.0.2 line",
+      "title": "Install the 0.0.3 line",
       "lead": "Add FileWeft to your build, align Spring Boot generations, and verify the dependency tree.",
       "file": "pages/en/getting-started/installation.md"
     },
     "zh": {
       "nav": "安装",
-      "title": "安装 0.0.2 正式版",
+      "title": "安装 0.0.3 版本线",
       "lead": "将 FileWeft 加入构建，对齐 Spring Boot 代际，并验证依赖树。",
       "file": "pages/zh/getting-started/installation.md"
     }
@@ -625,9 +625,25 @@ export const pages = {
       "file": "pages/zh/project/release-0-0-2-development.md"
     }
   },
-  "project/roadmap": {
+  "project/release-0-0-3": {
     "group": "project",
     "order": 5,
+    "en": {
+      "nav": "Release 0.0.3",
+      "title": "Release 0.0.3 contract",
+      "lead": "The current candidate contract adds metadata schemas and review withdrawal while keeping consumption conditional on guarded-tag, protected-main and anonymous remote evidence.",
+      "file": "pages/en/project/release-0-0-3.md"
+    },
+    "zh": {
+      "nav": "0.0.3 发布合同",
+      "title": "0.0.3 发布合同",
+      "lead": "当前候选合同新增 metadata schema 与审批撤回，并继续以标签发布门禁、受保护主干和匿名远端证据作为可消费前提。",
+      "file": "pages/zh/project/release-0-0-3.md"
+    }
+  },
+  "project/roadmap": {
+    "group": "project",
+    "order": 6,
     "en": {
       "nav": "Roadmap",
       "title": "Roadmap with proof, not promises",
@@ -643,7 +659,7 @@ export const pages = {
   },
   "project/faq": {
     "group": "project",
-    "order": 6,
+    "order": 7,
     "en": {
       "nav": "FAQ",
       "title": "Frequently asked questions",

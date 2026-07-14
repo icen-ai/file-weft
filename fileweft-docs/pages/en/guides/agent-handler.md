@@ -12,7 +12,7 @@ format: "markdown"
 Not every file operation fits inside an HTTP request. OCR, machine-learning inference, virus scanning, and bulk synchronization can take seconds or minutes. FileWeft pushes this work into durable `fw_task` records handled by background workers.
 
 > [!CAUTION]
-> This page covers the generic `FileWeftTaskHandler`, not FileWeft Agent product capability. 0.0.2 does not register, advertise or expose Agent by default; do not use the compatibility-only Agent SPI/ABI for new integrations.
+> This page covers the generic `FileWeftTaskHandler`, not FileWeft Agent product capability. Neither 0.0.2 nor 0.0.3 registers, advertises, or exposes Agent by default; do not use the compatibility-only Agent SPI/ABI for new integrations.
 
 ## 1. Task handler contract
 
