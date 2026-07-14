@@ -6,12 +6,14 @@
 
 ## 模块与兼容性
 
-本文描述 `v0.0.2` 的正式 HTTP 合同，其中包括 V026 决策证据接口。只有受保护 `v0.0.2` 标签流水线全部成功且远端公开仓库完成匿名冷缓存解析后，才能假定该路由已存在于可消费的 `ai.icen:*:0.0.2` 制品；源码、标签预期或本地构建不能替代这份远端证据。
+本文描述当前 `v0.0.3` 正式 HTTP 合同；V026 决策证据等既有接口仍属于历史 `v0.0.2` 合同，`0.0.3` 在其上增加 metadata schema、文档元数据输入和审批撤回。只有相应版本的受保护标签流水线全部成功且远端公开仓库完成匿名冷缓存解析后，才能假定这些路由已存在于可消费制品；源码、标签预期、本地构建或本文本身不能替代这份远端证据。
 
 当前已交付的工件是：
 
+- `fileweft-metadata-api`：JDK 8 基线、Java 友好的不可变版本化 schema/field/value/validation 契约，不依赖 Spring、数据库或厂商 SDK。
+- `fileweft-metadata-runtime`：JDK 8 基线的当前/历史 schema 注册、校验、规范化和处理实现；按可信租户上下文解析，不负责 HTTP 或持久化。
 - `fileweft-web-api`：JDK 8 基线的纯契约、响应模型、错误码与 DTO；不依赖 Spring、JDBC、领域实体或任意 FileWeft 运行时模块。
-- `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读写、正式断点续传、审计日志、插件清单、健康、工作流、Doctor 查询与下载门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，将应用层已授权、已脱敏的读取视图和命令结果映射为公共 DTO，并把 caller-owned 下载归一为只含安全响应元数据的 `Closeable` 句柄。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
+- `fileweft-web-runtime`：JDK 8 基线的纯 JVM v1 文档读写、metadata schema/输入映射、正式断点续传、审计日志、插件清单、健康、工作流、Doctor 查询与下载门面；显式依赖 `fileweft-application` 与 `fileweft-web-api`，将应用层已授权、已脱敏的读取视图和命令结果映射为公共 DTO，并把 caller-owned 下载归一为只含安全响应元数据的 `Closeable` 句柄。它不引入 Spring、MVC、Servlet、JDBC 或 HTTP 路由，也不接受租户/用户参数。
 - `fileweft-web-spring-boot2-starter`：JDK 8 / Spring Boot 2.7 的可选 MVC 适配器；通过 `spring.factories` 注册。读取路由以安全的 `DocumentQueryService` 为条件，首批写入路由以 `DocumentDraftService` 为条件，内容路由以 `DocumentDownloadService` 为条件，能力未安装时不会伪装成可用接口。
 - `fileweft-web-spring-boot3-starter`：JDK 17 / Spring Boot 3 的可选 MVC 适配器；通过 `AutoConfiguration.imports` 注册，并与 Boot 2 保持同一路径、状态码和响应外层及条件装配语义。
 
@@ -61,8 +63,9 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `DELETE /fileweft/v1/uploads/{uploadId}`：仅在状态已知可安全取消时终止 multipart，并返回公开终态视图。
 - `GET /fileweft/v1/documents/{documentId}`：当前租户、当前用户已授权且位于可读目录范围内的文档和版本视图。
 - `GET /fileweft/v1/documents`：使用不透明 cursor 的文档摘要分页，可选生命周期和目录筛选。
-- `POST /fileweft/v1/documents`：multipart 创建草稿；`documentNumber`、`title`、`file` 必须各出现一次，`folderId` 最多一次。
-- `POST /fileweft/v1/documents/{documentId}/versions`：multipart 新增草稿版本；`versionNumber`、`file` 必须各出现一次。
+- `GET /fileweft/v1/metadata/schemas/{schemaId}`：按可信当前租户解析指定 schema 的当前版本，返回 schema `id`、`version` 及字段的安全规则投影。
+- `POST /fileweft/v1/documents`：multipart 创建草稿；`documentNumber`、`title`、`file` 必须各出现一次，`folderId` 最多一次，可选携带一次 `metadataSchemaId` 与重复的 `metadata=field=value`。
+- `POST /fileweft/v1/documents/{documentId}/versions`：multipart 新增草稿版本；`versionNumber`、`file` 必须各出现一次，可选使用同一 metadata 输入协议。
 - `PATCH /fileweft/v1/documents/{documentId}`：以 JSON `{\"title\": \"...\"}` 修改草稿标题。
 - `GET /fileweft/v1/documents/{documentId}/content`：经当前租户、用户、目录范围和 `document:download` 授权后的当前版本内容流。
 - `GET /fileweft/v1/documents/{documentId}/versions/{versionId}/content`：同一授权边界下显式选择属于该文档的历史版本内容流。
@@ -78,7 +81,13 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `GET /fileweft/v1/plugins`：需要独立的 `system:plugins:read`，按稳定插件 ID 分页返回允许列表内的能力类型和数量；不返回实现类、Bean/JAR、连接器 ID、配置或实例。`GET /fileweft/plugins` 是手册兼容别名。
 - `GET /fileweft/v1/health`：公开、依赖无关的进程 liveness，只返回 `status=UP`；它不声明数据库、对象存储、插件或下游 readiness，深度诊断仍使用授权 Doctor。`GET /fileweft/health` 是手册兼容别名。
 
-上传文件名、长度和内容类型只从服务器收到的 multipart file part 派生，客户端不能另行提交对象键、资产 ID、哈希或存储 metadata；文件名拒绝路径分隔符、`.` 和 `..`。创建和新增版本返回 `201`，改名返回 `200`。成功创建后仅当文档 ID 是长度受限的安全单路径段时才附带相对 `Location`；自定义标识不满足这个条件时仍返回成功 body，不会在业务提交后制造一次失败。
+上传文件名、长度和内容类型只从服务器收到的 multipart file part 派生，客户端不能另行提交对象键、资产 ID、哈希或任意存储 metadata；文件名拒绝路径分隔符、`.` 和 `..`。schema 约束的业务 metadata 是唯一例外，必须使用下节的受限协议。创建和新增版本返回 `201`，改名返回 `200`。成功创建后仅当文档 ID 是长度受限的安全单路径段时才附带相对 `Location`；自定义标识不满足这个条件时仍返回成功 body，不会在业务提交后制造一次失败。
+
+## Metadata schema 与文档元数据
+
+Metadata schema 是不可变、带版本的公共契约。字段类型固定为 `STRING`、`NUMBER`、`BOOLEAN`、`DATE`、`ENUM` 和 `STRING_LIST`，并可声明必填、允许值、最大长度和格式。每个 schema 与单次 HTTP metadata 输入最多 128 个字段；`format` 使用 RE2/J 的线性时间正则方言，不支持反向引用、环视等依赖回溯的 Java 正则构造，非法格式会在 schema 注册时失败关闭。schema 查询只返回 `id`、`version` 与这些字段规则，不公开租户、注册来源、实现类或内部配置；租户始终由 `TenantProvider` 提供，HTTP 请求不能提交或覆盖。
+
+创建文档或新增版本不带任何 metadata 参数时保持 `0.0.2` 兼容行为。只要出现 `metadataSchemaId` 或 `metadata`，就必须恰好提交一个 `metadataSchemaId`；每个 `metadata` part 使用第一个 `=` 分隔 `field=value`，同名字段不得重复，空字符串可作为 STRING 值交由 schema 判断。Runtime 在基础文档授权（目录模式还包括目录 ACL）成功后解析当前 schema，按精确版本复核、校验并规范化输入，再把规范化值及 `metadata.schema-id` / `metadata.schema-version` 标记交给应用写入边界。创建时写入文档资产；新增版本时在同一事务完整替换文档级 schema metadata 并保留 `catalog.*` / `fileweft.*` 框架键。schema 业务 metadata 不写入厂商对象 user-metadata header，也不以对象存储作为唯一真相。缺失必填字段、未知字段、类型或规则不匹配固定作为无敏感回显的非法请求；schema/处理能力没有安全装配时失败关闭，不会按原始 Map 绕过校验。
 
 下载成功固定使用 `attachment`。`Content-Disposition` 同时提供不含控制字符的有界 ASCII fallback 与 RFC 5987 UTF-8 `filename*`；遗留路径、CRLF、Unicode FORMAT、孤立 surrogate 和超长文件名都不会进入原始响应头。内容类型只允许固定被动白名单，HTML、SVG、XML、JavaScript、JSON 和非法值回退 `application/octet-stream`；响应附带 `X-Content-Type-Options: nosniff` 与 `Cache-Control: private, no-store`。只有 Storage 实际报告且已与持久化元数据核对的长度才设置 `Content-Length`，持久化 fallback 不会伪装成传输层验证结果。响应不提供 ETag、`Accept-Ranges`、`Content-Range`、内容哈希、对象键或 Storage URL。
 
@@ -86,14 +95,17 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 未接入宿主目录 SPI 时，创建可以省略 `folderId`，但提交 `folderId` 会安全失败为 `503 FEATURE_UNAVAILABLE`。自动生成目录访问边界时，默认 Starter 要求恰好一个 `DocumentCatalogProvider`；多个未聚合 provider 即使存在 `@Primary` 也会启动失败。宿主如需组合多个 provider，必须显式提供一个聚合 ACL 的 `DocumentCatalogAccessService`，且多个 access 候选同样会启动失败。具备 `FileAssetMutationRepository` 行锁能力时，Starter 才装配目录感知修改与 action-aware 生命周期 guard。创建必须给出目录并通过应用层目录授权与保留绑定；新增版本和改名会先快照并授权当前源目录，新增版本在上传后还会再次检查源目录权限，目录移动则在目标目录解析后重新验证源目录，再按 document → asset 顺序取得两级 mutation lock 并复核原始绑定。生命周期与审批 guard 使用实际动作权限和源目录 `BROWSE` ACL，在审批路由或交付策略外调后再次验证，最终按 document → asset → workflow 锁序复核原始绑定。Catalog SPI 始终在 FileWeft 管理的数据库事务外调用，权限撤销或绑定竞态会在提交前失败，新增版本已上传的对象会被补偿删除。自定义装配若只有目录创建，或资产仓储没有安全 mutation lock 能力，目录模式的正式写入口必须保持不可用，不能回退调用租户级底层服务；自定义 `DocumentDownloadService` 也必须显式保留等价的目录可见性校验。
 
-现有六个 lifecycle/workflow 应用服务继续作为无目录宿主的租户级兼容原语，因此不会被 Starter 静默改写语义。目录宿主若绕过 catalog-aware 幂等边界直接调用这些原语，就不具备目录 ACL 保证。正式 lifecycle Controller 通过统一能力解析器选择 flat 或 guarded 路径：没有 access 时才允许 flat；存在 access 但缺少唯一 guarded capability 时固定返回 `503 FEATURE_UNAVAILABLE`。多个 access 或同类型 lifecycle/review 候选即使有 `@Primary` 也会启动失败；flat 与 catalog-aware 混装但无法形成唯一安全配对时不会回退，而是固定返回 `503`。
+现有 lifecycle/workflow 应用服务继续作为无目录宿主的租户级兼容原语，因此不会被 Starter 静默改写语义。目录宿主若绕过 catalog-aware 幂等边界直接调用这些原语，就不具备目录 ACL 保证。正式 lifecycle Controller 通过统一能力解析器选择 flat 或 guarded 路径：没有 access 时才允许 flat；存在 access 但缺少唯一 guarded capability 时固定返回 `503 FEATURE_UNAVAILABLE`。多个 access 或同类型 lifecycle/review 候选即使有 `@Primary` 也会启动失败；flat 与 catalog-aware 混装但无法形成唯一安全配对时不会回退，而是固定返回 `503`。
 
 以下正式命令路由已由 Boot 2 与 Boot 3 Web Starter 对齐交付，成功与重放均返回 `200` 和仅含稳定 `documentId/workflowId/taskId` 的回执：
 
 - `POST /fileweft/v1/documents/{documentId}/revise|publish|offline|restore|archive|submit`
+- `POST /fileweft/v1/workflows/{workflowId}/withdraw`：撤回仍在等待审批的工作流。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 
 `publish` 可选 `deliveryProfileId`，`submit` 可选 `reviewRouteId`，审批/驳回可选有界评论；这些值进入服务端 typed-command 指纹。同一 key 改变动作、资源、任务、评论、路由或交付档案都会返回 `409`。
+
+审批撤回要求恰好一个 `Idempotency-Key`，只允许 `PENDING_REVIEW` 文档及其 `PENDING` 工作流转为文档 `DRAFT`、工作流 `WITHDRAWN`。可信 `submittedBy` 与当前用户相同时可按提交者身份撤回；否则必须通过 `document:review:withdraw` 策略授权。V029 之前的历史工作流允许 `submittedBy=NULL`，这种记录不能猜测提交者，只能由策略授权的操作者撤回。每次重放仍重新认证、检查租户和目录可见性；跨租户、隐藏或竞态变化不会泄露工作流存在性，已完成审批固定冲突。最终事务遵守 idempotency → document → asset（目录模式）→ workflow 锁序，并原子保存状态、审计与稳定回执，使撤回与最后一次审批决定只能有一个成功结果。
 
 失败交付恢复使用两条不猜测操作的正式命令；二者都要求 `document:delivery:retry` 和恰好一个 `Idempotency-Key`，成功及重放固定返回 `{documentId, deliveryId, operation}`：
 
@@ -128,7 +140,7 @@ Boot 2 与 Boot 3 分别通过 `spring.factories` 和 `AutoConfiguration.imports
 
 ## 持久化请求幂等地基
 
-上述生命周期、审批、交付恢复与 Doctor 排队命令必须收到恰好一个 `Idempotency-Key`：首字符为 ASCII 字母或数字，后续只允许 ASCII 字母、数字、`.`、`_`、`~`、`:`、`-`，总长 1 到 128。缺失、重复、空白、控制字符或越界都固定归类为 `400 INVALID_REQUEST`，原始 key 不得进入日志、异常、审计或数据库。
+上述生命周期、审批（含撤回）、交付恢复与 Doctor 排队命令必须收到恰好一个 `Idempotency-Key`：首字符为 ASCII 字母或数字，后续只允许 ASCII 字母、数字、`.`、`_`、`~`、`:`、`-`，总长 1 到 128。缺失、重复、空白、控制字符或越界都固定归类为 `400 INVALID_REQUEST`，原始 key 不得进入日志、异常、审计或数据库。
 
 对于生命周期、审批、交付恢复与 Doctor 排队命令，Application 会把原始 key 与可信租户共同做带版本前缀的 SHA-256 摘要，只持久化摘要；同一租户下的摘要唯一。记录还绑定可信当前用户、动作、资源、可选子资源以及由已校验命令生成的请求指纹。完全相同的重试返回第一次提交的稳定资源 ID；任一绑定维度不同都固定返回 `409 CONFLICT`，不得说明冲突来自用户、路径还是请求体。请求指纹由服务端对 typed command 生成，客户端不能直接提交。正式续传创建则使用上一节定义的 Application 会话级租户域摘要，不写 `fw_idempotency_record`；实际分片长度和可选完整文件哈希由上传协议独立校验。
 
@@ -149,5 +161,7 @@ Boot 2 与 Boot 3 分别通过 `spring.factories` 和 `AutoConfiguration.imports
 每个正式路由至少覆盖：当前租户隔离、无用户/拒绝授权、参数错误、领域冲突、Trace 外层、敏感字段脱敏和响应稳定性。应用层将无用户与策略拒绝分别建模，供 Web 适配器稳定映射为 401/403，绝不依赖异常消息判断。Boot 2 与 Boot 3 都要有自动装配上下文与 MVC 契约测试；纯 `fileweft-web-api` 还要有 Java 8/Java 互操作测试。
 
 本里程碑的 formal-v1 Playwright 用例通过正式 Starter 实际执行缺失/非法 key、submit/approve/Doctor schedule fresh+replay、同 key 异 typed command 冲突，并从正式待办发现审批任务，验证普通审批历史保持身份脱敏、无 `document:audit` 权限的用户不能读取决策证据、有权限用户可读取准确的不可变决策者快照、遗留任务显示未知，以及审计分页、插件清单、公开 liveness、Doctor 脱敏、双租户隔离和任务轮询；其余浏览器用例继续覆盖中英文、角色控件、单人与双人审批的不同决策者、驳回修订以及正式同步状态与人工重排。
+
+`0.0.3` 新增面由 Metadata API/runtime、Application、两代 Starter MVC、领域/持久化撤回及三方言迁移测试覆盖。除非对应 Dev/Playwright 用例和 CNB `devAcceptanceCheck` 对精确提交取得绿灯，不应把这些模块级证据扩写成浏览器端验收已经完成。
 
 首次采用正式 API 时，宿主应先接入可信 `TenantProvider`、`UserRealmProvider` 和 `AuthorizationProvider`，再逐步把自己的 Controller 调用迁移到 `/fileweft/v1`。Dev UI 只作为可运行示例；仍留在 `/api` 的验收能力不构成正式协议。

@@ -75,6 +75,7 @@ class JavaIdempotentDocumentReviewWorkflowInteropTest {
                 String.class,
                 String.class
             ));
+            assertReceipt(boundary.getMethod("withdrawReview", Identifier.class, String.class));
         }
     }
 

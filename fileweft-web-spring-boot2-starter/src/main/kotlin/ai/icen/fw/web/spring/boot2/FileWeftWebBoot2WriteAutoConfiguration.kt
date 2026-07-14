@@ -3,6 +3,7 @@ package ai.icen.fw.web.spring.boot2
 import ai.icen.fw.application.catalog.DocumentCatalogDraftService
 import ai.icen.fw.application.catalog.DocumentCatalogMutationService
 import ai.icen.fw.application.document.DocumentDraftService
+import ai.icen.fw.application.metadata.DocumentMetadataWriteService
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.document.DocumentApiWriteFacade
@@ -29,15 +30,28 @@ import org.springframework.web.bind.annotation.RestController
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnBean(DocumentDraftService::class)
 class FileWeftWebBoot2WriteAutoConfiguration {
-    @Bean
+    @Bean(name = ["fileWeftV1DocumentApiWriteFacade"])
     @ConditionalOnMissingBean(DocumentApiWriteFacade::class)
+    fun fileWeftV1DocumentApiWriteFacadeWithMetadata(
+        drafts: DocumentDraftService,
+        catalogDrafts: ObjectProvider<DocumentCatalogDraftService>,
+        catalogMutations: ObjectProvider<DocumentCatalogMutationService>,
+        metadataWrites: ObjectProvider<DocumentMetadataWriteService>,
+    ): DocumentApiWriteFacade = DocumentApiWriteFacade(
+        drafts = drafts,
+        // getIfAvailable intentionally fails on multiple catalog services rather than silently dropping folder ACLs.
+        catalogDrafts = catalogDrafts.getIfAvailable(),
+        catalogMutations = catalogMutations.getIfAvailable(),
+        metadataWrites = metadataWrites.getIfAvailable(),
+    )
+
+    /** Preserved direct factory ABI for hosts compiled against 0.0.2. */
     fun fileWeftV1DocumentApiWriteFacade(
         drafts: DocumentDraftService,
         catalogDrafts: ObjectProvider<DocumentCatalogDraftService>,
         catalogMutations: ObjectProvider<DocumentCatalogMutationService>,
     ): DocumentApiWriteFacade = DocumentApiWriteFacade(
         drafts = drafts,
-        // getIfAvailable intentionally fails on multiple catalog services rather than silently dropping folder ACLs.
         catalogDrafts = catalogDrafts.getIfAvailable(),
         catalogMutations = catalogMutations.getIfAvailable(),
     )

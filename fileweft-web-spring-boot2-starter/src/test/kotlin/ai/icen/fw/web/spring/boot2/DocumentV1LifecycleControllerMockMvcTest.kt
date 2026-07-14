@@ -24,7 +24,7 @@ import kotlin.test.assertNull
 
 class DocumentV1LifecycleControllerMockMvcTest {
     @Test
-    fun `maps all eight routes to 200 stable envelopes and populated immutable commands`() {
+    fun `maps all nine routes to 200 stable envelopes and populated immutable commands`() {
         val recorder = RecordingLifecycleCommands()
         val mockMvc = mvc(recorder.facade())
         val expectedResults = listOf(
@@ -35,6 +35,7 @@ class DocumentV1LifecycleControllerMockMvcTest {
             StableResult("result-archive"),
             StableResult("result-submit-document", "result-submit-workflow"),
             StableResult("result-approve-document", "result-approve-workflow", "result-approve-task"),
+            StableResult("result-withdraw-document", "result-withdraw-workflow"),
             StableResult("result-reject-document", "result-reject-workflow", "result-reject-task"),
         )
 
@@ -59,21 +60,21 @@ class DocumentV1LifecycleControllerMockMvcTest {
         }
 
         assertEquals(
-            listOf("revise", "publish", "offline", "restore", "archive", "submit", "approve", "reject"),
+            listOf("revise", "publish", "offline", "restore", "archive", "submit", "approve", "withdraw", "reject"),
             recorder.calls.map { call -> call.method },
         )
         assertEquals("primary", recorder.calls[1].arguments[1])
         assertEquals("four-eyes", recorder.calls[5].arguments[1])
         assertEquals(listOf("approved", "primary"), recorder.calls[6].arguments.slice(2..3))
-        assertEquals("rejected", recorder.calls[7].arguments[2])
+        assertEquals("rejected", recorder.calls[8].arguments[2])
         assertEquals(
-            (0..7).map { index -> "lifecycle-key-$index" },
+            (0..8).map { index -> "lifecycle-key-$index" },
             recorder.calls.map { call -> call.arguments.last() },
         )
     }
 
     @Test
-    fun `maps all eight lifecycle routes and fails closed when their capabilities are absent`() {
+    fun `maps all nine lifecycle routes and fails closed when their capabilities are absent`() {
         val mockMvc = mvc()
 
         lifecycleRequests().forEachIndexed { index, request ->
@@ -158,6 +159,7 @@ class DocumentV1LifecycleControllerMockMvcTest {
         post("/fileweft/v1/workflows/workflow-1/tasks/task-1/approve")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"comment\":\"approved\",\"deliveryProfileId\":\"primary\"}"),
+        post("/fileweft/v1/workflows/workflow-1/withdraw"),
         post("/fileweft/v1/workflows/workflow-1/tasks/task-1/reject")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"comment\":\"rejected\"}"),
@@ -218,6 +220,10 @@ class DocumentV1LifecycleControllerMockMvcTest {
             approve = { workflowId, taskId, comment, profileId, key ->
                 record("approve", workflowId.value, taskId.value, comment, profileId, key)
                 receipt("result-approve-document", "result-approve-workflow", "result-approve-task")
+            },
+            withdrawReview = { workflowId, key ->
+                record("withdraw", workflowId.value, key)
+                receipt("result-withdraw-document", "result-withdraw-workflow")
             },
             reject = { workflowId, taskId, comment, key ->
                 record("reject", workflowId.value, taskId.value, comment, key)

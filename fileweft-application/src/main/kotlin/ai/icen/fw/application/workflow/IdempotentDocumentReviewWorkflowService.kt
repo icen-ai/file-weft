@@ -81,6 +81,11 @@ class IdempotentDocumentReviewWorkflowService(
         comment: String?,
         idempotencyKey: String,
     ): DocumentLifecycleReceipt = delegate.reject(workflowId, taskId, comment, idempotencyKey)
+
+    fun withdrawReview(
+        workflowId: Identifier,
+        idempotencyKey: String,
+    ): DocumentLifecycleReceipt = delegate.withdrawReview(workflowId, idempotencyKey)
 }
 
 /** Catalog-aware review boundary; every replay still checks the current source-folder ACL. */
@@ -150,6 +155,11 @@ class IdempotentDocumentCatalogReviewWorkflowService(
         comment: String?,
         idempotencyKey: String,
     ): DocumentLifecycleReceipt = delegate.reject(workflowId, taskId, comment, idempotencyKey)
+
+    fun withdrawReview(
+        workflowId: Identifier,
+        idempotencyKey: String,
+    ): DocumentLifecycleReceipt = delegate.withdrawReview(workflowId, idempotencyKey)
 }
 
 internal class IdempotentDocumentReviewWorkflowDelegate(
@@ -236,6 +246,43 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
         approved = false,
         idempotencyKey = idempotencyKey,
     )
+
+    @JvmSynthetic
+    fun withdrawReview(
+        workflowId: Identifier,
+        idempotencyKey: String,
+    ): DocumentLifecycleReceipt {
+        requireBoundaryIdentifier(workflowId)
+        val withdrawal = reviews.prepareReviewWithdrawal(workflowId, guard)
+        val context = withdrawal.lifecycle
+        val request = RequestIdempotency.create(
+            tenantId = context.tenantId,
+            operatorId = context.operator.id,
+            idempotencyKey = idempotencyKey,
+            action = WITHDRAW_ACTION,
+            resourceType = WORKFLOW_RESOURCE_TYPE,
+            resourceId = workflowId,
+            requestFingerprint = RequestFingerprint.sha256(WITHDRAW_FINGERPRINT_VERSION),
+        )
+        idempotency.findCompleted(request)?.let { result ->
+            return replay(context.documentId, workflowId, result)
+        }
+        val validated = reviews.revalidateReviewWithdrawal(withdrawal)
+        return idempotency.execute(
+            request,
+            IdempotencyReplayMapper { result -> replay(context.documentId, workflowId, result) },
+            IdempotentCommand {
+                DocumentLifecycleMutationTransaction.execute {
+                    fresh(
+                        result = reviews.withdrawSafelyInCurrentTransaction(validated, withdrawal),
+                        expectedDocumentId = context.documentId,
+                        expectedWorkflowId = workflowId,
+                        taskId = null,
+                    )
+                }
+            },
+        ).value
+    }
 
     private fun decide(
         workflowId: Identifier,
@@ -380,12 +427,14 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
         const val SUBMIT_ACTION = "document:review:submit"
         const val APPROVE_ACTION = "document:review:approve"
         const val REJECT_ACTION = "document:review:reject"
+        const val WITHDRAW_ACTION = "document:review:withdraw"
         const val MAX_IDENTIFIER_LENGTH = 256
         const val MAX_SELECTOR_LENGTH = 256
         const val MAX_COMMENT_LENGTH = 1_000
         const val SUBMIT_FINGERPRINT_VERSION = "fileweft:workflow:submit:v1"
         const val APPROVE_FINGERPRINT_VERSION = "fileweft:workflow:approve:v1"
         const val REJECT_FINGERPRINT_VERSION = "fileweft:workflow:reject:v1"
+        const val WITHDRAW_FINGERPRINT_VERSION = "fileweft:workflow:withdraw:v1"
         const val IDENTIFIER_VALIDATION_VERSION = "fileweft:workflow:identifier:v1"
         const val TEXT_VALIDATION_VERSION = "fileweft:workflow:text:v1"
     }

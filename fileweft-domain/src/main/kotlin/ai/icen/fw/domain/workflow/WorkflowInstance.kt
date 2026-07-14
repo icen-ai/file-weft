@@ -12,12 +12,34 @@ class WorkflowInstance(
     tasks: List<WorkflowTask>,
 ) {
     private val mutableTasks = ArrayList<WorkflowTask>()
+    private var mutableSubmittedBy: Identifier? = null
+
+    /**
+     * Additive rehydration constructor. The original six-argument JVM
+     * constructor remains unchanged for existing Java and Kotlin users. A null
+     * submitter represents a legacy workflow and must never be guessed.
+     */
+    constructor(
+        id: Identifier,
+        tenantId: Identifier,
+        documentId: Identifier,
+        workflowType: String,
+        state: WorkflowState,
+        tasks: List<WorkflowTask>,
+        submittedBy: Identifier?,
+    ) : this(id, tenantId, documentId, workflowType, state, tasks) {
+        mutableSubmittedBy = submittedBy
+    }
 
     var state: WorkflowState = state
         private set
 
     val tasks: List<WorkflowTask>
         get() = Collections.unmodifiableList(mutableTasks)
+
+    /** Trusted submitter identity when the workflow was created with submitter persistence. */
+    val submittedBy: Identifier?
+        get() = mutableSubmittedBy
 
     init {
         require(workflowType.isNotBlank()) { "Workflow type must not be blank." }
@@ -70,6 +92,16 @@ class WorkflowInstance(
         state = WorkflowState.REJECTED
     }
 
+    /** Withdraws an unfinished review while retaining task decisions as historical evidence. */
+    fun withdraw() {
+        if (state != WorkflowState.PENDING) {
+            throw WorkflowWithdrawalConflictException(
+                "Only pending workflows can be withdrawn; workflow ${id.value} is ${state.name}.",
+            )
+        }
+        state = WorkflowState.WITHDRAWN
+    }
+
     private fun task(taskId: Identifier): WorkflowTask =
         mutableTasks.firstOrNull { it.id == taskId }
             ?: throw WorkflowTaskNotFoundException(id, taskId)
@@ -89,6 +121,13 @@ class WorkflowInstance(
                     mutableTasks.any { it.state == WorkflowTaskState.PENDING },
             ) {
                 "Pending workflow must have pending tasks and no rejected task."
+            }
+
+            WorkflowState.WITHDRAWN -> require(
+                mutableTasks.none { it.state == WorkflowTaskState.REJECTED } &&
+                    mutableTasks.any { it.state == WorkflowTaskState.PENDING },
+            ) {
+                "Withdrawn workflow must retain unfinished tasks and no rejected task."
             }
 
             WorkflowState.APPROVED -> require(mutableTasks.all { it.state == WorkflowTaskState.APPROVED }) {

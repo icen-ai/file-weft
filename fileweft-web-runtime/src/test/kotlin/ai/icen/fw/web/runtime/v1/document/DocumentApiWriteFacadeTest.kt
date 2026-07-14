@@ -6,6 +6,10 @@ import ai.icen.fw.application.catalog.DocumentCatalogAccessService
 import ai.icen.fw.application.catalog.DocumentCatalogDraftService
 import ai.icen.fw.application.catalog.DocumentCatalogMutationService
 import ai.icen.fw.application.document.DocumentDraftService
+import ai.icen.fw.application.metadata.DocumentMetadataService
+import ai.icen.fw.application.metadata.DocumentMetadataWriteService
+import ai.icen.fw.application.security.ApplicationForbiddenException
+import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
@@ -16,6 +20,12 @@ import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
+import ai.icen.fw.metadata.api.MetadataField
+import ai.icen.fw.metadata.api.MetadataFieldType
+import ai.icen.fw.metadata.api.MetadataProcessor
+import ai.icen.fw.metadata.api.MetadataSchema
+import ai.icen.fw.metadata.api.MetadataSchemaContext
+import ai.icen.fw.metadata.api.MetadataSchemaResolver
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -33,6 +43,7 @@ import ai.icen.fw.spi.storage.StoredObject
 import ai.icen.fw.spi.tenant.TenantProvider
 import ai.icen.fw.web.api.v1.document.AddDocumentVersionCommand
 import ai.icen.fw.web.api.v1.document.CreateDocumentDraftCommand
+import ai.icen.fw.web.api.v1.document.DocumentMetadataCommand
 import ai.icen.fw.web.api.v1.document.RenameDocumentCommand
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -192,6 +203,119 @@ class DocumentApiWriteFacadeTest {
     }
 
     @Test
+    fun `validates and normalizes schema metadata before create and version persistence`() {
+        val contexts = mutableListOf<MetadataSchemaContext>()
+        val fixture = Fixture(
+            metadataProcessor = object : MetadataProcessor {
+                override fun process(
+                    context: MetadataSchemaContext,
+                    metadata: Map<String, String>,
+                ): Map<String, String> {
+                    contexts += context
+                    return mapOf("amount" to metadata.getValue("amount").trimEnd('0').trimEnd('.'))
+                }
+            },
+        )
+        fixture.facade.create(
+            CreateDocumentDraftCommand(
+                "DOC-1",
+                "Invoice",
+                "v1.txt",
+                2,
+            ),
+            DocumentMetadataCommand("invoice", mapOf("amount" to "12.500")),
+            ByteArrayInputStream("v1".toByteArray()),
+        )
+        fixture.facade.addVersion(
+            "document-1",
+            AddDocumentVersionCommand(
+                "2.0",
+                "v2.txt",
+                2,
+            ),
+            DocumentMetadataCommand("invoice", mapOf("amount" to "13.00")),
+            ByteArrayInputStream("v2".toByteArray()),
+        )
+
+        assertTrue(fixture.storage.requests.all { request -> request.metadata.isEmpty() })
+        assertEquals("12.5", fixture.assets.saved.first().metadata["amount"])
+        assertEquals("invoice", fixture.assets.saved.first().metadata[DocumentMetadataService.SCHEMA_ID_KEY])
+        assertEquals("2", fixture.assets.saved.first().metadata[DocumentMetadataService.SCHEMA_VERSION_KEY])
+        assertEquals("13", fixture.assets.saved.last().metadata["amount"])
+        assertEquals("invoice", fixture.assets.saved.last().metadata[DocumentMetadataService.SCHEMA_ID_KEY])
+        assertEquals("2", fixture.assets.saved.last().metadata[DocumentMetadataService.SCHEMA_VERSION_KEY])
+        assertEquals(listOf("2", "2"), contexts.map { context -> context.schemaVersion })
+        assertEquals(listOf("tenant-a", "tenant-a"), contexts.map { context -> context.tenantId })
+        assertEquals(2, fixture.tenantSnapshots)
+    }
+
+    @Test
+    fun `unauthenticated and forbidden schema writes never invoke the metadata processor`() {
+        listOf(false to true, true to false).forEach { (authenticated, authorized) ->
+            var processorCalls = 0
+            val fixture = Fixture(
+                authenticated = authenticated,
+                authorized = authorized,
+                metadataProcessor = object : MetadataProcessor {
+                    override fun process(
+                        context: MetadataSchemaContext,
+                        metadata: Map<String, String>,
+                    ): Map<String, String> {
+                        processorCalls++
+                        return metadata
+                    }
+                },
+            )
+
+            val failure = assertThrows<SecurityException> {
+                fixture.facade.create(
+                    CreateDocumentDraftCommand("DOC-1", "Invoice", "v1.txt", 2),
+                    DocumentMetadataCommand("invoice", mapOf("amount" to "private")),
+                    ByteArrayInputStream("v1".toByteArray()),
+                )
+            }
+
+            if (authenticated) {
+                assertTrue(failure is ApplicationForbiddenException)
+            } else {
+                assertTrue(failure is ApplicationUnauthenticatedException)
+            }
+            assertEquals(0, processorCalls)
+            assertTrue(fixture.storage.requests.isEmpty())
+            assertTrue(fixture.assets.saved.isEmpty())
+        }
+    }
+
+    @Test
+    fun `metadata failure and missing capability happen before storage is opened`() {
+        val invalid = Fixture(
+            metadataProcessor = object : MetadataProcessor {
+                override fun process(
+                    context: MetadataSchemaContext,
+                    metadata: Map<String, String>,
+                ): Map<String, String> = throw IllegalArgumentException("Metadata validation failed.")
+            },
+        )
+        val unavailable = Fixture()
+        val command = CreateDocumentDraftCommand(
+            "DOC-1",
+            "Invoice",
+            "v1.txt",
+            2,
+        )
+        val metadata = DocumentMetadataCommand("invoice", mapOf("amount" to "invalid"))
+
+        assertThrows<IllegalArgumentException> {
+            invalid.facade.create(command, metadata, ByteArrayInputStream("v1".toByteArray()))
+        }
+        assertThrows<V1FeatureUnavailableException> {
+            unavailable.facade.create(command, metadata, ByteArrayInputStream("v1".toByteArray()))
+        }
+        assertTrue(invalid.storage.requests.isEmpty())
+        assertTrue(unavailable.storage.requests.isEmpty())
+    }
+
+    @Test
     fun `rejects unsafe opaque identifiers before opening storage or loading a document`() {
         val fixture = Fixture()
 
@@ -213,16 +337,24 @@ class DocumentApiWriteFacadeTest {
     private class Fixture(
         withCatalog: Boolean = false,
         withCatalogMutations: Boolean = withCatalog,
+        metadataProcessor: MetadataProcessor? = null,
+        authenticated: Boolean = true,
+        authorized: Boolean = true,
     ) {
         val documents = MemoryDocuments()
         val assets = MemoryAssets()
         val storage = RecordingStorage()
-        val authorization = RecordingAuthorization()
+        val authorization = RecordingAuthorization(authorized)
+        var tenantSnapshots: Int = 0
+            private set
         private val tenants = object : TenantProvider {
-            override fun currentTenant(): TenantContext = TenantContext(TENANT_ID)
+            override fun currentTenant(): TenantContext {
+                tenantSnapshots++
+                return TenantContext(TENANT_ID)
+            }
         }
         private val users = object : UserRealmProvider {
-            override fun currentUser(): UserIdentity = UserIdentity(USER_ID, "Alice")
+            override fun currentUser(): UserIdentity? = UserIdentity(USER_ID, "Alice").takeIf { authenticated }
             override fun findUser(userId: Identifier): UserIdentity? = null
         }
         private val drafts = DocumentDraftService(
@@ -258,14 +390,30 @@ class DocumentApiWriteFacadeTest {
             ?.let { access ->
                 DocumentCatalogMutationService(drafts, access)
             }
-        val facade = DocumentApiWriteFacade(drafts, catalogDrafts, catalogMutations)
+        private val metadataService = metadataProcessor?.let { processor ->
+            DocumentMetadataService(
+                tenants,
+                object : MetadataSchemaResolver {
+                    override fun resolve(context: MetadataSchemaContext): MetadataSchema = MetadataSchema(
+                        "invoice",
+                        "2",
+                        listOf(MetadataField("amount", MetadataFieldType.NUMBER, required = true)),
+                    )
+                },
+                processor,
+            )
+        }
+        private val metadataWrites = metadataService?.let { metadata ->
+            DocumentMetadataWriteService(drafts, metadata, catalogDrafts, catalogMutations)
+        }
+        val facade = DocumentApiWriteFacade(drafts, catalogDrafts, catalogMutations, metadataWrites)
     }
 
-    private class RecordingAuthorization : AuthorizationProvider {
+    private class RecordingAuthorization(private val allowed: Boolean = true) : AuthorizationProvider {
         val requests = mutableListOf<AuthorizationRequest>()
         override fun authorize(request: AuthorizationRequest): AuthorizationDecision {
             requests += request
-            return AuthorizationDecision(true)
+            return AuthorizationDecision(allowed, "denied")
         }
     }
 

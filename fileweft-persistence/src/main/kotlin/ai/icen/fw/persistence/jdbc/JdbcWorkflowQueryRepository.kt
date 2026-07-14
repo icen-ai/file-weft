@@ -375,7 +375,7 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                 FROM fw_workflow_instance workflow
                 JOIN visible_document document ON document.id = workflow.document_id
                 WHERE workflow.tenant_id = ?
-                  AND workflow.state IN ('PENDING', 'APPROVED', 'REJECTED')
+                  AND workflow.state IN ('PENDING', 'WITHDRAWN', 'APPROVED', 'REJECTED')
                   AND workflow.created_time >= 0
                   AND workflow.updated_time >= workflow.created_time
                   AND ${dialectTrim("workflow.workflow_type")} <> ''
@@ -399,6 +399,21 @@ class JdbcWorkflowQueryRepository : WorkflowQueryRepository {
                   AND (
                       (
                           workflow.state = 'PENDING'
+                          AND EXISTS (
+                              SELECT 1 FROM fw_workflow_task task
+                              WHERE task.tenant_id = workflow.tenant_id
+                                AND task.workflow_id = workflow.id
+                                AND task.task_state = 'PENDING'
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM fw_workflow_task task
+                              WHERE task.tenant_id = workflow.tenant_id
+                                AND task.workflow_id = workflow.id
+                                AND task.task_state = 'REJECTED'
+                          )
+                      )
+                      OR (
+                          workflow.state = 'WITHDRAWN'
                           AND EXISTS (
                               SELECT 1 FROM fw_workflow_task task
                               WHERE task.tenant_id = workflow.tenant_id

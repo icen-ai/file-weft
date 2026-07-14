@@ -11,6 +11,8 @@ import ai.icen.fw.application.document.DocumentPageRequest
 import ai.icen.fw.application.document.DocumentPageResult
 import ai.icen.fw.application.document.DocumentQueryRepository
 import ai.icen.fw.application.document.DocumentQueryService
+import ai.icen.fw.application.metadata.DocumentMetadataService
+import ai.icen.fw.application.metadata.DocumentMetadataWriteService
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.context.TraceContext
@@ -23,6 +25,12 @@ import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
+import ai.icen.fw.metadata.api.MetadataField
+import ai.icen.fw.metadata.api.MetadataFieldType
+import ai.icen.fw.metadata.api.MetadataProcessor
+import ai.icen.fw.metadata.api.MetadataSchema
+import ai.icen.fw.metadata.api.MetadataSchemaContext
+import ai.icen.fw.metadata.api.MetadataSchemaResolver
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -113,6 +121,81 @@ class V1DocumentWriteControllerTest {
         assertContentEquals(payload, fixture.storage.contents.single())
         assertEquals(1, file.openCount)
         assertTrue(file.openedStreams.single().closed)
+    }
+
+    @Test
+    fun `accepts schema qualified metadata parts and persists only normalized values`() {
+        val fixture = V1DocumentWriteTestFixture(
+            listOf("document-1", "file-1", "asset-1", "version-1", "file-2", "version-2"),
+        )
+        val mvc = mockMvc(fixture, metadataService = metadataService("tenant-1"))
+
+        mvc.perform(
+            multipart(DOCUMENTS_PATH)
+                .file(trackingFile("invoice.txt"))
+                .param("documentNumber", "INV-1")
+                .param("title", "Invoice")
+                .param("metadataSchemaId", "invoice")
+                .param("metadata", "amount=12.500"),
+        ).andExpect(status().isCreated)
+            .andExpect(jsonPath("$.code").value("OK"))
+
+        assertTrue(fixture.storage.uploads.single().metadata.isEmpty())
+        assertEquals("12.5", fixture.assetMetadata()["amount"])
+        assertEquals("invoice", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_ID_KEY])
+        assertEquals("2", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_VERSION_KEY])
+
+        mvc.perform(
+            multipart("$DOCUMENTS_PATH/document-1/versions")
+                .file(trackingFile("invoice-v2.txt"))
+                .param("versionNumber", "2.0")
+                .param("metadataSchemaId", "invoice")
+                .param("metadata", "amount=13.00"),
+        ).andExpect(status().isCreated)
+            .andExpect(jsonPath("$.code").value("OK"))
+
+        assertTrue(fixture.storage.uploads.all { upload -> upload.metadata.isEmpty() })
+        assertEquals("13", fixture.assetMetadata()["amount"])
+        assertEquals("invoice", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_ID_KEY])
+        assertEquals("2", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_VERSION_KEY])
+    }
+
+    @Test
+    fun `Boot 3 schema writes do not reveal metadata validation before authentication or authorization`() {
+        listOf(false to true, true to false).forEach { (authenticated, authorized) ->
+            var processorCalls = 0
+            val fixture = V1DocumentWriteTestFixture().apply {
+                if (!authenticated) currentUser = null
+                if (!authorized) authorizationDecision = AuthorizationDecision(false, "denied")
+            }
+            val mvc = mockMvc(
+                fixture,
+                metadataService = metadataService(
+                    "tenant-1",
+                    object : MetadataProcessor {
+                        override fun process(
+                            context: MetadataSchemaContext,
+                            metadata: Map<String, String>,
+                        ): Map<String, String> {
+                            processorCalls++
+                            return metadata
+                        }
+                    },
+                ),
+            )
+
+            mvc.perform(
+                multipart(DOCUMENTS_PATH)
+                    .file(trackingFile("invoice.txt"))
+                    .param("documentNumber", "INV-PRIVATE")
+                    .param("title", "Invoice")
+                    .param("metadataSchemaId", "invoice")
+                    .param("metadata", "amount=private"),
+            ).andExpect(if (authenticated) status().isForbidden else status().isUnauthorized)
+
+            assertEquals(0, processorCalls)
+            assertTrue(fixture.storage.uploads.isEmpty())
+        }
     }
 
     @Test
@@ -474,13 +557,19 @@ class V1DocumentWriteControllerTest {
         fixture: V1DocumentWriteTestFixture,
         catalogDrafts: DocumentCatalogDraftService? = null,
         catalogMutations: DocumentCatalogMutationService? = null,
-    ): MockMvc = MockMvcBuilders.standaloneSetup(
-        V1DocumentWriteController(
-            documents = DocumentApiWriteFacade(fixture.drafts, catalogDrafts, catalogMutations),
-            responses = V1ApiResponseFactory(),
-            traceContextProvider = TRACE_CONTEXT_PROVIDER,
-        ),
-    ).setMessageConverters(MappingJackson2HttpMessageConverter(ObjectMapper())).build()
+        metadataService: DocumentMetadataService? = null,
+    ): MockMvc {
+        val metadataWrites = metadataService?.let { metadata ->
+            DocumentMetadataWriteService(fixture.drafts, metadata, catalogDrafts, catalogMutations)
+        }
+        return MockMvcBuilders.standaloneSetup(
+            V1DocumentWriteController(
+                documents = DocumentApiWriteFacade(fixture.drafts, catalogDrafts, catalogMutations, metadataWrites),
+                responses = V1ApiResponseFactory(),
+                traceContextProvider = TRACE_CONTEXT_PROVIDER,
+            ),
+        ).setMessageConverters(MappingJackson2HttpMessageConverter(ObjectMapper())).build()
+    }
 
     private fun createRequest() = multipart(DOCUMENTS_PATH)
         .file(trackingFile("proof.pdf"))
@@ -489,6 +578,30 @@ class V1DocumentWriteControllerTest {
 
     private fun trackingFile(originalFilename: String): TrackingMultipartFile =
         TrackingMultipartFile("file", originalFilename, "application/pdf", byteArrayOf(1, 2, 3))
+
+    private fun metadataService(
+        tenantId: String,
+        processor: MetadataProcessor = object : MetadataProcessor {
+            override fun process(
+                context: MetadataSchemaContext,
+                metadata: Map<String, String>,
+            ): Map<String, String> = mapOf(
+                "amount" to metadata.getValue("amount").trimEnd('0').trimEnd('.'),
+            )
+        },
+    ): DocumentMetadataService = DocumentMetadataService(
+        object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(Identifier(tenantId))
+        },
+        object : MetadataSchemaResolver {
+            override fun resolve(context: MetadataSchemaContext): MetadataSchema = MetadataSchema(
+                "invoice",
+                "2",
+                listOf(MetadataField("amount", MetadataFieldType.NUMBER, required = true)),
+            )
+        },
+        processor,
+    )
 
     private fun ResultActions.andExpectInvalidRequest() {
         andExpect(status().isBadRequest)
@@ -541,6 +654,7 @@ internal class V1DocumentWriteTestFixture(
     val documents = MemoryDocuments()
     val storage = RecordingStorage()
     private val assets = MemoryAssets()
+    fun assetMetadata(): Map<String, String> = assets.latestMetadata()
 
     private val tenantProvider = object : TenantProvider {
         override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
@@ -708,6 +822,8 @@ internal class V1DocumentWriteTestFixture(
         override fun save(fileAsset: FileAsset) {
             values[fileAsset.id] = fileAsset
         }
+
+        fun latestMetadata(): Map<String, String> = values.values.single().metadata
     }
 
     private class SequenceIdentifiers(values: List<String>) : IdentifierGenerator {

@@ -48,6 +48,7 @@ class DocumentLifecycleApiFacade private constructor(
             submitForReview: ((Identifier, String?, String) -> DocumentLifecycleReceipt)?,
             approve: ((Identifier, Identifier, String?, String?, String) -> DocumentLifecycleReceipt)?,
             reject: ((Identifier, Identifier, String?, String) -> DocumentLifecycleReceipt)?,
+            withdrawReview: ((Identifier, String) -> DocumentLifecycleReceipt)? = null,
         ): DocumentLifecycleApiFacade {
             val lifecycleFunctions = listOf(revise, publish, offline, restore, archive)
             val reviewFunctions = listOf(submitForReview, approve, reject)
@@ -68,7 +69,7 @@ class DocumentLifecycleApiFacade private constructor(
                     )
                 },
                 reviews = submitForReview?.let {
-                    LambdaReviewCommands(it, requireNotNull(approve), requireNotNull(reject))
+                    LambdaReviewCommands(it, requireNotNull(approve), requireNotNull(reject), withdrawReview)
                 },
             )
         }
@@ -174,6 +175,14 @@ class DocumentLifecycleApiFacade private constructor(
         key(idempotencyKey),
     ).toDto()
 
+    fun withdrawReview(
+        workflowId: String,
+        idempotencyKey: String,
+    ): DocumentLifecycleCommandResultDto = reviews().withdrawReview(
+        DocumentApiInputs.workflowId(workflowId),
+        key(idempotencyKey),
+    ).toDto()
+
     private fun documentId(value: String): Identifier = DocumentApiInputs.documentId(value)
 
     private fun key(value: String): String = IdempotencyKeyParser.parse(listOf(value))
@@ -212,6 +221,7 @@ class DocumentLifecycleApiFacade private constructor(
             comment: String?,
             key: String,
         ): DocumentLifecycleReceipt
+        fun withdrawReview(workflowId: Identifier, key: String): DocumentLifecycleReceipt
     }
 
     private class FlatLifecycleCommands(
@@ -250,6 +260,8 @@ class DocumentLifecycleApiFacade private constructor(
         ) = service.approve(workflowId, taskId, comment, profileId, key)
         override fun reject(workflowId: Identifier, taskId: Identifier, comment: String?, key: String) =
             service.reject(workflowId, taskId, comment, key)
+        override fun withdrawReview(workflowId: Identifier, key: String) =
+            service.withdrawReview(workflowId, key)
     }
 
     private class CatalogReviewCommands(
@@ -266,6 +278,8 @@ class DocumentLifecycleApiFacade private constructor(
         ) = service.approve(workflowId, taskId, comment, profileId, key)
         override fun reject(workflowId: Identifier, taskId: Identifier, comment: String?, key: String) =
             service.reject(workflowId, taskId, comment, key)
+        override fun withdrawReview(workflowId: Identifier, key: String) =
+            service.withdrawReview(workflowId, key)
     }
 
     private class LambdaLifecycleCommands(
@@ -287,6 +301,7 @@ class DocumentLifecycleApiFacade private constructor(
         private val submitCommand: (Identifier, String?, String) -> DocumentLifecycleReceipt,
         private val approveCommand: (Identifier, Identifier, String?, String?, String) -> DocumentLifecycleReceipt,
         private val rejectCommand: (Identifier, Identifier, String?, String) -> DocumentLifecycleReceipt,
+        private val withdrawCommand: ((Identifier, String) -> DocumentLifecycleReceipt)?,
     ) : ReviewCommands {
         override fun submitForReview(documentId: Identifier, routeId: String?, key: String) =
             submitCommand(documentId, routeId, key)
@@ -299,5 +314,7 @@ class DocumentLifecycleApiFacade private constructor(
         ) = approveCommand(workflowId, taskId, comment, profileId, key)
         override fun reject(workflowId: Identifier, taskId: Identifier, comment: String?, key: String) =
             rejectCommand(workflowId, taskId, comment, key)
+        override fun withdrawReview(workflowId: Identifier, key: String): DocumentLifecycleReceipt =
+            withdrawCommand?.invoke(workflowId, key) ?: throw V1FeatureUnavailableException()
     }
 }

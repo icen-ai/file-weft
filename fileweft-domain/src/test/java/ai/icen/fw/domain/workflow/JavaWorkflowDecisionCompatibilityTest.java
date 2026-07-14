@@ -30,6 +30,7 @@ class JavaWorkflowDecisionCompatibilityTest {
             WorkflowState.PENDING,
             Collections.singletonList(task)
         );
+        assertNull(workflow.getSubmittedBy());
 
         workflow.approve(task.getId(), reviewerId, "approved by released Java API");
 

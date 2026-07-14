@@ -113,6 +113,15 @@ class V1DocumentLifecycleController(
         documents.approve(workflowId, taskId, command, idempotencyKey)
     }
 
+    @PostMapping("/workflows/{workflowId}/withdraw")
+    fun withdrawReview(
+        @PathVariable("workflowId") workflowId: String,
+        @RequestHeader(name = IDEMPOTENCY_KEY, required = false) idempotencyKeys: List<String>?,
+    ): ResponseEntity<ApiResponse<Any?>> = execute {
+        val idempotencyKey = IdempotencyKeyParser.parse(idempotencyKeys)
+        documents.withdrawReview(workflowId, idempotencyKey)
+    }
+
     @PostMapping("/workflows/{workflowId}/tasks/{taskId}/reject")
     fun reject(
         @PathVariable("workflowId") workflowId: String,

@@ -142,6 +142,44 @@ class IdempotentDocumentReviewWorkflowServiceTest {
     }
 
     @Test
+    fun `withdraw fresh and replay restore draft and write audit only once`() {
+        val document = pendingDocument()
+        val workflow = pendingWorkflow(
+            document.id,
+            listOf(PRIMARY_USER.id),
+            submittedBy = PRIMARY_USER.id,
+        )
+        val fixture = Fixture(document, workflow)
+
+        val first = fixture.service.withdrawReview(workflow.id, "withdraw-key")
+        val replay = fixture.service.withdrawReview(workflow.id, "withdraw-key")
+
+        assertEquals(document.id, first.documentId)
+        assertEquals(first.documentId, replay.documentId)
+        assertEquals(workflow.id, replay.workflowId)
+        assertNull(replay.taskId)
+        assertEquals(LifecycleState.DRAFT, fixture.document.lifecycleState)
+        assertEquals(WorkflowState.WITHDRAWN, fixture.workflows.workflow?.state)
+        assertEquals(1, fixture.documents.saveCalls)
+        assertEquals(1, fixture.workflows.saveCalls)
+        assertEquals(1, fixture.audits.records.size)
+        assertEquals("document:review:withdraw", fixture.audits.records.single().action)
+        assertEquals(0, fixture.authorizationRequests.size)
+        assertEquals(1, fixture.idempotency.claimCalls)
+        assertEquals(1, fixture.idempotency.completeCalls)
+        assertSubsequence(
+            fixture.events,
+            "idem:claim",
+            "document:lock",
+            "workflow:lock",
+            "workflow:save",
+            "document:save",
+            "audit:append",
+            "idem:complete",
+        )
+    }
+
+    @Test
     fun `guarded replay reauthorizes and checks acl before skipping route profile and mutation locks`() {
         val submit = Fixture(draftDocument())
         submit.guarded.submitForReview(submit.document.id, PRIMARY_USER.id, ROUTE_ID, "guarded-submit")
@@ -768,13 +806,18 @@ private fun draftDocument(): Document = Document(
 
 private fun pendingDocument(): Document = draftDocument().also { it.transition(LifecycleCommand.SUBMIT) }
 
-private fun pendingWorkflow(documentId: Identifier, assignees: List<Identifier>): WorkflowInstance {
+private fun pendingWorkflow(
+    documentId: Identifier,
+    assignees: List<Identifier>,
+    submittedBy: Identifier? = null,
+): WorkflowInstance {
     val workflowId = Identifier("workflow-existing")
     return WorkflowInstance(
         workflowId,
         Identifier("tenant-1"),
         documentId,
         DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+        WorkflowState.PENDING,
         tasks = assignees.mapIndexed { index, assignee ->
             WorkflowTask(
                 Identifier("task-${index + 1}"),
@@ -783,5 +826,6 @@ private fun pendingWorkflow(documentId: Identifier, assignees: List<Identifier>)
                 assignee,
             )
         },
+        submittedBy = submittedBy,
     )
 }

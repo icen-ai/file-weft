@@ -60,7 +60,7 @@ class KingbaseFlywayMigrationRunnerIntegrationTest {
     @Test
     fun `applies all kingbase migrations and validates`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
-        assertEquals(28, migrations)
+        assertEquals(29, migrations)
 
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
@@ -81,6 +81,7 @@ class KingbaseFlywayMigrationRunnerIntegrationTest {
             assertTrue(tableExists(connection, "fw_upload_session_part"))
             assertTrue(tableExists(connection, "fw_idempotency_record"))
             assertTrue(tableExists(connection, "fw_document_delivery_target"))
+            assertTrue(columnExists(connection, "fw_workflow_instance", "submitted_by"))
         }
 
         FlywayMigrationRunner(dataSource).validate()
@@ -88,6 +89,11 @@ class KingbaseFlywayMigrationRunnerIntegrationTest {
 
     private fun tableExists(connection: Connection, tableName: String): Boolean =
         connection.metaData.getTables(null, null, tableName, arrayOf("TABLE")).use { result ->
+            result.next()
+        }
+
+    private fun columnExists(connection: Connection, tableName: String, columnName: String): Boolean =
+        connection.metaData.getColumns(null, null, tableName, columnName).use { result ->
             result.next()
         }
 }

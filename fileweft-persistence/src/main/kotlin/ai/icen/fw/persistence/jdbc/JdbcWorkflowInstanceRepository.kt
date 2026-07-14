@@ -13,13 +13,13 @@ class JdbcWorkflowInstanceRepository(
     private val clock: Clock,
 ) : WorkflowInstanceRepository {
     override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? =
-        find(tenantId, "SELECT id, tenant_id, document_id, workflow_type, state FROM fw_workflow_instance WHERE tenant_id = ? AND id = ?") { statement ->
+        find(tenantId, "SELECT id, tenant_id, document_id, workflow_type, state, submitted_by FROM fw_workflow_instance WHERE tenant_id = ? AND id = ?") { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, workflowId.value)
         }
 
     override fun findForDecision(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? =
-        find(tenantId, "SELECT id, tenant_id, document_id, workflow_type, state FROM fw_workflow_instance WHERE tenant_id = ? AND id = ? FOR UPDATE") { statement ->
+        find(tenantId, "SELECT id, tenant_id, document_id, workflow_type, state, submitted_by FROM fw_workflow_instance WHERE tenant_id = ? AND id = ? FOR UPDATE") { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, workflowId.value)
         }
@@ -27,7 +27,7 @@ class JdbcWorkflowInstanceRepository(
     override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? =
         find(
             tenantId,
-            "SELECT id, tenant_id, document_id, workflow_type, state FROM fw_workflow_instance WHERE tenant_id = ? AND document_id = ? AND state = 'PENDING' ORDER BY created_time DESC, id DESC LIMIT 1",
+            "SELECT id, tenant_id, document_id, workflow_type, state, submitted_by FROM fw_workflow_instance WHERE tenant_id = ? AND document_id = ? AND state = 'PENDING' ORDER BY created_time DESC, id DESC LIMIT 1",
         ) { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentId.value)
@@ -49,15 +49,16 @@ class JdbcWorkflowInstanceRepository(
         }
         if (updated == 0) {
             connection.prepareStatement(
-                "INSERT INTO fw_workflow_instance(id, tenant_id, document_id, workflow_type, state, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO fw_workflow_instance(id, tenant_id, document_id, workflow_type, state, submitted_by, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             ).use { statement ->
                 statement.setString(1, workflow.id.value)
                 statement.setString(2, workflow.tenantId.value)
                 statement.setString(3, workflow.documentId.value)
                 statement.setString(4, workflow.workflowType)
                 statement.setString(5, workflow.state.name)
-                statement.setLong(6, now)
+                statement.setString(6, workflow.submittedBy?.value)
                 statement.setLong(7, now)
+                statement.setLong(8, now)
                 statement.executeUpdate()
             }
         }
@@ -274,6 +275,7 @@ class JdbcWorkflowInstanceRepository(
         workflowType = result.getString("workflow_type"),
         state = WorkflowState.valueOf(result.getString("state")),
         tasks = tasks,
+        submittedBy = result.getString("submitted_by")?.let(::Identifier),
     )
 
     private companion object {

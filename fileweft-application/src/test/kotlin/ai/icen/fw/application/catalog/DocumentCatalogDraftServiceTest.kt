@@ -48,6 +48,62 @@ import kotlin.test.assertTrue
 
 class DocumentCatalogDraftServiceTest {
     @Test
+    fun `schema-aware create checks catalog and document access before metadata and keeps it out of storage`() {
+        val fixture = Fixture()
+        val providerTenants = mutableListOf<Identifier>()
+
+        fixture.service.createInFolderWithMetadata(
+            command(),
+            "folder-alias",
+            content(),
+        ) { tenantId ->
+            providerTenants += tenantId
+            linkedMapOf(
+                "amount" to "12.5",
+                "metadata.schema-id" to "invoice",
+                "metadata.schema-version" to "2",
+            )
+        }
+
+        assertEquals(listOf(Identifier("tenant-a")), providerTenants)
+        assertTrue(fixture.storage.uploads.single().metadata.isEmpty())
+        assertEquals(
+            linkedMapOf(
+                "amount" to "12.5",
+                "metadata.schema-id" to "invoice",
+                "metadata.schema-version" to "2",
+                DocumentCatalogBinding.METADATA_KEY to CANONICAL_FOLDER_ID,
+            ),
+            fixture.assets.saved.single().metadata,
+        )
+        assertTrue(fixture.events.indexOf("catalog") < fixture.events.indexOf("upload"))
+    }
+
+    @Test
+    fun `schema-aware create never invokes metadata before both catalog and document authorization`() {
+        listOf(
+            Fixture(authorized = false),
+            Fixture(documentAuthorized = false),
+        ).forEach { fixture ->
+            var providerCalls = 0
+
+            assertThrows<SecurityException> {
+                fixture.service.createInFolderWithMetadata(
+                    command(),
+                    "folder-alias",
+                    content(),
+                ) {
+                    providerCalls++
+                    mapOf("amount" to "private")
+                }
+            }
+
+            assertEquals(0, providerCalls)
+            assertNoDraftWasCreated(fixture)
+        }
+    }
+
+    @Test
     fun `validates a host folder before upload then persists its canonical binding and audit detail`() {
         val fixture = Fixture()
 
@@ -209,6 +265,7 @@ class DocumentCatalogDraftServiceTest {
 
     private class Fixture(
         authorized: Boolean = true,
+        documentAuthorized: Boolean = authorized,
         folder: DocumentCatalogFolder? = DocumentCatalogFolder(CANONICAL_FOLDER_ID, null, "Canonical folder"),
         attemptMetadataMutation: Boolean = false,
     ) {
@@ -217,7 +274,7 @@ class DocumentCatalogDraftServiceTest {
         val documents = RecordingDocuments()
         val assets = RecordingAssets()
         val audits = RecordingAudits()
-        val authorization = RecordingAuthorization(authorized)
+        val authorization = RecordingAuthorization(authorized, documentAuthorized)
         val catalog = RecordingCatalog(events, folder)
         private val tenants = object : TenantProvider {
             override fun currentTenant() = TenantContext(Identifier("tenant-a"))
@@ -242,11 +299,15 @@ class DocumentCatalogDraftServiceTest {
         val service = DocumentCatalogDraftService(drafts, catalogAccess)
     }
 
-    private class RecordingAuthorization(private val allowed: Boolean) : AuthorizationProvider {
+    private class RecordingAuthorization(
+        private val catalogAllowed: Boolean,
+        private val documentAllowed: Boolean,
+    ) : AuthorizationProvider {
         val requests = mutableListOf<AuthorizationRequest>()
 
         override fun authorize(request: AuthorizationRequest): AuthorizationDecision {
             requests += request
+            val allowed = if (request.resource.type == "DOCUMENT_CATALOG") catalogAllowed else documentAllowed
             return AuthorizationDecision(allowed, "denied")
         }
     }

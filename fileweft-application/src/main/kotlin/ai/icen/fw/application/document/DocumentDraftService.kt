@@ -13,6 +13,7 @@ import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileAsset
+import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
@@ -29,6 +30,7 @@ import ai.icen.fw.spi.tenant.TenantProvider
 import java.io.InputStream
 import java.util.Collections
 import java.util.LinkedHashMap
+import java.util.Locale
 
 /**
  * Creates and edits draft documents while keeping object storage outside the
@@ -56,13 +58,32 @@ class DocumentDraftService(
         transaction,
     )
 
-    fun create(command: CreateDocumentDraftCommand, content: InputStream): Document {
+    fun create(command: CreateDocumentDraftCommand, content: InputStream): Document =
+        createInternal(command, content, null)
+
+    /**
+     * Metadata-aware entry used by the additive schema write boundary. The
+     * provider receives the tenant snapshot only after document authorization
+     * succeeds, so schema existence and validation rules cannot be probed by
+     * an unauthenticated or unauthorized caller.
+     */
+    @JvmSynthetic
+    internal fun createWithMetadata(
+        command: CreateDocumentDraftCommand,
+        content: InputStream,
+        metadataProvider: (Identifier) -> Map<String, String>,
+    ): Document = createInternal(command, content, metadataProvider)
+
+    private fun createInternal(
+        command: CreateDocumentDraftCommand,
+        content: InputStream,
+        metadataProvider: ((Identifier) -> Map<String, String>)?,
+    ): Document {
         ApplicationTransactionBoundary.requireInactive(transaction)
         val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        val metadata = immutableMetadata(command.metadata)
         val documentId = identifierGenerator.nextId()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, CREATE_ACTION)
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, CREATE_ACTION)
+        val metadata = immutableMetadata(metadataProvider?.invoke(tenant.tenantId) ?: command.metadata)
         transaction.execute {
             if (documentRepository.findByDocumentNumber(tenant.tenantId, command.documentNumber) != null) {
                 throw DocumentNumberAlreadyExistsException(command.documentNumber)
@@ -74,7 +95,14 @@ class DocumentDraftService(
         var stored: StoredObject? = null
         var persistenceAttempt: CreatePersistenceAttempt? = null
         try {
-            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
+            val attempted = upload(
+                tenant.tenantId,
+                command.fileName,
+                command.contentLength,
+                command.contentType,
+                storageMetadata(metadata, metadataProvider),
+                content,
+            )
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
@@ -145,19 +173,43 @@ class DocumentDraftService(
         command: AddDocumentVersionCommand,
         content: InputStream,
         mutationGuard: DocumentMutationGuard?,
+    ): Document = addVersionInternal(documentId, command, content, mutationGuard, null)
+
+    /** Schema-aware variant whose provider runs only after base and catalog authorization. */
+    @JvmSynthetic
+    internal fun addVersionWithMetadata(
+        documentId: Identifier,
+        command: AddDocumentVersionCommand,
+        content: InputStream,
+        mutationGuard: DocumentMutationGuard?,
+        metadataProvider: (Identifier) -> Map<String, String>,
+    ): Document = addVersionInternal(documentId, command, content, mutationGuard, metadataProvider)
+
+    private fun addVersionInternal(
+        documentId: Identifier,
+        command: AddDocumentVersionCommand,
+        content: InputStream,
+        mutationGuard: DocumentMutationGuard?,
+        metadataProvider: ((Identifier) -> Map<String, String>)?,
     ): Document {
         ApplicationTransactionBoundary.requireInactive(transaction)
         val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        val metadata = immutableMetadata(command.metadata)
         val fileObjectId = identifierGenerator.nextId()
         val versionId = identifierGenerator.nextId()
-        authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
+        val operator = authorization.requireDocumentAction(tenant.tenantId, documentId, EDIT_ACTION)
         val mutationPermit = mutationGuard?.prepare(tenant.tenantId, documentId)
+        val metadata = immutableMetadata(metadataProvider?.invoke(tenant.tenantId) ?: command.metadata)
         var stored: StoredObject? = null
         var persistenceAttempt: AddVersionPersistenceAttempt? = null
         try {
-            val attempted = upload(tenant.tenantId, command.fileName, command.contentLength, command.contentType, metadata, content)
+            val attempted = upload(
+                tenant.tenantId,
+                command.fileName,
+                command.contentLength,
+                command.contentType,
+                storageMetadata(metadata, metadataProvider),
+                content,
+            )
             stored = attempted.stored
             StoredObjectIntegrity.requireMatches(attempted.request, attempted.stored)
             val uploaded = stored ?: error("Stored object is unavailable after upload.")
@@ -173,8 +225,20 @@ class DocumentDraftService(
                 if (mutationGuard != null) {
                     mutationGuard.verifyLocked(tenant.tenantId, existing, checkNotNull(mutationPermit))
                 }
+                val assetMutation = if (metadataProvider == null) {
+                    null
+                } else {
+                    documentMetadataMutation(tenant.tenantId, existing, metadata)
+                }
+                persistenceAttempt = AddVersionPersistenceAttempt(
+                    fileObject = fileObject,
+                    version = version,
+                    originalAsset = assetMutation?.original,
+                    expectedAsset = assetMutation?.updated,
+                )
                 existing.addVersion(version)
                 fileObjectRepository.save(fileObject)
+                assetMutation?.let { mutation -> fileAssetRepository.save(mutation.updated) }
                 documentRepository.save(existing)
                 auditTrail?.record(
                     tenantId = tenant.tenantId,
@@ -313,6 +377,9 @@ class DocumentDraftService(
                         attempted.fileObject.tenantId,
                         attempted.fileObject.id,
                     ),
+                    fileAsset = attempted.expectedAsset?.let { expected ->
+                        fileAssetRepository.findById(expected.tenantId, expected.id)
+                    },
                 )
             }
         } catch (reconciliationFailure: Throwable) {
@@ -324,13 +391,27 @@ class DocumentDraftService(
                 document.tenantId == attempted.version.tenantId &&
                 document.versions.any { version -> sameDocumentVersion(version, attempted.version) }
         }
-        val exactBinding = exactDocument != null && sameFileObject(persisted.fileObject, attempted.fileObject)
+        val exactBinding =
+            exactDocument != null &&
+                sameFileObject(persisted.fileObject, attempted.fileObject) &&
+                persisted.matchesExpectedAsset(attempted)
+        val assetUnchanged = persisted.matchesOriginalAsset(attempted)
         if (failure is ApplicationTransactionOutcomeUnknownException) {
             if (exactBinding) return checkNotNull(exactDocument)
-            if (persisted.fileObject == null && !persisted.document.references(attempted.version)) throw failure
+            if (
+                persisted.fileObject == null &&
+                !persisted.document.references(attempted.version) &&
+                assetUnchanged
+            ) {
+                throw failure
+            }
             throw outcomeUnknown(failure, IllegalStateException(RECONCILIATION_MISMATCH_MESSAGE))
         }
-        if (persisted.fileObject != null || persisted.document.references(attempted.version)) {
+        if (
+            persisted.fileObject != null ||
+            persisted.document.references(attempted.version) ||
+            !assetUnchanged
+        ) {
             throw outcomeUnknown(failure, IllegalStateException(RECONCILIATION_MISMATCH_MESSAGE))
         }
         return null
@@ -414,6 +495,59 @@ class DocumentDraftService(
             actual.versionNumber == expected.versionNumber &&
             actual.fileObjectId == expected.fileObjectId
 
+    private fun AddVersionPersistenceSnapshot.matchesExpectedAsset(attempted: AddVersionPersistenceAttempt): Boolean =
+        attempted.expectedAsset == null || sameFileAsset(fileAsset, attempted.expectedAsset)
+
+    private fun AddVersionPersistenceSnapshot.matchesOriginalAsset(attempted: AddVersionPersistenceAttempt): Boolean =
+        attempted.originalAsset == null || sameFileAsset(fileAsset, attempted.originalAsset)
+
+    private fun documentMetadataMutation(
+        tenantId: Identifier,
+        document: Document,
+        metadata: Map<String, String>,
+    ): FileAssetMetadataMutation {
+        require(metadata.keys.none(::isProtectedHostMetadataKey)) {
+            "Schema metadata must not use a host-reserved namespace."
+        }
+        val original = (fileAssetRepository as? FileAssetMutationRepository)
+            ?.findForMutation(tenantId, document.assetId)
+            ?: fileAssetRepository.findById(tenantId, document.assetId)
+            ?: throw IllegalStateException("Document metadata asset is unavailable.")
+        check(original.tenantId == tenantId && original.id == document.assetId) {
+            "Document metadata asset is incompatible."
+        }
+        val updatedMetadata = LinkedHashMap<String, String>()
+        original.metadata.entries
+            .filter { entry -> isProtectedHostMetadataKey(entry.key) }
+            .forEach { entry -> updatedMetadata[entry.key] = entry.value }
+        updatedMetadata.putAll(metadata)
+        val updated = FileAsset(
+            id = original.id,
+            tenantId = original.tenantId,
+            fileObjectId = original.fileObjectId,
+            assetType = original.assetType,
+            metadata = immutableMetadata(updatedMetadata),
+        )
+        return FileAssetMetadataMutation(original, updated)
+    }
+
+    private fun isProtectedHostMetadataKey(key: String): Boolean {
+        val normalized = key.lowercase(Locale.ROOT)
+        return normalized.startsWith(CATALOG_METADATA_NAMESPACE) ||
+            normalized.startsWith(FILEWEFT_METADATA_NAMESPACE)
+    }
+
+    /**
+     * Schema metadata is persisted in FileWeft's asset record. It is not
+     * duplicated into vendor object-user-metadata headers, whose limits and
+     * read-back guarantees are adapter-specific. Legacy callers retain the
+     * historical behavior of passing their metadata to storage.
+     */
+    private fun storageMetadata(
+        metadata: Map<String, String>,
+        metadataProvider: ((Identifier) -> Map<String, String>)?,
+    ): Map<String, String> = if (metadataProvider == null) metadata else emptyMap()
+
     private fun compensate(location: StorageObjectLocation, failure: Throwable) {
         try {
             storageAdapter.delete(location)
@@ -477,11 +611,19 @@ class DocumentDraftService(
     private data class AddVersionPersistenceAttempt(
         val fileObject: FileObject,
         val version: DocumentVersion,
+        val originalAsset: FileAsset? = null,
+        val expectedAsset: FileAsset? = null,
     )
 
     private data class AddVersionPersistenceSnapshot(
         val document: Document?,
         val fileObject: FileObject?,
+        val fileAsset: FileAsset?,
+    )
+
+    private data class FileAssetMetadataMutation(
+        val original: FileAsset,
+        val updated: FileAsset,
     )
 
     companion object {
@@ -492,6 +634,8 @@ class DocumentDraftService(
         const val EDIT_ACTION = "document:edit"
         const val ADD_VERSION_ACTION = "document:version:add"
         const val RENAME_ACTION = "document:rename"
+        private const val CATALOG_METADATA_NAMESPACE = "catalog."
+        private const val FILEWEFT_METADATA_NAMESPACE = "fileweft."
         private const val RECONCILIATION_MISMATCH_MESSAGE: String =
             "Persisted document upload state is partial or inconsistent and requires reconciliation."
     }

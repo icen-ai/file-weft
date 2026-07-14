@@ -19,6 +19,7 @@ import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.workflow.WorkflowInstance
 import ai.icen.fw.domain.workflow.WorkflowInstanceRepository
+import ai.icen.fw.domain.workflow.WorkflowState
 import ai.icen.fw.domain.workflow.WorkflowTask
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.identity.UserRealmProvider
@@ -177,6 +178,7 @@ class DocumentReviewWorkflowService(
             tenantId = context.tenantId,
             documentId = document.id,
             workflowType = preparation.resolvedRoute.route.workflowType,
+            state = WorkflowState.PENDING,
             tasks = preparation.resolvedRoute.route.tasks.map { routeTask ->
                 WorkflowTask(
                     id = identifierGenerator.nextId(),
@@ -185,6 +187,7 @@ class DocumentReviewWorkflowService(
                     assigneeId = routeTask.assigneeId,
                 )
             },
+            submittedBy = context.operator.id,
         )
         documentRepository.save(document)
         workflowRepository.save(workflow)
@@ -203,6 +206,142 @@ class DocumentReviewWorkflowService(
             ),
         )
         return DocumentReviewMutationResult(document, workflow)
+    }
+
+    fun withdraw(workflowId: Identifier): Document = executeWithdrawal(workflowId, null)
+
+    @JvmSynthetic
+    internal fun withdraw(
+        workflowId: Identifier,
+        guard: DocumentLifecycleMutationGuard,
+    ): Document = executeWithdrawal(workflowId, guard)
+
+    private fun executeWithdrawal(
+        workflowId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): Document {
+        val withdrawal = prepareReviewWithdrawal(workflowId, guard)
+        val validated = revalidateReviewWithdrawal(withdrawal)
+        return hideWorkflowDocumentVisibilityFailure(workflowId) {
+            transaction.execute {
+                DocumentLifecycleMutationTransaction.execute {
+                    withdrawInCurrentTransaction(validated, withdrawal).document
+                }
+            }
+        }
+    }
+
+    @JvmSynthetic
+    internal fun prepareReviewWithdrawal(
+        workflowId: Identifier,
+        guard: DocumentLifecycleMutationGuard?,
+    ): DocumentReviewWithdrawalContext {
+        requireNotNull(auditTrail) {
+            "Review withdrawal requires an audit trail."
+        }
+        val tenant = tenantProvider.currentTenant()
+        // Authenticate before the tenant-scoped lookup so an anonymous caller
+        // cannot use withdrawal to probe workflow identifiers.
+        val operator = authorization.requireCurrentUser()
+        val workflowSnapshot = transaction.execute {
+            workflowRepository.findById(tenant.tenantId, workflowId)
+                ?.takeIf { workflow -> workflow.tenantId == tenant.tenantId && workflow.id == workflowId }
+                ?: throw WorkflowNotFoundException(workflowId)
+        }
+        val authorizedAsSubmitter = workflowSnapshot.submittedBy == operator.id
+        val lifecycle = hideWorkflowDocumentVisibilityFailure(workflowId) {
+            val authorizedOperator = if (authorizedAsSubmitter) {
+                operator
+            } else {
+                authorization.requireDocumentActionAs(
+                    tenant.tenantId,
+                    workflowSnapshot.documentId,
+                    WITHDRAW_ACTION,
+                    operator,
+                )
+            }
+            DocumentLifecycleMutationContext.prepare(
+                tenantId = tenant.tenantId,
+                operator = authorizedOperator,
+                documentId = workflowSnapshot.documentId,
+                action = WITHDRAW_ACTION,
+                guard = guard,
+                // A trusted submitter owns the withdrawal decision, but a
+                // catalog host must still recheck current document visibility.
+                guardAction = if (authorizedAsSubmitter) SUBMITTER_VISIBILITY_ACTION else WITHDRAW_ACTION,
+            )
+        }
+        return DocumentReviewWithdrawalContext(
+            lifecycle = lifecycle,
+            workflowId = workflowId,
+            submittedBySnapshot = workflowSnapshot.submittedBy,
+            authorizedAsSubmitter = authorizedAsSubmitter,
+        )
+    }
+
+    @JvmSynthetic
+    internal fun revalidateReviewWithdrawal(
+        withdrawal: DocumentReviewWithdrawalContext,
+    ): ValidatedDocumentLifecycleMutation = hideWorkflowDocumentVisibilityFailure(withdrawal.workflowId) {
+        withdrawal.lifecycle.revalidate()
+    }
+
+    @JvmSynthetic
+    internal fun withdrawInCurrentTransaction(
+        validated: ValidatedDocumentLifecycleMutation,
+        withdrawal: DocumentReviewWithdrawalContext,
+    ): DocumentReviewMutationResult {
+        DocumentLifecycleMutationTransaction.requireActive()
+        val context = validated.contextFor(WITHDRAW_ACTION)
+        require(withdrawal.lifecycle === context) {
+            "Review withdrawal does not belong to this lifecycle operation."
+        }
+        // Preserve the same document -> asset -> workflow lock order as review
+        // decisions so withdrawal and the final vote have one serial outcome.
+        val document = documentRepository.findForMutation(context.tenantId, context.documentId)
+            ?: throw DocumentNotFoundException(context.documentId)
+        if (document.tenantId != context.tenantId || document.id != context.documentId) {
+            throw DocumentNotFoundException(context.documentId)
+        }
+        validated.verifyLocked(document, WITHDRAW_ACTION)
+        val workflow = workflowRepository.findForDecision(context.tenantId, withdrawal.workflowId)
+            ?: throw WorkflowNotFoundException(withdrawal.workflowId)
+        if (
+            workflow.tenantId != context.tenantId ||
+            workflow.id != withdrawal.workflowId ||
+            workflow.documentId != document.id ||
+            workflow.submittedBy != withdrawal.submittedBySnapshot ||
+            (withdrawal.authorizedAsSubmitter && workflow.submittedBy != context.operator.id)
+        ) {
+            throw WorkflowNotFoundException(withdrawal.workflowId)
+        }
+        workflow.withdraw()
+        document.transition(LifecycleCommand.WITHDRAW_REVIEW)
+        workflowRepository.save(workflow)
+        documentRepository.save(document)
+        checkNotNull(auditTrail).record(
+            tenantId = context.tenantId,
+            resourceType = DOCUMENT_RESOURCE_TYPE,
+            resourceId = document.id,
+            action = WITHDRAWN_AUDIT_ACTION,
+            operatorId = context.operator.id,
+            operatorName = context.operator.displayName,
+            details = mapOf(
+                "workflowId" to workflow.id.value,
+                "workflowState" to workflow.state.name,
+                "authorizationBasis" to if (withdrawal.authorizedAsSubmitter) "SUBMITTER" else "POLICY",
+            ),
+        )
+        return DocumentReviewMutationResult(document, workflow)
+    }
+
+    /** Keeps catalog revocation and a concurrent document disappearance indistinguishable from a missing workflow. */
+    @JvmSynthetic
+    internal fun withdrawSafelyInCurrentTransaction(
+        validated: ValidatedDocumentLifecycleMutation,
+        withdrawal: DocumentReviewWithdrawalContext,
+    ): DocumentReviewMutationResult = hideWorkflowDocumentVisibilityFailure(withdrawal.workflowId) {
+        withdrawInCurrentTransaction(validated, withdrawal)
     }
 
     fun approve(workflowId: Identifier, taskId: Identifier, comment: String? = null): Document =
@@ -470,10 +609,13 @@ class DocumentReviewWorkflowService(
         const val REVIEW_WORKFLOW_TYPE = "DOCUMENT_REVIEW"
         const val SUBMIT_ACTION = "document:submit"
         const val AUDIT_ACTION = "document:audit"
+        const val WITHDRAW_ACTION = "document:review:withdraw"
         const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val SUBMITTED_AUDIT_ACTION = "document:review:submit"
         const val APPROVED_AUDIT_ACTION = "document:review:approve"
         const val REJECTED_AUDIT_ACTION = "document:review:reject"
+        const val WITHDRAWN_AUDIT_ACTION = "document:review:withdraw"
+        private const val SUBMITTER_VISIBILITY_ACTION = "document:read"
     }
 }
 

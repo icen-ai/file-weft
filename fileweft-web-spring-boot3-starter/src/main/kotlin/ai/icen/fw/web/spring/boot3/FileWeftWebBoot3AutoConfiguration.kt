@@ -1,13 +1,16 @@
 package ai.icen.fw.web.spring.boot3
 
 import ai.icen.fw.application.document.DocumentQueryService
+import ai.icen.fw.application.metadata.MetadataSchemaQueryService
 import ai.icen.fw.application.delivery.DocumentSyncStatusQueryService
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.document.DocumentApiReadFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentSyncStatusApiFacade
+import ai.icen.fw.web.runtime.v1.metadata.MetadataSchemaApiFacade
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentReadController
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentSyncStatusController
+import ai.icen.fw.web.spring.boot3.v1.metadata.V1MetadataSchemaController
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -28,6 +31,12 @@ import org.springframework.web.bind.annotation.RestController
 @ConditionalOnClass(RestController::class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 class FileWeftWebBoot3AutoConfiguration {
+    @Bean
+    @ConditionalOnBean(MetadataSchemaQueryService::class)
+    @ConditionalOnMissingBean(MetadataSchemaApiFacade::class)
+    fun fileWeftV1MetadataSchemaApiFacade(schemas: MetadataSchemaQueryService): MetadataSchemaApiFacade =
+        MetadataSchemaApiFacade(schemas)
+
     @Bean
     @ConditionalOnBean(DocumentQueryService::class)
     @ConditionalOnMissingBean(DocumentApiReadFacade::class)
@@ -52,6 +61,11 @@ class FileWeftWebBoot3AutoConfiguration {
     fun fileWeftV1SyncStatusApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
 
     @Bean
+    @ConditionalOnBean(MetadataSchemaQueryService::class)
+    @ConditionalOnMissingBean(V1ApiResponseFactory::class)
+    fun fileWeftV1MetadataApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
+
+    @Bean
     @ConditionalOnBean(DocumentQueryService::class)
     @ConditionalOnMissingBean(V1DocumentReadController::class)
     fun fileWeftV1DocumentReadController(
@@ -73,6 +87,19 @@ class FileWeftWebBoot3AutoConfiguration {
         traceContexts: ObjectProvider<TraceContextProvider>,
     ): V1DocumentSyncStatusController = V1DocumentSyncStatusController(
         synchronization,
+        responses,
+        traceContexts.getIfUnique(),
+    )
+
+    @Bean
+    @ConditionalOnBean(MetadataSchemaQueryService::class)
+    @ConditionalOnMissingBean(V1MetadataSchemaController::class)
+    fun fileWeftV1MetadataSchemaController(
+        schemas: MetadataSchemaApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContexts: ObjectProvider<TraceContextProvider>,
+    ): V1MetadataSchemaController = V1MetadataSchemaController(
+        schemas,
         responses,
         traceContexts.getIfUnique(),
     )

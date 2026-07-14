@@ -24,6 +24,16 @@ class WorkflowDecisionConflictException @JvmOverloads constructor(
     }
 }
 
+/** A review was no longer pending when its submitter or an operator tried to withdraw it. */
+class WorkflowWithdrawalConflictException @JvmOverloads constructor(
+    message: String = DEFAULT_MESSAGE,
+    cause: Throwable? = null,
+) : WorkflowConflictException(message, cause) {
+    companion object {
+        const val DEFAULT_MESSAGE: String = "Workflow withdrawal conflicts with the current workflow state."
+    }
+}
+
 /** The requested task belongs to another reviewer. */
 class WorkflowTaskAssignmentDeniedException @JvmOverloads constructor(
     val taskId: Identifier,

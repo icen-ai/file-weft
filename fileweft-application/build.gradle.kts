@@ -10,6 +10,7 @@ plugins {
 dependencies {
     api(project(":fileweft-core"))
     api(project(":fileweft-domain"))
+    api(project(":fileweft-metadata-api"))
     api(project(":fileweft-spi"))
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

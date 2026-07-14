@@ -36,6 +36,7 @@ import ai.icen.fw.application.doctor.DocumentDoctorTaskQueryRepository
 import ai.icen.fw.application.doctor.DocumentDoctorTaskQueryService
 import ai.icen.fw.application.doctor.IdempotentScheduleDocumentCatalogDoctorService
 import ai.icen.fw.application.doctor.IdempotentScheduleDocumentDoctorService
+import ai.icen.fw.application.doctor.MetadataDoctorChecker
 import ai.icen.fw.application.doctor.SystemDoctorService
 import ai.icen.fw.application.doctor.WorkflowDoctorChecker
 import ai.icen.fw.application.delivery.DocumentDeliverySyncService
@@ -58,6 +59,9 @@ import ai.icen.fw.application.idempotency.RequestIdempotencyRepository
 import ai.icen.fw.application.idempotency.RequestIdempotencyService
 import ai.icen.fw.application.lifecycle.IdempotentDocumentCatalogLifecycleService
 import ai.icen.fw.application.lifecycle.IdempotentDocumentLifecycleService
+import ai.icen.fw.application.metadata.DocumentMetadataService
+import ai.icen.fw.application.metadata.DocumentMetadataWriteService
+import ai.icen.fw.application.metadata.MetadataSchemaQueryService
 import ai.icen.fw.application.upload.ResumableUploadService
 import ai.icen.fw.application.upload.ResumableUploadSessionRepository
 import ai.icen.fw.application.outbox.OutboxWorker
@@ -114,6 +118,14 @@ import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.domain.workflow.WorkflowInstanceRepository
+import ai.icen.fw.metadata.api.MetadataField
+import ai.icen.fw.metadata.api.MetadataFieldType
+import ai.icen.fw.metadata.api.MetadataProcessor
+import ai.icen.fw.metadata.api.MetadataSchema
+import ai.icen.fw.metadata.api.MetadataSchemaContext
+import ai.icen.fw.metadata.api.MetadataSchemaResolver
+import ai.icen.fw.metadata.runtime.HistoricalMetadataSchema
+import ai.icen.fw.metadata.runtime.MetadataSchemaRegistry
 import ai.icen.fw.spi.authorization.AuthorizationAction
 import ai.icen.fw.spi.authorization.AuthorizationEnvironment
 import ai.icen.fw.spi.authorization.AuthorizationProvider
@@ -728,6 +740,94 @@ class FileWeftAutoConfigurationTest {
     }
 
     @Test
+    fun `assembles one categorized runtime configuration with stable bean names`() {
+        contextRunner().withUserConfiguration(DatabaseConfiguration::class.java).run { context ->
+            assertEquals(1, context.getBeansOfType(FileWeftRuntimeConfiguration::class.java).size)
+            assertEquals(1, context.getBeansOfType(FileWeftDocumentConfiguration::class.java).size)
+            assertEquals(1, context.getBeansOfType(FileWeftUploadConfiguration::class.java).size)
+            assertEquals(1, context.getBeansOfType(FileWeftWorkflowConfiguration::class.java).size)
+            assertEquals(1, context.getBeansOfType(FileWeftDoctorConfiguration::class.java).size)
+            assertEquals(1, context.getBeansOfType(FileWeftDeliveryConfiguration::class.java).size)
+
+            listOf(
+                "transaction",
+                "documents",
+                "metadataSchemaRegistry",
+                "metadataProcessor",
+                "metadataSchemaQueryService",
+                "documentMetadataService",
+                "documentMetadataWriteService",
+                "resumableUploadService",
+                "reviewWorkflowService",
+                "doctorService",
+                "metadataDoctor",
+                "documentDeliverySyncService",
+            ).forEach { beanName -> assertTrue(context.containsBean(beanName), beanName) }
+
+            assertEquals(1, context.getBeansOfType(ResumableUploadService::class.java).size)
+            assertEquals(1, context.getBeansOfType(MetadataSchemaRegistry::class.java).size)
+            assertEquals(1, context.getBeansOfType(MetadataProcessor::class.java).size)
+            assertEquals(1, context.getBeansOfType(MetadataSchemaQueryService::class.java).size)
+            assertEquals(1, context.getBeansOfType(DocumentMetadataService::class.java).size)
+            assertEquals(1, context.getBeansOfType(DocumentMetadataWriteService::class.java).size)
+            assertEquals(1, context.getBeansOfType(MetadataDoctorChecker::class.java).size)
+            assertNull(context.getBean(MetadataSchemaRegistry::class.java).findCurrent("missing"))
+            assertTrue(
+                context.getBean(DoctorApplicationService::class.java)
+                    .inspectDocumentAsSystem(Identifier("tenant-a"), Identifier("document-a"))
+                    .checks.any { check -> check.checkerName == MetadataDoctorChecker.NAME },
+            )
+            assertEquals(1, context.getBeansOfType(DocumentReviewWorkflowService::class.java).size)
+            assertEquals(1, context.getBeansOfType(DoctorApplicationService::class.java).size)
+            assertEquals(1, context.getBeansOfType(DocumentDeliverySyncService::class.java).size)
+        }
+    }
+
+    @Test
+    fun `backs off the default metadata registry for a custom resolver`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                MetadataSchemaContributionsConfiguration::class.java,
+                CustomMetadataResolverConfiguration::class.java,
+            )
+            .run { context ->
+                assertTrue(context.getBeansOfType(MetadataSchemaRegistry::class.java).isEmpty())
+                assertSame(
+                    context.getBean("customMetadataSchemaResolver"),
+                    context.getBean(MetadataSchemaResolver::class.java),
+                )
+                assertEquals(1, context.getBeansOfType(MetadataProcessor::class.java).size)
+                assertEquals(1, context.getBeansOfType(DocumentMetadataWriteService::class.java).size)
+            }
+    }
+
+    @Test
+    fun `default metadata registry keeps current and exact historical contributions distinct`() {
+        contextRunner()
+            .withUserConfiguration(
+                DatabaseConfiguration::class.java,
+                MetadataSchemaContributionsConfiguration::class.java,
+            )
+            .run { context ->
+                val registry = context.getBean(MetadataSchemaRegistry::class.java)
+                val current = context.getBean("currentDocumentMetadataSchema", MetadataSchema::class.java)
+                val historical = context.getBean(HistoricalMetadataSchema::class.java).schema
+
+                assertSame(current, registry.findCurrent("document"))
+                assertSame(historical, registry.findExact("document", "1"))
+                assertSame(
+                    current,
+                    registry.resolve(MetadataSchemaContext("tenant-a", "document", "DOCUMENT", "UPLOAD")),
+                )
+                assertSame(
+                    historical,
+                    registry.resolve(MetadataSchemaContext("tenant-a", "document", "DOCUMENT", "DOCTOR", "1")),
+                )
+            }
+    }
+
+    @Test
     fun `assembles persistence backed runtime services when a data source is available`() {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java).run { context ->
             assertTrue(context.getBean(ApplicationTransaction::class.java) != null)
@@ -1255,6 +1355,35 @@ class FileWeftAutoConfigurationTest {
     class DatabaseConfiguration {
         @Bean
         fun dataSource(): DataSource = StubDataSource
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class MetadataSchemaContributionsConfiguration {
+        @Bean
+        fun currentDocumentMetadataSchema(): MetadataSchema = MetadataSchema(
+            "document",
+            "2",
+            listOf(MetadataField("title", MetadataFieldType.STRING)),
+        )
+
+        @Bean
+        fun historicalDocumentMetadataSchema(): HistoricalMetadataSchema = HistoricalMetadataSchema(
+            MetadataSchema(
+                "document",
+                "1",
+                listOf(MetadataField("legacyTitle", MetadataFieldType.STRING)),
+            ),
+        )
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class CustomMetadataResolverConfiguration {
+        @Bean
+        fun customMetadataSchemaResolver(): MetadataSchemaResolver = object : MetadataSchemaResolver {
+            override fun resolve(
+                context: ai.icen.fw.metadata.api.MetadataSchemaContext,
+            ): ai.icen.fw.metadata.api.MetadataSchema? = null
+        }
     }
 
     @Configuration(proxyBeanMethods = false)

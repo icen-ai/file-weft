@@ -5,6 +5,7 @@ import ai.icen.fw.application.document.DocumentContentUnavailableException
 import ai.icen.fw.application.document.DocumentNotFoundException
 import ai.icen.fw.application.idempotency.IdempotencyInProgressException
 import ai.icen.fw.application.idempotency.IdempotencyKeyConflictException
+import ai.icen.fw.application.metadata.DocumentMetadataWriteUnavailableException
 import ai.icen.fw.application.offline.DocumentRestoreConflictException
 import ai.icen.fw.application.offline.DocumentRestoreConflictReason
 import ai.icen.fw.application.workflow.DocumentReviewConflictException
@@ -54,6 +55,7 @@ class V1ApiResponseFactoryTest {
                 "Resource was not found.",
             ),
             DocumentFolderReadAccessUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
+            DocumentMetadataWriteUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             V1FeatureUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             DocumentNumberAlreadyExistsException("private-number") to Triple(
                 409,

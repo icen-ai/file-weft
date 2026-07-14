@@ -5,6 +5,8 @@ import ai.icen.fw.application.catalog.DocumentCatalogAccessService
 import ai.icen.fw.application.catalog.DocumentCatalogDraftService
 import ai.icen.fw.application.catalog.DocumentCatalogMutationService
 import ai.icen.fw.application.document.DocumentDraftService
+import ai.icen.fw.application.metadata.DocumentMetadataService
+import ai.icen.fw.application.metadata.DocumentMetadataWriteService
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.context.TraceContext
@@ -16,6 +18,12 @@ import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
+import ai.icen.fw.metadata.api.MetadataField
+import ai.icen.fw.metadata.api.MetadataFieldType
+import ai.icen.fw.metadata.api.MetadataProcessor
+import ai.icen.fw.metadata.api.MetadataSchema
+import ai.icen.fw.metadata.api.MetadataSchemaContext
+import ai.icen.fw.metadata.api.MetadataSchemaResolver
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -48,6 +56,8 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
+import org.springframework.web.bind.annotation.PatchMapping
+import org.springframework.web.bind.annotation.PostMapping
 import java.io.InputStream
 import java.lang.reflect.Modifier
 import java.net.URI
@@ -57,6 +67,73 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class DocumentV1WriteControllerMockMvcTest {
+    @Test
+    fun `persists normalized schema metadata from Boot 2 multipart parameters`() {
+        val fixture = DocumentV1WriteControllerTestFixture()
+        val mockMvc = mvc(fixture, metadataService = metadataService("tenant-a"))
+
+        mockMvc.perform(
+            createRequest()
+                .param("metadataSchemaId", "invoice")
+                .param("metadata", "amount=12.500"),
+        ).andExpect(status().isCreated)
+            .andExpect(jsonPath("$.code").value("OK"))
+
+        assertTrue(fixture.storage.uploads.single().metadata.isEmpty())
+        assertEquals("12.5", fixture.assetMetadata()["amount"])
+        assertEquals("invoice", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_ID_KEY])
+        assertEquals("2", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_VERSION_KEY])
+
+        mockMvc.perform(
+            multipart("/fileweft/v1/documents/document-1/versions")
+                .file(file("version.txt", "version-two"))
+                .param("versionNumber", "2.0")
+                .param("metadataSchemaId", "invoice")
+                .param("metadata", "amount=13.00"),
+        ).andExpect(status().isCreated)
+            .andExpect(jsonPath("$.code").value("OK"))
+
+        assertTrue(fixture.storage.uploads.all { upload -> upload.metadata.isEmpty() })
+        assertEquals("13", fixture.assetMetadata()["amount"])
+        assertEquals("invoice", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_ID_KEY])
+        assertEquals("2", fixture.assetMetadata()[DocumentMetadataService.SCHEMA_VERSION_KEY])
+    }
+
+    @Test
+    fun `Boot 2 schema writes do not reveal metadata validation before authentication or authorization`() {
+        listOf(false to true, true to false).forEach { (authenticated, authorized) ->
+            var processorCalls = 0
+            val fixture = DocumentV1WriteControllerTestFixture().apply {
+                if (!authenticated) currentUser = null
+                if (!authorized) authorizationDecision = AuthorizationDecision(false, "denied")
+            }
+            val mockMvc = mvc(
+                fixture,
+                metadataService = metadataService(
+                    "tenant-a",
+                    object : MetadataProcessor {
+                        override fun process(
+                            context: MetadataSchemaContext,
+                            metadata: Map<String, String>,
+                        ): Map<String, String> {
+                            processorCalls++
+                            return metadata
+                        }
+                    },
+                ),
+            )
+
+            mockMvc.perform(
+                createRequest()
+                    .param("metadataSchemaId", "invoice")
+                    .param("metadata", "amount=private"),
+            ).andExpect(if (authenticated) status().isForbidden else status().isUnauthorized)
+
+            assertEquals(0, processorCalls)
+            assertTrue(fixture.storage.uploads.isEmpty())
+        }
+    }
+
     @Test
     fun `creates a draft adds a version and renames through JSON without Kotlin Jackson support`() {
         val fixture = DocumentV1WriteControllerTestFixture()
@@ -302,9 +379,14 @@ class DocumentV1WriteControllerMockMvcTest {
     @Test
     fun `write handlers do not accept tenant user or reviewer inputs`() {
         val handlerMethods = DocumentV1WriteController::class.java.declaredMethods
-            .filter { method -> Modifier.isPublic(method.modifiers) && !method.isSynthetic }
+            .filter { method ->
+                Modifier.isPublic(method.modifiers) &&
+                    !method.isSynthetic &&
+                    (method.isAnnotationPresent(PostMapping::class.java) ||
+                        method.isAnnotationPresent(PatchMapping::class.java))
+            }
 
-        assertEquals(setOf("create", "addVersion", "rename"), handlerMethods.map { it.name }.toSet())
+        assertEquals(setOf("createWithMetadata", "addVersionWithMetadata", "rename"), handlerMethods.map { it.name }.toSet())
         assertTrue(handlerMethods.none { method ->
             method.parameterTypes.any { type ->
                 type == TenantContext::class.java || type == UserIdentity::class.java || type == Identifier::class.java
@@ -324,10 +406,11 @@ class DocumentV1WriteControllerMockMvcTest {
         traceId: String? = null,
         catalogMode: Boolean = false,
         catalogMutationsAvailable: Boolean = true,
+        metadataService: DocumentMetadataService? = null,
     ): MockMvc =
         MockMvcBuilders.standaloneSetup(
             DocumentV1WriteController(
-                documents = fixture.facade(catalogMode, catalogMutationsAvailable),
+                documents = fixture.facade(catalogMode, catalogMutationsAvailable, metadataService),
                 responses = V1ApiResponseFactory(),
                 traceContextProvider = traceId?.let(DocumentV1WriteControllerTestFixture::traceProvider),
             ),
@@ -344,6 +427,30 @@ class DocumentV1WriteControllerMockMvcTest {
 
     private fun file(name: String, content: String): MockMultipartFile =
         MockMultipartFile("file", name, "text/plain", content.toByteArray())
+
+    private fun metadataService(
+        tenantId: String,
+        processor: MetadataProcessor = object : MetadataProcessor {
+            override fun process(
+                context: MetadataSchemaContext,
+                metadata: Map<String, String>,
+            ): Map<String, String> = mapOf(
+                "amount" to metadata.getValue("amount").trimEnd('0').trimEnd('.'),
+            )
+        },
+    ): DocumentMetadataService = DocumentMetadataService(
+        object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(Identifier(tenantId))
+        },
+        object : MetadataSchemaResolver {
+            override fun resolve(context: MetadataSchemaContext): MetadataSchema = MetadataSchema(
+                "invoice",
+                "2",
+                listOf(MetadataField("amount", MetadataFieldType.NUMBER, required = true)),
+            )
+        },
+        processor,
+    )
 }
 
 internal class DocumentV1WriteControllerTestFixture(
@@ -358,6 +465,7 @@ internal class DocumentV1WriteControllerTestFixture(
     private val assets = MemoryAssets()
     val assetMutationReads: List<Identifier>
         get() = assets.mutationReads.toList()
+    fun assetMetadata(): Map<String, String> = assets.latestMetadata()
     private val tenants = object : TenantProvider {
         override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-a"))
     }
@@ -392,14 +500,19 @@ internal class DocumentV1WriteControllerTestFixture(
     fun facade(
         catalogMode: Boolean = false,
         catalogMutationsAvailable: Boolean = true,
-    ): DocumentApiWriteFacade = if (catalogMode) {
-        DocumentApiWriteFacade(
+        metadataService: DocumentMetadataService? = null,
+    ): DocumentApiWriteFacade {
+        val catalogDrafts = if (catalogMode) catalogDraftService() else null
+        val catalogMutations = if (catalogMode && catalogMutationsAvailable) catalogMutationService() else null
+        val metadataWrites = metadataService?.let { metadata ->
+            DocumentMetadataWriteService(drafts, metadata, catalogDrafts, catalogMutations)
+        }
+        return DocumentApiWriteFacade(
             drafts = drafts,
-            catalogDrafts = catalogDraftService(),
-            catalogMutations = if (catalogMutationsAvailable) catalogMutationService() else null,
+            catalogDrafts = catalogDrafts,
+            catalogMutations = catalogMutations,
+            metadataWrites = metadataWrites,
         )
-    } else {
-        DocumentApiWriteFacade(drafts)
     }
 
     class MemoryDocuments : DocumentRepository {
@@ -491,6 +604,8 @@ internal class DocumentV1WriteControllerTestFixture(
         override fun save(fileAsset: FileAsset) {
             values[fileAsset.id] = fileAsset
         }
+
+        fun latestMetadata(): Map<String, String> = values.values.single().metadata
     }
 
     private class SequenceIdentifiers(values: List<String>) : IdentifierGenerator {

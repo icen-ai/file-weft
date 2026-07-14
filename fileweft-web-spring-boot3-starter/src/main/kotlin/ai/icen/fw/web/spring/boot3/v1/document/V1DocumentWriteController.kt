@@ -9,6 +9,7 @@ import ai.icen.fw.web.api.v1.document.RenameDocumentCommand
 import ai.icen.fw.web.api.v1.document.RenameDocumentRequest
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.document.DocumentApiLocations
+import ai.icen.fw.web.runtime.v1.document.DocumentMetadataApiInputs
 import ai.icen.fw.web.runtime.v1.document.DocumentApiWriteFacade
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -39,12 +40,44 @@ class V1DocumentWriteController(
     private val responses: V1ApiResponseFactory,
     private val traceContextProvider: TraceContextProvider?,
 ) {
-    @PostMapping(consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun create(
         @RequestParam(name = "documentNumber", required = false) documentNumbers: List<String>?,
         @RequestParam(name = "title", required = false) titles: List<String>?,
         @RequestParam(name = "folderId", required = false) folderIds: List<String>?,
         @RequestParam(name = "file", required = false) files: List<MultipartFile>?,
+    ): ResponseEntity<ApiResponse<Any?>> = createRequest(
+        documentNumbers,
+        titles,
+        folderIds,
+        files,
+        null,
+        null,
+    )
+
+    @PostMapping(consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun createWithMetadata(
+        @RequestParam(name = "documentNumber", required = false) documentNumbers: List<String>?,
+        @RequestParam(name = "title", required = false) titles: List<String>?,
+        @RequestParam(name = "folderId", required = false) folderIds: List<String>?,
+        @RequestParam(name = "file", required = false) files: List<MultipartFile>?,
+        @RequestParam(name = "metadataSchemaId", required = false) metadataSchemaIds: List<String>?,
+        @RequestParam(name = "metadata", required = false) metadataEntries: List<String>?,
+    ): ResponseEntity<ApiResponse<Any?>> = createRequest(
+        documentNumbers,
+        titles,
+        folderIds,
+        files,
+        metadataSchemaIds,
+        metadataEntries,
+    )
+
+    private fun createRequest(
+        documentNumbers: List<String>?,
+        titles: List<String>?,
+        folderIds: List<String>?,
+        files: List<MultipartFile>?,
+        metadataSchemaIds: List<String>?,
+        metadataEntries: List<String>?,
     ): ResponseEntity<ApiResponse<Any?>> = executeCreated {
         val documentNumber = requiredSingle(documentNumbers, "documentNumber")
         val title = requiredSingle(titles, "title")
@@ -58,17 +91,48 @@ class V1DocumentWriteController(
             contentType = file.contentType,
             folderId = folderId,
         )
-        file.inputStream.use { content -> documents.create(command, content) }
+        val metadata = DocumentMetadataApiInputs.parse(metadataSchemaIds, metadataEntries)
+        file.inputStream.use { content ->
+            if (metadata == null) documents.create(command, content) else documents.create(command, metadata, content)
+        }
     }
+
+    fun addVersion(
+        @PathVariable("documentId") documentId: String,
+        @RequestParam(name = "versionNumber", required = false) versionNumbers: List<String>?,
+        @RequestParam(name = "file", required = false) files: List<MultipartFile>?,
+    ): ResponseEntity<ApiResponse<Any?>> = addVersionRequest(
+        documentId,
+        versionNumbers,
+        files,
+        null,
+        null,
+    )
 
     @PostMapping(
         path = ["/{documentId}/versions"],
         consumes = [MediaType.MULTIPART_FORM_DATA_VALUE],
     )
-    fun addVersion(
+    fun addVersionWithMetadata(
         @PathVariable("documentId") documentId: String,
         @RequestParam(name = "versionNumber", required = false) versionNumbers: List<String>?,
         @RequestParam(name = "file", required = false) files: List<MultipartFile>?,
+        @RequestParam(name = "metadataSchemaId", required = false) metadataSchemaIds: List<String>?,
+        @RequestParam(name = "metadata", required = false) metadataEntries: List<String>?,
+    ): ResponseEntity<ApiResponse<Any?>> = addVersionRequest(
+        documentId,
+        versionNumbers,
+        files,
+        metadataSchemaIds,
+        metadataEntries,
+    )
+
+    private fun addVersionRequest(
+        documentId: String,
+        versionNumbers: List<String>?,
+        files: List<MultipartFile>?,
+        metadataSchemaIds: List<String>?,
+        metadataEntries: List<String>?,
     ): ResponseEntity<ApiResponse<Any?>> = executeCreated {
         val versionNumber = requiredSingle(versionNumbers, "versionNumber")
         val file = requiredSingle(files, "file")
@@ -78,7 +142,14 @@ class V1DocumentWriteController(
             contentLength = file.size,
             contentType = file.contentType,
         )
-        file.inputStream.use { content -> documents.addVersion(documentId, command, content) }
+        val metadata = DocumentMetadataApiInputs.parse(metadataSchemaIds, metadataEntries)
+        file.inputStream.use { content ->
+            if (metadata == null) {
+                documents.addVersion(documentId, command, content)
+            } else {
+                documents.addVersion(documentId, command, metadata, content)
+            }
+        }
     }
 
     @PatchMapping(

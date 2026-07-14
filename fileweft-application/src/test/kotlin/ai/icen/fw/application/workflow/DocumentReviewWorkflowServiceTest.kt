@@ -27,6 +27,7 @@ import ai.icen.fw.domain.workflow.WorkflowState
 import ai.icen.fw.domain.workflow.WorkflowTask
 import ai.icen.fw.domain.workflow.WorkflowTaskAssignmentDeniedException
 import ai.icen.fw.domain.workflow.WorkflowTaskState
+import ai.icen.fw.domain.workflow.WorkflowWithdrawalConflictException
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -108,6 +109,176 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     @Test
+    fun `submitter withdraws with one trusted identity and catalog visibility snapshot`() {
+        val submitter = UserIdentity(Identifier("submitter-1"), "提交人")
+        val document = pendingReviewDocument()
+        val workflow = pendingWorkflow(document.id, submittedBy = submitter.id)
+        val workflows = InMemoryWorkflows(workflow)
+        val documents = InMemoryDocuments(document)
+        val audits = RecordingAudits()
+        val guard = IdentitySnapshotGuard()
+        var policyCalls = 0
+        val service = service(
+            documents = documents,
+            workflows = workflows,
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            currentUser = submitter,
+            auditTrail = auditTrail(audits),
+            authorization = {
+                policyCalls++
+                AuthorizationDecision(false, "withdraw policy denied")
+            },
+        )
+
+        val withdrawn = service.withdraw(workflow.id, guard)
+
+        assertSame(document, withdrawn)
+        assertEquals(0, policyCalls)
+        assertEquals(LifecycleState.DRAFT, document.lifecycleState)
+        assertEquals(WorkflowState.WITHDRAWN, workflow.state)
+        assertEquals(1, documents.saveCalls)
+        assertEquals(1, workflows.saveCalls)
+        guard.assertSingleSnapshot(submitter, "document:read")
+        val audit = audits.records.single()
+        assertEquals(DocumentReviewWorkflowService.WITHDRAWN_AUDIT_ACTION, audit.action)
+        assertEquals("WITHDRAWN", audit.details["workflowState"])
+        assertEquals("SUBMITTER", audit.details["authorizationBasis"])
+        assertAuditOperator(audit, submitter)
+    }
+
+    @Test
+    fun `authorized operator withdraws a legacy workflow while unauthorized user learns no document identity`() {
+        val document = pendingReviewDocument()
+        val legacyWorkflow = pendingWorkflow(document.id)
+        val audits = RecordingAudits()
+        val authorizationRequests = mutableListOf<AuthorizationRequest>()
+        val authorized = service(
+            documents = InMemoryDocuments(document),
+            workflows = InMemoryWorkflows(legacyWorkflow),
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            currentUser = UserIdentity(Identifier("operator-1"), "管理员"),
+            auditTrail = auditTrail(audits),
+            authorization = { request ->
+                authorizationRequests += request
+                AuthorizationDecision(true)
+            },
+        )
+
+        authorized.withdraw(legacyWorkflow.id)
+
+        assertEquals(listOf(DocumentReviewWorkflowService.WITHDRAW_ACTION), authorizationRequests.map { it.action.name })
+        assertEquals(WorkflowState.WITHDRAWN, legacyWorkflow.state)
+        assertEquals("POLICY", audits.records.single().details["authorizationBasis"])
+
+        val deniedDocument = pendingReviewDocument()
+        val deniedWorkflow = pendingWorkflow(deniedDocument.id, submittedBy = Identifier("submitter-other"))
+        val deniedAudits = RecordingAudits()
+        val deniedWorkflows = InMemoryWorkflows(deniedWorkflow)
+        val deniedDocuments = InMemoryDocuments(deniedDocument)
+        val denied = service(
+            documents = deniedDocuments,
+            workflows = deniedWorkflows,
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            currentUser = UserIdentity(Identifier("operator-denied")),
+            auditTrail = auditTrail(deniedAudits),
+            authorization = { AuthorizationDecision(false, "withdraw denied") },
+        )
+
+        assertFailsWith<WorkflowNotFoundException> { denied.withdraw(deniedWorkflow.id) }
+        assertEquals(LifecycleState.PENDING_REVIEW, deniedDocument.lifecycleState)
+        assertEquals(WorkflowState.PENDING, deniedWorkflow.state)
+        assertEquals(0, deniedDocuments.saveCalls)
+        assertEquals(0, deniedWorkflows.saveCalls)
+        assertEquals(emptyList(), deniedAudits.records)
+    }
+
+    @Test
+    fun `cross tenant withdrawal is hidden before authorization or mutation`() {
+        val foreignTenant = Identifier("tenant-foreign")
+        val operator = UserIdentity(Identifier("submitter-1"), "提交人")
+        val document = pendingReviewDocument(Identifier("document-foreign"), foreignTenant)
+        val workflow = WorkflowInstance(
+            Identifier("workflow-foreign"),
+            foreignTenant,
+            document.id,
+            DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+            WorkflowState.PENDING,
+            listOf(
+                WorkflowTask(
+                    Identifier("task-foreign"),
+                    foreignTenant,
+                    Identifier("workflow-foreign"),
+                    Identifier("reviewer-foreign"),
+                ),
+            ),
+            operator.id,
+        )
+        val documents = InMemoryDocuments(document)
+        val workflows = InMemoryWorkflows(workflow)
+        val audits = RecordingAudits()
+        var authorizationCalls = 0
+        val service = service(
+            documents = documents,
+            workflows = workflows,
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            currentUser = operator,
+            auditTrail = auditTrail(audits),
+            authorization = {
+                authorizationCalls++
+                AuthorizationDecision(true)
+            },
+        )
+
+        assertFailsWith<WorkflowNotFoundException> { service.withdraw(workflow.id) }
+
+        assertEquals(LifecycleState.PENDING_REVIEW, document.lifecycleState)
+        assertEquals(WorkflowState.PENDING, workflow.state)
+        assertEquals(1, workflows.snapshotLookups)
+        assertEquals(0, workflows.decisionLookups)
+        assertEquals(0, authorizationCalls)
+        assertEquals(0, documents.saveCalls)
+        assertEquals(0, workflows.saveCalls)
+        assertEquals(emptyList(), audits.records)
+    }
+
+    @Test
+    fun `completed workflow and missing audit trail reject withdrawal without mutations`() {
+        val document = pendingReviewDocument()
+        val workflow = pendingWorkflow(document.id, submittedBy = Identifier("reviewer-1"))
+        workflow.approve(workflow.tasks.single().id, Identifier("reviewer-1"))
+        val documents = InMemoryDocuments(document)
+        val workflows = InMemoryWorkflows(workflow)
+        val audited = service(
+            documents = documents,
+            workflows = workflows,
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            auditTrail = auditTrail(RecordingAudits()),
+            authorization = { AuthorizationDecision(true) },
+        )
+
+        assertFailsWith<WorkflowWithdrawalConflictException> { audited.withdraw(workflow.id) }
+        assertEquals(LifecycleState.PENDING_REVIEW, document.lifecycleState)
+        assertEquals(0, documents.saveCalls)
+        assertEquals(0, workflows.saveCalls)
+
+        val pending = pendingWorkflow(document.id, submittedBy = Identifier("reviewer-1"))
+        val withoutAudit = service(
+            documents = InMemoryDocuments(document),
+            workflows = InMemoryWorkflows(pending),
+            outbox = RecordingOutbox(),
+            identifiers = emptyList(),
+            authorization = { AuthorizationDecision(true) },
+        )
+        assertFailsWith<IllegalArgumentException> { withoutAudit.withdraw(pending.id) }
+        assertEquals(WorkflowState.PENDING, pending.state)
+    }
+
+    @Test
     fun `submits document into a persisted reviewer workflow`() {
         val documents = InMemoryDocuments(draftDocument())
         val workflows = InMemoryWorkflows()
@@ -122,6 +293,7 @@ class DocumentReviewWorkflowServiceTest {
         assertEquals(LifecycleState.PENDING_REVIEW, documents.document?.lifecycleState)
         assertEquals(WorkflowState.PENDING, workflow.state)
         assertEquals(Identifier("reviewer-1"), workflow.tasks.single().assigneeId)
+        assertEquals(Identifier("reviewer-1"), workflow.submittedBy)
         assertEquals(DocumentReviewWorkflowService.SUBMIT_ACTION, action)
     }
 
@@ -661,9 +833,18 @@ class DocumentReviewWorkflowServiceTest {
         "wrong document id" to factory(Identifier("document-wrong"), Identifier("tenant-1")),
     )
 
-    private fun pendingWorkflow(documentId: Identifier, assigneeId: Identifier = Identifier("reviewer-1")) = WorkflowInstance(
-        Identifier("workflow-1"), Identifier("tenant-1"), documentId, DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
-        tasks = listOf(WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), assigneeId)),
+    private fun pendingWorkflow(
+        documentId: Identifier,
+        assigneeId: Identifier = Identifier("reviewer-1"),
+        submittedBy: Identifier? = null,
+    ) = WorkflowInstance(
+        Identifier("workflow-1"),
+        Identifier("tenant-1"),
+        documentId,
+        DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
+        WorkflowState.PENDING,
+        listOf(WorkflowTask(Identifier("task-1"), Identifier("tenant-1"), Identifier("workflow-1"), assigneeId)),
+        submittedBy,
     )
 
     private class RotatingUsers(first: UserIdentity) : UserRealmProvider {
