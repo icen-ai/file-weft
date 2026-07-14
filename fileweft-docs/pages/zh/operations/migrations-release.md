@@ -146,10 +146,10 @@ curl -sf -X POST \
 不可以。长期运行的 API 节点必须以 `validate` 模式运行。schema 变更必须通过受控的一次性迁移 Job 执行。
 
 **什么时候可以安全消费 0.0.3？**
-只有受发布门禁约束的 `v0.0.3` 标签匹配受保护远端 `main` HEAD、精确提交的全部必需门禁成功，且匿名消费者以全新隔离缓存回读全部 19 个坐标及 Boot 2、Boot 3、纯 SPI 消费者后，才可使用 `ai.icen:*:0.0.3`。不能从源码、本文、标签名称或部分绿灯推断远端已经可用。
+稳定版 `ai.icen:*:0.0.3` 已在提交 `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637` 发布；CNB 构建 `cnb-cl8-1jtgih45j` 完成 12/12 流水线，并匿名回读全部 19 个坐标。制品可用不放宽 V029 的停写、停止旧节点和迁移核验流程。
 
 ## 下一步
 
 - 按角色部署：[生产部署](deployment)
 - 发布后监控：[Doctor 与可观测性](doctor-observability)
-- 阅读当前发布合同：[0.0.3 发布合同](../project/release-0-0-3)，并保留 [0.0.2 正式版](../project/release-0-0-2-development) 与 [0.0.1 正式版](../project/release-0-0-1) 作为历史升级边界。
+- 阅读当前稳定版：[0.0.3 发布说明](../project/release-0-0-3)，并保留 [0.0.2 正式版](../project/release-0-0-2-development) 与 [0.0.1 正式版](../project/release-0-0-1) 作为历史升级边界。

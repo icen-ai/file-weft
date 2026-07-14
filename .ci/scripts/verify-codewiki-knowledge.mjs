@@ -1,13 +1,19 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isBoundToGeneratedWiki } from "./codewiki-evidence.mjs";
+import {
+  collectBoundCodeWikiResults,
+  isWikiPageForBuild,
+} from "./codewiki-evidence.mjs";
 
 const requiredEnvironment = [
   "CNB_API_ENDPOINT",
+  "CNB_BRANCH",
+  "CNB_BUILD_ID",
   "CNB_BUILD_WORKSPACE",
   "CNB_REPO_SLUG",
   "CNB_TOKEN",
   "CNB_COMMIT",
+  "CNB_WEB_ENDPOINT",
 ];
 for (const name of requiredEnvironment) {
   if (!process.env[name]) {
@@ -30,12 +36,20 @@ if (contract.repository !== process.env.CNB_REPO_SLUG) {
 }
 
 const baseUrl = `${process.env.CNB_API_ENDPOINT.replace(/\/$/u, "")}/${process.env.CNB_REPO_SLUG}`;
+const wikiUrl = new URL(
+  `${process.env.CNB_REPO_SLUG}/-/wiki`,
+  `${process.env.CNB_WEB_ENDPOINT.replace(/\/$/u, "")}/`,
+);
+wikiUrl.searchParams.set("codewiki_commit", expectedSha);
+wikiUrl.searchParams.set("codewiki_build", process.env.CNB_BUILD_ID);
 const headers = {
   Accept: "application/json",
   Authorization: `Bearer ${process.env.CNB_TOKEN}`,
 };
-const maximumAttempts = 12;
+const maximumAttempts = 8;
 const retryDelayMilliseconds = 30_000;
+const requestTimeoutMilliseconds = 10_000;
+const queryResultLimit = 5;
 const generatedWikiDirectory = join(
   process.env.CNB_BUILD_WORKSPACE,
   process.env.CNB_REPO_SLUG,
@@ -85,7 +99,7 @@ async function request(path, searchParameters = {}) {
   for (const [name, value] of Object.entries(searchParameters)) {
     url.searchParams.set(name, String(value));
   }
-  const response = await fetch(url, { headers });
+  const response = await fetchWithTimeout(url, { headers }, "CNB knowledge");
   if (!response.ok) {
     const trace = response.headers.get("traceparent") ?? "unavailable";
     const retryable = response.status === 404 || response.status === 429 || response.status >= 500;
@@ -94,14 +108,60 @@ async function request(path, searchParameters = {}) {
       retryable,
     );
   }
-  return response.json();
+  try {
+    return await response.json();
+  } catch {
+    throw new KnowledgeVerificationError("CNB knowledge response was not valid JSON.");
+  }
+}
+
+async function requestWikiPage() {
+  const response = await fetchWithTimeout(
+    wikiUrl,
+    {
+      headers: {
+        Accept: "text/html",
+        "Cache-Control": "no-cache",
+      },
+    },
+    "CNB Wiki",
+  );
+  if (!response.ok) {
+    const trace = response.headers.get("traceparent") ?? "unavailable";
+    const retryable = response.status === 404 || response.status === 429 || response.status >= 500;
+    throw new KnowledgeVerificationError(
+      `CNB Wiki request failed with HTTP ${response.status}; trace=${trace}.`,
+      retryable,
+    );
+  }
+  return response.text();
+}
+
+async function fetchWithTimeout(url, options, description) {
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(requestTimeoutMilliseconds),
+    });
+  } catch (failure) {
+    const detail = failure instanceof Error ? failure.message : String(failure);
+    throw new KnowledgeVerificationError(`${description} request failed: ${detail}`);
+  }
 }
 
 async function verify(generatedDocuments) {
-  const knowledgeBase = await request("/-/knowledge/base");
-  if (knowledgeBase.last_commit_sha !== expectedSha) {
+  const wikiPage = await requestWikiPage();
+  if (
+    !isWikiPageForBuild(
+      wikiPage,
+      contract.repository,
+      expectedSha,
+      process.env.CNB_BUILD_ID,
+      process.env.CNB_BRANCH,
+    )
+  ) {
     throw new KnowledgeVerificationError(
-      `Knowledge base SHA ${knowledgeBase.last_commit_sha ?? "missing"} does not match ${expectedSha}.`,
+      `Published CodeWiki is not bound to build ${process.env.CNB_BUILD_ID}, ref ${process.env.CNB_BRANCH}, and commit ${expectedSha}.`,
     );
   }
 
@@ -119,22 +179,27 @@ async function verify(generatedDocuments) {
 
     const results = await request("/-/knowledge/base/query", {
       query: acceptanceCase.query,
-      top_k: 20,
+      top_k: queryResultLimit,
       score_threshold: 0,
     });
-    const currentCodeWikiResults = results.filter((result) =>
-      isBoundToGeneratedWiki(result, generatedDocuments),
-    );
+    if (!Array.isArray(results)) {
+      throw new KnowledgeVerificationError(
+        `${acceptanceCase.id} returned an invalid CNB knowledge response.`,
+      );
+    }
+    const currentCodeWikiResults = collectBoundCodeWikiResults(results, generatedDocuments);
+    if (currentCodeWikiResults === null) {
+      throw new KnowledgeVerificationError(
+        `${acceptanceCase.id} returned CodeWiki evidence that is not bound to this run's generated documents.`,
+      );
+    }
     if (currentCodeWikiResults.length === 0) {
       throw new KnowledgeVerificationError(
         `${acceptanceCase.id} returned no CodeWiki evidence bound to this run's generated documents.`,
       );
     }
-    const evidence = currentCodeWikiResults
-      .map((result) => `${result.chunk ?? ""}\n${result.metadata?.path ?? ""}`)
-      .join("\n");
     for (const anchor of acceptanceCase.requiredAnchors) {
-      if (!evidence.includes(anchor)) {
+      if (!currentCodeWikiResults.some((result) => result.chunk.includes(anchor))) {
         throw new KnowledgeVerificationError(
           `${acceptanceCase.id} is missing required CodeWiki anchor: ${anchor}`,
         );

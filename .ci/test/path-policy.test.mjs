@@ -12,7 +12,10 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
+  collectBoundCodeWikiResults,
   isBoundToGeneratedWiki,
+  isWikiPageForBuild,
+  isWikiPageForCommit,
   sha256Text,
 } from "../scripts/codewiki-evidence.mjs";
 
@@ -470,12 +473,105 @@ test("CodeWiki is manual, source-curated, pinned, serialized, and verified", () 
       `${acceptanceCase.id} needs exact-symbol anchors`,
     );
   }
-  assert.ok(codeKnowledgeVerifier.includes("isBoundToGeneratedWiki(result, generatedDocuments)"));
+  assert.ok(
+    codeKnowledgeVerifier.includes(
+      "collectBoundCodeWikiResults(results, generatedDocuments)",
+    ),
+  );
+  assert.ok(
+    codeKnowledgeVerifier.includes("isWikiPageForBuild("),
+  );
   assert.ok(codeKnowledgeVerifier.includes('from "./codewiki-evidence.mjs"'));
   assert.ok(codeKnowledgeVerifier.includes('status.status !== "success"'));
-  assert.ok(codeKnowledgeVerifier.includes("knowledgeBase.last_commit_sha !== expectedSha"));
-  assert.ok(codeKnowledgeVerifier.includes("const maximumAttempts = 12"));
+  assert.ok(codeKnowledgeVerifier.includes('"CNB_BRANCH"'));
+  assert.ok(codeKnowledgeVerifier.includes('"CNB_BUILD_ID"'));
+  assert.ok(codeKnowledgeVerifier.includes('"CNB_WEB_ENDPOINT"'));
+  assert.doesNotMatch(codeKnowledgeVerifier, /last_commit_sha/u);
+  assert.ok(
+    codeKnowledgeVerifier.includes(
+      "currentCodeWikiResults === null",
+    ),
+  );
+  assert.ok(codeKnowledgeVerifier.includes("const maximumAttempts = 8"));
   assert.ok(codeKnowledgeVerifier.includes("const retryDelayMilliseconds = 30_000"));
+  assert.ok(codeKnowledgeVerifier.includes("const requestTimeoutMilliseconds = 10_000"));
+  assert.ok(codeKnowledgeVerifier.includes("const queryResultLimit = 5"));
+
+  const attempts = Number(
+    codeKnowledgeVerifier.match(/const maximumAttempts = (\d+);/u)?.[1],
+  );
+  const retryDelay = Number(
+    codeKnowledgeVerifier.match(/const retryDelayMilliseconds = ([\d_]+);/u)?.[1].replaceAll("_", ""),
+  );
+  const requestTimeout = Number(
+    codeKnowledgeVerifier.match(/const requestTimeoutMilliseconds = ([\d_]+);/u)?.[1].replaceAll("_", ""),
+  );
+  const stageMinutes = Number(codeWikiConfiguration.match(/verify-codewiki-knowledge\r?\n\s+timeout: (\d+)m/u)?.[1]);
+  const worstCaseNetworkBudget =
+    attempts * (1 + codeKnowledgeAcceptance.cases.length) * requestTimeout +
+    (attempts - 1) * retryDelay;
+  assert.ok(
+    worstCaseNetworkBudget <= stageMinutes * 60_000 - 60_000,
+    "CodeWiki retry and request timeouts must leave at least one minute of stage headroom",
+  );
+});
+
+test("the published CodeWiki page must identify the exact build, ref, and commit", () => {
+  const commitSha = "dbf2a50fbca41e2ac5b5cf18bb44f9287c153637";
+  const buildId = "cnb-4d8-1jtgg1511";
+  const page = (pipelineBuildId, ref, pipelineSha, href = true) => {
+    const nextData = JSON.stringify({
+      props: { pageProps: { pipelineMeta: { buildId: pipelineBuildId, ref, sha: pipelineSha } } },
+    });
+    const link = href
+      ? `<a href="/china.ai/file-weft/-/commits/${commitSha}">dbf2a50f</a>`
+      : `/china.ai/file-weft/-/commits/${commitSha}`;
+    return `${link}<script id="__NEXT_DATA__" type="application/json" nonce="fixture">${nextData}</script>`;
+  };
+  const currentPage = page(buildId, "main", commitSha);
+  const absolutePage = currentPage.replace(
+    'href="/china.ai/file-weft',
+    'href="https://cnb.cool/china.ai/file-weft',
+  );
+
+  assert.equal(isWikiPageForCommit(currentPage, "china.ai/file-weft", commitSha), true);
+  assert.equal(isWikiPageForCommit(absolutePage, "china.ai/file-weft", commitSha), true);
+  assert.equal(
+    isWikiPageForBuild(currentPage, "china.ai/file-weft", commitSha, buildId, "main"),
+    true,
+  );
+  assert.equal(
+    isWikiPageForBuild(absolutePage, "china.ai/file-weft", commitSha, buildId, "main"),
+    true,
+  );
+  assert.equal(
+    isWikiPageForBuild(
+      page("cnb-stale-build", "main", commitSha),
+      "china.ai/file-weft",
+      commitSha,
+      buildId,
+      "main",
+    ),
+    false,
+  );
+  assert.equal(
+    isWikiPageForBuild(page(buildId, "feature", commitSha), "china.ai/file-weft", commitSha, buildId, "main"),
+    false,
+  );
+  assert.equal(
+    isWikiPageForBuild(page(buildId, "main", commitSha, false), "china.ai/file-weft", commitSha, buildId, "main"),
+    false,
+  );
+  assert.equal(isWikiPageForCommit(currentPage, "china.ai/another-repository", commitSha), false);
+  assert.equal(
+    isWikiPageForCommit(
+      currentPage,
+      "china.ai/file-weft",
+      "f7f1b438be0ef15d772f3452f4804a118bc6e2d3",
+    ),
+    false,
+  );
+  assert.equal(isWikiPageForCommit(currentPage, "china.ai/file-weft", "dbf2a50f"), false);
 });
 
 test("CodeWiki query evidence must be a hashed token sequence from this run", () => {
@@ -504,6 +600,11 @@ be collapsed into an ambiguous transport failure.`;
     chunk: currentChunk,
     metadata: { type: "codewiki", hash: sha256Text(currentChunk) },
   };
+  const staleChunk = currentChunk.replace("stable checkpoint", "mutable state");
+  const staleResult = {
+    chunk: staleChunk,
+    metadata: { type: "codewiki", hash: sha256Text(staleChunk) },
+  };
 
   assert.equal(isBoundToGeneratedWiki(result, [generatedDocument]), true);
   assert.equal(
@@ -512,6 +613,19 @@ be collapsed into an ambiguous transport failure.`;
   );
   assert.equal(isBoundToGeneratedWiki({ ...result, metadata: { ...result.metadata, hash: "0" } }, [generatedDocument]), false);
   assert.equal(isBoundToGeneratedWiki({ ...result, metadata: { ...result.metadata, type: "code" } }, [generatedDocument]), false);
+  assert.deepEqual(collectBoundCodeWikiResults([result], [generatedDocument]), [result]);
+  assert.equal(
+    collectBoundCodeWikiResults([result, staleResult], [generatedDocument]),
+    null,
+  );
+  assert.equal(collectBoundCodeWikiResults([staleResult], [generatedDocument]), null);
+  assert.deepEqual(
+    collectBoundCodeWikiResults(
+      [{ ...result, metadata: { ...result.metadata, type: "code" } }],
+      [generatedDocument],
+    ),
+    [],
+  );
 });
 
 test("the CodeWiki sparse rules retain production evidence and remove superseded input", () => {
@@ -597,6 +711,7 @@ test("the default repository NPC keeps personality subordinate to evidence", () 
     "git rev-parse HEAD",
     "相对路径:行号",
     "CodeWiki 不能覆盖源码事实",
+    "具体类请在 Issue/PR 中 @织澜核对源码",
     "默认只读",
     "没有执行就不得声称",
   ]) {

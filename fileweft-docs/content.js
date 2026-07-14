@@ -630,14 +630,14 @@ export const pages = {
     "order": 5,
     "en": {
       "nav": "Release 0.0.3",
-      "title": "Release 0.0.3 contract",
-      "lead": "The current candidate contract adds metadata schemas and review withdrawal while keeping consumption conditional on guarded-tag, protected-main and anonymous remote evidence.",
+      "title": "Release 0.0.3 notes",
+      "lead": "The stable release adds metadata schemas and review withdrawal; the exact tag, 12/12 CNB lanes, and 19/19 anonymous artifact readback are complete.",
       "file": "pages/en/project/release-0-0-3.md"
     },
     "zh": {
-      "nav": "0.0.3 发布合同",
-      "title": "0.0.3 发布合同",
-      "lead": "当前候选合同新增 metadata schema 与审批撤回，并继续以标签发布门禁、受保护主干和匿名远端证据作为可消费前提。",
+      "nav": "0.0.3 发布说明",
+      "title": "0.0.3 发布说明",
+      "lead": "稳定版新增 metadata schema 与审批撤回；精确标签、12/12 CNB 门禁和 19/19 匿名制品回读均已闭环。",
       "file": "pages/zh/project/release-0-0-3.md"
     }
   },

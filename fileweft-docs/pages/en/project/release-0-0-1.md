@@ -85,7 +85,7 @@ Every major component exposes diagnostics through the `DoctorChecker` SPI. Query
 
 ## Known limits
 
-- At the time of this historical release, `0.0.1` was the stable line and `0.0.2-SNAPSHOT` was unreleased. Current consumption guidance lives in the 0.0.3 release contract.
+- At the time of this historical release, `0.0.1` was the stable line and `0.0.2-SNAPSHOT` was unreleased. Current consumption guidance lives in the 0.0.3 release notes.
 - The local filesystem storage fallback and default-tenant fallback are for development only. They are not production multi-tenant solutions.
 - Official vendor adapters for OSS, Dify, ESE and AppBuilder are on the roadmap; the S3-compatible adapter covers S3-like storage in 0.0.1.
 - Dev-only `/api/**` endpoints are not part of the formal public HTTP protocol.

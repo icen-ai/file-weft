@@ -146,10 +146,10 @@ curl -sf -X POST \
 No. Long-running API nodes must run in `validate` mode. Schema changes require a controlled, one-shot migration job.
 
 **When is 0.0.3 safe to consume?**
-Use `ai.icen:*:0.0.3` only after the guarded `v0.0.3` tag matches the protected remote `main` HEAD, every required lane for that exact commit succeeds, and anonymous cold-cache readback covers all 19 coordinates plus the Boot 2, Boot 3, and pure-SPI consumers. Do not infer remote availability from source, this page, a tag name, or partial green evidence.
+Stable `ai.icen:*:0.0.3` is available at commit `dbf2a50fbca41e2ac5b5cf18bb44f9287c153637`. CNB build `cnb-cl8-1jtgih45j` completed 12/12 pipelines and anonymous readback verified all 19 coordinates. Artifact availability does not relax the V029 stop-write and stop-old-node migration procedure.
 
 ## Next steps
 
 - Deploy with separate runtime roles: [Production deployment](deployment)
 - Monitor after release: [Doctor & observability](doctor-observability)
-- Read the current release contract: [Release 0.0.3](../project/release-0-0-3), and retain [Release 0.0.2](../project/release-0-0-2-development) and [Release 0.0.1](../project/release-0-0-1) for historical upgrade boundaries.
+- Read the current stable notes: [Release 0.0.3](../project/release-0-0-3), and retain [Release 0.0.2](../project/release-0-0-2-development) and [Release 0.0.1](../project/release-0-0-1) for historical upgrade boundaries.

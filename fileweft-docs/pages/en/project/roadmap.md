@@ -24,7 +24,7 @@ format: "html"
 
 <aside class="callout warning" data-mark="!"><div><strong>Evidence is version-specific</strong><p>Do not copy a success from another database, Boot generation, vendor emulator or earlier release into a completion claim. If evidence cannot be reproduced, the item remains open.</p></div></aside>
 
-<h2>0.0.3 · current candidate contract</h2>
+<h2>0.0.3 · current stable release</h2>
 
 <p>The 0.0.3 line adds typed metadata schemas and a complete pending-review withdrawal path without weakening the compatibility and release evidence established by 0.0.2.</p>
 
@@ -44,7 +44,7 @@ format: "html"
 </tbody>
 </table>
 
-<aside class="callout" data-mark="CANDIDATE"><div><strong>0.0.3 consumption rule</strong><p>This is a candidate contract, not proof of publication. Consume <code>ai.icen:*:0.0.3</code> only after the guarded <code>v0.0.3</code> tag matches the protected remote <code>main</code> HEAD, every required CNB lane matches that exact commit, and a fresh anonymous consumer resolves all 19 coordinates plus Boot 2, Boot 3 and pure-SPI scenarios.</p></div></aside>
+<aside class="callout" data-mark="STABLE"><div><strong>0.0.3 is consumable</strong><p><code>v0.0.3</code> is fixed at <code>dbf2a50fbca41e2ac5b5cf18bb44f9287c153637</code>. CNB build <code>cnb-cl8-1jtgih45j</code> completed all 12/12 release pipelines, and independent anonymous readback verified the POM, main JAR and checksum for all 19 coordinates. Later main commits do not change this stable identity.</p></div></aside>
 
 <h2>0.0.2 · previous immutable boundary</h2>
 
@@ -160,7 +160,7 @@ format: "html"
 <h2>Next steps</h2>
 
 <ul>
-<li>Read the <a href="#/project/release-0-0-3">Release 0.0.3 contract</a> for the current scope and remote-consumption rule.</li>
+<li>Read the <a href="#/project/release-0-0-3">Release 0.0.3 notes</a> for the stable scope, upgrade boundary and remote evidence.</li>
 <li>Retain <a href="#/project/release-0-0-2-development">Release 0.0.2</a> as the previous immutable upgrade boundary.</li>
 <li>See <a href="#/project/contributing">Contributing</a> if you want to help close an open item.</li>
 </ul>

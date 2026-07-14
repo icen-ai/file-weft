@@ -271,15 +271,25 @@ test("0.0.2 historical release identity retains its protected remote evidence", 
   }
 });
 
-test("0.0.3 current release identity remains conditional on guarded-tag and protected-main evidence", async () => {
+test("0.0.3 stable release identity is immutable and backed by complete remote evidence", async () => {
   for (const page of currentReleaseIdentityPages) {
     const source = await read(page);
-    assert.match(source, /0\.0\.3/u, `${page} release identity`);
-    assert.match(source, /(?:guarded[^\n]{0,40}tag|受发布门禁约束[^\n]{0,40}标签)/iu, `${page} guarded tag evidence`);
-    assert.match(source, /(?:protected[^\n]{0,40}main|受保护[^\n]{0,40}(?:main|主干))/iu, `${page} protected main evidence`);
     assert.match(
       source,
-      /(?:anonymous[^\n]{0,80}(?:cold-cache|cold cache|resolution|resolves)|匿名[^\n]{0,80}(?:冷缓存|解析|回读))/iu,
+      /(?:stable[^\n]{0,50}0\.0\.3|0\.0\.3[^\n]{0,50}stable|稳定版[^\n]{0,50}0\.0\.3|0\.0\.3[^\n]{0,50}稳定)/iu,
+      `${page} stable release identity`,
+    );
+    assert.match(source, /v0\.0\.3/u, `${page} immutable tag`);
+    assert.match(
+      source,
+      /dbf2a50fbca41e2ac5b5cf18bb44f9287c153637/u,
+      `${page} exact release commit`,
+    );
+    assert.match(source, /cnb-cl8-1jtgih45j/u, `${page} exact release build`);
+    assert.match(source, /12\/12/u, `${page} complete release pipelines`);
+    assert.match(
+      source,
+      /(?:anonymous[^\n]{0,80}(?:cold-cache|cold cache|resolution|resolves|readback)|匿名[^\n]{0,80}(?:冷缓存|解析|回读))/iu,
       `${page} anonymous remote evidence`,
     );
     assert.match(source, /19/u, `${page} complete 19-coordinate inventory`);
