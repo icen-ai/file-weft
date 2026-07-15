@@ -1,10 +1,14 @@
 package ai.icen.fw.testkit.retrieval
 
 import ai.icen.fw.retrieval.api.RetrievalCancellationOutcome
+import ai.icen.fw.retrieval.api.RetrievalProviderException
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import java.time.Duration
+import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,6 +42,37 @@ object RetrievalContractAssertions {
             .get(timeoutMillis(timeout, "$stageName timeout"), TimeUnit.MILLISECONDS)
         assertNotNull(value, "$stageName must complete with a non-null value.")
         return requireNotNull(value)
+    }
+
+    @JvmStatic
+    fun awaitProviderFailure(
+        stage: CompletionStage<*>?,
+        timeout: Duration,
+        stageName: String,
+    ): RetrievalProviderException {
+        assertNotNull(stage, "$stageName must return a non-null CompletionStage.")
+        var observedFailure: Throwable? = null
+        try {
+            requireNotNull(stage).toCompletableFuture()
+                .get(timeoutMillis(timeout, "$stageName timeout"), TimeUnit.MILLISECONDS)
+        } catch (failure: Throwable) {
+            observedFailure = failure
+        }
+        assertNotNull(observedFailure, "$stageName must complete exceptionally.")
+        return requireProviderFailure(requireNotNull(observedFailure), stageName)
+    }
+
+    @JvmStatic
+    fun requireProviderFailure(failure: Throwable, stageName: String): RetrievalProviderException {
+        var current = failure
+        while ((current is CompletionException || current is ExecutionException) && current.cause != null) {
+            current = requireNotNull(current.cause)
+        }
+        assertTrue(
+            current is RetrievalProviderException,
+            "$stageName must fail with a sanitized RetrievalProviderException, not ${current.javaClass.name}.",
+        )
+        return current as RetrievalProviderException
     }
 
     @JvmStatic

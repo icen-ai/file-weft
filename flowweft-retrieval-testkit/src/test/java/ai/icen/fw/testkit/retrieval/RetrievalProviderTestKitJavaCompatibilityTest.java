@@ -25,6 +25,13 @@ import ai.icen.fw.retrieval.spi.Reranker;
 import ai.icen.fw.retrieval.spi.RerankerDescriptor;
 import ai.icen.fw.retrieval.spi.RetrievalContentProvider;
 import ai.icen.fw.retrieval.spi.RetrievalContentProviderDescriptor;
+import ai.icen.fw.retrieval.spi.RetrievalIndexActivationRequest;
+import ai.icen.fw.retrieval.spi.RetrievalIndexMutationRequest;
+import ai.icen.fw.retrieval.spi.RetrievalIndexProvider;
+import ai.icen.fw.retrieval.spi.RetrievalIndexProviderDescriptor;
+import ai.icen.fw.retrieval.spi.RetrievalIndexSealRequest;
+import ai.icen.fw.retrieval.spi.RetrievalIndexStageBatch;
+import ai.icen.fw.retrieval.spi.RetrievalIndexStateRequest;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collection;
@@ -32,7 +39,7 @@ import java.util.function.LongSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-/** Proves every non-index retrieval provider contract remains subclassable from Java 8. */
+/** Proves every retrieval provider contract remains subclassable from Java 8. */
 class RetrievalProviderTestKitJavaCompatibilityTest {
     @Test
     void allRetrievalContractsAreSubclassableFromJavaEight() {
@@ -45,6 +52,7 @@ class RetrievalProviderTestKitJavaCompatibilityTest {
         assertNotNull(new ExtractionContract());
         assertNotNull(new ChunkingContract());
         assertNotNull(new EmbeddingContract());
+        assertNotNull(new IndexContract());
     }
 
     private static UnsupportedOperationException fixtureOnly() {
@@ -111,6 +119,52 @@ class RetrievalProviderTestKitJavaCompatibilityTest {
     private static final class EmbeddingContract extends EmbeddingProviderContractTest {
         @Override protected EmbeddingProvider getEmbeddingProvider() { throw fixtureOnly(); }
         @Override protected EmbeddingRequest embeddingRequest(EmbeddingProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+    }
+
+    private static final class IndexContract extends RetrievalIndexProviderContractTest {
+        @Override protected RetrievalIndexProvider getIndexProvider() { throw fixtureOnly(); }
+        @Override protected RetrievalIndexStageBatch stageRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexSealRequest sealRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationRequest activationRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexMutationRequest mutationRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexStateRequest stateRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationRaceScenario activationRaceScenario(
+            RetrievalIndexProviderDescriptor descriptor,
+            int contenderCount
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationReplayScenario activationReplayScenario(
+            RetrievalIndexProviderDescriptor descriptor,
+            int replayCount
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationReplayMismatchScenario activationReplayMismatchScenario(
+            RetrievalIndexProviderDescriptor descriptor
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexProviderBindingMismatchScenario providerBindingMismatchScenario(
+            RetrievalIndexProviderDescriptor descriptor
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationFailureScenario activationFailureScenario(
+            RetrievalIndexProviderDescriptor descriptor
+        ) {
             throw fixtureOnly();
         }
     }
