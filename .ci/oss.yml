@@ -1,0 +1,25 @@
+.flowweft-oss-secret-file: &flowweft-oss-secret-file
+  https://cnb.cool/china.ai/file-weft-ci-secrets/-/blob/main/oss-integration.yml
+
+main:
+  web_trigger_oss:
+    oss:
+      name: On-demand Alibaba Cloud OSS integration
+      runner: !reference [.fileweft-runner-4]
+      docker: !reference [.fileweft-jvm-docker]
+      env: !reference [.flowweft-oss-env]
+      stages:
+        - name: verify-oss-source-identity
+          script: |
+            test "$CNB_BRANCH" = "main"
+            test "$(git rev-parse HEAD)" = "$CNB_COMMIT"
+        - name: real-oss-integration
+          timeout: 30m
+          imports:
+            - *flowweft-oss-secret-file
+          lock:
+            key: flowweft-oss-integration
+            wait: true
+            timeout: 1800
+            expires: 2700
+          script: bash ./gradlew ossIntegrationCheck --no-daemon --no-configuration-cache --stacktrace

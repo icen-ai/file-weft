@@ -9,3 +9,11 @@ branch:
           roles:
             - owner
             - master
+      - name: 验证阿里云 OSS
+        description: 使用短期 STS 在专用私有 bucket 验证当前 main 提交的 OSS 生产合同
+        event: web_trigger_oss
+        groupName: 真实环境验收
+        permissions:
+          roles:
+            - owner
+            - master

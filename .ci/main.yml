@@ -29,7 +29,33 @@ main:
       ifModify: !reference [.fileweft-docs-paths]
       stages:
         - name: docs-contract
-          script: node --test fileweft-docs/test/site.test.mjs
+          script: node --test flowweft-docs/test/site.test.mjs
+
+    console:
+      runner: !reference [.fileweft-runner-4]
+      docker: !reference [.flowweft-console-docker]
+      env: !reference [.flowweft-console-env]
+      name: Main console contract
+      ifModify: !reference [.flowweft-console-paths]
+      stages:
+        - name: install-console
+          script: npm ci --prefix flowweft-console
+        - name: verify-console
+          script: npm run check --prefix flowweft-console
+
+    console-redis:
+      runner: !reference [.flowweft-runner-2]
+      docker: !reference [.flowweft-console-redis-docker]
+      env: !reference [.flowweft-console-env]
+      name: Main Console Redis contract
+      ifModify: !reference [.flowweft-console-redis-paths]
+      stages:
+        - name: install-console-redis-contract
+          timeout: 5m
+          script: npm ci --prefix flowweft-console
+        - name: verify-console-redis-contract
+          timeout: 2m
+          script: sh .ci/scripts/run-console-redis-contract.sh
 
     artifacts:
       runner: !reference [.fileweft-runner-8]

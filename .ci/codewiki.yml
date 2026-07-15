@@ -1,5 +1,5 @@
 .fileweft-codewiki: &fileweft-codewiki
-  name: Refresh FileWeft Code Wiki
+  name: Refresh FlowWeft Code Wiki
   runner: !reference [.fileweft-runner-4]
   docker: !reference [.fileweft-jvm-docker]
   lock:
@@ -15,7 +15,7 @@
         test ! -e .ai
         test ! -e fileweft-agent
         test ! -e codewiki
-        test -n "$(find fileweft-* -path '*/src/main/*' -type f -print -quit)"
+        test -n "$(find fileweft-* flowweft-* -path '*/src/main/*' -type f -print -quit)"
     - name: generate-and-ingest-codewiki
       timeout: 4h
       image: docker.cnb.cool/cnb/plugins/cnbcool/codewiki:v1.12.0@sha256:961271592768c7baa914d247ad4f2f37a7f795d386428ffef6684754fd4a7819

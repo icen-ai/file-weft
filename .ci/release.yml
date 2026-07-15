@@ -34,6 +34,25 @@
             key: release-quality
             data: { commit: $CNB_COMMIT }
 
+    console-redis:
+      runner: !reference [.flowweft-runner-2]
+      docker: !reference [.flowweft-console-redis-docker]
+      env: !reference [.flowweft-console-env]
+      name: Release Console Redis contract
+      stages:
+        - *fileweft-stable-release-tag
+        - name: install-console-redis-contract
+          timeout: 5m
+          script: npm ci --prefix flowweft-console
+        - name: verify-console-redis-contract
+          timeout: 2m
+          script: sh .ci/scripts/run-console-redis-contract.sh
+        - name: console-redis-complete
+          type: cnb:resolve
+          options:
+            key: release-console-redis
+            data: { commit: $CNB_COMMIT }
+
     java8:
       <<: *fileweft-release-jvm
       name: Release Java 8 compatibility
@@ -195,6 +214,30 @@
         - name: stop-rustfs
           script: docker compose -f .docker/docker-compose.dev.yaml down --volumes --remove-orphans || true
 
+    oss:
+      <<: *fileweft-release-jvm
+      name: Release Alibaba Cloud OSS integration
+      env: !reference [.flowweft-oss-env]
+      stages:
+        - *fileweft-stable-release-tag
+        - name: real-oss-integration
+          timeout: 30m
+          imports:
+            - https://cnb.cool/china.ai/file-weft-ci-secrets/-/blob/main/oss-integration.yml
+          lock:
+            key: flowweft-oss-integration
+            wait: true
+            timeout: 1800
+            expires: 2700
+          script: |
+            VERSION="${CNB_BRANCH#v}"
+            bash ./gradlew ossIntegrationCheck "-PfileweftVersion=$VERSION" --no-daemon --no-configuration-cache --stacktrace
+        - name: oss-complete
+          type: cnb:resolve
+          options:
+            key: release-oss
+            data: { commit: $CNB_COMMIT }
+
     acceptance:
       runner: !reference [.fileweft-runner-8]
       docker: !reference [.fileweft-e2e-docker]
@@ -240,6 +283,12 @@
                 key: release-quality
               exports:
                 commit: FILEWEFT_VERIFIED_QUALITY_COMMIT
+            console-redis:
+              type: cnb:await
+              options:
+                key: release-console-redis
+              exports:
+                commit: FLOWWEFT_VERIFIED_CONSOLE_REDIS_COMMIT
             java8:
               type: cnb:await
               options:
@@ -294,6 +343,12 @@
                 key: release-rustfs
               exports:
                 commit: FILEWEFT_VERIFIED_RUSTFS_COMMIT
+            oss:
+              type: cnb:await
+              options:
+                key: release-oss
+              exports:
+                commit: FLOWWEFT_VERIFIED_OSS_COMMIT
             acceptance:
               type: cnb:await
               options:
@@ -304,6 +359,7 @@
           script: |
             for verified_commit in \
               "$FILEWEFT_VERIFIED_QUALITY_COMMIT" \
+              "$FLOWWEFT_VERIFIED_CONSOLE_REDIS_COMMIT" \
               "$FILEWEFT_VERIFIED_JAVA8_COMMIT" \
               "$FILEWEFT_VERIFIED_JAVA11_COMMIT" \
               "$FILEWEFT_VERIFIED_JAVA17_COMMIT" \
@@ -313,6 +369,7 @@
               "$FILEWEFT_VERIFIED_MYSQL_COMMIT" \
               "$FILEWEFT_VERIFIED_KINGBASE_COMMIT" \
               "$FILEWEFT_VERIFIED_RUSTFS_COMMIT" \
+              "$FLOWWEFT_VERIFIED_OSS_COMMIT" \
               "$FILEWEFT_VERIFIED_ACCEPTANCE_COMMIT"
             do
               if [ "$verified_commit" != "$CNB_COMMIT" ]; then

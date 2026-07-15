@@ -217,7 +217,7 @@ for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
   try {
     const verified = await verify(generatedDocuments);
     for (const message of verified) console.log(message);
-    console.log(`Verified FileWeft CodeWiki knowledge for ${expectedSha}.`);
+    console.log(`Verified FlowWeft CodeWiki knowledge for ${expectedSha}.`);
     break;
   } catch (failure) {
     if (!(failure instanceof KnowledgeVerificationError) || !failure.retryable) throw failure;
