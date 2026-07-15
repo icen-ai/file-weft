@@ -1,6 +1,9 @@
 package ai.icen.fw.retrieval.spi
 
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.retrieval.api.RetrievalFailureCode
+import ai.icen.fw.retrieval.api.RetrievalProviderException
+import ai.icen.fw.retrieval.api.RetrievalRetryability
 import java.util.LinkedHashMap
 import java.util.concurrent.CompletionStage
 
@@ -1118,8 +1121,8 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
     generationId: String,
     val baselineState: RetrievalIndexState,
     val observedState: RetrievalIndexState,
-    failureCode: String,
-    val retryable: Boolean,
+    val failureCode: RetrievalFailureCode,
+    val retryability: RetrievalRetryability,
 ) {
     val operationRequestDigest: String = requireSpiSha256(
         operationRequestDigest,
@@ -1130,11 +1133,7 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
         RetrievalSpiLimits.MAX_ID_CODE_POINTS,
         "Failed index generation id is invalid.",
     )
-    val failureCode: String = requireSpiText(
-        failureCode,
-        RetrievalSpiLimits.MAX_ID_CODE_POINTS,
-        "Index generation failure code is invalid.",
-    )
+    val retryable: Boolean = retryability == RetrievalRetryability.RETRYABLE
     val digest: String
 
     init {
@@ -1163,7 +1162,7 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             .text(this.generationId)
             .text(baselineState.digest)
             .text(observedState.digest)
-            .text(this.failureCode)
+            .text(failureCode.id)
             .boolean(retryable)
             .finish()
     }
@@ -1176,8 +1175,8 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             request: RetrievalIndexStageBatch,
             baselineState: RetrievalIndexState,
             observedState: RetrievalIndexState,
-            failureCode: String,
-            retryable: Boolean,
+            failureCode: RetrievalFailureCode,
+            retryability: RetrievalRetryability,
         ): RetrievalIndexGenerationFailureEvidence = create(
             RetrievalIndexGenerationOperation.STAGE,
             request.requestId,
@@ -1187,7 +1186,7 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             baselineState,
             observedState,
             failureCode,
-            retryable,
+            retryability,
         )
 
         @JvmStatic
@@ -1195,8 +1194,8 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             request: RetrievalIndexSealRequest,
             baselineState: RetrievalIndexState,
             observedState: RetrievalIndexState,
-            failureCode: String,
-            retryable: Boolean,
+            failureCode: RetrievalFailureCode,
+            retryability: RetrievalRetryability,
         ): RetrievalIndexGenerationFailureEvidence = create(
             RetrievalIndexGenerationOperation.SEAL,
             request.requestId,
@@ -1206,7 +1205,7 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             baselineState,
             observedState,
             failureCode,
-            retryable,
+            retryability,
         )
 
         @JvmStatic
@@ -1214,8 +1213,8 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             request: RetrievalIndexActivationRequest,
             baselineState: RetrievalIndexState,
             observedState: RetrievalIndexState,
-            failureCode: String,
-            retryable: Boolean,
+            failureCode: RetrievalFailureCode,
+            retryability: RetrievalRetryability,
         ): RetrievalIndexGenerationFailureEvidence {
             require(
                 baselineState.activeGenerationId == request.expectedPreviousGenerationId &&
@@ -1230,7 +1229,7 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
                 baselineState,
                 observedState,
                 failureCode,
-                retryable,
+                retryability,
             )
         }
 
@@ -1242,8 +1241,8 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
             requestedAtEpochMilli: Long,
             baselineState: RetrievalIndexState,
             observedState: RetrievalIndexState,
-            failureCode: String,
-            retryable: Boolean,
+            failureCode: RetrievalFailureCode,
+            retryability: RetrievalRetryability,
         ): RetrievalIndexGenerationFailureEvidence {
             require(
                 baselineState.descriptorDigest == manifest.descriptor.digest &&
@@ -1265,7 +1264,7 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
                 baselineState,
                 observedState,
                 failureCode,
-                retryable,
+                retryability,
             )
         }
     }
@@ -1275,6 +1274,19 @@ class RetrievalIndexGenerationFailureEvidence private constructor(
  * Generation protocol: stage and seal are invisible; activate is the only atomic read-path switch.
  * A failed stage/seal/activation must preserve the previous active generation. Tombstone and ACL
  * refresh operations use compare-and-set projection revisions and return convergence evidence.
+ *
+ * Every write is idempotent in the scope `(operation, requestId)`. An exact replay returns the same
+ * terminal receipt, including its provider request id and digest. Reusing that identity with another
+ * request digest fails with [RetrievalFailureCode.INDEX_REQUEST_REPLAY_MISMATCH]. Implementations
+ * validate the complete provider/descriptor/source/generation binding before any side effect and use
+ * [RetrievalFailureCode.INDEX_PROVIDER_BINDING_MISMATCH] when it does not match.
+ *
+ * Activation linearizes the expected active generation and projection revision in one compare-and-set.
+ * Mutation linearizes the expected active generation and projection revision in the same way. A stale
+ * precondition fails with [RetrievalFailureCode.INDEX_PROJECTION_CONFLICT], leaves the complete active
+ * projection unchanged, and requires the caller to observe state and create a new request rather than
+ * retrying the same request. Provider failures are returned by exceptionally completing a non-null
+ * [CompletionStage] with a sanitized [RetrievalProviderException]; raw SDK failures never cross this SPI.
  */
 interface RetrievalIndexProvider {
     fun descriptor(): RetrievalIndexProviderDescriptor

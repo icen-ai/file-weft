@@ -21,6 +21,12 @@ class RetrievalFailureCode private constructor(val id: String) {
         @JvmField val INVALID_RESPONSE = RetrievalFailureCode("invalid-response")
         @JvmField val CANCELLED = RetrievalFailureCode("cancelled")
         @JvmField val PERMANENT_FAILURE = RetrievalFailureCode("permanent-failure")
+        /** The authoritative active generation or projection revision did not match the request CAS precondition. */
+        @JvmField val INDEX_PROJECTION_CONFLICT = RetrievalFailureCode("index.projection-conflict")
+        /** The same index operation/request id was already bound to a different request digest. */
+        @JvmField val INDEX_REQUEST_REPLAY_MISMATCH = RetrievalFailureCode("index.request-replay-mismatch")
+        /** The request descriptor, provider instance, schema, source, generation, or receipt belongs elsewhere. */
+        @JvmField val INDEX_PROVIDER_BINDING_MISMATCH = RetrievalFailureCode("index.provider-binding-mismatch")
 
         @JvmStatic
         fun of(id: String): RetrievalFailureCode = RetrievalFailureCode(id)
@@ -39,6 +45,14 @@ class RetrievalProviderException @JvmOverloads constructor(
     val providerRequestId: String? = null,
 ) : RuntimeException(safeMessage(code)) {
     init {
+        require(
+            retryability == RetrievalRetryability.NOT_RETRYABLE ||
+                code != RetrievalFailureCode.INDEX_PROJECTION_CONFLICT &&
+                code != RetrievalFailureCode.INDEX_REQUEST_REPLAY_MISMATCH &&
+                code != RetrievalFailureCode.INDEX_PROVIDER_BINDING_MISMATCH,
+        ) {
+            "Index conflict, replay, and provider-binding failures are not retryable for the same request."
+        }
         providerRequestId?.let { requestId ->
             requireRetrievalText(
                 requestId,
@@ -61,6 +75,12 @@ class RetrievalProviderException @JvmOverloads constructor(
             RetrievalFailureCode.INVALID_RESPONSE -> "The retrieval provider returned an invalid response."
             RetrievalFailureCode.CANCELLED -> "The retrieval operation was cancelled."
             RetrievalFailureCode.PERMANENT_FAILURE -> "The retrieval provider rejected the operation permanently."
+            RetrievalFailureCode.INDEX_PROJECTION_CONFLICT ->
+                "The retrieval index projection changed before the requested operation could be applied."
+            RetrievalFailureCode.INDEX_REQUEST_REPLAY_MISMATCH ->
+                "The retrieval index request identifier is already bound to another request."
+            RetrievalFailureCode.INDEX_PROVIDER_BINDING_MISMATCH ->
+                "The retrieval index request does not belong to the selected provider binding."
             else -> "The retrieval provider operation failed."
         }
     }

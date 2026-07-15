@@ -15,6 +15,19 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class JavaRetrievalApiCompatibilityTest {
     @Test
+    void indexFailureProtocolIsCallableFromPlainJava8() {
+        RetrievalProviderException failure = new RetrievalProviderException(
+            RetrievalFailureCode.INDEX_PROJECTION_CONFLICT,
+            RetrievalRetryability.NOT_RETRYABLE,
+            "provider-index-java"
+        );
+
+        assertEquals("index.projection-conflict", failure.getCode().getId());
+        assertEquals(RetrievalRetryability.NOT_RETRYABLE, failure.getRetryability());
+        assertFalse(failure.getMessage().contains("provider-index-java"));
+    }
+
+    @Test
     void completeSecurityChainIsCallableFromPlainJava8() {
         Identifier tenantId = id("tenant-java");
         Identifier documentId = id("document-java");

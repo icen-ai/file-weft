@@ -1,6 +1,8 @@
 package ai.icen.fw.retrieval.spi;
 
 import ai.icen.fw.core.id.Identifier;
+import ai.icen.fw.retrieval.api.RetrievalFailureCode;
+import ai.icen.fw.retrieval.api.RetrievalRetryability;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -87,6 +89,14 @@ class JavaRetrievalSpiCompatibilityTest {
             long.class,
             long.class
         ));
+        assertEquals(
+            RetrievalFailureCode.class,
+            RetrievalIndexGenerationFailureEvidence.class.getMethod("getFailureCode").getReturnType()
+        );
+        assertEquals(
+            RetrievalRetryability.class,
+            RetrievalIndexGenerationFailureEvidence.class.getMethod("getRetryability").getReturnType()
+        );
         assertNotNull(FilenameCatalog.class.getMethod("descriptor"));
         assertNotNull(FilenameCatalog.class.getMethod("scan", FilenameCatalogScanRequest.class));
         assertNotNull(FilenameCatalogScanRequest.class.getMethod(

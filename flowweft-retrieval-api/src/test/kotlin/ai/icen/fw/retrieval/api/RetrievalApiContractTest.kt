@@ -541,6 +541,26 @@ class RetrievalApiContractTest {
     }
 
     @Test
+    fun `index concurrency failures are stable typed and non-retryable for the same request`() {
+        val expected = linkedMapOf(
+            RetrievalFailureCode.INDEX_PROJECTION_CONFLICT to "index.projection-conflict",
+            RetrievalFailureCode.INDEX_REQUEST_REPLAY_MISMATCH to "index.request-replay-mismatch",
+            RetrievalFailureCode.INDEX_PROVIDER_BINDING_MISMATCH to "index.provider-binding-mismatch",
+        )
+
+        expected.forEach { (code, identifier) ->
+            assertEquals(identifier, code.id)
+            assertEquals(code, RetrievalFailureCode.of(identifier))
+            val failure = RetrievalProviderException(code, RetrievalRetryability.NOT_RETRYABLE, "provider-index-7")
+            assertFalse(failure.message.orEmpty().contains("provider-index-7"))
+            assertFalse(failure.toString().contains("provider-index-7"))
+            assertFailsWith<IllegalArgumentException> {
+                RetrievalProviderException(code, RetrievalRetryability.RETRYABLE)
+            }
+        }
+    }
+
+    @Test
     fun `plain interfaces use JDK8 completion stages and typed idempotent cancellation`() {
         val fixture = fixture()
         val expected = envelope(fixture)

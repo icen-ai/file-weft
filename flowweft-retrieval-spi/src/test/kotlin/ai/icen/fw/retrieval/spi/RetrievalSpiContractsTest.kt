@@ -5,8 +5,10 @@ import ai.icen.fw.retrieval.api.CandidateRetrieverDescriptor
 import ai.icen.fw.retrieval.api.ExecutableRetrievalRequest
 import ai.icen.fw.retrieval.api.RetrievalAccessProfile
 import ai.icen.fw.retrieval.api.RetrievalCall
+import ai.icen.fw.retrieval.api.RetrievalFailureCode
 import ai.icen.fw.retrieval.api.RetrievalMode
 import ai.icen.fw.retrieval.api.RetrievalResultEnvelope
+import ai.icen.fw.retrieval.api.RetrievalRetryability
 import java.io.ByteArrayInputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
@@ -389,10 +391,13 @@ class RetrievalSpiContractsTest {
             activation,
             baselineState,
             stateAfterFailure,
-            "provider-timeout",
-            true,
+            RetrievalFailureCode.TEMPORARY_UNAVAILABLE,
+            RetrievalRetryability.RETRYABLE,
         )
         assertSame(RetrievalIndexGenerationOperation.ACTIVATE, failureEvidence.operation)
+        assertSame(RetrievalFailureCode.TEMPORARY_UNAVAILABLE, failureEvidence.failureCode)
+        assertSame(RetrievalRetryability.RETRYABLE, failureEvidence.retryability)
+        assertTrue(failureEvidence.retryable)
         assertEquals("generation-1", failureEvidence.observedState.activeGenerationId)
         val changedState = RetrievalIndexState.observed(
             stateAfterFailureRequest,
@@ -407,8 +412,8 @@ class RetrievalSpiContractsTest {
                 activation,
                 baselineState,
                 changedState,
-                "provider-timeout",
-                true,
+                RetrievalFailureCode.INDEX_PROJECTION_CONFLICT,
+                RetrievalRetryability.NOT_RETRYABLE,
             )
         }
 
