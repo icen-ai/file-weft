@@ -21,7 +21,7 @@ plugins {
 }
 
 group = "ai.icen"
-version = providers.gradleProperty("fileweftVersion").orElse("0.0.3-SNAPSHOT").get()
+version = providers.gradleProperty("fileweftVersion").orElse("1.0.0-SNAPSHOT").get()
 
 val publishableModuleNames = setOf(
     "fileweft-core",
@@ -43,6 +43,11 @@ val publishableModuleNames = setOf(
     "fileweft-adapter-s3",
     "fileweft-agent",
     "fileweft-testkit",
+    "flowweft-workflow-api",
+    "flowweft-workflow-spi",
+    "flowweft-workflow-domain",
+    "flowweft-workflow-runtime",
+    "flowweft-workflow-persistence-jdbc",
 )
 val releaseSbomModuleNames = publishableModuleNames.sorted()
 extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {

@@ -1,6 +1,6 @@
-# FileWeft AI Agent Development Instructions
+# FlowWeft AI Agent Development Instructions
 
-> This file is the root-level AI development contract for the FileWeft repository.
+> This file is the root-level AI development contract for the FlowWeft repository.
 >
 > Scope:
 >
@@ -19,41 +19,76 @@
 > `.ai/FileWeft_Ultimate_Implementation_Manual_Source_Extension_30/`, or
 > `.ai/FileWeft_Ultimate_Implementation_Manual_Extension_40/` when the task
 > touches databases, source blueprints, deployment, observability, security,
-> or plugins. These checked-in directories are the complete FileWeft design
+> or plugins. These checked-in directories are the complete legacy FileWeft design
 > documentation; the older `..._FINAL_PACKAGE` path is not present in this
 > repository.
 
-## Superseding Product Decision: FileWeft Agent Is Deferred
+## Superseding Product Decision: FlowWeft 1.0 Includes Agent and Generic Workflow
 
-This decision has the highest priority. It supersedes every older Agent phase,
-roadmap item, example, acceptance statement, and release-planning statement in
-this repository when they conflict with it.
+This decision has the highest priority for development after `0.0.3`. It
+supersedes the former indefinite Agent deferral when that text is used as a
+future-development instruction. It does not rewrite historical release facts:
+`0.0.2` and `0.0.3` did not provide Agent product capability.
 
-- FileWeft `0.0.2` does not provide Agent product capability.
-- Agent will be redesigned later, but that work is deferred indefinitely. The
-  earliest point at which the project may reassess it is **after `1.0.0` has
-  been released**. This is not a commitment to `1.x`, the next release, or any
-  other version.
-- Keep the existing `fileweft-agent` artifact, Agent SPI/public ABI, and the
-  Agent-related parts of migrations V012/V026 only for source, binary, and
-  database compatibility. Their presence does not make Agent a supported
-  product capability.
-- The default runtime, Starters, Doctor inventory, plugin inventory, public
-  HTTP API, and `fileweft-dev` must not register, advertise, exercise, or expose
-  Agent capability. Any explicit legacy compatibility switch remains
-  compatibility-only and must not be presented as a `0.0.2` feature.
-- Until a new architecture decision is approved after the reassessment point,
-  do not add Agent endpoints, UI, automatic registration, positive product
-  tests/examples, or new Agent behavior. Compatibility/security fixes and
-  negative tests that enforce default non-exposure are allowed.
-- Do not delete historical Agent text. Mark it as historical/superseded so the
-  reason for retained ABI and migrations remains auditable.
+The approved decisions and change-control analysis are recorded in
+`docs/decisions/0001-flowweft-1.0-product-scope.md`,
+`docs/decisions/0002-flowweft-product-rename.md`, and
+`docs/decisions/0003-generic-workflow-platform.md`. The executable delivery
+ledger is `docs/flowweft-1.0-delivery-ledger.md`.
+
+- The product name is FlowWeft. Keep `ai.icen.fw`, already-published
+  `FileWeft*` public ABI, V001-V029, `fw_` tables, `/fileweft/v1`, historical
+  release facts, and other documented machine compatibility identifiers.
+  New 1.0 product surfaces and artifacts use FlowWeft/`flowweft-*`; do not run
+  an unclassified global name replacement.
+- FlowWeft `1.0.0` must include a redesigned, provider-neutral Agent product
+  capability, permission-filtered retrieval, durable orchestration, diagnostics,
+  evaluation, and a production console.
+- FlowWeft `1.0.0` must include the standalone `flowweft-workflow-*` product
+  family. It runs without file modules and provides versioned definitions,
+  durable execution, human tasks, organization/participant SPIs, forms,
+  comments and safe mentions, notifications, operations, and standard codec
+  boundaries. File approval is an optional document adapter, not the engine.
+- Keep the existing `fileweft-agent` artifact, `ai.icen.fw.spi.ai` public ABI,
+  and Agent-related V012/V026 schema for source, binary, and database
+  compatibility. Do not repurpose their types, enums, tables, or columns for
+  the 1.0 design. New contracts and persistence are additive and versioned.
+- The only built-in search baseline is safe filename matching. Full-text,
+  vector, hybrid, reranking, extraction, embedding, model, tool, MCP, and A2A
+  behavior must cross explicit SPIs. Absence of an advanced provider is a
+  diagnosable unsupported state, never a silent authorization downgrade.
+- Agent tools may call existing application use cases only through a trusted
+  tenant/user context, fresh authorization, idempotency, budgets, and the
+  configured approval policy. Agent code never receives repositories or a raw
+  domain mutation interface.
+- Agent workflow tools may cover every public Workflow application use case,
+  but only with the current principal's authority. Policy proposals,
+  confirmations, and authorized invocations bind principal, action, resource,
+  purpose, exact arguments and versions, authorization revision/expiry, and a
+  one-time execution context. Publishing definitions, deciding human tasks,
+  delegation, add-sign, termination, and migration never gain superuser
+  semantics merely because Agent initiated them.
+- FlowWeft will ship only three maintained reference integrations for 1.0:
+  RustFS through the S3-compatible adapter and real-environment profile, Dify
+  knowledge-base integration, and Alibaba Cloud OSS integration. Other vendor
+  adapters remain host/plugin responsibilities.
+- FlowWeft does not own host catalog CRUD. It may expose an authorization-safe,
+  read-only catalog facade and the existing controlled document move command.
+- The new console is a separate product surface, not the historical Dev
+  acceptance UI. It must support host source profiles, tenant aliases, secure
+  login/token exchange, Agent configuration, operations, and every supported
+  FlowWeft capability without making host passwords or provider secrets browser
+  storage.
+- Historical documents and release notes must remain auditable. Add a current
+  superseding notice or link instead of rewriting what an old release contained.
 
 ---
 
 # 1. Project Identity
 
-FileWeft is a Kotlin/JVM enterprise file intelligence infrastructure.
+FlowWeft is a Kotlin/JVM enterprise file intelligence and workflow
+infrastructure. FileWeft is the historical product name and compatibility
+namespace used by released 0.0.x artifacts.
 
 It is not:
 
@@ -133,7 +168,7 @@ Any violation requires redesign before implementation.
 
 # 4. Kotlin Rules
 
-FileWeft is implemented in Kotlin.
+FlowWeft is implemented in Kotlin.
 
 Target:
 
@@ -420,6 +455,7 @@ External evidence is additive and fail-closed:
   `mysqlIntegrationCheck` or `kingbaseIntegrationCheck`; PostgreSQL success is
   not evidence for another dialect
 - S3-compatible storage changes require `rustFsIntegrationCheck`
+- Alibaba Cloud OSS storage changes require `ossIntegrationCheck` against a dedicated private bucket with short-lived STS credentials
 - Dev API, UI, or Compose behavior changes require `devAcceptanceCheck`
 - publication, POM, metadata, SBOM, or release bundle changes require
   `releaseArtifactCheck`
@@ -529,8 +565,9 @@ Follow:
 
 Do not skip foundational layers.
 
-The former Agent implementation phase is superseded by the product decision at
-the top of this file and must not be executed before a future approved redesign.
+The historical Agent phase must not be revived verbatim. Implement the additive
+1.0 architecture approved by the product decision and ADR at the top of this
+file.
 
 ---
 
@@ -575,7 +612,7 @@ Do not create local containers before the relevant implementation phase requires
 
 When uncertain:
 
-Choose the design that keeps FileWeft:
+Choose the design that keeps FlowWeft:
 
 - more extensible
 - more compatible

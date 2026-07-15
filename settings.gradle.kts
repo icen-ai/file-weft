@@ -15,7 +15,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "fileweft"
+rootProject.name = "flowweft"
 
 includeBuild("build-logic")
 
@@ -40,6 +40,11 @@ include(
     ":fileweft-adapter-s3",
     ":fileweft-agent",
     ":fileweft-testkit",
+    ":flowweft-workflow-api",
+    ":flowweft-workflow-spi",
+    ":flowweft-workflow-domain",
+    ":flowweft-workflow-runtime",
+    ":flowweft-workflow-persistence-jdbc",
     ":fileweft-sample-host",
     ":fileweft-dev",
 )
