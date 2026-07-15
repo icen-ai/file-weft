@@ -19,6 +19,7 @@ dependencies {
     api(project(":fileweft-adapter-micrometer"))
     api(libs.micrometer.core)
     api(project(":fileweft-persistence"))
+    compileOnly(project(":flowweft-adapter-oss"))
     api(libs.jackson.databind)
     api(libs.spring.boot3.autoconfigure)
     compileOnly(libs.flyway.core.boot3)
@@ -38,6 +39,7 @@ dependencies {
     testImplementation(libs.spring.boot3.starter.test)
     testImplementation(libs.spring.boot3.starter.jdbc)
     testImplementation(libs.assertj.core)
+    testImplementation(project(":flowweft-adapter-oss"))
     testCompileOnly(libs.flyway.core.boot3)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

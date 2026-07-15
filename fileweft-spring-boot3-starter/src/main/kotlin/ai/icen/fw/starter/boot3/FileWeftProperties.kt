@@ -31,6 +31,23 @@ class FileWeftProperties {
         var localEnabled: Boolean = false
 
         var localRoot: String = ""
+
+        var oss: OssProperties = OssProperties()
+    }
+
+    class OssProperties {
+        /** Enables the optional Alibaba Cloud OSS reference adapter when its artifact is present. */
+        var enabled: Boolean = false
+        var endpoint: String = ""
+        var region: String = ""
+        var bucket: String = ""
+        var usePathStyle: Boolean = false
+        var useCName: Boolean = false
+        var connectionTimeoutMillis: Long = 5_000
+        var socketTimeoutMillis: Long = 120_000
+        var requestTimeoutMillis: Long = 900_000
+        var maxAttempts: Int = 3
+        var credentialExpirySafetyWindowMillis: Long = 30_000
     }
 
     class UploadProperties {

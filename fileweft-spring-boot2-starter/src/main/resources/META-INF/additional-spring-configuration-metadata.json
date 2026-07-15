@@ -23,6 +23,69 @@
       "description": "Filesystem root used only when fileweft.storage.local-enabled is true. It must be configured explicitly."
     },
     {
+      "name": "fileweft.storage.oss.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enables the optional Alibaba Cloud OSS reference adapter. Requires its artifact and exactly one host-owned OssCredentialsProvider bean.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.oss.endpoint",
+      "type": "java.lang.String",
+      "description": "Absolute HTTPS OSS endpoint without credentials, query, fragment, or non-root path."
+    },
+    {
+      "name": "fileweft.storage.oss.region",
+      "type": "java.lang.String",
+      "description": "OSS region used for request signing."
+    },
+    {
+      "name": "fileweft.storage.oss.bucket",
+      "type": "java.lang.String",
+      "description": "Dedicated OSS bucket selected for FlowWeft objects."
+    },
+    {
+      "name": "fileweft.storage.oss.use-path-style",
+      "type": "java.lang.Boolean",
+      "description": "Uses path-style addressing; it cannot be combined with CNAME mode.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.oss.use-cname",
+      "type": "java.lang.Boolean",
+      "description": "Uses an OSS CNAME endpoint; it cannot be combined with path-style mode.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.oss.connection-timeout-millis",
+      "type": "java.lang.Long",
+      "description": "Positive bounded OSS connection timeout in milliseconds.",
+      "defaultValue": 5000
+    },
+    {
+      "name": "fileweft.storage.oss.socket-timeout-millis",
+      "type": "java.lang.Long",
+      "description": "Positive bounded OSS socket timeout in milliseconds.",
+      "defaultValue": 120000
+    },
+    {
+      "name": "fileweft.storage.oss.request-timeout-millis",
+      "type": "java.lang.Long",
+      "description": "Positive bounded OSS request timeout in milliseconds.",
+      "defaultValue": 900000
+    },
+    {
+      "name": "fileweft.storage.oss.max-attempts",
+      "type": "java.lang.Integer",
+      "description": "Bounded OSS attempt count from 1 through 10.",
+      "defaultValue": 3
+    },
+    {
+      "name": "fileweft.storage.oss.credential-expiry-safety-window-millis",
+      "type": "java.lang.Long",
+      "description": "Positive safety window applied to rotating OSS credential expiry.",
+      "defaultValue": 30000
+    },
+    {
       "name": "fileweft.upload.presigned-enabled",
       "type": "java.lang.Boolean",
       "description": "Enables durable constrained direct PUT grants and atomic asset claims. Requires one selected PresignedUploadStorageAdapter plus V034 and V035 migration history.",
