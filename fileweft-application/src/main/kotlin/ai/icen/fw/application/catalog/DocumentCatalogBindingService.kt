@@ -3,6 +3,7 @@ package ai.icen.fw.application.catalog
 import ai.icen.fw.application.audit.AuditTrail
 import ai.icen.fw.application.document.DocumentMutationComponents
 import ai.icen.fw.application.document.DocumentNotFoundException
+import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
@@ -34,24 +35,35 @@ class DocumentCatalogBindingService(
     private val assets: FileAssetRepository,
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,
-) {
+) : DocumentCatalogBindingCommand {
     private val mutationGuard = DocumentCatalogMutationGuard(
         catalogAccess,
         DocumentMutationComponents(documents, assets, transaction),
     )
 
-    fun move(documentId: Identifier, folderId: String): Document {
+    override fun move(documentId: Identifier, folderId: String): Document {
         val tenant = tenantProvider.currentTenant()
-        val operator = userRealmProvider.currentUser()
-        // Base authorization must happen before the source binding snapshot.
-        catalogAccess.requireDocumentUpdateAuthorization(documentId)
-        val sourcePermit = mutationGuard.prepare(tenant.tenantId, documentId)
+        val currentUser = userRealmProvider.currentUser()
+            ?: throw ApplicationUnauthenticatedException()
+        // Capture and validate one identity before any persistence or catalog
+        // access; every later authorization and the audit use this snapshot.
+        val operator = catalogAccess.requireDocumentUpdateAuthorizationAs(
+            tenant.tenantId,
+            documentId,
+            currentUser,
+        )
+        val sourcePermit = mutationGuard.prepareAs(tenant.tenantId, operator, documentId)
         // Source visibility is established by prepare; only then may the
         // requested target folder be evaluated.
-        val folder = catalogAccess.requireFolderForDocumentUpdate(documentId, folderId)
+        val folder = catalogAccess.requireFolderForDocumentUpdateAs(
+            tenant.tenantId,
+            operator,
+            documentId,
+            folderId,
+        )
         // A target provider may be remote. Revalidate the source decision after
         // that call so a revocation cannot slip into the final mutation window.
-        mutationGuard.revalidate(tenant.tenantId, documentId, sourcePermit)
+        mutationGuard.revalidateAs(tenant.tenantId, operator, documentId, sourcePermit)
         return transaction.execute {
             val document = documents.findForMutation(tenant.tenantId, documentId)
                 ?: throw DocumentNotFoundException(documentId)
@@ -72,8 +84,8 @@ class DocumentCatalogBindingService(
                     resourceType = DOCUMENT_RESOURCE_TYPE,
                     resourceId = document.id,
                     action = MOVE_ACTION,
-                    operatorId = operator?.id,
-                    operatorName = operator?.displayName,
+                    operatorId = operator.id,
+                    operatorName = operator.displayName,
                     details = linkedMapOf<String, String>().apply {
                         put("folderId", folder.id)
                         previousFolderId?.let { put("previousFolderId", it) }

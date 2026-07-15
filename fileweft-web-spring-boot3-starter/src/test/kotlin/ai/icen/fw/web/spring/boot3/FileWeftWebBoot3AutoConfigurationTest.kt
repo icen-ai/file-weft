@@ -1,6 +1,8 @@
 package ai.icen.fw.web.spring.boot3
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import ai.icen.fw.application.catalog.DocumentCatalogAccessService
+import ai.icen.fw.application.catalog.DocumentCatalogBindingCommand
 import ai.icen.fw.application.document.DocumentDetailView
 import ai.icen.fw.application.document.DocumentFolderReadAccess
 import ai.icen.fw.application.document.DocumentFolderReadScope
@@ -17,15 +19,21 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.context.TraceContext
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.domain.document.Document
 import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
+import ai.icen.fw.spi.catalog.DocumentCatalogFolder
+import ai.icen.fw.spi.catalog.DocumentCatalogProvider
 import ai.icen.fw.spi.identity.UserIdentity
 import ai.icen.fw.spi.identity.UserRealmProvider
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.spi.tenant.TenantProvider
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentReadController
+import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentCatalogController
+import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentCatalogRequestFailureHandler
+import ai.icen.fw.web.runtime.v1.catalog.DocumentCatalogApiFacade
 import ai.icen.fw.web.spring.boot3.v1.document.V1DocumentSyncStatusController
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -33,6 +41,9 @@ import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner
 import org.springframework.context.ApplicationContext
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Primary
 import org.springframework.http.MediaType
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
 import org.springframework.test.web.servlet.MockMvc
@@ -44,10 +55,21 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import java.nio.charset.StandardCharsets
 import java.util.function.Supplier
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+
+private fun catalogBindingFixture(): DocumentCatalogBindingCommand = object : DocumentCatalogBindingCommand {
+    override fun move(documentId: Identifier, folderId: String): Document = Document(
+        documentId,
+        Identifier("tenant-a"),
+        Identifier("asset-a"),
+        "DOC-1",
+        "Document",
+    )
+}
 
 class FileWeftWebBoot3AutoConfigurationTest {
     private val contextRunner = WebApplicationContextRunner()
@@ -79,7 +101,46 @@ class FileWeftWebBoot3AutoConfigurationTest {
             assertNull(context.getBeanProvider(V1DocumentReadController::class.java).getIfAvailable())
             assertNull(context.getBeanProvider(ai.icen.fw.web.runtime.v1.document.DocumentApiReadFacade::class.java).getIfAvailable())
             assertNull(context.getBeanProvider(ai.icen.fw.web.runtime.v1.V1ApiResponseFactory::class.java).getIfAvailable())
+            assertNull(context.getBeanProvider(DocumentCatalogApiFacade::class.java).getIfAvailable())
+            assertNull(context.getBeanProvider(V1DocumentCatalogController::class.java).getIfAvailable())
+            assertNull(context.getBeanProvider(V1DocumentCatalogRequestFailureHandler::class.java).getIfAvailable())
         }
+    }
+
+    @Test
+    fun `assembles a read-only catalog capability and fails closed for move without one command`() {
+        contextRunner
+            .withBean(DocumentCatalogAccessService::class.java, Supplier { catalogAccess() })
+            .run { context ->
+                assertNotNull(context.getBeanProvider(DocumentCatalogApiFacade::class.java).getIfAvailable())
+                assertNotNull(context.getBeanProvider(V1DocumentCatalogController::class.java).getIfAvailable())
+                assertNotNull(
+                    context.getBeanProvider(V1DocumentCatalogRequestFailureHandler::class.java).getIfAvailable(),
+                )
+                assertFailsWith<IllegalStateException> {
+                    context.getBean(DocumentCatalogApiFacade::class.java).move("document-a", "child")
+                }
+            }
+    }
+
+    @Test
+    fun `uses one catalog binding command and rejects ambiguous candidates`() {
+        contextRunner
+            .withBean(DocumentCatalogAccessService::class.java, Supplier { catalogAccess() })
+            .withUserConfiguration(UniqueCatalogBindingConfiguration::class.java)
+            .run { context ->
+                val result = context.getBean(DocumentCatalogApiFacade::class.java).move("document-a", "child")
+                assertEquals("document-a", result.documentId)
+            }
+
+        contextRunner
+            .withBean(DocumentCatalogAccessService::class.java, Supplier { catalogAccess() })
+            .withUserConfiguration(AmbiguousCatalogBindingConfiguration::class.java)
+            .run { context ->
+                assertFailsWith<IllegalStateException> {
+                    context.getBean(DocumentCatalogApiFacade::class.java).move("document-a", "child")
+                }
+            }
     }
 
     @Test
@@ -389,6 +450,41 @@ class FileWeftWebBoot3AutoConfigurationTest {
         Mockito.mock(DocumentSyncStatusQueryRepository::class.java),
         Mockito.mock(ApplicationTransaction::class.java),
     )
+
+    private fun catalogAccess(): DocumentCatalogAccessService = DocumentCatalogAccessService(
+        object : TenantProvider {
+            override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-a"))
+        },
+        object : UserRealmProvider {
+            override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-a"), "User A")
+            override fun findUser(userId: Identifier): UserIdentity? = null
+        },
+        object : AuthorizationProvider {
+            override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
+        },
+        object : DocumentCatalogProvider {
+            override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = listOf(
+                DocumentCatalogFolder("root", null, "Root"),
+                DocumentCatalogFolder("child", "root", "Child"),
+            )
+        },
+    )
+
+    @Configuration(proxyBeanMethods = false)
+    class UniqueCatalogBindingConfiguration {
+        @Bean
+        fun catalogBinding(): DocumentCatalogBindingCommand = catalogBindingFixture()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class AmbiguousCatalogBindingConfiguration {
+        @Bean
+        @Primary
+        fun firstCatalogBinding(): DocumentCatalogBindingCommand = catalogBindingFixture()
+
+        @Bean
+        fun secondCatalogBinding(): DocumentCatalogBindingCommand = catalogBindingFixture()
+    }
 
     private fun detail(documentId: String): DocumentDetailView = DocumentDetailView(
         document = summary(documentId, LifecycleState.PUBLISHED, Identifier("version-1")),

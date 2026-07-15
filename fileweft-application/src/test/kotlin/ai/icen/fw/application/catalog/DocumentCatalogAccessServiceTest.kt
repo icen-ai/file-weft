@@ -16,6 +16,7 @@ import ai.icen.fw.spi.tenant.TenantProvider
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class DocumentCatalogAccessServiceTest {
     @Test
@@ -93,6 +94,70 @@ class DocumentCatalogAccessServiceTest {
         assertFailsWith<UnsupportedOperationException> {
             (readableFolderIds as MutableSet<String>).add("hidden")
         }
+    }
+
+    @Test
+    fun `returns an immutable validated visible tree`() {
+        val service = service(
+            RecordingCatalog(
+                listOf(
+                    DocumentCatalogFolder("root", null, "Root"),
+                    DocumentCatalogFolder("child", "root", "Child"),
+                ),
+            ),
+            RecordingAuthorization(),
+        )
+
+        val folders = service.listAccessibleFolders()
+
+        assertEquals(listOf("root", "child"), folders.map { folder -> folder.id })
+        @Suppress("UNCHECKED_CAST")
+        assertFailsWith<UnsupportedOperationException> {
+            (folders as MutableList<DocumentCatalogFolder>).clear()
+        }
+    }
+
+    @Test
+    fun `fails closed for duplicate hidden-parent cyclic unsafe and oversized provider trees`() {
+        val invalidTrees = listOf(
+            listOf(
+                DocumentCatalogFolder("same", null, "First"),
+                DocumentCatalogFolder("same", null, "Second"),
+            ),
+            listOf(DocumentCatalogFolder("visible-child", "hidden-parent", "Visible child")),
+            listOf(
+                DocumentCatalogFolder("cycle-a", "cycle-b", "Cycle A"),
+                DocumentCatalogFolder("cycle-b", "cycle-a", "Cycle B"),
+            ),
+            listOf(DocumentCatalogFolder("unsafe", null, "Unsafe\u200bname")),
+            (0..10_000).map { index ->
+                DocumentCatalogFolder("folder-$index", null, "Folder $index")
+            },
+        )
+
+        invalidTrees.forEach { folders ->
+            val catalog = RecordingCatalog(folders)
+            val authorization = RecordingAuthorization()
+            val failure = assertFailsWith<IllegalStateException> {
+                service(catalog, authorization).listAccessibleFolders()
+            }
+
+            assertTrue(failure.message.orEmpty().contains("Document catalog provider"))
+            assertEquals(DocumentCatalogOperation.BROWSE, catalog.lastRequest?.operation)
+        }
+    }
+
+    @Test
+    fun `re-evaluates the current users dynamic catalog visibility on every browse`() {
+        val catalog = MutableRecordingCatalog(
+            listOf(DocumentCatalogFolder("first", null, "First")),
+        )
+        val service = service(catalog, RecordingAuthorization())
+
+        assertEquals(listOf("first"), service.listAccessibleFolders().map { folder -> folder.id })
+        catalog.folders = listOf(DocumentCatalogFolder("second", null, "Second"))
+        assertEquals(listOf("second"), service.listAccessibleFolders().map { folder -> folder.id })
+        assertEquals(2, catalog.calls)
     }
 
     @Test
@@ -210,6 +275,20 @@ class DocumentCatalogAccessServiceTest {
 
         override fun listFolders(request: DocumentCatalogAccessRequest): List<DocumentCatalogFolder> {
             lastRequest = request
+            return folders
+        }
+    }
+
+    private class MutableRecordingCatalog(
+        var folders: List<DocumentCatalogFolder>,
+    ) : DocumentCatalogProvider {
+        var calls: Int = 0
+            private set
+
+        override fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder> = emptyList()
+
+        override fun listFolders(request: DocumentCatalogAccessRequest): List<DocumentCatalogFolder> {
+            calls += 1
             return folders
         }
     }

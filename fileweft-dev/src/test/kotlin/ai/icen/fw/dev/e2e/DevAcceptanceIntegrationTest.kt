@@ -809,6 +809,19 @@ class DevAcceptanceIntegrationTest {
         assertTrue(betaFolders.any { it.path("id").asText() == "projects" })
         assertTrue(betaFolders.none { it.path("id").asText() == "contracts" })
 
+        val formalAlphaFolders = response(
+            authorizedRequest("$apiUrl/fileweft/v1/catalog/folders?limit=200", alphaEditor).GET().build(),
+        )
+        val formalBetaFolders = response(
+            authorizedRequest("$apiUrl/fileweft/v1/catalog/folders?limit=200", betaEditor).GET().build(),
+        )
+        assertV1SuccessEnvelope(formalAlphaFolders)
+        assertV1SuccessEnvelope(formalBetaFolders)
+        assertTrue(formalAlphaFolders.path("data").path("items").any { it.path("id").asText() == "contracts" })
+        assertTrue(formalAlphaFolders.path("data").path("items").none { it.path("id").asText() == "projects" })
+        assertTrue(formalBetaFolders.path("data").path("items").any { it.path("id").asText() == "projects" })
+        assertTrue(formalBetaFolders.path("data").path("items").none { it.path("id").asText() == "contracts" })
+
         val alphaCreatedDetail = getJson("$apiUrl/api/documents/$alphaDocument", alphaEditor)
         assertEquals("contracts", alphaCreatedDetail.path("document").path("folderId").asText())
         assertEquals(0, alphaCreatedDetail.path("audits").size())

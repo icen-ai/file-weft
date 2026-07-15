@@ -14,6 +14,7 @@ import ai.icen.fw.spi.identity.UserIdentity
 import ai.icen.fw.spi.identity.UserRealmProvider
 import ai.icen.fw.spi.tenant.TenantProvider
 import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 
 /**
@@ -34,7 +35,7 @@ class DocumentCatalogAccessService(
         CATALOG_RESOURCE_TYPE,
         DOCUMENT_READ_ACTION,
     ) { request ->
-        catalog.listFolders(request)
+        validatedVisibleTree(catalog.listFolders(request))
     }
 
     fun requireFolderForDocumentCreation(folderId: String): DocumentCatalogFolder {
@@ -60,6 +61,18 @@ class DocumentCatalogAccessService(
         requireDocumentActionAuthorization(documentId, DOCUMENT_EDIT_ACTION)
     }
 
+    /** Reuses one trusted identity snapshot captured by the outer command. */
+    internal fun requireDocumentUpdateAuthorizationAs(
+        tenantId: Identifier,
+        documentId: Identifier,
+        operator: UserIdentity,
+    ): UserIdentity = authorization.requireDocumentActionAs(
+        tenantId,
+        documentId,
+        DOCUMENT_EDIT_ACTION,
+        operator,
+    )
+
     /** Performs one action-specific base authorization without consulting the catalog. */
     internal fun requireDocumentActionAuthorization(documentId: Identifier, actionName: String) {
         requireValidDocumentAction(actionName)
@@ -78,6 +91,35 @@ class DocumentCatalogAccessService(
     ): DocumentCatalogFolder = requireCurrentFolderForDocumentAction(
         documentId,
         folderId,
+        DOCUMENT_EDIT_ACTION,
+        DocumentCatalogOperation.BIND_DOCUMENT,
+    )
+
+    internal fun requireCurrentFolderForDocumentUpdate(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        documentId: Identifier,
+        folderId: String,
+    ): DocumentCatalogFolder = requireCurrentFolderForDocumentActionAs(
+        tenantId,
+        operator,
+        documentId,
+        folderId,
+        DOCUMENT_EDIT_ACTION,
+        DocumentCatalogOperation.BIND_DOCUMENT,
+    )
+
+    internal fun requireFolderForDocumentUpdateAs(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        documentId: Identifier,
+        folderId: String,
+    ): DocumentCatalogFolder = requireFolderAs(
+        tenantId,
+        operator,
+        folderId,
+        documentId,
+        DOCUMENT_RESOURCE_TYPE,
         DOCUMENT_EDIT_ACTION,
         DocumentCatalogOperation.BIND_DOCUMENT,
     )
@@ -250,15 +292,67 @@ class DocumentCatalogAccessService(
             folder.id.isBlank() ||
             folder.id != folder.id.trim() ||
             folder.id.length > MAX_FOLDER_ID_LENGTH ||
-            folder.id.any { character -> Character.isISOControl(character) }
+            folder.id.any(::isUnsafeCatalogTextCharacter)
         ) {
             throw IllegalStateException("Document catalog provider returned an invalid canonical folder id.")
+        }
+        if (
+            folder.parentFolderId?.let { parentId ->
+                parentId.isBlank() ||
+                    parentId != parentId.trim() ||
+                    parentId.length > MAX_FOLDER_ID_LENGTH ||
+                    parentId.any(::isUnsafeCatalogTextCharacter)
+            } == true ||
+            folder.displayName.isBlank() ||
+            folder.displayName != folder.displayName.trim() ||
+            folder.displayName.length > MAX_FOLDER_DISPLAY_NAME_LENGTH ||
+            folder.displayName.any(::isUnsafeCatalogTextCharacter)
+        ) {
+            throw IllegalStateException("Document catalog provider returned an invalid canonical folder.")
         }
     }
 
     private fun immutableFolderIds(folders: List<DocumentCatalogFolder>): Set<String> {
-        folders.forEach(::requireValidCanonicalFolder)
-        return Collections.unmodifiableSet(LinkedHashSet(folders.map { folder -> folder.id }))
+        val validated = validatedVisibleTree(folders)
+        return Collections.unmodifiableSet(LinkedHashSet(validated.map { folder -> folder.id }))
+    }
+
+    /**
+     * Validates one complete user-visible tree before any node is returned.
+     * A provider must re-root a visible child instead of returning the opaque
+     * identifier of a hidden parent; otherwise the whole snapshot fails closed.
+     */
+    private fun validatedVisibleTree(folders: List<DocumentCatalogFolder>): List<DocumentCatalogFolder> {
+        if (folders.size > MAX_VISIBLE_FOLDER_COUNT) {
+            throw IllegalStateException("Document catalog provider returned too many visible folders.")
+        }
+        val byId = LinkedHashMap<String, DocumentCatalogFolder>(folders.size)
+        folders.forEach { folder ->
+            requireValidCanonicalFolder(folder)
+            if (byId.put(folder.id, folder) != null) {
+                throw IllegalStateException("Document catalog provider returned duplicate folder identifiers.")
+            }
+        }
+        byId.values.forEach { folder ->
+            val parentId = folder.parentFolderId ?: return@forEach
+            if (!byId.containsKey(parentId)) {
+                throw IllegalStateException("Document catalog provider returned a folder with a hidden or missing parent.")
+            }
+        }
+        val complete = HashSet<String>(byId.size)
+        byId.keys.forEach { startId ->
+            if (startId in complete) return@forEach
+            val path = LinkedHashSet<String>()
+            var currentId: String? = startId
+            while (currentId != null && currentId !in complete) {
+                if (!path.add(currentId)) {
+                    throw IllegalStateException("Document catalog provider returned a cyclic folder tree.")
+                }
+                currentId = byId.getValue(currentId).parentFolderId
+            }
+            complete.addAll(path)
+        }
+        return Collections.unmodifiableList(ArrayList(byId.values))
     }
 
     private fun <T> access(
@@ -311,8 +405,13 @@ class DocumentCatalogAccessService(
         const val DOCUMENT_EDIT_ACTION = "document:edit"
         const val DOCUMENT_ACTION_PREFIX = "document:"
         const val MAX_FOLDER_ID_LENGTH = 256
+        const val MAX_FOLDER_DISPLAY_NAME_LENGTH = 512
+        const val MAX_VISIBLE_FOLDER_COUNT = 10_000
     }
 }
+
+private fun isUnsafeCatalogTextCharacter(character: Char): Boolean =
+    Character.isISOControl(character) || Character.getType(character) == Character.FORMAT.toInt()
 
 /** Missing and user-invisible target folders retain the existing invalid-input contract. */
 internal class DocumentCatalogFolderUnavailableException :

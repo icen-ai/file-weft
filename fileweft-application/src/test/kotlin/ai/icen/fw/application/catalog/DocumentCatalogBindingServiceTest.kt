@@ -248,6 +248,21 @@ class DocumentCatalogBindingServiceTest {
     }
 
     @Test
+    fun `uses one captured identity for authorization catalog checks and audit`() {
+        val entry = UserIdentity(Identifier("operator-entry"), "Entry operator")
+        val switched = UserIdentity(Identifier("operator-switched"), "Switched operator")
+        val fixture = Fixture(userIdentities = listOf(entry, switched))
+
+        fixture.service.move(fixture.document.id, TARGET_FOLDER_ID)
+
+        assertEquals(1, fixture.users.calls)
+        assertTrue(fixture.authorization.requests.all { request -> request.subject.id == entry.id })
+        assertTrue(fixture.catalog.userIds.all { userId -> userId == entry.id })
+        assertEquals(entry.id, fixture.audits.records.single().operatorId)
+        assertEquals(entry.displayName, fixture.audits.records.single().operatorName)
+    }
+
+    @Test
     fun `rejects malicious locked identities without moving or auditing`() {
         listOf("document", "asset").forEach { maliciousResult ->
             val fixture = Fixture()
@@ -307,6 +322,9 @@ class DocumentCatalogBindingServiceTest {
         authorized: Boolean = true,
         authenticated: Boolean = true,
         mutationCapable: Boolean = true,
+        userIdentities: List<UserIdentity?> = listOf(
+            if (authenticated) UserIdentity(Identifier("editor-a"), "Editor A") else null,
+        ),
     ) {
         val events = mutableListOf<String>()
         val transaction = TrackingTransaction(events)
@@ -339,18 +357,11 @@ class DocumentCatalogBindingServiceTest {
         }
         val audits = RecordingAudits(transaction)
         val catalog = RecordingCatalog(visibleFolderIds, folderOverrides, transaction, events)
-        private val authorization = RecordingAuthorization(authorized, events)
+        val authorization = RecordingAuthorization(authorized, events)
         private val tenants = object : TenantProvider {
             override fun currentTenant() = TenantContext(TENANT_ID)
         }
-        private val users = object : UserRealmProvider {
-            override fun currentUser() = if (authenticated) {
-                UserIdentity(Identifier("editor-a"), "Editor A")
-            } else {
-                null
-            }
-            override fun findUser(userId: Identifier): UserIdentity? = null
-        }
+        val users = SwitchingUsers(userIdentities)
         private val access = DocumentCatalogAccessService(tenants, users, authorization, catalog)
         val service = DocumentCatalogBindingService(
             tenantProvider = tenants,
@@ -484,6 +495,7 @@ class DocumentCatalogBindingServiceTest {
     ) : DocumentCatalogProvider {
         private val visibleFolderIds = visibleFolderIds.toMutableSet()
         val folderRequests = mutableListOf<String>()
+        val userIds = mutableListOf<Identifier>()
         val transactionStates = mutableListOf<Boolean>()
         var afterLookup: ((String) -> Unit)? = null
 
@@ -493,6 +505,7 @@ class DocumentCatalogBindingServiceTest {
             transactionStates += transaction.active
             assertFalse(transaction.active, "A host catalog must never be called inside a database transaction.")
             folderRequests += folderId
+            userIds += request.userId
             events += "catalog:$folderId"
             val folder = if (folderId in visibleFolderIds) {
                 folderOverrides[folderId]
@@ -513,10 +526,28 @@ class DocumentCatalogBindingServiceTest {
         private val allowed: Boolean,
         private val events: MutableList<String>,
     ) : AuthorizationProvider {
+        val requests = mutableListOf<AuthorizationRequest>()
+
         override fun authorize(request: AuthorizationRequest): AuthorizationDecision {
             events += "authorization:${request.action.name}"
+            requests += request
             return AuthorizationDecision(allowed, "denied")
         }
+    }
+
+    private class SwitchingUsers(
+        private val identities: List<UserIdentity?>,
+    ) : UserRealmProvider {
+        var calls = 0
+            private set
+
+        init {
+            require(identities.isNotEmpty())
+        }
+
+        override fun currentUser(): UserIdentity? = identities[minOf(calls++, identities.lastIndex)]
+
+        override fun findUser(userId: Identifier): UserIdentity? = null
     }
 
     private class RecordingAudits(

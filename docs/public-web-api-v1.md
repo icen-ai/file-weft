@@ -38,7 +38,7 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 
 ## 协议稳定性
 
-所有正式业务路由将以 `/fileweft/v1` 开头。除授权内容流的二进制成功响应外，业务成功响应与开始流式输出前的业务执行错误均生产 `application/json` 并使用统一外层；multipart 只改变请求的 `Content-Type`。内容流开始后的 I/O 失败会关闭 caller-owned 句柄并终止响应，不会尝试在部分二进制后追加 JSON。未匹配路由仍由宿主 Spring Web 的全局异常策略处理；正式上传资源是明确例外，其路径内的请求体解码失败及 405/406/415 由上传专用、路径作用域内的 resolver 转成同一安全外层，其他宿主路由仍交还宿主策略：
+所有正式业务路由将以 `/fileweft/v1` 开头。除授权内容流的二进制成功响应外，业务成功响应与开始流式输出前的业务执行错误均生产 `application/json` 并使用统一外层；multipart 只改变请求的 `Content-Type`。内容流开始后的 I/O 失败会关闭 caller-owned 句柄并终止响应，不会尝试在部分二进制后追加 JSON。未匹配路由仍由宿主 Spring Web 的全局异常策略处理；正式上传资源与下述 Catalog 路径是明确例外，其路径内的请求体解码失败及 405/406/415 由各自专用、路径作用域内的 resolver 转成同一安全外层，其他宿主路由仍交还宿主策略：
 
 ```json
 {
@@ -61,12 +61,14 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `PUT /fileweft/v1/uploads/{uploadId}/parts/{partNumber}`：流式接收 `application/octet-stream`，要求恰好一个正数 `X-FileWeft-Part-Length`，并在存储确认及实际读取长度精确匹配后才持久化分片确认。
 - `POST /fileweft/v1/uploads/{uploadId}/complete`：以服务端持久化的连续分片和私有 ETag 权威列表同步完成，成功及重放返回同一 `fileObjectId/fileAssetId` 回执。
 - `DELETE /fileweft/v1/uploads/{uploadId}`：仅在状态已知可安全取消时终止 multipart，并返回公开终态视图。
+- `GET /fileweft/v1/catalog/folders`：1.0 新增的宿主目录只读 facade；可选 opaque `cursor`，`limit` 默认 50、范围 1～200，返回 `{id, displayName, parentFolderId}` 与可选 `nextCursor`，不接受 tenant、user 或权限参数。
 - `GET /fileweft/v1/documents/{documentId}`：当前租户、当前用户已授权且位于可读目录范围内的文档和版本视图。
 - `GET /fileweft/v1/documents`：使用不透明 cursor 的文档摘要分页，可选生命周期和目录筛选。
 - `GET /fileweft/v1/metadata/schemas/{schemaId}`：按可信当前租户解析指定 schema 的当前版本，返回 schema `id`、`version` 及字段的安全规则投影。
 - `POST /fileweft/v1/documents`：multipart 创建草稿；`documentNumber`、`title`、`file` 必须各出现一次，`folderId` 最多一次，可选携带一次 `metadataSchemaId` 与重复的 `metadata=field=value`。
 - `POST /fileweft/v1/documents/{documentId}/versions`：multipart 新增草稿版本；`versionNumber`、`file` 必须各出现一次，可选使用同一 metadata 输入协议。
 - `PATCH /fileweft/v1/documents/{documentId}`：以 JSON `{\"title\": \"...\"}` 修改草稿标题。
+- `PUT /fileweft/v1/documents/{documentId}/catalog-folder`：以 JSON `{"folderId":"..."}` 执行唯一受控目录写操作；成功或同 canonical 目标重放返回 `200` 与 `{documentId, versionId?}`，只修改保留的目录绑定，不修改生命周期、对象位置或既有下游副本。
 - `GET /fileweft/v1/documents/{documentId}/content`：经当前租户、用户、目录范围和 `document:download` 授权后的当前版本内容流。
 - `GET /fileweft/v1/documents/{documentId}/versions/{versionId}/content`：同一授权边界下显式选择属于该文档的历史版本内容流。
 - `GET /fileweft/v1/workflows/tasks`：当前用户的待审批任务分页；只含分配给当前用户或未分配、且文档与工作流仍待审批的任务。
@@ -82,6 +84,14 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `GET /fileweft/v1/health`：公开、依赖无关的进程 liveness，只返回 `status=UP`；它不声明数据库、对象存储、插件或下游 readiness，深度诊断仍使用授权 Doctor。`GET /fileweft/health` 是手册兼容别名。
 
 上传文件名、长度和内容类型只从服务器收到的 multipart file part 派生，客户端不能另行提交对象键、资产 ID、哈希或任意存储 metadata；文件名拒绝路径分隔符、`.` 和 `..`。schema 约束的业务 metadata 是唯一例外，必须使用下节的受限协议。创建和新增版本返回 `201`，改名返回 `200`。成功创建后仅当文档 ID 是长度受限的安全单路径段时才附带相对 `Location`；自定义标识不满足这个条件时仍返回成功 body，不会在业务提交后制造一次失败。
+
+## 宿主目录 Facade
+
+目录 Provider 的完整森林约束在分页前对整份新鲜授权快照验证；单页不是闭合子树，`parentFolderId` 可能指向其他页，客户端不得按页内顺序推断层级。服务按 canonical ID 排序。每页都会重新取得可信 tenant/user、重新执行 `document:read` 与 Provider `BROWSE`，cursor 只绑定上一页排序边界，不是权限缓存或跨请求快照；ACL 或目录变化使边界不再匹配时固定返回 `400 INVALID_REQUEST`，不会从猜测位置继续。
+
+移动请求每次重新执行可信身份、`document:edit`、源目录与目标目录授权；外部 Catalog 调用位于数据库事务外，随后按 document → asset 加锁并复核原绑定。目标别名解析后只持久化 Provider 返回的 canonical ID；重复移动到同一 canonical 目标不再写资产或审计。源文档隐藏为 `404`，缺失或不可见目标为固定 `400`；存在目录读取能力但没有严格唯一的 `DocumentCatalogBindingCommand` 时移动返回 `503 FEATURE_UNAVAILABLE`。没有 `DocumentCatalogAccessService` 时两条 Catalog 路由均不注册。
+
+Catalog JSON 成功和已声明路径内的 400/405/406/415 失败统一带 `Cache-Control: private, no-store`、`Pragma: no-cache` 与 `X-Content-Type-Options: nosniff`；目录列表显式 `HEAD` 返回 `405` 和 `Allow: GET`。未匹配路径仍由宿主全局异常策略负责。
 
 ## Metadata schema 与文档元数据
 

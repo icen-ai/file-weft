@@ -1,10 +1,13 @@
 package ai.icen.fw.web.spring.boot2
 
+import ai.icen.fw.application.catalog.DocumentCatalogAccessService
+import ai.icen.fw.application.catalog.DocumentCatalogBindingCommand
 import ai.icen.fw.application.document.DocumentQueryService
 import ai.icen.fw.application.metadata.MetadataSchemaQueryService
 import ai.icen.fw.application.delivery.DocumentSyncStatusQueryService
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
+import ai.icen.fw.web.runtime.v1.catalog.DocumentCatalogApiFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentApiReadFacade
 import ai.icen.fw.web.runtime.v1.document.DocumentSyncStatusApiFacade
 import ai.icen.fw.web.runtime.v1.metadata.MetadataSchemaApiFacade
@@ -30,6 +33,14 @@ import org.springframework.web.bind.annotation.RestController
 @ConditionalOnClass(RestController::class)
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 class FileWeftWebBoot2AutoConfiguration {
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogApiFacade::class)
+    fun fileWeftDocumentCatalogApiFacade(
+        catalog: DocumentCatalogAccessService,
+        bindings: ObjectProvider<DocumentCatalogBindingCommand>,
+    ): DocumentCatalogApiFacade = DocumentCatalogApiFacade(catalog, bindings.onlyCandidate())
+
     @Bean
     @ConditionalOnBean(MetadataSchemaQueryService::class)
     @ConditionalOnMissingBean(MetadataSchemaApiFacade::class)
@@ -63,6 +74,22 @@ class FileWeftWebBoot2AutoConfiguration {
     @ConditionalOnBean(MetadataSchemaQueryService::class)
     @ConditionalOnMissingBean(V1ApiResponseFactory::class)
     fun fileWeftV1MetadataApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(V1ApiResponseFactory::class)
+    fun fileWeftV1CatalogApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogV1RequestFailureHandler::class)
+    fun fileWeftV1DocumentCatalogRequestFailureHandler(
+        responses: V1ApiResponseFactory,
+        traceContextProviders: ObjectProvider<TraceContextProvider>,
+    ): DocumentCatalogV1RequestFailureHandler = DocumentCatalogV1RequestFailureHandler(
+        responses,
+        traceContextProviders.getIfUnique(),
+    )
 
     @Bean
     @ConditionalOnBean(DocumentQueryService::class)
@@ -102,4 +129,25 @@ class FileWeftWebBoot2AutoConfiguration {
         responses,
         traceContextProviders.getIfUnique(),
     )
+
+    @Bean
+    @ConditionalOnBean(DocumentCatalogAccessService::class)
+    @ConditionalOnMissingBean(DocumentCatalogV1Controller::class)
+    fun fileWeftV1DocumentCatalogController(
+        catalog: DocumentCatalogApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContextProviders: ObjectProvider<TraceContextProvider>,
+    ): DocumentCatalogV1Controller = DocumentCatalogV1Controller(
+        catalog,
+        responses,
+        traceContextProviders.getIfUnique(),
+    )
+}
+
+/** Ignores Spring primary/priority hints: a security-sensitive command must have exactly one bean. */
+private fun <T : Any> ObjectProvider<T>.onlyCandidate(): T? {
+    val candidates = stream().iterator()
+    if (!candidates.hasNext()) return null
+    val candidate = candidates.next()
+    return if (candidates.hasNext()) null else candidate
 }
