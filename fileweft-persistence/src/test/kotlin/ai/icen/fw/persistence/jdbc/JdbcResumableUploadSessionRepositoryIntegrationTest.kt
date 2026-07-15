@@ -1,6 +1,8 @@
 package ai.icen.fw.persistence.jdbc
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaim
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimStateException
 import ai.icen.fw.application.upload.ResumableUploadPart
 import ai.icen.fw.application.upload.QuarantinableResumableUploadSessionRepository
 import ai.icen.fw.application.upload.ResumableUploadSession
@@ -14,6 +16,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.postgresql.ds.PGSimpleDataSource
 import java.sql.Connection
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -108,6 +113,126 @@ class JdbcResumableUploadSessionRepositoryIntegrationTest {
         assertEquals(ResumableUploadSessionStatus.EXPIRED, expired?.status)
         assertEquals("owner-1", expired?.ownerId)
         assertEquals("completion rejected", expired?.lastError)
+    }
+
+    @Test
+    fun `completed document asset claim is owner scoped one time and rolls back with its transaction`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcResumableUploadSessionRepository(ObjectMapper())
+        val expected = completedSession("claim-once")
+        transaction.execute { repository.save(expected) }
+        val claim = completedClaim(expected, "a", "document-a", "version-a")
+
+        assertFailsWith<IllegalStateException> {
+            transaction.execute {
+                val locked = checkNotNull(
+                    repository.lockCompletedAssetClaim(expected.tenantId, "owner-1", expected.id),
+                )
+                checkNotNull(repository.markCompletedAssetClaimed(locked.session, claim))
+                error("simulated document transaction rollback")
+            }
+        }
+
+        val afterRollback = transaction.execute {
+            repository.findCompletedAssetClaim(expected.tenantId, "owner-1", expected.id)
+        }
+        assertNull(afterRollback?.claim)
+        assertEquals(100L, afterRollback?.session?.updatedTime)
+
+        val marked = transaction.execute {
+            val locked = checkNotNull(
+                repository.lockCompletedAssetClaim(expected.tenantId, "owner-1", expected.id),
+            )
+            repository.markCompletedAssetClaimed(locked.session, claim)
+        }
+        assertEquals("document-a", marked?.claim?.resourceId?.value)
+        assertEquals(200L, marked?.session?.updatedTime)
+        assertNull(transaction.execute {
+            repository.markCompletedAssetClaimed(expected, completedClaim(expected, "b", "document-b", "version-b"))
+        })
+        assertNull(transaction.execute {
+            repository.findCompletedAssetClaim(Identifier("tenant-2"), "owner-1", expected.id)
+        })
+        assertNull(transaction.execute {
+            repository.findCompletedAssetClaim(expected.tenantId, "owner-2", expected.id)
+        })
+    }
+
+    @Test
+    fun `invalid persisted claim marker fails as a completed asset state error`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcResumableUploadSessionRepository(ObjectMapper())
+        val expected = completedSession("claim-corrupt")
+        transaction.execute {
+            repository.save(expected)
+            JdbcConnectionContext.requireCurrent().createStatement().use { statement ->
+                statement.execute("ALTER TABLE fw_upload_session DROP CONSTRAINT ck_fw_upload_session_asset_claim")
+            }
+            JdbcConnectionContext.requireCurrent().prepareStatement(
+                """
+                UPDATE fw_upload_session
+                   SET claimed_idempotency_key_digest = ?, claimed_resource_type = ?, claimed_resource_id = ?,
+                       claimed_subresource_id = ?, claimed_by = ?, claimed_time = ?, updated_time = ?
+                 WHERE tenant_id = ? AND id = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, "not-a-versioned-digest")
+                statement.setString(2, "DOCUMENT")
+                statement.setString(3, "document-corrupt")
+                statement.setString(4, "version-corrupt")
+                statement.setString(5, "owner-1")
+                statement.setLong(6, 200)
+                statement.setLong(7, 200)
+                statement.setString(8, expected.tenantId.value)
+                statement.setString(9, expected.id.value)
+                assertEquals(1, statement.executeUpdate())
+            }
+        }
+
+        assertFailsWith<CompletedResumableUploadAssetClaimStateException> {
+            transaction.execute {
+                repository.findCompletedAssetClaim(expected.tenantId, "owner-1", expected.id)
+            }
+        }
+    }
+
+    @Test
+    fun `concurrent completed asset claims serialize to exactly one winner`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcResumableUploadSessionRepository(ObjectMapper())
+        val expected = completedSession("claim-race")
+        transaction.execute { repository.save(expected) }
+        val start = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val futures = listOf(
+                completedClaim(expected, "c", "document-c", "version-c"),
+                completedClaim(expected, "d", "document-d", "version-d"),
+            ).map { candidate ->
+                pool.submit(Callable {
+                    start.await()
+                    transaction.execute {
+                        val state = checkNotNull(
+                            repository.lockCompletedAssetClaim(expected.tenantId, "owner-1", expected.id),
+                        )
+                        if (state.claim != null) false else repository.markCompletedAssetClaimed(
+                            state.session,
+                            candidate,
+                        ) != null
+                    }
+                })
+            }
+            start.countDown()
+            val results = futures.map { it.get() }
+
+            assertEquals(1, results.count { it })
+            assertEquals(1, results.count { !it })
+            assertTrue(transaction.execute {
+                repository.findCompletedAssetClaim(expected.tenantId, "owner-1", expected.id)?.claim != null
+            })
+        } finally {
+            pool.shutdownNow()
+        }
     }
 
     @Test
@@ -365,6 +490,46 @@ class JdbcResumableUploadSessionRepositoryIntegrationTest {
     private fun part(tenant: String, sessionId: String, number: Int, id: String, time: Long) = ResumableUploadPart(
         id = Identifier(id), tenantId = Identifier(tenant), sessionId = Identifier(sessionId), partNumber = number,
         eTag = "etag-$number", contentLength = 10, createdTime = time, updatedTime = time,
+    )
+
+    private fun completedSession(id: String) = ResumableUploadSession(
+        id = Identifier(id),
+        tenantId = Identifier("tenant-1"),
+        idempotencyKey = "request-$id",
+        storageUploadId = Identifier("storage-$id"),
+        storageLocation = StorageObjectLocation("s3", "objects/${id.padEnd(64, 'a').take(64)}"),
+        fileObjectId = Identifier("file-$id"),
+        fileAssetId = Identifier("asset-$id"),
+        fileName = "contract.pdf",
+        contentLength = 21,
+        assetType = "DOCUMENT",
+        contentType = "application/pdf",
+        expectedContentHash = "sha256:content",
+        metadata = mapOf("source" to "integration"),
+        status = ResumableUploadSessionStatus.COMPLETED,
+        expiresAt = 1_000,
+        completedAt = 100,
+        createdTime = 10,
+        updatedTime = 100,
+        ownerId = "owner-1",
+    )
+
+    private fun completedClaim(
+        session: ResumableUploadSession,
+        digestCharacter: String,
+        documentId: String,
+        versionId: String,
+    ) = CompletedResumableUploadAssetClaim(
+        tenantId = session.tenantId,
+        uploadId = session.id,
+        fileObjectId = session.fileObjectId,
+        fileAssetId = session.fileAssetId,
+        idempotencyKeyDigest = "sha256:" + digestCharacter.repeat(64),
+        resourceType = "DOCUMENT",
+        resourceId = Identifier(documentId),
+        subresourceId = Identifier(versionId),
+        claimedBy = "owner-1",
+        claimedTime = 200,
     )
 
     private fun reset(connection: Connection) = connection.use {

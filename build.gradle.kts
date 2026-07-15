@@ -450,6 +450,7 @@ val expectedFileWeftMigrationResources = listOf(
     "V027__stabilize_worker_claim_order.sql",
     "V028__enforce_binary_identifier_collation.sql",
     "V029__persist_workflow_submitter.sql",
+    "V033__claim_completed_upload_asset.sql",
 ).flatMap { migration ->
     fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
 }

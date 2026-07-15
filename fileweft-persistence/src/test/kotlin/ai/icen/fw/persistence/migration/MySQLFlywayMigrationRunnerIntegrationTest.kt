@@ -59,7 +59,7 @@ class MySQLFlywayMigrationRunnerIntegrationTest {
     @Test
     fun `applies all mysql migrations and validates`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
-        assertEquals(29, migrations)
+        assertEquals(30, migrations)
 
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
@@ -78,6 +78,8 @@ class MySQLFlywayMigrationRunnerIntegrationTest {
             assertTrue(tableExists(connection, "fw_agent_suggestion_confirmation"))
             assertTrue(tableExists(connection, "fw_upload_session"))
             assertTrue(tableExists(connection, "fw_upload_session_part"))
+            assertTrue(columnExists(connection, "fw_upload_session", "claimed_idempotency_key_digest"))
+            assertTrue(columnExists(connection, "fw_upload_session", "claimed_time"))
             assertTrue(tableExists(connection, "fw_idempotency_record"))
             assertTrue(tableExists(connection, "fw_document_delivery_target"))
             connection.metaData.getColumns(connection.catalog, null, "fw_workflow_instance", "submitted_by").use { result ->
@@ -106,6 +108,11 @@ class MySQLFlywayMigrationRunnerIntegrationTest {
 
     private fun tableExists(connection: Connection, tableName: String): Boolean =
         connection.metaData.getTables(null, null, tableName, arrayOf("TABLE")).use { result ->
+            result.next()
+        }
+
+    private fun columnExists(connection: Connection, tableName: String, columnName: String): Boolean =
+        connection.metaData.getColumns(connection.catalog, null, tableName, columnName).use { result ->
             result.next()
         }
 
