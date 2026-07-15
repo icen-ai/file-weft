@@ -2,6 +2,7 @@ import io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension
 import org.gradle.api.JavaVersion
 import org.gradle.api.attributes.Bundling
 import org.gradle.api.plugins.JavaPluginExtension
+import org.gradle.api.tasks.GradleBuild
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.testing.Test
@@ -281,6 +282,22 @@ val verifyUnmanagedBoot3FlywayRuntime = tasks.register("verifyUnmanagedBoot3Flyw
     }
 }
 
+val verifyGradleModuleMetadataConsumer = tasks.register<GradleBuild>("verifyGradleModuleMetadataConsumer") {
+    group = "verification"
+    description = "Resolves FlowWeft through Gradle module metadata and verifies API/runtime/source variants."
+    dir = file("gradle-module-consumer")
+    tasks = listOf("verifyGradleModuleMetadata")
+    startParameter.projectProperties = mapOf(
+        "fileweftVersion" to project.version.toString(),
+        "fileweftRepositoryUrl" to flowWeftRepositoryUrl.get(),
+        "publicationInventoryEntries" to publicationInventory
+            .sortedBy { entry -> entry.artifactId }
+            .joinToString(",") { entry ->
+                "${entry.artifactId}|${entry.artifactKind}|${entry.lineage}|${entry.jvmBaseline}"
+            },
+    )
+}
+
 val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 val mavenExecutable = providers.provider {
     val executableNames = if (isWindows) listOf("mvn.cmd", "mvn.bat", "mvn.exe") else listOf("mvn")
@@ -355,9 +372,10 @@ val verifyMavenPomConsumer = tasks.register<Exec>("verifyMavenPomConsumer") {
 
 tasks.register("releaseSmoke") {
     group = "verification"
-    description = "Verifies POM-only consumers, the release inventory, and Boot 2/3 hosts with host-owned JDBC."
+    description = "Verifies POM and Gradle metadata consumers, release inventory, and Boot 2/3 hosts."
     dependsOn(verifyReleaseInventory)
     dependsOn(verifyUnmanagedBoot3FlywayRuntime)
+    dependsOn(verifyGradleModuleMetadataConsumer)
     dependsOn(verifyMavenPomConsumer)
     dependsOn(subprojects.map { consumerProject -> consumerProject.tasks.named("build") })
 }
