@@ -48,6 +48,7 @@ val publishableModuleNames = setOf(
     "flowweft-workflow-domain",
     "flowweft-workflow-runtime",
     "flowweft-workflow-persistence-jdbc",
+    "flowweft-migration-cli",
 )
 val releaseSbomModuleNames = publishableModuleNames.sorted()
 extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {
@@ -935,33 +936,39 @@ val remoteCnbConsumerSmoke = tasks.register<Exec>("remoteCnbConsumerSmoke") {
 
 val postgresIntegrationCheck = tasks.register("postgresIntegrationCheck") {
     group = "verification"
-    description = "Runs PostgreSQL persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    description = "Runs PostgreSQL persistence with FlowWeft, Boot 2, and Boot 3 Flyway runtimes."
     dependsOn(
         ":fileweft-persistence:postgresIntegrationTest",
         ":fileweft-persistence:postgresFlyway8CompatibilityTest",
         ":fileweft-persistence:postgresFlyway11CompatibilityTest",
+        ":flowweft-workflow-persistence-jdbc:workflowPostgresIntegrationTest",
+        ":flowweft-migration-cli:flowweftMigrationPostgresIntegrationTest",
     )
 }
 
 val mysqlIntegrationCheck = tasks.register("mysqlIntegrationCheck") {
     group = "verification"
-    description = "Runs MySQL 8 persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    description = "Runs MySQL 8 persistence with FlowWeft, Boot 2, and Boot 3 Flyway runtimes."
     dependsOn(
         ":fileweft-persistence:mysqlIntegrationTest",
         ":fileweft-persistence:mysqlFlyway8CompatibilityTest",
         ":fileweft-persistence:mysqlFlyway11CompatibilityTest",
+        ":flowweft-workflow-persistence-jdbc:workflowMySqlIntegrationTest",
+        ":flowweft-migration-cli:flowweftMigrationMySqlIntegrationTest",
     )
 }
 
 val kingbaseIntegrationCheck = tasks.register("kingbaseIntegrationCheck") {
     group = "verification"
-    description = "Runs KingbaseES V8 persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    description = "Runs KingbaseES V8 persistence with FlowWeft, Boot 2, and Boot 3 Flyway runtimes."
     dependsOn(
         ":fileweft-persistence:kingbaseIntegrationTest",
         ":fileweft-persistence:kingbaseFlyway8CompatibilityTest",
         ":fileweft-persistence:kingbaseFlyway11CompatibilityTest",
         ":fileweft-spring-boot2-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
         ":fileweft-spring-boot3-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
+        ":flowweft-workflow-persistence-jdbc:workflowKingbaseIntegrationTest",
+        ":flowweft-migration-cli:flowweftMigrationKingbaseIntegrationTest",
     )
 }
 

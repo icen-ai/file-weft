@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flowweft-migration
+  labels:
+    app.kubernetes.io/name: flowweft-migration
+    app.kubernetes.io/component: database-migration
+spec:
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowweft-migration
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          # Replace the deliberately invalid example with the reviewed release image digest.
+          image: registry.example.invalid/flowweft/flowweft-migration-cli@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLOWWEFT_MIGRATION_JDBC_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: flowweft-migration-db
+                  key: jdbc-url
+            - name: FLOWWEFT_MIGRATION_JDBC_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: flowweft-migration-db
+                  key: jdbc-user
+            - name: FLOWWEFT_MIGRATION_SCHEMA
+              valueFrom:
+                configMapKeyRef:
+                  name: flowweft-migration-db
+                  key: schema
+            - name: FLOWWEFT_MIGRATION_MODE
+              value: migrate
+            - name: FLOWWEFT_MIGRATION_LINES
+              value: all
+            - name: FLOWWEFT_MIGRATION_CREATE_SCHEMA
+              value: "false"
+            - name: FLOWWEFT_MIGRATION_JDBC_PASSWORD_FILE
+              value: /var/run/secrets/flowweft-db/password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: database-password
+              mountPath: /var/run/secrets/flowweft-db
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: database-password
+          secret:
+            secretName: flowweft-migration-db
+            # Decimal 288 is octal 0440; fsGroup grants only the migration process read access.
+            defaultMode: 288
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
