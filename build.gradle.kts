@@ -679,24 +679,34 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
             val unexpected = mutableListOf<String>()
             inputs.files.files.sortedBy { sourceFile -> sourceFile.absolutePath }.forEach { sourceFile ->
                 val relativePath = sourceFile.relativeTo(repositoryRoot).invariantSeparatorsPath
-                val requiredFlag = when {
+                val requiredFlags = when {
+                    relativePath ==
+                        "flowweft-migration-cli/src/test/kotlin/ai/icen/fw/migration/cli/FlowWeftMigrationRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-workflow-persistence-jdbc/src/test/kotlin/ai/icen/fw/workflow/persistence/jdbc/WorkflowRealDatabaseIntegrationTest.kt" ->
+                        setOf(
+                            "FILEWEFT_RUN_POSTGRES_TESTS",
+                            "FILEWEFT_RUN_MYSQL_TESTS",
+                            "FILEWEFT_RUN_KINGBASE_TESTS",
+                        )
                     relativePath.startsWith("fileweft-persistence/src/test/") && "MySQL" in sourceFile.name ->
-                        "FILEWEFT_RUN_MYSQL_TESTS"
+                        setOf("FILEWEFT_RUN_MYSQL_TESTS")
                     relativePath.startsWith("fileweft-persistence/src/test/") && "Kingbase" in sourceFile.name ->
-                        "FILEWEFT_RUN_KINGBASE_TESTS"
+                        setOf("FILEWEFT_RUN_KINGBASE_TESTS")
                     relativePath.startsWith("fileweft-spring-boot") && "Kingbase" in sourceFile.name ->
-                        "FILEWEFT_RUN_KINGBASE_TESTS"
+                        setOf("FILEWEFT_RUN_KINGBASE_TESTS")
                     relativePath.startsWith("fileweft-persistence/src/test/") ->
-                        "FILEWEFT_RUN_POSTGRES_TESTS"
+                        setOf("FILEWEFT_RUN_POSTGRES_TESTS")
                     relativePath ==
                         "fileweft-adapter-s3/src/test/kotlin/ai/icen/fw/adapter/s3/S3StorageAdapterRustFsIntegrationTest.kt" ->
-                        "FILEWEFT_RUN_RUSTFS_TESTS"
+                        setOf("FILEWEFT_RUN_RUSTFS_TESTS")
                     relativePath ==
                         "fileweft-dev/src/test/kotlin/ai/icen/fw/dev/e2e/DevAcceptanceIntegrationTest.kt" ->
-                        "FILEWEFT_RUN_DEV_E2E"
-                    else -> null
+                        setOf("FILEWEFT_RUN_DEV_E2E")
+                    else -> emptySet()
                 }
-                if (requiredFlag == null || !sourceFile.readText(Charsets.UTF_8).contains(requiredFlag)) {
+                val source = sourceFile.readText(Charsets.UTF_8)
+                if (requiredFlags.isEmpty() || requiredFlags.any { requiredFlag -> requiredFlag !in source }) {
                     unexpected += relativePath
                 }
             }
