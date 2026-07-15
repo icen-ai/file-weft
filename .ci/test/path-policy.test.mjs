@@ -522,6 +522,18 @@ test("database, storage, and Boot generations select their real dependency closu
     ".fileweft-jvm17-paths",
     ".fileweft-jvm-all-paths",
   ]);
+  const agentTestKitGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  expectGroups(
+    "flowweft-agent-testkit/src/main/kotlin/ai/icen/fw/testkit/agent/AgentAuthorizationProviderContractTest.kt",
+    agentTestKitGroups,
+  );
+  expectGroups("flowweft-agent-testkit/build.gradle.kts", agentTestKitGroups);
+  expectGroups("flowweft-agent-testkit/gradle.lockfile", agentTestKitGroups);
   expectGroups("flowweft-workflow-api/src/main/kotlin/WorkflowParticipantResolver.kt", [
     ".fileweft-fast-paths",
     ".fileweft-jvm8-paths",

@@ -234,6 +234,7 @@
   - flowweft-retrieval-runtime/**
   - flowweft-agent-api/**
   - flowweft-agent-runtime/**
+  - flowweft-agent-testkit/**
   - flowweft-workflow-api/**
   - flowweft-workflow-spi/**
   - flowweft-workflow-domain/**
@@ -290,6 +291,7 @@
   - flowweft-retrieval-runtime/**
   - flowweft-agent-api/**
   - flowweft-agent-runtime/**
+  - flowweft-agent-testkit/**
   - flowweft-workflow-api/**
   - flowweft-workflow-spi/**
   - flowweft-workflow-domain/**
@@ -394,6 +396,7 @@
   - flowweft-retrieval-runtime/**
   - flowweft-agent-api/**
   - flowweft-agent-runtime/**
+  - flowweft-agent-testkit/**
   - flowweft-workflow-api/**
   - flowweft-workflow-spi/**
   - flowweft-workflow-domain/**
@@ -641,6 +644,7 @@
   - fileweft-*/gradle.lockfile
   - flowweft-*/build.gradle.kts
   - flowweft-*/gradle.lockfile
+  - flowweft-agent-testkit/**
   - flowweft-console/package.json
   - flowweft-console/package-lock.json
   - flowweft-console/scripts/generate-sbom.mjs

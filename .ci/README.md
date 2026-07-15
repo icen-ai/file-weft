@@ -86,7 +86,7 @@ PR/main 的安装阶段硬超时 5 分钟、合同阶段硬超时 2 分钟并失
 
 标签发布使用 CNB 仅在受信事件提供的 `CNB_TOKEN` 写入 `https://maven.cnb.cool/china.ai/maven/-/packages/`。写入后立即销毁流水线 token，再用全新、隔离且先清空的 Gradle User Home 从公开仓库回读当前构建声明的精确发布坐标，并编译 Boot 2、Boot 3 和纯库消费者；发布流水线任何正常 stage 失败时也会进入失败清理并销毁 token。远端仓库短暂最终一致时最多重试三次；验证失败不会被转成成功。
 
-`0.0.3` 的历史发布库存是 19 个坐标（含 `fileweft-metadata-api` 与 `fileweft-metadata-runtime`）。`1.0.0-SNAPSHOT` 当前接线库存是 32 个坐标，新增 `flowweft-retrieval-api/spi/runtime`、`flowweft-agent-api/runtime`、`flowweft-workflow-api/spi/domain/runtime/persistence-jdbc`、`flowweft-migration-cli`、`flowweft-adapter-dify` 与 `flowweft-adapter-oss` 十三个坐标；这只是当前实现库存，不是对 1.0 最终模块数的冻结承诺。单一事实来源是 `gradle/publication-inventory.tsv`；settings、根发布/SBOM 与 `release-smoke` 必须只读取该清单，不再复制模块列表。
+`0.0.3` 的历史发布库存是 19 个坐标（含 `fileweft-metadata-api` 与 `fileweft-metadata-runtime`）。`1.0.0-SNAPSHOT` 当前接线库存是 33 个坐标，新增 `flowweft-retrieval-api/spi/runtime`、`flowweft-agent-api/runtime/testkit`、`flowweft-workflow-api/spi/domain/runtime/persistence-jdbc`、`flowweft-migration-cli`、`flowweft-adapter-dify` 与 `flowweft-adapter-oss` 十四个坐标；这只是当前实现库存，不是对 1.0 最终模块数的冻结承诺。单一事实来源是 `gradle/publication-inventory.tsv`；settings、根发布/SBOM 与 `release-smoke` 必须只读取该清单，不再复制模块列表。
 
 CI 中的 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET` 只是隔离 Compose 网络内模拟平台的公开测试夹具值，不授予 CNB、Maven 或任何生产系统权限。真实发布凭据只来自 CNB 事件 token，禁止写入仓库、Gradle properties、缓存或测试报告。
 
