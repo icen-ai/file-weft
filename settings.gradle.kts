@@ -48,6 +48,9 @@ include(
     ":flowweft-migration-cli",
     ":flowweft-agent-api",
     ":flowweft-agent-runtime",
+    ":flowweft-retrieval-api",
+    ":flowweft-retrieval-spi",
+    ":flowweft-retrieval-runtime",
     ":fileweft-sample-host",
     ":fileweft-dev",
 )
