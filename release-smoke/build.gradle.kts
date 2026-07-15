@@ -2,6 +2,7 @@ import io.spring.gradle.dependencymanagement.dsl.DependencyManagementExtension
 import org.gradle.api.JavaVersion
 import org.gradle.api.attributes.Bundling
 import org.gradle.api.plugins.JavaPluginExtension
+import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -62,6 +63,8 @@ fun readPublicationInventory(inventoryFile: File): List<ReleasePublicationInvent
 
 version = providers.gradleProperty("fileweftVersion").orNull
     ?: throw GradleException("-PfileweftVersion is required for release consumer smoke testing.")
+val flowWeftRepositoryUrl = providers.gradleProperty("fileweftRepositoryUrl")
+    .orElse(rootDir.resolve("../build/repository").toURI().toString())
 
 val springBoot2Version = "2.7.18"
 val springBoot3Version = "3.5.16"
@@ -218,6 +221,19 @@ project(":library-consumer") {
     targetJvm(JavaVersion.VERSION_1_8, JvmTarget.JVM_1_8, 8)
     dependencies {
         add("implementation", "ai.icen:fileweft-spi:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-retrieval-api:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-retrieval-spi:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-retrieval-runtime:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-agent-api:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-agent-runtime:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-workflow-api:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-workflow-spi:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-workflow-domain:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-workflow-runtime:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-workflow-persistence-jdbc:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-migration-cli:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-adapter-dify:${rootProject.version}")
+        add("implementation", "ai.icen:flowweft-adapter-oss:${rootProject.version}")
         add("implementation", "ai.icen:fileweft-agent:${rootProject.version}")
         add("implementation", "ai.icen:fileweft-persistence:${rootProject.version}")
         add("implementation", "ai.icen:fileweft-adapter-micrometer:${rootProject.version}")
@@ -265,10 +281,83 @@ val verifyUnmanagedBoot3FlywayRuntime = tasks.register("verifyUnmanagedBoot3Flyw
     }
 }
 
+val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+val mavenExecutable = providers.provider {
+    val executableNames = if (isWindows) listOf("mvn.cmd", "mvn.bat", "mvn.exe") else listOf("mvn")
+    val pathDirectories = System.getenv("PATH")
+        .orEmpty()
+        .split(File.pathSeparatorChar)
+        .filter { path -> path.isNotBlank() }
+        .map(::File)
+    val mavenHomeDirectories = listOfNotNull(
+        System.getenv("MAVEN_HOME"),
+        System.getenv("M2_HOME"),
+    ).map { home -> File(home, "bin") }
+    (pathDirectories + mavenHomeDirectories)
+        .asSequence()
+        .flatMap { directory -> executableNames.asSequence().map(directory::resolve) }
+        .firstOrNull { candidate -> candidate.isFile }
+        ?: throw GradleException(
+            "Maven CLI is required for the independent POM consumer gate. " +
+                "Install the CI-pinned Maven distribution and expose mvn on PATH; " +
+                "this release check never downloads a Maven runtime.",
+        )
+}
+val mavenConsumerBuildDirectory = layout.buildDirectory.dir("maven-pom-consumer/target")
+val mavenConsumerLocalRepository = layout.buildDirectory.dir("maven-pom-consumer/repository")
+val verifyMavenPomConsumer = tasks.register<Exec>("verifyMavenPomConsumer") {
+    group = "verification"
+    description = "Test-compiles a Java 8 consumer with Maven CLI using only published FlowWeft POM metadata."
+    workingDir(file("maven-consumer"))
+    inputs.files(fileTree("maven-consumer") { include("pom.xml", "src/**/*.java") })
+        .withPropertyName("mavenConsumerSources")
+    inputs.property("fileweftVersion", project.version.toString())
+    inputs.property("fileweftRepositoryUrl", flowWeftRepositoryUrl)
+
+    doFirst {
+        project.delete(mavenConsumerBuildDirectory, mavenConsumerLocalRepository)
+        val arguments = listOf(
+            "-B",
+            "-ntp",
+            "-U",
+            "-Dstyle.color=never",
+            "-Dmaven.repo.local=${mavenConsumerLocalRepository.get().asFile.absolutePath}",
+            "-Dflowweft.version=${project.version}",
+            "-Dflowweft.repository.url=${flowWeftRepositoryUrl.get()}",
+            "-Dflowweft.maven.build.directory=${mavenConsumerBuildDirectory.get().asFile.absolutePath}",
+            "test-compile",
+        )
+        val executable = mavenExecutable.get().absolutePath
+        if (isWindows) {
+            commandLine(listOf(System.getenv("ComSpec") ?: "cmd.exe", "/d", "/c", executable) + arguments)
+        } else {
+            commandLine(listOf(executable) + arguments)
+        }
+        val existingMavenOptions = System.getenv("MAVEN_OPTS").orEmpty().trim()
+        environment(
+            "MAVEN_OPTS",
+            listOf(existingMavenOptions, "-Dfile.encoding=UTF-8").filter(String::isNotEmpty).joinToString(" "),
+        )
+    }
+    doLast {
+        val compiledMainConsumer = mavenConsumerBuildDirectory.get().asFile
+            .resolve("classes/ai/icen/fw/release/smoke/maven/MavenPomJava8Consumer.class")
+        require(compiledMainConsumer.isFile && compiledMainConsumer.length() > 0L) {
+            "Maven POM consumer did not produce the expected Java 8 main class: ${compiledMainConsumer.absolutePath}"
+        }
+        val compiledTestConsumer = mavenConsumerBuildDirectory.get().asFile
+            .resolve("test-classes/ai/icen/fw/release/smoke/maven/MavenPublishedTestKitJava8Consumer.class")
+        require(compiledTestConsumer.isFile && compiledTestConsumer.length() > 0L) {
+            "Maven POM consumer did not produce the expected Java 8 test class: ${compiledTestConsumer.absolutePath}"
+        }
+    }
+}
+
 tasks.register("releaseSmoke") {
     group = "verification"
-    description = "Verifies the release inventory, compiles independent consumers, and starts Boot 2/3 hosts with host-owned JDBC."
+    description = "Verifies POM-only consumers, the release inventory, and Boot 2/3 hosts with host-owned JDBC."
     dependsOn(verifyReleaseInventory)
     dependsOn(verifyUnmanagedBoot3FlywayRuntime)
+    dependsOn(verifyMavenPomConsumer)
     dependsOn(subprojects.map { consumerProject -> consumerProject.tasks.named("build") })
 }
