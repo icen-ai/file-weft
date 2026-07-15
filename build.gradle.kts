@@ -385,10 +385,10 @@ val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
 val verifyDocsSite = tasks.register<Exec>("verifyDocsSite") {
     group = "verification"
     description = "Runs the zero-dependency documentation site contract tests."
-    workingDir(layout.projectDirectory.dir("fileweft-docs"))
+    workingDir(layout.projectDirectory.dir("flowweft-docs"))
     commandLine("node", "--test", "test/site.test.mjs")
     inputs.files(
-        fileTree("fileweft-docs") {
+        fileTree("flowweft-docs") {
             include("**/*.html", "**/*.css", "**/*.js", "**/*.mjs", "**/*.json", "**/*.md")
         },
     ).withPropertyName("docsSiteSources")
