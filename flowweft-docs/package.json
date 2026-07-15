@@ -1,0 +1,16 @@
+{
+  "name": "flowweft-docs",
+  "version": "0.0.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "copy-skill": "node copy-skill.mjs",
+    "prestart": "node copy-skill.mjs",
+    "start": "node server.mjs",
+    "pretest": "node copy-skill.mjs",
+    "test": "node --test test/site.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

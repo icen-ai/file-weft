@@ -5,6 +5,8 @@
 *.iml
 out/
 **/node_modules/
+**/.next/
+**/*.tsbuildinfo
 **/playwright-report/
 **/test-results/
 .ai/mcp/
