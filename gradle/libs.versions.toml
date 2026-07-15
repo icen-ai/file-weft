@@ -14,9 +14,11 @@ spring-boot3 = "3.5.16"
 assertj = "3.26.3"
 aws-sdk = "2.47.4"
 micrometer = "1.10.13"
-opentelemetry = "1.40.0"
+opentelemetry = "1.62.0"
 re2j = "1.8"
 h2 = "2.3.232"
+aliyun-oss = "3.18.5"
+bouncycastle = "1.84"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
@@ -59,6 +61,8 @@ opentelemetry-sdk-logs = { module = "io.opentelemetry:opentelemetry-sdk-logs", v
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
 re2j = { module = "com.google.re2j:re2j", version.ref = "re2j" }
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
+aliyun-oss = { module = "com.aliyun.oss:aliyun-sdk-oss", version.ref = "aliyun-oss" }
+bouncycastle-provider = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version = "1.7.36" }
 
 [plugins]

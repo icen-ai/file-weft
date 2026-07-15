@@ -54,6 +54,7 @@ val publishableModuleNames = setOf(
     "flowweft-retrieval-api",
     "flowweft-retrieval-spi",
     "flowweft-retrieval-runtime",
+    "flowweft-adapter-oss",
 )
 val releaseSbomModuleNames = publishableModuleNames.sorted()
 extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {
@@ -701,6 +702,12 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
                         "fileweft-adapter-s3/src/test/kotlin/ai/icen/fw/adapter/s3/S3StorageAdapterRustFsIntegrationTest.kt" ->
                         setOf("FILEWEFT_RUN_RUSTFS_TESTS")
                     relativePath ==
+                        "flowweft-adapter-oss/src/test/kotlin/ai/icen/fw/adapter/oss/OssStorageAdapterIntegrationTest.kt" ->
+                        setOf("FLOWWEFT_RUN_OSS_TESTS")
+                    relativePath ==
+                        "flowweft-adapter-oss/src/test/kotlin/ai/icen/fw/adapter/oss/OssOverwriteGuardIntegrationTest.kt" ->
+                        setOf("FLOWWEFT_RUN_OSS_OVERWRITE_TESTS")
+                    relativePath ==
                         "fileweft-dev/src/test/kotlin/ai/icen/fw/dev/e2e/DevAcceptanceIntegrationTest.kt" ->
                         setOf("FILEWEFT_RUN_DEV_E2E")
                     else -> emptySet()
@@ -996,6 +1003,12 @@ val rustFsIntegrationCheck = tasks.register("rustFsIntegrationCheck") {
     dependsOn(":fileweft-adapter-s3:rustFsIntegrationTest")
 }
 
+val ossIntegrationCheck = tasks.register("ossIntegrationCheck") {
+    group = "verification"
+    description = "Runs the dedicated Alibaba Cloud OSS storage-adapter integration lane."
+    dependsOn(":flowweft-adapter-oss:ossIntegrationTest")
+}
+
 val devAcceptanceCheck = tasks.register("devAcceptanceCheck") {
     group = "verification"
     description = "Runs Dev API and Playwright acceptance sequentially against one Compose stack."
@@ -1014,6 +1027,7 @@ val externalAcceptanceCheck = tasks.register("externalAcceptanceCheck") {
         mysqlIntegrationCheck,
         kingbaseIntegrationCheck,
         rustFsIntegrationCheck,
+        ossIntegrationCheck,
         devAcceptanceCheck,
     )
 }
