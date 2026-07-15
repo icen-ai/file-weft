@@ -18,6 +18,37 @@ class ArchitectureGuardPlugin : Plugin<Project> {
             "fileweft-spi" to listOf(
                 "ai.icen.fw.core.", "ai.icen.fw.spi.", "java.", "javax.", "kotlin.",
             ),
+            "flowweft-retrieval-api" to listOf(
+                "ai.icen.fw.retrieval.api.", "ai.icen.fw.core.", "ai.icen.fw.spi.",
+                "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-retrieval-spi" to listOf(
+                "ai.icen.fw.retrieval.spi.", "ai.icen.fw.retrieval.api.", "ai.icen.fw.core.",
+                "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-agent-api" to listOf(
+                "ai.icen.fw.agent.api.", "ai.icen.fw.core.", "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-agent-runtime" to listOf(
+                "ai.icen.fw.agent.runtime.", "ai.icen.fw.agent.api.", "ai.icen.fw.core.",
+                "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-workflow-api" to listOf(
+                "ai.icen.fw.workflow.api.", "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-workflow-spi" to listOf(
+                "ai.icen.fw.workflow.spi.", "ai.icen.fw.workflow.api.",
+                "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-workflow-domain" to listOf(
+                "ai.icen.fw.workflow.domain.", "ai.icen.fw.workflow.api.",
+                "java.", "javax.", "kotlin.",
+            ),
+            "flowweft-workflow-runtime" to listOf(
+                "ai.icen.fw.workflow.runtime.", "ai.icen.fw.workflow.domain.", "ai.icen.fw.workflow.api.",
+                "ai.icen.fw.workflow.spi.",
+                "java.", "javax.", "kotlin.",
+            ),
             "fileweft-domain" to listOf(
                 "ai.icen.fw.core.", "ai.icen.fw.domain.", "java.", "javax.", "kotlin.",
             ),
@@ -69,7 +100,7 @@ class ArchitectureGuardPlugin : Plugin<Project> {
             VerifyFileWeftArchitectureTask::class.java,
         ) {
             group = "verification"
-            description = "Verifies FileWeft module boundaries and forbidden infrastructure imports."
+            description = "Verifies FlowWeft module boundaries and forbidden infrastructure imports."
             this.approvedImportPrefixesByModule.putAll(approvedImportPrefixesByModule)
             this.allowedInfrastructurePrefixesByModule.putAll(allowedInfrastructurePrefixesByModule)
             this.allowedAutoConfigurationAfterNameReferencesByModule.putAll(
@@ -85,6 +116,30 @@ class ArchitectureGuardPlugin : Plugin<Project> {
                 mapOf(
                     "fileweft-core" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                     "fileweft-spi" to listOf("suspend fun", "value class", "sealed interface", "data object"),
+                    "flowweft-retrieval-api" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-retrieval-spi" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-agent-api" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-agent-runtime" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-workflow-api" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-workflow-spi" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-workflow-domain" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
+                    "flowweft-workflow-runtime" to listOf(
+                        "suspend fun", "value class", "sealed interface", "data object",
+                    ),
                     "fileweft-metadata-api" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                     "fileweft-metadata-runtime" to listOf("suspend fun", "value class", "sealed interface", "data object"),
                     "fileweft-web-api" to listOf("suspend fun", "value class", "sealed interface", "data object"),
