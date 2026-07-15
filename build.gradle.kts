@@ -55,6 +55,7 @@ val publishableModuleNames = setOf(
     "flowweft-retrieval-spi",
     "flowweft-retrieval-runtime",
     "flowweft-adapter-oss",
+    "flowweft-adapter-dify",
 )
 val releaseSbomModuleNames = publishableModuleNames.sorted()
 extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {

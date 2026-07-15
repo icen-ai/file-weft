@@ -52,6 +52,7 @@ include(
     ":flowweft-retrieval-spi",
     ":flowweft-retrieval-runtime",
     ":flowweft-adapter-oss",
+    ":flowweft-adapter-dify",
     ":fileweft-sample-host",
     ":fileweft-dev",
 )
