@@ -800,8 +800,8 @@ subprojects {
                         }
                     }
                     pom {
-                        name.set(project.name)
-                        description.set("FileWeft enterprise file infrastructure module ${project.name}.")
+                        name.set("FlowWeft module ${project.name}")
+                        description.set("FlowWeft enterprise file and workflow infrastructure module ${project.name}.")
                         url.set(projectHomepage)
                         licenses {
                             license {

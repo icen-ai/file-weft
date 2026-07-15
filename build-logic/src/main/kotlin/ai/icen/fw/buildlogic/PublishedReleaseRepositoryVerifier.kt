@@ -10,7 +10,7 @@ import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * Verifies the exact FileWeft Maven publication contract for all public modules.
+ * Verifies the exact FlowWeft Maven publication contract for all public modules.
  *
  * The verifier is intentionally strict: every artifact, checksum, metadata file,
  * POM element, Gradle module metadata field, and JAR entry must match the reviewed
@@ -48,8 +48,21 @@ class PublishedReleaseRepositoryVerifier(
         }
 
         val resolvedSnapshotVersions = mutableSetOf<String>()
+        val classOwners = linkedMapOf<String, String>()
+        val duplicateClassOwners = linkedMapOf<String, MutableSet<String>>()
         expectedModules.sorted().forEach { moduleName ->
-            verifyModule(moduleName, resolvedSnapshotVersions)
+            verifyModule(moduleName, resolvedSnapshotVersions).forEach { classEntry ->
+                val previousOwner = classOwners.putIfAbsent(classEntry, moduleName)
+                if (previousOwner != null && previousOwner != moduleName) {
+                    duplicateClassOwners.getOrPut(classEntry) { linkedSetOf(previousOwner) } += moduleName
+                }
+            }
+        }
+        require(duplicateClassOwners.isEmpty()) {
+            val sample = duplicateClassOwners.entries
+                .take(20)
+                .joinToString { (classEntry, owners) -> "$classEntry -> ${owners.sorted()}" }
+            "Published binary JARs contain classes owned by more than one module: $sample"
         }
         if (releaseVersion.endsWith("-SNAPSHOT")) {
             require(resolvedSnapshotVersions.size == 1) {
@@ -58,7 +71,7 @@ class PublishedReleaseRepositoryVerifier(
         }
     }
 
-    private fun verifyModule(moduleName: String, resolvedSnapshotVersions: MutableSet<String>) {
+    private fun verifyModule(moduleName: String, resolvedSnapshotVersions: MutableSet<String>): Set<String> {
         val moduleDirectory = groupDirectory.resolve(moduleName)
         val publishedVersions = moduleDirectory.listFiles()
             .orEmpty()
@@ -113,10 +126,11 @@ class PublishedReleaseRepositoryVerifier(
                 "missing=${(expectedFiles - actualFiles).map { it.name }}."
         }
 
-        verifyJar(binaryJar, moduleName, expectSources = false)
+        val binaryClasses = verifyJar(binaryJar, moduleName, expectSources = false)
         verifyJar(sourcesJar, moduleName, expectSources = true)
         verifyPom(pomFile, moduleName, expectedModules)
         verifyModuleMetadata(moduleFile, moduleName)
+        return binaryClasses
     }
 
     private fun verifySnapshotMetadata(
@@ -186,7 +200,7 @@ class PublishedReleaseRepositoryVerifier(
         }
     }
 
-    private fun verifyJar(archive: File, moduleName: String, expectSources: Boolean) {
+    private fun verifyJar(archive: File, moduleName: String, expectSources: Boolean): Set<String> =
         ZipFile(archive).use { jar ->
             val fileEntries = jar.entries().asSequence()
                 .filterNot { entry -> entry.isDirectory }
@@ -225,7 +239,14 @@ class PublishedReleaseRepositoryVerifier(
                 require(entries.keys.any { entry -> entry.endsWith(".kt") || entry.endsWith(".java") }) {
                     "Published sources JAR contains no Kotlin or Java source: ${archive.name}"
                 }
+                emptySet()
             } else {
+                val classEntries = entries.keys
+                    .filter { entry -> entry.endsWith(".class") }
+                    .toSortedSet()
+                require(classEntries.isNotEmpty()) {
+                    "Published binary JAR contains no class files: ${archive.name}"
+                }
                 val manifestEntry = entries["META-INF/MANIFEST.MF"]
                     ?: error("Published binary JAR has no manifest: ${archive.name}")
                 val manifest = jar.getInputStream(manifestEntry)
@@ -237,9 +258,9 @@ class PublishedReleaseRepositoryVerifier(
                 require(manifest.contains("Implementation-Version: $releaseVersion")) {
                     "Published binary JAR manifest has the wrong version: ${archive.name}"
                 }
+                classEntries
             }
         }
-    }
 
     private fun verifyPom(pomFile: File, moduleName: String, expectedModules: Set<String>) {
         val pomDocument = secureDocumentBuilderFactory().newDocumentBuilder().parse(pomFile)
@@ -254,6 +275,15 @@ class PublishedReleaseRepositoryVerifier(
         require(directChildText(projectElement, "groupId") == releaseGroup)
         require(directChildText(projectElement, "artifactId") == moduleName)
         require(directChildText(projectElement, "version") == releaseVersion)
+        require(directChildText(projectElement, "name") == "FlowWeft module $moduleName") {
+            "POM has the wrong FlowWeft display name: ${pomFile.name}"
+        }
+        require(
+            directChildText(projectElement, "description") ==
+                "FlowWeft enterprise file and workflow infrastructure module $moduleName.",
+        ) {
+            "POM has the wrong FlowWeft description: ${pomFile.name}"
+        }
         require(directChildText(projectElement, "url") == projectHomepage)
 
         val licenseNodes = pomDocument.getElementsByTagNameNS("*", "license")
