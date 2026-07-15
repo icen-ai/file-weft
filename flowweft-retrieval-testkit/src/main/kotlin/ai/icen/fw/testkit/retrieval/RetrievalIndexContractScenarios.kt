@@ -9,7 +9,7 @@ import java.util.Collections
 
 /** Immutable input for a linearizable activation race against one authoritative projection. */
 class RetrievalIndexActivationRaceScenario private constructor(
-    activationRequests: Collection<RetrievalIndexActivationRequest>,
+    activationRequests: List<RetrievalIndexActivationRequest>,
     val baselineStateRequest: RetrievalIndexStateRequest,
     val observedStateRequest: RetrievalIndexStateRequest,
 ) {
@@ -42,7 +42,7 @@ class RetrievalIndexActivationRaceScenario private constructor(
     companion object {
         @JvmStatic
         fun of(
-            activationRequests: Collection<RetrievalIndexActivationRequest>,
+            activationRequests: List<RetrievalIndexActivationRequest>,
             baselineStateRequest: RetrievalIndexStateRequest,
             observedStateRequest: RetrievalIndexStateRequest,
         ): RetrievalIndexActivationRaceScenario = RetrievalIndexActivationRaceScenario(
@@ -85,6 +85,7 @@ class RetrievalIndexActivationReplayScenario private constructor(
 class RetrievalIndexActivationReplayMismatchScenario private constructor(
     val acceptedRequest: RetrievalIndexActivationRequest,
     val conflictingRequest: RetrievalIndexActivationRequest,
+    val baselineStateRequest: RetrievalIndexStateRequest,
     val observedStateRequest: RetrievalIndexStateRequest,
 ) {
     init {
@@ -104,7 +105,7 @@ class RetrievalIndexActivationReplayMismatchScenario private constructor(
             acceptedManifest.source.digest == conflictingManifest.source.digest &&
                 acceptedManifest.descriptor.digest == conflictingManifest.descriptor.digest,
         ) { "Index replay mismatch requests must target the same provider and source." }
-        requireStateRequestMatches(acceptedRequest, observedStateRequest)
+        requireStateRequestsMatch(acceptedRequest, baselineStateRequest, observedStateRequest)
     }
 
     companion object {
@@ -112,16 +113,24 @@ class RetrievalIndexActivationReplayMismatchScenario private constructor(
         fun of(
             acceptedRequest: RetrievalIndexActivationRequest,
             conflictingRequest: RetrievalIndexActivationRequest,
+            baselineStateRequest: RetrievalIndexStateRequest,
             observedStateRequest: RetrievalIndexStateRequest,
         ): RetrievalIndexActivationReplayMismatchScenario = RetrievalIndexActivationReplayMismatchScenario(
             acceptedRequest,
             conflictingRequest,
+            baselineStateRequest,
             observedStateRequest,
         )
     }
 }
 
-/** Foreign descriptor chain used to prove fail-closed binding validation before side effects. */
+/**
+ * Foreign inputs used to prove fail-closed binding validation before side effects.
+ *
+ * The stage request carries a foreign descriptor. The seal and activation requests keep the
+ * provider's own descriptor but must carry structurally valid receipts that the provider under
+ * test never accepted. This distinguishes descriptor validation from durable receipt binding.
+ */
 class RetrievalIndexProviderBindingMismatchScenario private constructor(
     val foreignStageRequest: RetrievalIndexStageBatch,
     val foreignSealRequest: RetrievalIndexSealRequest,
@@ -130,26 +139,35 @@ class RetrievalIndexProviderBindingMismatchScenario private constructor(
     val observedStateRequest: RetrievalIndexStateRequest,
 ) {
     init {
-        val manifest = foreignStageRequest.manifest
-        require(foreignSealRequest.manifest.digest == manifest.digest) {
-            "Foreign index seal request must belong to the staged manifest."
-        }
-        require(foreignSealRequest.stageReceipts.any { receipt -> receipt.requestDigest == foreignStageRequest.digest }) {
-            "Foreign index seal request must attest the supplied stage request."
-        }
-        require(foreignActivationRequest.sealReceipt.request.digest == foreignSealRequest.digest) {
-            "Foreign index activation request must belong to the supplied seal request."
-        }
         require(
             baselineStateRequest.descriptor.digest == observedStateRequest.descriptor.digest &&
-                baselineStateRequest.source.digest == observedStateRequest.source.digest,
+                baselineStateRequest.source.digest == observedStateRequest.source.digest &&
+                baselineStateRequest.requestId != observedStateRequest.requestId,
         ) { "Index binding failure observations must share one authoritative state scope." }
-        require(baselineStateRequest.source.digest == manifest.source.digest) {
-            "Foreign index requests and authoritative observations must address the same source."
+        val authoritativeDescriptorDigest = baselineStateRequest.descriptor.digest
+        val authoritativeSourceDigest = baselineStateRequest.source.digest
+        require(foreignStageRequest.manifest.source.digest == authoritativeSourceDigest) {
+            "Foreign index stage and authoritative observations must address the same source."
         }
-        require(baselineStateRequest.descriptor.digest != manifest.descriptor.digest) {
+        require(foreignStageRequest.manifest.descriptor.digest != authoritativeDescriptorDigest) {
             "Index binding mismatch scenario must use a genuinely foreign provider descriptor."
         }
+        require(
+            foreignSealRequest.manifest.source.digest == authoritativeSourceDigest &&
+                foreignSealRequest.manifest.descriptor.digest == authoritativeDescriptorDigest,
+        ) { "Foreign index seal evidence must target the authoritative provider and source." }
+        val activationManifest = foreignActivationRequest.sealReceipt.request.manifest
+        require(
+            activationManifest.source.digest == authoritativeSourceDigest &&
+                activationManifest.descriptor.digest == authoritativeDescriptorDigest,
+        ) { "Foreign index activation evidence must target the authoritative provider and source." }
+        require(
+            listOf(
+                foreignStageRequest.requestId,
+                foreignSealRequest.requestId,
+                foreignActivationRequest.requestId,
+            ).toSet().size == 3,
+        ) { "Foreign index binding operations must use unique request identifiers." }
     }
 
     companion object {

@@ -30,11 +30,14 @@ import ai.icen.fw.retrieval.spi.RetrievalIndexStageReceipt
 import ai.icen.fw.retrieval.spi.RetrievalIndexState
 import ai.icen.fw.retrieval.spi.RetrievalIndexStateRequest
 import java.io.ByteArrayInputStream
+import java.time.Duration
 import java.util.HashMap
 import java.util.HashSet
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.atomic.AtomicInteger
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 
 /** Runs the public contract against a stateful, thread-safe provider rather than receipt-only mocks. */
 class RetrievalIndexProviderContractBehaviorTest : RetrievalIndexProviderContractTest() {
@@ -147,6 +150,7 @@ class RetrievalIndexProviderContractBehaviorTest : RetrievalIndexProviderContrac
         return RetrievalIndexActivationReplayMismatchScenario.of(
             accepted,
             conflicting,
+            stateRequest("$scope-before-conflict", descriptor, source, 110L),
             stateRequest("$scope-after", descriptor, source, 120L),
         )
     }
@@ -169,24 +173,76 @@ class RetrievalIndexProviderContractBehaviorTest : RetrievalIndexProviderContrac
             true,
             true,
         )
-        val stage = newStage("$scope-foreign", foreign, source, 80L)
-        val staged = RetrievalIndexStageReceipt.staged(stage, "foreign-stage-$scope", 81L)
-        val seal = RetrievalIndexSealRequest.of(
-            Identifier("seal-$scope-foreign"),
-            stage.manifest,
-            listOf(staged),
+        val foreignStage = newStage("$scope-foreign-descriptor", foreign, source, 80L)
+
+        val unattestedStage = newStage("$scope-unattested-stage", descriptor, source, 80L)
+        val unattestedStageReceipt = RetrievalIndexStageReceipt.staged(
+            unattestedStage,
+            "unattested-stage-$scope",
+            81L,
+        )
+        val foreignSeal = RetrievalIndexSealRequest.of(
+            Identifier("seal-$scope-unattested"),
+            unattestedStage.manifest,
+            listOf(unattestedStageReceipt),
             90L,
             DEADLINE,
         )
-        val sealed = RetrievalIndexSealReceipt.sealed(seal, "foreign-seal-$scope", 91L)
-        val activate = activation(Identifier("activate-$scope-foreign"), sealed, baseline, 100L)
+
+        val unattestedSealStage = newStage("$scope-unattested-seal", descriptor, source, 80L)
+        val unattestedSealStageReceipt = RetrievalIndexStageReceipt.staged(
+            unattestedSealStage,
+            "unattested-activation-stage-$scope",
+            81L,
+        )
+        val unattestedSealRequest = RetrievalIndexSealRequest.of(
+            Identifier("seal-$scope-unattested-activation"),
+            unattestedSealStage.manifest,
+            listOf(unattestedSealStageReceipt),
+            90L,
+            DEADLINE,
+        )
+        val unattestedSealReceipt = RetrievalIndexSealReceipt.sealed(
+            unattestedSealRequest,
+            "unattested-seal-$scope",
+            91L,
+        )
+        val foreignActivation = activation(
+            Identifier("activate-$scope-unattested"),
+            unattestedSealReceipt,
+            baseline,
+            100L,
+        )
         return RetrievalIndexProviderBindingMismatchScenario.of(
-            stage,
-            seal,
-            activate,
+            foreignStage,
+            foreignSeal,
+            foreignActivation,
             stateRequest("$scope-before", descriptor, source, 75L),
             stateRequest("$scope-after", descriptor, source, 120L),
         )
+    }
+
+    @Test
+    fun `fixture rejects descriptor and receipt bindings before durable side effects`() {
+        val scenario = providerBindingMismatchScenario(DESCRIPTOR)
+        val baseline = provider.durableSnapshot()
+        val operations: List<Pair<String, () -> CompletionStage<*>>> = listOf(
+            "foreign descriptor stage" to { provider.stage(scenario.foreignStageRequest) },
+            "unattested stage receipt seal" to { provider.seal(scenario.foreignSealRequest) },
+            "unattested seal receipt activation" to { provider.activate(scenario.foreignActivationRequest) },
+        )
+
+        operations.forEach { (name, operation) ->
+            val failure = RetrievalContractAssertions.awaitProviderFailure(
+                operation(),
+                Duration.ofSeconds(1L),
+                name,
+            )
+            assertEquals(RetrievalFailureCode.INDEX_PROVIDER_BINDING_MISMATCH, failure.code)
+            assertEquals(RetrievalRetryability.NOT_RETRYABLE, failure.retryability)
+        }
+
+        assertEquals(baseline, provider.durableSnapshot())
     }
 
     override fun activationFailureScenario(
@@ -451,6 +507,32 @@ private class InMemoryRetrievalIndexProvider(
         }
     }
 
+    fun durableSnapshot(): String = synchronized(monitor) {
+        val ledgerSnapshot = ledger.toSortedMap().entries.joinToString(";") { (key, entry) ->
+            "$key=${entry.requestDigest}:${receiptDigest(entry.receipt)}"
+        }
+        val stageSnapshot = stagedReceipts.toSortedMap().entries.joinToString(";") { (manifestDigest, batches) ->
+            val batchSnapshot = batches.toSortedMap().entries.joinToString(",") { (ordinal, receipts) ->
+                "$ordinal=${receipts.sorted().joinToString("+")}"
+            }
+            "$manifestDigest=$batchSnapshot"
+        }
+        val sealSnapshot = sealedReceipts.toSortedMap().entries.joinToString(";") { (requestDigest, receiptDigest) ->
+            "$requestDigest=$receiptDigest"
+        }
+        val projectionSnapshot = projections.toSortedMap().entries.joinToString(";") { (sourceDigest, projection) ->
+            listOf(
+                sourceDigest,
+                projection.activeGenerationId.orEmpty(),
+                projection.revision.toString(),
+                projection.policyRevision.orEmpty(),
+                projection.policyScopeDigest.orEmpty(),
+                projection.tombstoned.toString(),
+            ).joinToString(":")
+        }
+        listOf(ledgerSnapshot, stageSnapshot, sealSnapshot, projectionSnapshot).joinToString("|")
+    }
+
     override fun stage(request: RetrievalIndexStageBatch): CompletionStage<RetrievalIndexStageReceipt> = completed {
         synchronized(monitor) {
             requireDescriptor(request.manifest.descriptor)
@@ -601,6 +683,14 @@ private class InMemoryRetrievalIndexProvider(
 
     private fun record(operation: String, requestId: Identifier, digest: String, receipt: Any) {
         check(ledger.put(ledgerKey(operation, requestId), LedgerEntry(digest, receipt)) == null)
+    }
+
+    private fun receiptDigest(receipt: Any): String = when (receipt) {
+        is RetrievalIndexStageReceipt -> receipt.digest
+        is RetrievalIndexSealReceipt -> receipt.digest
+        is RetrievalIndexActivationReceipt -> receipt.digest
+        is RetrievalIndexMutationReceipt -> receipt.digest
+        else -> error("Unknown fixture receipt type: ${receipt.javaClass.name}")
     }
 
     private fun ledgerKey(operation: String, requestId: Identifier): String = "$operation:${requestId.value}"

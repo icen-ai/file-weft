@@ -1,11 +1,13 @@
 package ai.icen.fw.testkit.retrieval
 
+import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.retrieval.api.RetrievalFailureCode
 import ai.icen.fw.retrieval.api.RetrievalProviderException
 import ai.icen.fw.retrieval.api.RetrievalRetryability
 import ai.icen.fw.retrieval.spi.RetrievalIndexActivationReceipt
 import ai.icen.fw.retrieval.spi.RetrievalIndexActivationRequest
 import ai.icen.fw.retrieval.spi.RetrievalIndexGenerationFailureEvidence
+import ai.icen.fw.retrieval.spi.RetrievalIndexGenerationManifest
 import ai.icen.fw.retrieval.spi.RetrievalIndexMutationRequest
 import ai.icen.fw.retrieval.spi.RetrievalIndexProvider
 import ai.icen.fw.retrieval.spi.RetrievalIndexProviderDescriptor
@@ -97,6 +99,15 @@ abstract class RetrievalIndexProviderContractTest {
         val descriptor = indexProvider.descriptor()
         val request = stageRequest(descriptor)
         assertEquals(descriptor.digest, request.manifest.descriptor.digest)
+        val baseline = awaitState(
+            visibilityStateRequest(
+                "stage-before",
+                request.manifest,
+                request.requestedAtEpochMilli,
+                request.deadlineEpochMilli,
+            ),
+            "Retrieval index stage baseline",
+        )
         val receipt = RetrievalContractAssertions.awaitStage(
             indexProvider.stage(request),
             asynchronousTimeout(),
@@ -109,6 +120,16 @@ abstract class RetrievalIndexProviderContractTest {
         assertEquals(request.recordManifestDigest, receipt.recordManifestDigest)
         assertEquals(request.batchOrdinal, receipt.batchOrdinal)
         assertFalse(receipt.visibleToQueries, "Staged records must remain invisible.")
+        val observed = awaitState(
+            visibilityStateRequest(
+                "stage-after",
+                request.manifest,
+                request.requestedAtEpochMilli,
+                request.deadlineEpochMilli,
+            ),
+            "Retrieval index stage result",
+        )
+        assertSameProjection(baseline, observed)
     }
 
     @Test
@@ -116,6 +137,15 @@ abstract class RetrievalIndexProviderContractTest {
         val descriptor = indexProvider.descriptor()
         val request = sealRequest(descriptor)
         assertEquals(descriptor.digest, request.manifest.descriptor.digest)
+        val baseline = awaitState(
+            visibilityStateRequest(
+                "seal-before",
+                request.manifest,
+                request.requestedAtEpochMilli,
+                request.deadlineEpochMilli,
+            ),
+            "Retrieval index seal baseline",
+        )
         val receipt = RetrievalContractAssertions.awaitStage(
             indexProvider.seal(request),
             asynchronousTimeout(),
@@ -123,6 +153,16 @@ abstract class RetrievalIndexProviderContractTest {
         )
         assertEquals(request.digest, receipt.request.digest)
         assertFalse(receipt.visibleToQueries, "Sealing must not switch the read generation.")
+        val observed = awaitState(
+            visibilityStateRequest(
+                "seal-after",
+                request.manifest,
+                request.requestedAtEpochMilli,
+                request.deadlineEpochMilli,
+            ),
+            "Retrieval index seal result",
+        )
+        assertSameProjection(baseline, observed)
     }
 
     @Test
@@ -211,13 +251,11 @@ abstract class RetrievalIndexProviderContractTest {
         )
         assertTrue(outcomes.all { outcome -> outcome.failure == null }, "Exact activation replays must all succeed.")
         val receipts = outcomes.map { outcome -> requireNotNull(outcome.receipt) }
-        assertEquals(1, receipts.map { receipt -> receipt.digest }.toSet().size)
-        assertEquals(1, receipts.map { receipt -> receipt.providerRequestId }.toSet().size)
-        assertEquals(1, receipts.map { receipt -> receipt.activeProjectionRevision }.toSet().size)
         receipts.forEach { receipt -> assertActivationReceipt(scenario.activationRequest, receipt) }
 
         val observed = awaitState(scenario.observedStateRequest, "Index activation replay result")
         val canonical = receipts.first()
+        receipts.drop(1).forEach { receipt -> assertSameActivationReceipt(canonical, receipt) }
         assertEquals(canonical.activeGenerationId, observed.activeGenerationId)
         assertEquals(baseline.projectionRevision + 1L, observed.projectionRevision)
     }
@@ -230,6 +268,9 @@ abstract class RetrievalIndexProviderContractTest {
             asynchronousTimeout(),
             "Accepted index activation",
         )
+        val baseline = awaitState(scenario.baselineStateRequest, "Index replay mismatch baseline")
+        assertEquals(accepted.activeGenerationId, baseline.activeGenerationId)
+        assertEquals(accepted.activeProjectionRevision, baseline.projectionRevision)
         val failure = providerFailure("Mismatched index activation replay") {
             indexProvider.activate(scenario.conflictingRequest)
         }
@@ -237,16 +278,7 @@ abstract class RetrievalIndexProviderContractTest {
         assertEquals(RetrievalRetryability.NOT_RETRYABLE, failure.retryability)
 
         val observed = awaitState(scenario.observedStateRequest, "Index replay mismatch result")
-        assertEquals(accepted.activeGenerationId, observed.activeGenerationId)
-        assertEquals(accepted.activeProjectionRevision, observed.projectionRevision)
-        assertEquals(
-            scenario.acceptedRequest.sealReceipt.request.manifest.authorizationPolicyRevision,
-            observed.authorizationPolicyRevision,
-        )
-        assertEquals(
-            scenario.acceptedRequest.sealReceipt.request.manifest.authorizationScopeDigest,
-            observed.authorizationScopeDigest,
-        )
+        assertSameProjection(baseline, observed)
     }
 
     @Test
@@ -305,10 +337,18 @@ abstract class RetrievalIndexProviderContractTest {
                     check(start.await(timeoutMillis, TimeUnit.MILLISECONDS)) {
                         "$stageName contender $index did not receive the start signal."
                     }
+                    val stage = try {
+                        indexProvider.activate(request)
+                    } catch (failure: Throwable) {
+                        throw AssertionError(
+                            "$stageName contender $index threw before returning a CompletionStage.",
+                            failure,
+                        )
+                    }
                     try {
                         ActivationOutcome(
                             RetrievalContractAssertions.awaitStage(
-                                indexProvider.activate(request),
+                                stage,
                                 timeout,
                                 "$stageName contender $index",
                             ),
@@ -348,7 +388,7 @@ abstract class RetrievalIndexProviderContractTest {
         val stage = try {
             operation()
         } catch (failure: Throwable) {
-            return RetrievalContractAssertions.requireProviderFailure(failure, stageName)
+            throw AssertionError("$stageName threw before returning a CompletionStage.", failure)
         }
         return RetrievalContractAssertions.awaitProviderFailure(stage, asynchronousTimeout(), stageName)
     }
@@ -368,6 +408,35 @@ abstract class RetrievalIndexProviderContractTest {
         assertEquals(request.expectedProjectionRevision + 1L, receipt.activeProjectionRevision)
         assertTrue(receipt.atomicSwitch)
     }
+
+    private fun assertSameActivationReceipt(
+        expected: RetrievalIndexActivationReceipt,
+        actual: RetrievalIndexActivationReceipt,
+    ) {
+        assertEquals(expected.requestId, actual.requestId)
+        assertEquals(expected.requestDigest, actual.requestDigest)
+        assertEquals(expected.previousGenerationId, actual.previousGenerationId)
+        assertEquals(expected.activeGenerationId, actual.activeGenerationId)
+        assertEquals(expected.previousProjectionRevision, actual.previousProjectionRevision)
+        assertEquals(expected.activeProjectionRevision, actual.activeProjectionRevision)
+        assertEquals(expected.providerRequestId, actual.providerRequestId)
+        assertEquals(expected.activatedAtEpochMilli, actual.activatedAtEpochMilli)
+        assertEquals(expected.atomicSwitch, actual.atomicSwitch)
+        assertEquals(expected.digest, actual.digest)
+    }
+
+    private fun visibilityStateRequest(
+        label: String,
+        manifest: RetrievalIndexGenerationManifest,
+        requestedAtEpochMilli: Long,
+        deadlineEpochMilli: Long,
+    ): RetrievalIndexStateRequest = RetrievalIndexStateRequest.of(
+        Identifier("index-contract-$label-${manifest.digest.take(24)}"),
+        manifest.descriptor,
+        manifest.source,
+        requestedAtEpochMilli,
+        deadlineEpochMilli,
+    )
 
     private fun assertSameProjection(expected: RetrievalIndexState, actual: RetrievalIndexState) {
         assertEquals(expected.descriptorDigest, actual.descriptorDigest)

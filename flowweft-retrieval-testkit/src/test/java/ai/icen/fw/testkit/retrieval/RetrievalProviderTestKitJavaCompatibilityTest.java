@@ -34,10 +34,14 @@ import ai.icen.fw.retrieval.spi.RetrievalIndexStageBatch;
 import ai.icen.fw.retrieval.spi.RetrievalIndexStateRequest;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Modifier;
 import java.util.Collection;
+import java.util.List;
 import java.util.function.LongSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Proves every retrieval provider contract remains subclassable from Java 8. */
 class RetrievalProviderTestKitJavaCompatibilityTest {
@@ -53,6 +57,52 @@ class RetrievalProviderTestKitJavaCompatibilityTest {
         assertNotNull(new ChunkingContract());
         assertNotNull(new EmbeddingContract());
         assertNotNull(new IndexContract());
+    }
+
+    @Test
+    void indexScenariosExposePlainStaticJavaEightFactories() throws Exception {
+        assertEquals(
+            List.class,
+            RetrievalIndexActivationRaceScenario.class.getMethod("getActivationRequests").getReturnType()
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationRaceScenario.class,
+            List.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationReplayScenario.class,
+            RetrievalIndexActivationRequest.class,
+            int.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationReplayMismatchScenario.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexProviderBindingMismatchScenario.class,
+            RetrievalIndexStageBatch.class,
+            RetrievalIndexSealRequest.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationFailureScenario.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+    }
+
+    private static void assertStaticFactory(Class<?> type, Class<?>... parameterTypes) throws Exception {
+        assertTrue(Modifier.isStatic(type.getMethod("of", parameterTypes).getModifiers()));
     }
 
     private static UnsupportedOperationException fixtureOnly() {
