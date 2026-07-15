@@ -46,6 +46,8 @@ include(
     ":flowweft-workflow-runtime",
     ":flowweft-workflow-persistence-jdbc",
     ":flowweft-migration-cli",
+    ":flowweft-agent-api",
+    ":flowweft-agent-runtime",
     ":fileweft-sample-host",
     ":fileweft-dev",
 )
