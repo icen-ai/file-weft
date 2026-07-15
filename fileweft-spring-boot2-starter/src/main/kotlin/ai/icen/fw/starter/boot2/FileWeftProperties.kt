@@ -37,6 +37,14 @@ class FileWeftProperties {
         /** TTL for an unfinished resumable multipart session before worker cleanup. */
         var resumableSessionTtlMillis: Long = 86_400_000
         var resumableCleanupBatchSize: Int = 100
+        /** Explicitly enables the durable direct-to-storage PUT capability. */
+        var presignedEnabled: Boolean = false
+        /** Additional time after the signed PUT deadline in which finalization may start. */
+        var presignedFinalizeGraceMillis: Long = 900_000
+        /** Fenced lease for one provider finalization attempt. */
+        var presignedClaimLeaseMillis: Long = 120_000
+        /** Bounded recovery and staging-cleanup batch size on an explicit worker role. */
+        var presignedMaintenanceBatchSize: Int = 100
     }
 
     class PersistenceProperties {
@@ -138,5 +146,6 @@ class FileWeftProperties {
         var processOutbox: Boolean = true
         var processTasks: Boolean = true
         var processUploadCleanup: Boolean = true
+        var processPresignedUploadMaintenance: Boolean = true
     }
 }

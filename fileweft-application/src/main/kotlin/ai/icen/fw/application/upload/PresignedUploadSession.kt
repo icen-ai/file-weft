@@ -230,6 +230,26 @@ class StartPresignedUploadCommand @JvmOverloads constructor(
     metadata: Map<String, String> = emptyMap(),
     val grantDuration: Duration = Duration.ofMinutes(15),
 ) {
+    @JvmOverloads
+    constructor(
+        fileName: String,
+        contentLength: Long,
+        contentType: String,
+        contentHash: String,
+        checksumAlgorithm: String,
+        checksumValue: String,
+        metadata: Map<String, String> = emptyMap(),
+        grantDuration: Duration = Duration.ofMinutes(15),
+    ) : this(
+        fileName = fileName,
+        contentLength = contentLength,
+        contentType = contentType,
+        contentHash = contentHash,
+        checksum = StorageContentChecksum(checksumAlgorithm, checksumValue),
+        metadata = metadata,
+        grantDuration = grantDuration,
+    )
+
     val fileName: String = requiredSessionText(fileName, "Presigned upload file name", 1_024)
     val contentType: String = requiredSessionText(contentType, "Presigned upload content type", 256)
     val contentHash: String = requiredSessionText(contentHash, "Presigned upload content hash", 512)

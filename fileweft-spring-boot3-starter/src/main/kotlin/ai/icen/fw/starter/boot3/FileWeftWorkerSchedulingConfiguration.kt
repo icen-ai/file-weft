@@ -4,6 +4,8 @@ import ai.icen.fw.application.outbox.OutboxBacklogMetricsPublisher
 import ai.icen.fw.application.outbox.OutboxWorker
 import ai.icen.fw.application.task.TaskWorker
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.application.upload.PresignedUploadCleanupService
+import ai.icen.fw.application.upload.PresignedUploadRecoveryService
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
@@ -27,6 +29,30 @@ import java.util.logging.Logger
 @ConditionalOnProperty(prefix = "fileweft.worker", name = ["enabled"], havingValue = "true")
 class FileWeftWorkerSchedulingConfiguration {
     @Bean(name = ["fileWeftWorkerScheduler"])
+    fun configuredFlowWeftWorkerScheduler(
+        properties: FileWeftProperties,
+        outbox: ObjectProvider<OutboxWorker>,
+        tasks: ObjectProvider<TaskWorker>,
+        uploads: ObjectProvider<ResumableUploadService>,
+        presignedRecovery: ObjectProvider<PresignedUploadRecoveryService>,
+        presignedCleanup: ObjectProvider<PresignedUploadCleanupService>,
+        presignedMetrics: ObjectProvider<FlowWeftPresignedUploadMetricsPublisher>,
+        outboxBacklogMetrics: ObjectProvider<OutboxBacklogMetricsPublisher>,
+        @Qualifier(OUTBOX_BACKLOG_EXECUTOR_BEAN) outboxBacklogMetricsExecutor: ObjectProvider<Executor>,
+    ): FileWeftWorkerScheduler = newWorkerScheduler(
+        properties = properties,
+        outbox = outbox.getIfAvailable(),
+        tasks = tasks.getIfAvailable(),
+        uploads = uploads.getIfAvailable(),
+        presignedRecovery = presignedRecovery.getIfAvailable(),
+        presignedCleanup = presignedCleanup.getIfAvailable(),
+        presignedMetrics = presignedMetrics.getIfAvailable(),
+        outboxBacklogMetrics = outboxBacklogMetrics.getIfAvailable(),
+        outboxBacklogMetricsExecutor = outboxBacklogMetricsExecutor.getIfAvailable(),
+    )
+
+    /** Retains the earlier Spring factory signature for compiled and source-compatible hosts. */
+    @Deprecated("Use the Spring-managed worker scheduler with presigned maintenance providers.")
     fun configuredFileWeftWorkerScheduler(
         properties: FileWeftProperties,
         outbox: ObjectProvider<OutboxWorker>,
@@ -39,6 +65,9 @@ class FileWeftWorkerSchedulingConfiguration {
         outbox = outbox.getIfAvailable(),
         tasks = tasks.getIfAvailable(),
         uploads = uploads.getIfAvailable(),
+        presignedRecovery = null,
+        presignedCleanup = null,
+        presignedMetrics = null,
         outboxBacklogMetrics = outboxBacklogMetrics.getIfAvailable(),
         outboxBacklogMetricsExecutor = outboxBacklogMetricsExecutor.getIfAvailable(),
     )
@@ -58,6 +87,9 @@ class FileWeftWorkerSchedulingConfiguration {
         outbox = outbox.getIfAvailable(),
         tasks = tasks.getIfAvailable(),
         uploads = uploads.getIfAvailable(),
+        presignedRecovery = null,
+        presignedCleanup = null,
+        presignedMetrics = null,
         outboxBacklogMetrics = null,
         outboxBacklogMetricsExecutor = null,
     )
@@ -87,6 +119,9 @@ class FileWeftWorkerSchedulingConfiguration {
         outbox: OutboxWorker?,
         tasks: TaskWorker?,
         uploads: ResumableUploadService?,
+        presignedRecovery: PresignedUploadRecoveryService?,
+        presignedCleanup: PresignedUploadCleanupService?,
+        presignedMetrics: FlowWeftPresignedUploadMetricsPublisher?,
         outboxBacklogMetrics: OutboxBacklogMetricsPublisher?,
         outboxBacklogMetricsExecutor: Executor?,
     ): FileWeftWorkerScheduler = FileWeftWorkerScheduler(
@@ -105,8 +140,49 @@ class FileWeftWorkerSchedulingConfiguration {
             }
         },
         tasks?.let { worker -> { worker.processAvailable(properties.worker.taskBatchSize) } },
-        uploads?.let { service -> { service.cleanupExpired(properties.upload.resumableCleanupBatchSize) } },
+        if (uploads != null || presignedRecovery != null || presignedCleanup != null) {
+            {
+                if (properties.worker.processUploadCleanup) {
+                    uploads?.cleanupExpired(properties.upload.resumableCleanupBatchSize)
+                }
+                if (properties.worker.processPresignedUploadMaintenance) {
+                    runPresignedMaintenance(
+                        properties.upload.presignedMaintenanceBatchSize,
+                        presignedRecovery,
+                        presignedCleanup,
+                        presignedMetrics,
+                    )
+                }
+            }
+        } else {
+            null
+        },
     )
+
+    private fun runPresignedMaintenance(
+        limit: Int,
+        recovery: PresignedUploadRecoveryService?,
+        cleanup: PresignedUploadCleanupService?,
+        metrics: FlowWeftPresignedUploadMetricsPublisher?,
+    ) {
+        var firstFailure: Exception? = null
+        try {
+            recovery?.recover(limit)
+        } catch (failure: Exception) {
+            firstFailure = failure
+        }
+        try {
+            cleanup?.cleanup(limit)
+        } catch (failure: Exception) {
+            if (firstFailure == null) firstFailure = failure else firstFailure.addSuppressed(failure)
+        }
+        try {
+            metrics?.publish()
+        } catch (_: Exception) {
+            // Observability must not change durable maintenance semantics.
+        }
+        firstFailure?.let { throw it }
+    }
 
     private companion object {
         const val OUTBOX_BACKLOG_EXECUTOR_BEAN = "fileWeftOutboxBacklogMetricsExecutor"
@@ -132,7 +208,9 @@ class FileWeftWorkerScheduler(
     fun processAvailable() {
         if (properties.processOutbox) runSafely("outbox", processOutbox)
         if (properties.processTasks) runSafely("task", processTasks)
-        if (properties.processUploadCleanup) runSafely("resumable-upload-cleanup", cleanupUploads)
+        if (properties.processUploadCleanup || properties.processPresignedUploadMaintenance) {
+            runSafely("upload-maintenance", cleanupUploads)
+        }
     }
 
     private fun runSafely(role: String, processor: (() -> Unit)?) {

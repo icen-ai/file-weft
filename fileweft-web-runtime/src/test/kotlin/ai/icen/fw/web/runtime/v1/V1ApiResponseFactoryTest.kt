@@ -15,6 +15,13 @@ import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
 import ai.icen.fw.application.upload.ResumableUploadStateException
 import ai.icen.fw.application.upload.ResumableUploadUnavailableException
+import ai.icen.fw.application.upload.PresignedUploadStateException
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimConflictException
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimStateException
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimUnavailableException
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimConflictException
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimStateException
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimUnavailableException
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
 import ai.icen.fw.domain.workflow.WorkflowDecisionConflictException
@@ -62,6 +69,11 @@ class V1ApiResponseFactoryTest {
                 ApiErrorCodes.CONFLICT,
                 "Request conflicts with the current resource state.",
             ),
+            PresignedUploadStateException("private provider state") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
             WorkflowDecisionConflictException("private workflow state") to Triple(
                 409,
                 ApiErrorCodes.CONFLICT,
@@ -100,7 +112,37 @@ class V1ApiResponseFactoryTest {
                 ApiErrorCodes.FEATURE_UNAVAILABLE,
                 "The requested feature is unavailable.",
             ),
+            CompletedResumableUploadAssetClaimUnavailableException() to Triple(
+                503,
+                ApiErrorCodes.FEATURE_UNAVAILABLE,
+                "The requested feature is unavailable.",
+            ),
+            CompletedPresignedUploadAssetClaimUnavailableException() to Triple(
+                503,
+                ApiErrorCodes.FEATURE_UNAVAILABLE,
+                "The requested feature is unavailable.",
+            ),
             ResumableUploadStateException("private upload state detail") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            CompletedResumableUploadAssetClaimConflictException() to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            CompletedResumableUploadAssetClaimStateException("private claim binding detail") to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            CompletedPresignedUploadAssetClaimConflictException() to Triple(
+                409,
+                ApiErrorCodes.CONFLICT,
+                "Request conflicts with the current resource state.",
+            ),
+            CompletedPresignedUploadAssetClaimStateException("private provider claim detail") to Triple(
                 409,
                 ApiErrorCodes.CONFLICT,
                 "Request conflicts with the current resource state.",

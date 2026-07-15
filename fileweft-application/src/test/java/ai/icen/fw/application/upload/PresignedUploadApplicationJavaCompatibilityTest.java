@@ -24,6 +24,16 @@ class PresignedUploadApplicationJavaCompatibilityTest {
             Collections.singletonMap("business", "legal"),
             Duration.ofMinutes(5)
         );
+        StartPresignedUploadCommand transportStart = new StartPresignedUploadCommand(
+            "contract.txt",
+            7L,
+            "text/plain",
+            "sha256:239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5",
+            "md5",
+            "CY9rzUYh03PK3k6DJie09g==",
+            Collections.singletonMap("business", "legal"),
+            Duration.ofMinutes(5)
+        );
         CompletePresignedUploadCommand complete = new CompletePresignedUploadCommand(new Identifier("session-1"));
         CompletePresignedUploadAssetCommand claim = new CompletePresignedUploadAssetCommand(
             new Identifier("session-1"), "finalize-1"
@@ -45,6 +55,7 @@ class PresignedUploadApplicationJavaCompatibilityTest {
         );
 
         assertEquals("contract.txt", start.getFileName());
+        assertEquals("md5", transportStart.getChecksum().getAlgorithm());
         assertEquals("session-1", complete.getSessionId().getValue());
         assertEquals("session-1", claim.getUploadId().getValue());
         assertEquals("file-object-1", claimResult.getFileObjectId().getValue());

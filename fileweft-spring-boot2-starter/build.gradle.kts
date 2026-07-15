@@ -27,6 +27,7 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.spring.boot2.test)
+    testImplementation(libs.spring.boot2.starter.test)
     testImplementation(libs.spring.boot2.starter.jdbc)
     testImplementation(libs.assertj.core)
     testCompileOnly(libs.flyway.core.boot2)

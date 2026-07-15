@@ -1,9 +1,14 @@
 package ai.icen.fw.web.spring.boot2
 
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.application.upload.PresignedUploadService
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimService
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimService
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.upload.ResumableUploadApiFacade
+import ai.icen.fw.web.runtime.v1.upload.PresignedUploadApiFacade
+import ai.icen.fw.web.runtime.v1.document.CompletedUploadDocumentApiFacade
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -21,6 +26,14 @@ import org.springframework.web.bind.annotation.RestController
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 class FileWeftWebBoot2ResumableUploadAutoConfiguration {
     @Bean
+    @ConditionalOnBean(value = [PresignedUploadService::class, CompletedPresignedUploadAssetClaimService::class])
+    @ConditionalOnMissingBean(PresignedUploadApiFacade::class)
+    fun flowWeftV1PresignedUploadApiFacade(
+        uploads: PresignedUploadService,
+        claims: CompletedPresignedUploadAssetClaimService,
+    ): PresignedUploadApiFacade = PresignedUploadApiFacade(uploads, claims)
+
+    @Bean
     @ConditionalOnBean(ResumableUploadService::class)
     @ConditionalOnMissingBean(ResumableUploadApiFacade::class)
     fun fileWeftV1ResumableUploadApiFacade(
@@ -28,9 +41,44 @@ class FileWeftWebBoot2ResumableUploadAutoConfiguration {
     ): ResumableUploadApiFacade = ResumableUploadApiFacade(uploads)
 
     @Bean
-    @ConditionalOnBean(ResumableUploadApiFacade::class)
+    @ConditionalOnBean(CompletedResumableUploadAssetClaimService::class)
+    @ConditionalOnMissingBean(CompletedUploadDocumentApiFacade::class)
+    fun fileWeftV1CompletedUploadDocumentApiFacade(
+        claims: CompletedResumableUploadAssetClaimService,
+    ): CompletedUploadDocumentApiFacade = CompletedUploadDocumentApiFacade(claims)
+
+    @Bean
     @ConditionalOnMissingBean(V1ApiResponseFactory::class)
     fun fileWeftV1ResumableUploadApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
+
+    @Bean
+    @ConditionalOnBean(PresignedUploadService::class)
+    @ConditionalOnMissingBean(V1ApiResponseFactory::class)
+    fun flowWeftV1PresignedUploadApiResponseFactory(): V1ApiResponseFactory = V1ApiResponseFactory()
+
+    @Bean
+    @ConditionalOnBean(PresignedUploadApiFacade::class)
+    @ConditionalOnMissingBean(V1PresignedUploadController::class)
+    fun flowWeftV1PresignedUploadController(
+        uploads: PresignedUploadApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContexts: ObjectProvider<TraceContextProvider>,
+    ): V1PresignedUploadController = V1PresignedUploadController(
+        uploads = uploads,
+        responses = responses,
+        traceContextProvider = traceContexts.getIfUnique(),
+    )
+
+    @Bean
+    @ConditionalOnBean(PresignedUploadApiFacade::class)
+    @ConditionalOnMissingBean(V1PresignedUploadRequestFailureHandler::class)
+    fun flowWeftV1PresignedUploadRequestFailureHandler(
+        responses: V1ApiResponseFactory,
+        traceContexts: ObjectProvider<TraceContextProvider>,
+    ): V1PresignedUploadRequestFailureHandler = V1PresignedUploadRequestFailureHandler(
+        responses = responses,
+        traceContextProvider = traceContexts.getIfUnique(),
+    )
 
     @Bean
     @ConditionalOnBean(ResumableUploadApiFacade::class)
@@ -41,6 +89,19 @@ class FileWeftWebBoot2ResumableUploadAutoConfiguration {
         traceContextProviders: ObjectProvider<TraceContextProvider>,
     ): V1ResumableUploadController = V1ResumableUploadController(
         uploads = uploads,
+        responses = responses,
+        traceContextProvider = traceContextProviders.getIfUnique(),
+    )
+
+    @Bean
+    @ConditionalOnBean(CompletedUploadDocumentApiFacade::class)
+    @ConditionalOnMissingBean(CompletedUploadDocumentV1Controller::class)
+    fun fileWeftV1CompletedUploadDocumentController(
+        claims: CompletedUploadDocumentApiFacade,
+        responses: V1ApiResponseFactory,
+        traceContextProviders: ObjectProvider<TraceContextProvider>,
+    ): CompletedUploadDocumentV1Controller = CompletedUploadDocumentV1Controller(
+        claims = claims,
         responses = responses,
         traceContextProvider = traceContextProviders.getIfUnique(),
     )

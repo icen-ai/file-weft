@@ -63,6 +63,7 @@ import ai.icen.fw.application.metadata.DocumentMetadataService
 import ai.icen.fw.application.metadata.DocumentMetadataWriteService
 import ai.icen.fw.application.metadata.MetadataSchemaQueryService
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimService
 import ai.icen.fw.application.upload.ResumableUploadSessionRepository
 import ai.icen.fw.application.outbox.OutboxWorker
 import ai.icen.fw.application.outbox.OutboxBacklogMetricsPublisher
@@ -758,6 +759,7 @@ class FileWeftAutoConfigurationTest {
                 "documentMetadataService",
                 "documentMetadataWriteService",
                 "resumableUploadService",
+                "completedUploadAssetClaimService",
                 "reviewWorkflowService",
                 "doctorService",
                 "metadataDoctor",
@@ -765,6 +767,7 @@ class FileWeftAutoConfigurationTest {
             ).forEach { beanName -> assertTrue(context.containsBean(beanName), beanName) }
 
             assertEquals(1, context.getBeansOfType(ResumableUploadService::class.java).size)
+            assertEquals(1, context.getBeansOfType(CompletedResumableUploadAssetClaimService::class.java).size)
             assertEquals(1, context.getBeansOfType(MetadataSchemaRegistry::class.java).size)
             assertEquals(1, context.getBeansOfType(MetadataProcessor::class.java).size)
             assertEquals(1, context.getBeansOfType(MetadataSchemaQueryService::class.java).size)
