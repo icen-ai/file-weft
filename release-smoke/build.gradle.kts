@@ -12,6 +12,54 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7" apply false
 }
 
+data class ReleasePublicationInventoryEntry(
+    val artifactId: String,
+    val artifactKind: String,
+    val lineage: String,
+    val jvmBaseline: Int,
+)
+
+fun readPublicationInventory(inventoryFile: File): List<ReleasePublicationInventoryEntry> {
+    require(inventoryFile.isFile && inventoryFile.length() > 0L) {
+        "Publication inventory is missing or empty: ${inventoryFile.absolutePath}"
+    }
+    val normalized = inventoryFile.readText(Charsets.UTF_8)
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+    val rawLines = normalized.split('\n')
+    val lines = if (rawLines.lastOrNull().isNullOrEmpty()) rawLines.dropLast(1) else rawLines
+    val header = "artifactId\tartifactKind\tlineage\tjvmBaseline"
+    require(lines.firstOrNull() == header) {
+        "Publication inventory must start with the exact TSV header '$header'."
+    }
+    val entries = lines.drop(1).mapIndexed { index, line ->
+        val lineNumber = index + 2
+        val columns = line.split('\t', limit = 5)
+        require(columns.size == 4 && columns.all { column -> column.isNotEmpty() && column == column.trim() }) {
+            "Publication inventory line $lineNumber must contain exactly four non-padded TSV fields."
+        }
+        val artifactId = columns[0]
+        val jvmBaseline = columns[3].toIntOrNull()
+        require(artifactId.length in 3..80 && Regex("^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$").matches(artifactId)) {
+            "Publication inventory line $lineNumber has an invalid artifact ID '$artifactId'."
+        }
+        require(columns[1] in setOf("jar", "platform")) {
+            "Publication inventory line $lineNumber has unsupported artifact kind '${columns[1]}'."
+        }
+        require(columns[2] in setOf("legacy-physical", "new-physical")) {
+            "Publication inventory line $lineNumber has unsupported lineage '${columns[2]}'."
+        }
+        require(jvmBaseline != null && jvmBaseline in setOf(8, 17)) {
+            "Publication inventory line $lineNumber has unsupported JVM baseline '${columns[3]}'."
+        }
+        ReleasePublicationInventoryEntry(artifactId, columns[1], columns[2], jvmBaseline)
+    }
+    require(entries.isNotEmpty() && entries.size == entries.map { entry -> entry.artifactId }.distinct().size) {
+        "Publication inventory must contain a non-empty unique artifact ID set."
+    }
+    return entries
+}
+
 version = providers.gradleProperty("fileweftVersion").orNull
     ?: throw GradleException("-PfileweftVersion is required for release consumer smoke testing.")
 
@@ -23,27 +71,9 @@ val slf4jBoot2Version = "1.7.36"
 val flywayBoot2Version = "8.5.13"
 val flywayBoot3Version = "11.7.2"
 
-val expectedFileWeftModules = setOf(
-    "fileweft-core",
-    "fileweft-spi",
-    "fileweft-domain",
-    "fileweft-application",
-    "fileweft-metadata-api",
-    "fileweft-metadata-runtime",
-    "fileweft-web-api",
-    "fileweft-web-runtime",
-    "fileweft-web-spring-boot2-starter",
-    "fileweft-web-spring-boot3-starter",
-    "fileweft-persistence",
-    "fileweft-runtime",
-    "fileweft-spring-boot2-starter",
-    "fileweft-spring-boot3-starter",
-    "fileweft-adapter",
-    "fileweft-adapter-micrometer",
-    "fileweft-adapter-s3",
-    "fileweft-agent",
-    "fileweft-testkit",
-)
+val publicationInventory = readPublicationInventory(rootDir.resolve("../gradle/publication-inventory.tsv"))
+val publishedJarInventory = publicationInventory.filter { entry -> entry.artifactKind == "jar" }
+val expectedPublishedModules = publishedJarInventory.map { entry -> entry.artifactId }.toSet()
 val releaseInventory = configurations.create("releaseInventory") {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -56,7 +86,7 @@ val boot3UnmanagedRuntime = configurations.create("boot3UnmanagedRuntime") {
     isCanBeResolved = true
 }
 dependencies {
-    expectedFileWeftModules.forEach { moduleName ->
+    expectedPublishedModules.forEach { moduleName ->
         add(releaseInventory.name, "ai.icen:$moduleName:${project.version}")
     }
     add(boot3UnmanagedRuntime.name, "ai.icen:fileweft-spring-boot3-starter:${project.version}")
@@ -196,20 +226,20 @@ project(":library-consumer") {
 
 val verifyReleaseInventory = tasks.register("verifyReleaseInventory") {
     group = "verification"
-    description = "Resolves the exact public FileWeft module inventory from the configured Maven repository."
-    inputs.property("expectedFileWeftModules", expectedFileWeftModules.sorted())
+    description = "Resolves the exact physical publication inventory from the configured Maven repository."
+    inputs.property("expectedPublishedModules", expectedPublishedModules.sorted())
     inputs.files(releaseInventory)
 
     doLast {
-        val resolvedFileWeftModules = releaseInventory.resolvedConfiguration.resolvedArtifacts
+        val resolvedPublishedModules = releaseInventory.resolvedConfiguration.resolvedArtifacts
             .map { artifact -> artifact.moduleVersion.id }
             .filter { component -> component.group == "ai.icen" && component.version == project.version.toString() }
             .map { component -> component.name }
             .toSet()
-        require(resolvedFileWeftModules == expectedFileWeftModules) {
-            "Resolved FileWeft inventory differs from the release contract; " +
-                "missing=${expectedFileWeftModules - resolvedFileWeftModules}, " +
-                "unexpected=${resolvedFileWeftModules - expectedFileWeftModules}."
+        require(resolvedPublishedModules == expectedPublishedModules) {
+            "Resolved publication inventory differs from the release contract; " +
+                "missing=${expectedPublishedModules - resolvedPublishedModules}, " +
+                "unexpected=${resolvedPublishedModules - expectedPublishedModules}."
         }
     }
 }

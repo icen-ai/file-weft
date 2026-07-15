@@ -8,6 +8,8 @@ import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.api.tasks.bundling.Zip
+import ai.icen.fw.buildlogic.PublicationInventoryVerifier
+import ai.icen.fw.buildlogic.VerifyPublicationInventoryTask
 import ai.icen.fw.buildlogic.ReleaseSbomExtension
 import ai.icen.fw.buildlogic.TestTaskConcurrencyService
 import java.util.Locale
@@ -23,40 +25,12 @@ plugins {
 group = "ai.icen"
 version = providers.gradleProperty("fileweftVersion").orElse("1.0.0-SNAPSHOT").get()
 
-val publishableModuleNames = setOf(
-    "fileweft-core",
-    "fileweft-spi",
-    "fileweft-domain",
-    "fileweft-application",
-    "fileweft-metadata-api",
-    "fileweft-metadata-runtime",
-    "fileweft-web-api",
-    "fileweft-web-runtime",
-    "fileweft-web-spring-boot2-starter",
-    "fileweft-web-spring-boot3-starter",
-    "fileweft-persistence",
-    "fileweft-runtime",
-    "fileweft-spring-boot2-starter",
-    "fileweft-spring-boot3-starter",
-    "fileweft-adapter",
-    "fileweft-adapter-micrometer",
-    "fileweft-adapter-s3",
-    "fileweft-agent",
-    "fileweft-testkit",
-    "flowweft-workflow-api",
-    "flowweft-workflow-spi",
-    "flowweft-workflow-domain",
-    "flowweft-workflow-runtime",
-    "flowweft-workflow-persistence-jdbc",
-    "flowweft-migration-cli",
-    "flowweft-agent-api",
-    "flowweft-agent-runtime",
-    "flowweft-retrieval-api",
-    "flowweft-retrieval-spi",
-    "flowweft-retrieval-runtime",
-    "flowweft-adapter-oss",
-    "flowweft-adapter-dify",
-)
+val publicationInventoryFile = layout.projectDirectory.file("gradle/publication-inventory.tsv").asFile
+val publicationInventory = PublicationInventoryVerifier.parse(publicationInventoryFile)
+val publishableModuleNames = publicationInventory
+    .filter { entry -> entry.artifactKind == PublicationInventoryVerifier.JAR_KIND }
+    .map { entry -> entry.artifactId }
+    .toSet()
 val releaseSbomModuleNames = publishableModuleNames.sorted()
 extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {
     publishableModuleNames.set(releaseSbomModuleNames)
@@ -73,6 +47,17 @@ val withdrawnMavenGroup = listOf("com", "fileweft").joinToString(".")
 val withdrawnJvmPath = listOf("com", "fileweft").joinToString("/")
 val projectLicenseFile = layout.projectDirectory.file("LICENSE")
 val projectNoticeFile = layout.projectDirectory.file("NOTICE")
+val verifyPublicationInventory = tasks.register<VerifyPublicationInventoryTask>("verifyPublicationInventory") {
+    group = "verification"
+    description = "Verifies the single checked-in physical FlowWeft publication inventory."
+    inventoryFile.set(layout.projectDirectory.file("gradle/publication-inventory.tsv"))
+    moduleBuildFiles.from(
+        publicationInventory.map { entry ->
+            layout.projectDirectory.file("${entry.artifactId}/build.gradle.kts")
+        },
+    )
+    repositoryDirectory.set(layout.projectDirectory)
+}
 val releaseNotesFile = layout.projectDirectory.file(
     "docs/releases/${releaseVersion.removeSuffix("-SNAPSHOT")}.md",
 )
@@ -936,7 +921,7 @@ val cleanRemoteCnbConsumerGradleHome = tasks.register<Delete>("cleanRemoteCnbCon
 val remoteCnbConsumerSmoke = tasks.register<Exec>("remoteCnbConsumerSmoke") {
     group = "verification"
     description = "Cold-resolves all public modules from CNB Maven and compiles independent consumers."
-    dependsOn(cleanRemoteCnbConsumerGradleHome)
+    dependsOn(cleanRemoteCnbConsumerGradleHome, verifyPublicationInventory)
     workingDir(rootProject.projectDir)
     environment(
         "GRADLE_USER_HOME",
@@ -1038,6 +1023,7 @@ val releaseQualityCheck = tasks.register("releaseQualityCheck") {
     description = "Runs fast architecture, build-logic, documentation, migration, partition, and credential checks."
     dependsOn(
         verifyFileWeftBuildLogic,
+        verifyPublicationInventory,
         "verifyFileWeftArchitecture",
         "verifyFileWeftWebApiDependencies",
         verifyDocsSite,
@@ -1328,14 +1314,15 @@ gradle.projectsEvaluated {
     }
     localReleasePublishTasks.forEach { taskProvider ->
         taskProvider.configure {
-            dependsOn(cleanReleaseRepository)
+            dependsOn(cleanReleaseRepository, verifyPublicationInventory)
         }
     }
     publishReleaseRepository.configure {
-        dependsOn(localReleasePublishTasks)
+        dependsOn(verifyPublicationInventory, localReleasePublishTasks)
     }
     installReleaseToMavenLocal.configure {
         dependsOn(
+            verifyPublicationInventory,
             publishedProjects.map { project ->
                 project.tasks.named("publishMavenJavaPublicationToMavenLocal")
             },
