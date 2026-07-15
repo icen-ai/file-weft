@@ -1,3 +1,6 @@
 # Keep migration and immutable-release evidence byte-stable across platforms.
 fileweft-persistence/src/main/resources/ai/icen/fw/db/migration/**/*.sql text eol=lf
 .ci/fixtures/*.sha256 text eol=lf
+gradle/compatibility/*.tsv text eol=lf
+gradle/compatibility/**/*.api text eol=lf
+gradle/compatibility/**/*.exports text eol=lf
