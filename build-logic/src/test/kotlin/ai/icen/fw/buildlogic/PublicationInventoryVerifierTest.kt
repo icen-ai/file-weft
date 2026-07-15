@@ -15,8 +15,29 @@ class PublicationInventoryVerifierTest {
         withCheckedInInventoryFixture { inventoryFile, repositoryRoot, entries ->
             val verified = PublicationInventoryVerifier(inventoryFile, repositoryRoot).verify()
             assertEquals(entries, verified)
+            assertEquals(34, verified.size)
             assertEquals(19, verified.count { entry -> entry.lineage == PublicationInventoryVerifier.LEGACY_PHYSICAL })
+            assertEquals(15, verified.count { entry -> entry.lineage == PublicationInventoryVerifier.NEW_PHYSICAL })
             assertTrue(verified.all { entry -> entry.artifactKind == PublicationInventoryVerifier.JAR_KIND })
+            val artifacts = verified.associateBy { entry -> entry.artifactId }
+            assertEquals(
+                PublicationInventoryEntry(
+                    artifactId = "flowweft-agent-testkit",
+                    artifactKind = PublicationInventoryVerifier.JAR_KIND,
+                    lineage = PublicationInventoryVerifier.NEW_PHYSICAL,
+                    jvmBaseline = 8,
+                ),
+                artifacts["flowweft-agent-testkit"],
+            )
+            assertEquals(
+                PublicationInventoryEntry(
+                    artifactId = "flowweft-retrieval-testkit",
+                    artifactKind = PublicationInventoryVerifier.JAR_KIND,
+                    lineage = PublicationInventoryVerifier.NEW_PHYSICAL,
+                    jvmBaseline = 8,
+                ),
+                artifacts["flowweft-retrieval-testkit"],
+            )
         }
     }
 
