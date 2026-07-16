@@ -34,6 +34,7 @@ class WorkflowRuntimeAction private constructor(code: String) {
         @JvmField val RETRY_EFFECT = WorkflowRuntimeAction("retry-effect")
         @JvmField val RECONCILE_EFFECT = WorkflowRuntimeAction("reconcile-effect")
         @JvmField val RESOLVE_EFFECT_INCIDENT = WorkflowRuntimeAction("resolve-effect-incident")
+        @JvmField val EVALUATE_BUSINESS_TIME = WorkflowRuntimeAction("evaluate-business-time")
 
         @JvmStatic fun of(code: String): WorkflowRuntimeAction = builtIns.firstOrNull { it.code == code }
             ?: WorkflowRuntimeAction(code)
@@ -61,6 +62,7 @@ class WorkflowRuntimeAction private constructor(code: String) {
             RETRY_EFFECT,
             RECONCILE_EFFECT,
             RESOLVE_EFFECT_INCIDENT,
+            EVALUATE_BUSINESS_TIME,
         )
     }
 }
