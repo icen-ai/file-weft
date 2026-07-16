@@ -28,6 +28,7 @@ flowweft-agent-observability	jar	new-physical	8
 flowweft-agent-workflow-tools	jar	new-physical	8
 flowweft-agent-adapter-http	jar	new-physical	8
 flowweft-agent-adapter-http-okhttp	jar	new-physical	8
+flowweft-agent-adapter-http-runtime	jar	new-physical	8
 flowweft-agent-testkit	jar	new-physical	8
 flowweft-workflow-api	jar	new-physical	8
 flowweft-workflow-spi	jar	new-physical	8
