@@ -67,4 +67,5 @@ include(
     ":fileweft-adapter-opentelemetry",
     ":fileweft-sample-host",
     ":fileweft-dev",
+    ":flowweft-agent-persistence-jdbc",
 )

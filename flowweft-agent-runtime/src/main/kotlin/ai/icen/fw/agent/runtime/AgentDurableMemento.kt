@@ -13,6 +13,7 @@ import java.util.Arrays
 
 private const val AGENT_STATE_MAX_MEMENTO_BYTES = 64 * 1_024 * 1_024
 private const val AGENT_EVENT_MAX_MEMENTO_BYTES = 24 * 1_024 * 1_024
+private const val AGENT_OPERATION_MAX_MEMENTO_BYTES = 32 * 1_024 * 1_024
 
 /** Immutable digest-bound state bytes suitable for a BLOB plus digest column. */
 class AgentDurableStateMemento private constructor(
@@ -70,6 +71,37 @@ class AgentRunEventMemento private constructor(
 
         @JvmStatic
         fun restore(payload: ByteArray, digest: String): AgentRunEventMemento = AgentRunEventMemento(payload, digest)
+    }
+}
+
+/** Immutable digest-bound pending-operation evidence retained after a run clears active work. */
+class AgentPendingOperationMemento private constructor(
+    payload: ByteArray,
+    digest: String?,
+) {
+    private val payloadSnapshot: ByteArray = boundedMementoBytes(
+        payload,
+        AGENT_OPERATION_MAX_MEMENTO_BYTES,
+        "Agent pending-operation memento is too large.",
+    )
+    val digest: String = digest?.let { expected ->
+        requireRuntimeDigest(expected, "Agent pending-operation memento digest is invalid.")
+        require(runtimeSha256(payloadSnapshot) == expected) {
+            "Agent pending-operation memento digest does not match its bytes."
+        }
+        expected
+    } ?: runtimeSha256(payloadSnapshot)
+
+    val payload: ByteArray
+        get() = payloadSnapshot.copyOf()
+
+    companion object {
+        internal fun create(payload: ByteArray): AgentPendingOperationMemento =
+            AgentPendingOperationMemento(payload, null)
+
+        @JvmStatic
+        fun restore(payload: ByteArray, digest: String): AgentPendingOperationMemento =
+            AgentPendingOperationMemento(payload, digest)
     }
 }
 
@@ -295,6 +327,7 @@ internal const val MAX_MEMENTO_ITEMS = 4_096
 internal const val MAX_MEMENTO_NESTING = 16
 internal const val AGENT_STATE_MEMENTO_MAX_BYTES = AGENT_STATE_MAX_MEMENTO_BYTES
 internal const val AGENT_EVENT_MEMENTO_MAX_BYTES = AGENT_EVENT_MAX_MEMENTO_BYTES
+internal const val AGENT_OPERATION_MEMENTO_MAX_BYTES = AGENT_OPERATION_MAX_MEMENTO_BYTES
 internal const val AGENT_MEMENTO_FORMAT_VERSION = 2
 private const val AGENT_MEMENTO_MAGIC_BYTES = 8
 private const val AGENT_MEMENTO_FRAME_HEADER_BYTES = 16

@@ -75,6 +75,28 @@ class AgentDurableMementoCodec @JvmOverloads constructor(
         AGENT_EVENT_MEMENTO_MAX_BYTES,
     ) { _ -> readEvent() }
 
+    fun encodeOperation(operation: AgentPendingOperation): AgentPendingOperationMemento =
+        AgentPendingOperationMemento.create(
+            encodeAgentMementoFrame(OPERATION_MAGIC, AGENT_OPERATION_MEMENTO_MAX_BYTES) {
+                pendingOperation(operation)
+            },
+        )
+
+    @JvmOverloads
+    fun decodeOperation(
+        memento: AgentPendingOperationMemento,
+        cancellationToken: AgentCancellationToken = AgentCancellationToken.NONE,
+    ): AgentPendingOperation = decodeAgentMementoFrame(
+        memento.payload,
+        OPERATION_MAGIC,
+        AGENT_OPERATION_MEMENTO_MAX_BYTES,
+    ) { formatVersion ->
+        require(formatVersion == AGENT_MEMENTO_FORMAT_VERSION) {
+            "Agent pending-operation memento format version is unsupported."
+        }
+        pendingOperation(cancellationToken)
+    }
+
     private fun AgentMementoWriter.writeState(state: AgentDurableRunState) {
         identifier(state.runId)
         runContext(state.context)
@@ -1366,6 +1388,7 @@ class AgentDurableMementoCodec @JvmOverloads constructor(
     private companion object {
         val STATE_MAGIC: ByteArray = "FWAGSTAT".toByteArray(StandardCharsets.US_ASCII)
         val EVENT_MAGIC: ByteArray = "FWAGEVNT".toByteArray(StandardCharsets.US_ASCII)
+        val OPERATION_MAGIC: ByteArray = "FWAGOPER".toByteArray(StandardCharsets.US_ASCII)
 
         const val PENDING_MODEL_TAG = 1
         const val PENDING_TOOL_TAG = 2
