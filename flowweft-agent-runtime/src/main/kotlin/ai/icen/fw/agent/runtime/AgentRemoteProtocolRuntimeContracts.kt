@@ -4,6 +4,7 @@ import ai.icen.fw.agent.api.AgentRemoteAuthorizationProvider
 import ai.icen.fw.agent.api.AgentRemoteOperationKind
 import ai.icen.fw.agent.api.AgentRemotePeerProfile
 import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchRequest
+import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchFailure
 import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchResult
 import ai.icen.fw.agent.api.AgentRemoteProtocolInvocationRequest
 import ai.icen.fw.agent.api.AgentRemoteProtocolKind
@@ -294,6 +295,26 @@ class AgentRemoteProtocolInvocationState private constructor(
             lastDispatchResult = null,
             authorizationRevision = authorizationRevision,
             failureCode = null,
+            updatedAt = transitionTime(atTime),
+        )
+    }
+
+    fun operationRejected(
+        failure: AgentRemoteProtocolDispatchFailure,
+        atTime: Long,
+    ): AgentRemoteProtocolInvocationState {
+        val dispatch = requireNotNull(lastDispatch) {
+            "Agent remote pre-operation rejection lacks its checkpointed dispatch."
+        }
+        require(status == AgentRemoteProtocolExecutionStatus.DISPATCHING &&
+            !failure.operationFrameMayHaveReachedPeer && failure.isBoundTo(dispatch)
+        ) { "Agent remote pre-operation rejection is uncertain or belongs to another dispatch." }
+        return next(
+            status = AgentRemoteProtocolExecutionStatus.FAILED,
+            failureCode = requireRuntimeCode(
+                failure.safeFailureCode,
+                "Agent remote pre-operation rejection code is invalid.",
+            ),
             updatedAt = transitionTime(atTime),
         )
     }

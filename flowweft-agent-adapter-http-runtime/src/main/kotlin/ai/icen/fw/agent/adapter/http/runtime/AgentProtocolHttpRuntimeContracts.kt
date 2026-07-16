@@ -4,6 +4,7 @@ import ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpExchangeEvidence
 import ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTransportOutcome
 import ai.icen.fw.agent.api.AgentRemotePeerObservation
 import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchRequest
+import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchFailure
 import ai.icen.fw.agent.api.AgentRemoteProtocolKind
 import ai.icen.fw.agent.api.AgentRemoteTransportReceipt
 import ai.icen.fw.agent.api.ProviderId
@@ -291,12 +292,37 @@ enum class AgentProtocolHttpRuntimeFailurePhase {
     SESSION_PERSISTENCE,
 }
 
-class AgentProtocolHttpRuntimeException(
+class AgentProtocolHttpRuntimeException private constructor(
     code: String,
     val phase: AgentProtocolHttpRuntimeFailurePhase,
     val requestMayHaveReachedPeer: Boolean,
-) : RuntimeException("Agent protocol HTTP runtime failed: ${requireRuntimeCode(code)}") {
+    private val dispatchRequestId: Identifier?,
+    private val dispatchBindingDigest: String?,
+) : RuntimeException("Agent protocol HTTP runtime failed: ${requireRuntimeCode(code)}"),
+    AgentRemoteProtocolDispatchFailure {
     val code: String = requireRuntimeCode(code)
+
+    constructor(
+        code: String,
+        phase: AgentProtocolHttpRuntimeFailurePhase,
+        requestMayHaveReachedPeer: Boolean,
+    ) : this(code, phase, requestMayHaveReachedPeer, null, null)
+
+    constructor(
+        request: AgentRemoteProtocolDispatchRequest,
+        code: String,
+        phase: AgentProtocolHttpRuntimeFailurePhase,
+        requestMayHaveReachedPeer: Boolean,
+    ) : this(code, phase, requestMayHaveReachedPeer, request.requestId, request.bindingDigest)
+
+    override val safeFailureCode: String
+        get() = code
+
+    override val operationFrameMayHaveReachedPeer: Boolean
+        get() = requestMayHaveReachedPeer
+
+    override fun isBoundTo(request: AgentRemoteProtocolDispatchRequest): Boolean =
+        dispatchRequestId == request.requestId && dispatchBindingDigest == request.bindingDigest
 
     override fun toString(): String =
         "AgentProtocolHttpRuntimeException(code=$code, phase=$phase, peerData=<redacted>)"

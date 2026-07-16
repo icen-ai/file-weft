@@ -14,6 +14,7 @@ import ai.icen.fw.agent.api.AgentRemoteNetworkResolver
 import ai.icen.fw.agent.api.AgentRemotePeerProfile
 import ai.icen.fw.agent.api.AgentRemoteProtocolBaselines
 import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchRequest
+import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchFailure
 import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchResult
 import ai.icen.fw.agent.api.AgentRemoteProtocolInvocationRequest
 import ai.icen.fw.agent.api.AgentRemoteProtocolKind
@@ -24,7 +25,9 @@ import ai.icen.fw.agent.api.AgentRunContext
 import ai.icen.fw.core.id.Identifier
 import java.net.URI
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.ExecutionException
 
 /**
  * Provider-neutral MCP/A2A security coordinator.
@@ -495,12 +498,17 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
             val call = provider.start(dispatchRequest)
             call.completion().whenComplete { result, providerFailure ->
                 if (providerFailure != null || result == null) {
-                    completeOutcomeUnknown(
-                        checkpointed,
-                        "protocol.dispatch-outcome-unknown",
-                        dispatchRequest,
-                        output,
-                    )
+                    val rejection = providerFailure?.let { preOperationRejection(it, dispatchRequest) }
+                    if (rejection == null) {
+                        completeOutcomeUnknown(
+                            checkpointed,
+                            "protocol.dispatch-outcome-unknown",
+                            dispatchRequest,
+                            output,
+                        )
+                    } else {
+                        completeOperationRejected(checkpointed, rejection, output)
+                    }
                 } else {
                     processDispatchResult(checkpointed, result, output)
                 }
@@ -516,16 +524,22 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
                     output,
                 )
             }
-        } catch (_: RuntimeException) {
+        } catch (failure: RuntimeException) {
             if (dispatching == null) {
                 completeFailedBeforeDispatch(state, "protocol.dispatch-checkpoint-failed", output)
             } else {
-                completeOutcomeUnknown(
-                    dispatching,
-                    "protocol.dispatch-outcome-unknown",
-                    requireNotNull(dispatch),
-                    output,
-                )
+                val checkpointedDispatch = requireNotNull(dispatch)
+                val rejection = preOperationRejection(failure, checkpointedDispatch)
+                if (rejection == null) {
+                    completeOutcomeUnknown(
+                        dispatching,
+                        "protocol.dispatch-outcome-unknown",
+                        checkpointedDispatch,
+                        output,
+                    )
+                } else {
+                    completeOperationRejected(dispatching, rejection, output)
+                }
             }
         }
     }
@@ -810,6 +824,18 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
         }
     }
 
+    private fun completeOperationRejected(
+        state: AgentRemoteProtocolInvocationState,
+        failure: AgentRemoteProtocolDispatchFailure,
+        output: CompletableFuture<AgentRemoteProtocolInvocationState>,
+    ) {
+        try {
+            output.complete(commit(state, state.operationRejected(failure, stateTime(state))))
+        } catch (_: RuntimeException) {
+            output.completeExceptionally(AgentRemoteProtocolRuntimeException("protocol.journal-conflict"))
+        }
+    }
+
     private fun completeReconciliationUnavailable(
         state: AgentRemoteProtocolInvocationState,
         output: CompletableFuture<AgentRemoteProtocolInvocationState>,
@@ -958,6 +984,18 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
             .add(dispatch.bindingDigest)
             .add(requireRuntimeCode(code, "Agent remote unknown outcome code is invalid."))
             .finish()
+
+    private fun preOperationRejection(
+        failure: Throwable,
+        dispatch: AgentRemoteProtocolDispatchRequest,
+    ): AgentRemoteProtocolDispatchFailure? {
+        var current: Throwable = failure
+        while ((current is CompletionException || current is ExecutionException) && current.cause != null) {
+            current = requireNotNull(current.cause)
+        }
+        val classified = current as? AgentRemoteProtocolDispatchFailure ?: return null
+        return if (!classified.operationFrameMayHaveReachedPeer && classified.isBoundTo(dispatch)) classified else null
+    }
 
     private class HopPreparation(
         val networkRequest: AgentRemoteNetworkResolutionRequest,

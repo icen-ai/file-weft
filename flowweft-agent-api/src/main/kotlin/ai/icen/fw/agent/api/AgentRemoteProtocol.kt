@@ -1411,6 +1411,22 @@ interface AgentRemoteProtocolCall {
 }
 
 /**
+ * Optional, fail-closed classification carried by a provider exception.
+ *
+ * Implementations may report [operationFrameMayHaveReachedPeer] as `false` only when they can
+ * prove that the exact tool, message or cancellation operation frame was never handed to the
+ * transport. Discovery, descriptor and Agent Card reads may already have happened. An unbound
+ * failure, a mismatched request, or any uncertainty is treated as an unknown remote outcome.
+ */
+interface AgentRemoteProtocolDispatchFailure {
+    val safeFailureCode: String
+
+    val operationFrameMayHaveReachedPeer: Boolean
+
+    fun isBoundTo(request: AgentRemoteProtocolDispatchRequest): Boolean
+}
+
+/**
  * One-hop protocol adapter. It must connect only to [AgentRemoteNetworkResolution], consume only
  * [AgentRemoteCredentialLease], never resolve/follow redirects itself, and never expose secrets.
  * Before emitting a tool/message/cancellation frame it must freshly negotiate and validate the

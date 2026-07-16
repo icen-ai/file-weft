@@ -24,6 +24,7 @@ import ai.icen.fw.agent.api.AgentRemoteProtocolBaselines
 import ai.icen.fw.agent.api.AgentRemoteProtocolBindingId
 import ai.icen.fw.agent.api.AgentRemoteProtocolCapabilities
 import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchRequest
+import ai.icen.fw.agent.api.AgentRemoteProtocolDispatchFailure
 import ai.icen.fw.agent.api.AgentRemoteProtocolInvocationRequest
 import ai.icen.fw.agent.api.AgentRemoteProtocolKind
 import ai.icen.fw.agent.api.AgentRemoteProtocolPayload
@@ -144,9 +145,12 @@ class AgentProtocolHttpRuntimeProviderTest {
         }
 
         val classified = assertIs<AgentProtocolHttpRuntimeException>(failure)
+        val generic = assertIs<AgentRemoteProtocolDispatchFailure>(classified)
         assertEquals(AgentProtocolHttpRuntimeFailurePhase.TRANSPORT_BEFORE_REQUEST, classified.phase)
         assertFalse(classified.requestMayHaveReachedPeer)
         assertEquals("protocol.http.rejected-before-request", classified.code)
+        assertFalse(generic.operationFrameMayHaveReachedPeer)
+        assertTrue(generic.isBoundTo(fixture.dispatch))
     }
 
     @Test

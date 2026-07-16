@@ -910,7 +910,7 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
             } else {
                 code
             }
-            output.completeExceptionally(AgentProtocolHttpRuntimeException(normalized, phase, mayHaveReached))
+            output.completeExceptionally(AgentProtocolHttpRuntimeException(request, normalized, phase, mayHaveReached))
             diagnostic(
                 if (mayHaveReached) AgentProtocolHttpRuntimeDiagnosticOutcome.OUTCOME_UNKNOWN
                 else AgentProtocolHttpRuntimeDiagnosticOutcome.REJECTED_BEFORE_REQUEST,
