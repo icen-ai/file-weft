@@ -1,4 +1,4 @@
--- FlowWeft cycle-guard schema contract. It is not auto-run; the owning deployment assigns a migration version.
+-- FlowWeft cycle-guard schema contract. It is not auto-run. The owning deployment assigns a migration version.
 CREATE TABLE fw_wf_cycle_guard_total (
     id varbinary(64) NOT NULL,
     tenant_id varbinary(512) NOT NULL,
