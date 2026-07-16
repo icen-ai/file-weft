@@ -35,6 +35,7 @@ flowweft-workflow-domain	jar	new-physical	8
 flowweft-workflow-runtime	jar	new-physical	8
 flowweft-workflow-persistence-jdbc	jar	new-physical	8
 flowweft-workflow-web-api	jar	new-physical	8
+flowweft-workflow-web-runtime	jar	new-physical	8
 flowweft-migration-cli	jar	new-physical	8
 flowweft-adapter-dify	jar	new-physical	8
 flowweft-adapter-oss	jar	new-physical	8
