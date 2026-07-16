@@ -7,6 +7,8 @@ import type {
   ConsoleWorkflowDefinitionPage,
   ConsoleWorkflowHistoryPage,
   ConsoleWorkflowInstance,
+  ConsoleWorkflowMutationFormProtection,
+  ConsoleWorkflowMutationResult,
   ConsoleWorkflowTaskDetail,
   ConsoleWorkflowTaskFormSummary,
   ConsoleWorkflowTaskPage,
@@ -40,6 +42,8 @@ export interface WorkflowWorkbenchProps {
   readonly commentsUnavailable?: boolean;
   readonly formUnavailable?: boolean;
   readonly cursors?: WorkflowWorkbenchCursors;
+  readonly mutationProtection?: ConsoleWorkflowMutationFormProtection | null;
+  readonly mutationResult?: ConsoleWorkflowMutationResult;
 }
 
 const copy = {
@@ -47,7 +51,7 @@ const copy = {
     eyebrow: "02 / 通用流程控制室",
     title: "Workflow 流程工作台",
     summary: "待办、实例、历史、评论与定义都来自当前宿主身份的实时授权投影。页面没有 tenant、token、endpoint 或 Provider secret，也不会把可见按钮当成执行权限。",
-    live: "LIVE / READ ONLY",
+    live: "LIVE / CONTROLLED WRITES",
     visibleTasks: "本页待办",
     visibleDefinitions: "本页定义",
     taskReel: "当前身份待办",
@@ -68,7 +72,18 @@ const copy = {
     subject: "业务对象",
     allowedActions: "服务端声明动作",
     noActions: "无可执行动作",
-    mutationBoundary: "此切片只读。领取、审批、转办、加签、退回和表单提交将在同源 CSRF、If-Match 与 Idempotency-Key 全部接线后开放。",
+    mutationBoundary: "领取、审批与纯文本评论已接入固定同源 BFF；每次操作都重验会话、CSRF、If-Match 与幂等键。转办、加签、退回和表单提交仍保持关闭。可见按钮不是授权证明。",
+    mutationUnavailable: "当前安全表单材料不可用；所有写操作保持关闭。",
+    claim: "领取任务",
+    approve: "通过",
+    reject: "驳回",
+    requestChanges: "要求修改",
+    commentLabel: "添加纯文本评论",
+    commentPlaceholder: "输入评论；@ 提及将在安全主体选择器接入后开放。",
+    createComment: "发布评论",
+    mutationSucceeded: "操作已收到严格回执，页面数据已重新读取。",
+    mutationRejected: "操作未执行：会话、任务版本或当前权限已变化。请重新选择任务后再试。",
+    mutationUnknown: "操作结果未确认。请先核对任务状态与历史记录，不要直接重复提交。",
     state: "状态",
     version: "版本",
     definition: "流程定义",
@@ -118,7 +133,7 @@ const copy = {
     eyebrow: "02 / GENERIC FLOW CONTROL ROOM",
     title: "Workflow operations workbench",
     summary: "Tasks, instances, history, comments and definitions are live authorization projections for the current host identity. No tenant, token, endpoint or provider secret enters this page, and visible controls never imply execution authority.",
-    live: "LIVE / READ ONLY",
+    live: "LIVE / CONTROLLED WRITES",
     visibleTasks: "Tasks here",
     visibleDefinitions: "Definitions here",
     taskReel: "Current-principal tasks",
@@ -139,7 +154,18 @@ const copy = {
     subject: "Business subject",
     allowedActions: "Server-declared actions",
     noActions: "No actions available",
-    mutationBoundary: "This slice is read-only. Claim, decision, delegation, add-sign, return and form submission stay locked until same-origin CSRF, If-Match and Idempotency-Key are all wired.",
+    mutationBoundary: "Claim, decisions and text comments use fixed same-origin BFF routes with fresh session, CSRF, If-Match and idempotency checks. Delegation, add-sign, return and form submission remain locked. A visible control is never authorization proof.",
+    mutationUnavailable: "Secure form material is unavailable; every write remains locked.",
+    claim: "Claim task",
+    approve: "Approve",
+    reject: "Reject",
+    requestChanges: "Request changes",
+    commentLabel: "Add a text comment",
+    commentPlaceholder: "Enter a comment. Mentions remain locked until the safe principal picker is connected.",
+    createComment: "Post comment",
+    mutationSucceeded: "The operation returned a strict receipt and page data was read again.",
+    mutationRejected: "The operation did not run because the session, task version or current authority changed. Select the task again before retrying.",
+    mutationUnknown: "The outcome is not confirmed. Inspect task state and history before attempting anything again.",
     state: "State",
     version: "Version",
     definition: "Definition",
@@ -193,6 +219,7 @@ export function WorkflowWorkbench(props: WorkflowWorkbenchProps) {
     ...props,
     selectedTaskId: props.selectedTaskUnavailable ? null : props.selectedTaskId,
     selectedDefinitionId: props.selectedDefinitionUnavailable ? null : props.selectedDefinitionId,
+    mutationProtection: props.selectedTaskUnavailable ? null : props.mutationProtection,
   };
   return (
     <article className="workflow-workbench">
@@ -211,6 +238,11 @@ export function WorkflowWorkbench(props: WorkflowWorkbenchProps) {
           </dl>
         </div>
       </header>
+
+      {safeProps.mutationResult ? <MutationResultBanner
+        locale={safeProps.locale}
+        result={safeProps.mutationResult}
+      /> : null}
 
       <div className="workflow-workbench__grid">
         <TaskReel {...safeProps} />
@@ -321,7 +353,15 @@ function TaskDossier(props: WorkflowWorkbenchProps) {
       </div>
       <section className="workflow-task-dossier__actions">
         <header><h3>{text.allowedActions}</h3><p>{text.mutationBoundary}</p></header>
-        <div>{task.allowedActions.length === 0 ? <span>{text.noActions}</span> : task.allowedActions.map((action) => <code key={action}>{action}</code>)}</div>
+        <div className="workflow-task-dossier__action-stack">
+          <div className="workflow-task-dossier__action-codes">{task.allowedActions.length === 0 ? <span>{text.noActions}</span> : task.allowedActions.map((action) => <code key={action}>{action}</code>)}</div>
+          <MutationControls
+            locale={props.locale}
+            task={task}
+            instance={instance}
+            protection={props.mutationProtection ?? null}
+          />
+        </div>
       </section>
       <FormBoundary locale={props.locale} task={task} form={props.form} unavailable={props.formUnavailable ?? false} />
       <div className="workflow-task-dossier__evidence">
@@ -330,6 +370,112 @@ function TaskDossier(props: WorkflowWorkbenchProps) {
       </div>
     </section>
   );
+}
+
+function MutationResultBanner({ locale, result }: {
+  readonly locale: Locale;
+  readonly result: ConsoleWorkflowMutationResult;
+}) {
+  const text = copy[locale];
+  const message = result === "succeeded"
+    ? text.mutationSucceeded
+    : result === "rejected"
+      ? text.mutationRejected
+      : text.mutationUnknown;
+  return <aside
+    className={`workflow-mutation-result workflow-mutation-result--${result}`}
+    role={result === "succeeded" ? "status" : "alert"}
+  ><span aria-hidden="true">{result === "succeeded" ? "✓" : "!"}</span><p>{message}</p></aside>;
+}
+
+function MutationControls({ locale, task, instance, protection }: {
+  readonly locale: Locale;
+  readonly task: ConsoleWorkflowTaskDetail;
+  readonly instance: ConsoleWorkflowInstance;
+  readonly protection: ConsoleWorkflowMutationFormProtection | null;
+}) {
+  const text = copy[locale];
+  const decisions = (["APPROVE", "REJECT", "REQUEST_CHANGES"] as const)
+    .filter((action) => task.allowedActions.includes(action));
+  const canClaim = task.allowedActions.includes("CLAIM");
+  const canComment = task.allowedActions.includes("CREATE_COMMENT") || task.allowedActions.includes("COMMENT");
+  if (!canClaim && decisions.length === 0 && !canComment) return null;
+  if (!protection) return <p className="workflow-mutation-controls__unavailable">{text.mutationUnavailable}</p>;
+  return (
+    <div className="workflow-mutation-controls">
+      <div className="workflow-mutation-controls__commands">
+        {canClaim ? <form action="/api/bff/workflow/tasks/claim" method="post">
+          <MutationHiddenFields
+            locale={locale}
+            taskId={task.task.id}
+            expectedTaskVersion={task.task.recordVersion}
+            csrfToken={protection.csrfToken}
+            idempotencyKey={protection.claimIdempotencyKey}
+          />
+          <button type="submit">{text.claim}</button>
+        </form> : null}
+        {decisions.map((action) => <form
+          action="/api/bff/workflow/tasks/decide"
+          method="post"
+          key={action}
+        >
+          <MutationHiddenFields
+            locale={locale}
+            taskId={task.task.id}
+            expectedTaskVersion={task.task.recordVersion}
+            csrfToken={protection.csrfToken}
+            idempotencyKey={protection.decisionIdempotencyKeys[action]}
+          />
+          <input type="hidden" name="action" value={action} />
+          <button type="submit" data-decision={action}>{action === "APPROVE"
+            ? text.approve
+            : action === "REJECT" ? text.reject : text.requestChanges}</button>
+        </form>)}
+      </div>
+      {canComment ? <form className="workflow-mutation-controls__comment" action="/api/bff/workflow/comments/create" method="post">
+        <MutationHiddenFields
+          locale={locale}
+          taskId={task.task.id}
+          expectedTaskVersion={task.task.recordVersion}
+          csrfToken={protection.csrfToken}
+          idempotencyKey={protection.commentIdempotencyKey}
+        />
+        <input type="hidden" name="expectedInstanceVersion" value={String(instance.recordVersion)} />
+        <label htmlFor="workflow-comment-text">{text.commentLabel}</label>
+        <textarea
+          id="workflow-comment-text"
+          name="commentText"
+          minLength={1}
+          maxLength={8_192}
+          placeholder={text.commentPlaceholder}
+          required
+        />
+        <button type="submit">{text.createComment}</button>
+      </form> : null}
+    </div>
+  );
+}
+
+function MutationHiddenFields({
+  locale,
+  taskId,
+  expectedTaskVersion,
+  csrfToken,
+  idempotencyKey,
+}: {
+  readonly locale: Locale;
+  readonly taskId: string;
+  readonly expectedTaskVersion: number;
+  readonly csrfToken: string;
+  readonly idempotencyKey: string;
+}) {
+  return <>
+    <input type="hidden" name="locale" value={locale} />
+    <input type="hidden" name="taskId" value={taskId} />
+    <input type="hidden" name="expectedTaskVersion" value={String(expectedTaskVersion)} />
+    <input type="hidden" name="csrfToken" value={csrfToken} />
+    <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+  </>;
 }
 
 function FormBoundary({ locale, task, form, unavailable }: {

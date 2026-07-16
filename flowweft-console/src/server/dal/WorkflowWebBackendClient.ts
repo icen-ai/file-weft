@@ -18,7 +18,10 @@ import type {
 } from "@/contracts/bff";
 import type { StoredConsoleSession } from "@/server/auth/ConsoleAuthStore";
 import type { ConsoleSourceProfileDefinition } from "@/server/config/schema";
-import { requestPinnedJson } from "@/server/security/PinnedJsonHttpClient";
+import {
+  PinnedJsonHttpError,
+  requestPinnedJson,
+} from "@/server/security/PinnedJsonHttpClient";
 import { sourceProfileBindingDigest } from "@/server/sources/SourceProfileBinding";
 
 const safeInteger = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -199,13 +202,142 @@ const taskFormSchema = z.object({
   }
 });
 
+const commandReceiptSchema = z.object({
+  resourceType: workflowCode,
+  resourceId: safeText(512),
+  resourceVersion: safeInteger,
+  state: workflowCode,
+}).strict();
+
+const workflowFailureCodeSchema = z.enum([
+  "INVALID_REQUEST",
+  "UNAUTHENTICATED",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "METHOD_NOT_ALLOWED",
+  "NOT_ACCEPTABLE",
+  "UNSUPPORTED_MEDIA_TYPE",
+  "CONFLICT",
+  "PRECONDITION_REQUIRED",
+  "PRECONDITION_FAILED",
+  "CAPABILITY_UNSUPPORTED",
+  "FEATURE_UNAVAILABLE",
+  "CONTENT_UNAVAILABLE",
+  "OUTCOME_UNKNOWN",
+  "TOO_MANY_REQUESTS",
+  "INTERNAL_ERROR",
+]);
+const workflowFailureEnvelopeSchema = z.object({
+  code: workflowFailureCodeSchema,
+  message: safeText(512),
+  data: z.null(),
+  error: z.object({
+    code: workflowFailureCodeSchema,
+    message: safeText(512),
+  }).strict(),
+  traceId: safeText(256).nullable().optional(),
+}).strict().refine((value) =>
+  value.code === value.error.code && value.message === value.error.message,
+);
+
+export type WorkflowTaskDecisionAction = "APPROVE" | "REJECT" | "REQUEST_CHANGES";
+
 export class WorkflowWebBackendClientError extends Error {
-  readonly code: "UNAUTHENTICATED" | "UPSTREAM_UNAVAILABLE" | "INVALID_RESPONSE" | "INVALID_REQUEST";
+  readonly code:
+    | "UNAUTHENTICATED"
+    | "UPSTREAM_UNAVAILABLE"
+    | "INVALID_RESPONSE"
+    | "INVALID_REQUEST"
+    | "MUTATION_REJECTED"
+    | "OUTCOME_UNKNOWN";
 
   constructor(code: WorkflowWebBackendClientError["code"]) {
     super(`FlowWeft Workflow Web request failed: ${code}.`);
     this.name = "WorkflowWebBackendClientError";
     this.code = code;
+  }
+}
+
+/**
+ * Executes the formal current-principal claim route. The caller must perform a fresh task read
+ * first; the Workflow application boundary still performs the authoritative authorization.
+ */
+export async function claimWorkflowTask(
+  profile: ConsoleSourceProfileDefinition,
+  session: StoredConsoleSession,
+  taskId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+): Promise<void> {
+  const safeId = requirePathSegment(taskId);
+  const receipt = await writeWorkflowData(
+    profile,
+    session,
+    `/flowweft/v1/workflows/tasks/${encodeURIComponent(safeId)}/claim`,
+    {},
+    expectedVersion,
+    idempotencyKey,
+  );
+  requireTaskReceipt(receipt, safeId, expectedVersion);
+}
+
+export async function decideWorkflowTask(
+  profile: ConsoleSourceProfileDefinition,
+  session: StoredConsoleSession,
+  taskId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+  action: WorkflowTaskDecisionAction,
+): Promise<void> {
+  const safeId = requirePathSegment(taskId);
+  const safeAction = requireDecisionAction(action);
+  const receipt = await writeWorkflowData(
+    profile,
+    session,
+    `/flowweft/v1/workflows/tasks/${encodeURIComponent(safeId)}/decisions`,
+    { action: safeAction },
+    expectedVersion,
+    idempotencyKey,
+  );
+  requireTaskReceipt(receipt, safeId, expectedVersion);
+}
+
+/** Text-only Console comments deliberately exclude unresolved mention identifiers. */
+export async function createWorkflowTextComment(
+  profile: ConsoleSourceProfileDefinition,
+  session: StoredConsoleSession,
+  instanceId: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+  text: string,
+): Promise<void> {
+  const safeId = requirePathSegment(instanceId);
+  const safeComment = safeText(8_192, true).parse(text);
+  const receipt = await writeWorkflowData(
+    profile,
+    session,
+    `/flowweft/v1/workflows/instances/${encodeURIComponent(safeId)}/comments`,
+    { tokens: [{ kind: "TEXT", text: safeComment }] },
+    expectedVersion,
+    idempotencyKey,
+  );
+  if (receipt.resourceType !== "COMMENT") {
+    throw new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
+  }
+  let comments: ConsoleWorkflowCommentPage;
+  try {
+    // This is a single read-only reconciliation, never a retry of the comment command. The
+    // generic receipt has no parent id, so success is only proven when the exact created comment
+    // is visible on the fixed instance route under the same trusted session.
+    comments = await readWorkflowCommentPage(profile, session, safeId, { limit: 50 });
+  } catch {
+    throw new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
+  }
+  const comment = comments.items.find((item) => item.id === receipt.resourceId);
+  if (!comment || comment.revision !== receipt.resourceVersion || !comment.authoredByCurrentUser ||
+    comment.tokens.length !== 1 || comment.tokens[0]?.kind !== "TEXT" ||
+    comment.tokens[0].text !== safeComment) {
+    throw new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
   }
 }
 
@@ -386,6 +518,124 @@ async function readWorkflowData<T>(
   }).strict().safeParse(rawResponse);
   if (!envelope.success) throw new WorkflowWebBackendClientError("INVALID_RESPONSE");
   return envelope.data.data;
+}
+
+async function writeWorkflowData(
+  profile: ConsoleSourceProfileDefinition,
+  session: StoredConsoleSession,
+  path: string,
+  body: Readonly<Record<string, unknown>>,
+  expectedVersion: number,
+  idempotencyKey: string,
+): Promise<z.infer<typeof commandReceiptSchema>> {
+  requireSessionProfile(profile, session);
+  const safeVersion = requireExpectedVersion(expectedVersion);
+  const safeIdempotencyKey = requireIdempotencyKey(idempotencyKey);
+  const endpoint = new URL(path, profile.baseUrl);
+  let rawResponse: unknown;
+  try {
+    rawResponse = await requestPinnedJson({
+      url: endpoint.toString(),
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": safeIdempotencyKey,
+        "If-Match": `"fw-${safeVersion}"`,
+      },
+      timeoutMillis: 15_000,
+      allowPrivateNetwork: profile.api?.allowPrivateNetwork ?? false,
+      captureJsonErrorResponse: true,
+    });
+  } catch (failure) {
+    throw classifyWorkflowWriteFailure(failure);
+  }
+  const envelope = z.object({
+    code: z.literal("OK"),
+    message: safeText(512),
+    data: commandReceiptSchema,
+    error: z.null(),
+    traceId: safeText(256).nullable().optional(),
+  }).strict().safeParse(rawResponse);
+  if (!envelope.success) {
+    // The command may already be committed even when its receipt is malformed.
+    throw new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
+  }
+  return envelope.data.data;
+}
+
+function classifyWorkflowWriteFailure(failure: unknown): WorkflowWebBackendClientError {
+  if (!(failure instanceof PinnedJsonHttpError) || failure.statusCode === null ||
+    failure.responseBody === null) {
+    // Transport failure or a missing/malformed error receipt cannot prove the command outcome.
+    return new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
+  }
+  const envelope = workflowFailureEnvelopeSchema.safeParse(failure.responseBody);
+  if (!envelope.success || expectedWorkflowFailureStatus(envelope.data.code) !== failure.statusCode) {
+    return new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
+  }
+  // INTERNAL_ERROR is produced when the Workflow application invocation throws. The invocation
+  // may already have committed before that exception, so a syntactically valid 500 still cannot
+  // prove rejection and must never invite a blind retry.
+  return new WorkflowWebBackendClientError(
+    envelope.data.code === "OUTCOME_UNKNOWN" || envelope.data.code === "INTERNAL_ERROR"
+      ? "OUTCOME_UNKNOWN"
+      : "MUTATION_REJECTED",
+  );
+}
+
+function expectedWorkflowFailureStatus(code: z.infer<typeof workflowFailureCodeSchema>): number {
+  switch (code) {
+    case "INVALID_REQUEST": return 400;
+    case "UNAUTHENTICATED": return 401;
+    case "FORBIDDEN": return 403;
+    case "NOT_FOUND": return 404;
+    case "METHOD_NOT_ALLOWED": return 405;
+    case "NOT_ACCEPTABLE": return 406;
+    case "CONFLICT": return 409;
+    case "PRECONDITION_FAILED": return 412;
+    case "UNSUPPORTED_MEDIA_TYPE": return 415;
+    case "PRECONDITION_REQUIRED": return 428;
+    case "TOO_MANY_REQUESTS": return 429;
+    case "CAPABILITY_UNSUPPORTED":
+    case "FEATURE_UNAVAILABLE":
+    case "CONTENT_UNAVAILABLE":
+    case "OUTCOME_UNKNOWN": return 503;
+    case "INTERNAL_ERROR": return 500;
+  }
+}
+
+function requireTaskReceipt(
+  receipt: z.infer<typeof commandReceiptSchema>,
+  taskId: string,
+  expectedVersion: number,
+): void {
+  if (receipt.resourceType !== "TASK" || receipt.resourceId !== taskId ||
+    receipt.resourceVersion <= expectedVersion) {
+    throw new WorkflowWebBackendClientError("OUTCOME_UNKNOWN");
+  }
+}
+
+function requireExpectedVersion(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new WorkflowWebBackendClientError("INVALID_REQUEST");
+  }
+  return value;
+}
+
+function requireIdempotencyKey(value: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._~:-]{0,127}$/u.test(value)) {
+    throw new WorkflowWebBackendClientError("INVALID_REQUEST");
+  }
+  return value;
+}
+
+function requireDecisionAction(value: string): WorkflowTaskDecisionAction {
+  if (value !== "APPROVE" && value !== "REJECT" && value !== "REQUEST_CHANGES") {
+    throw new WorkflowWebBackendClientError("INVALID_REQUEST");
+  }
+  return value;
 }
 
 function projectPageQuery(query: ConsoleWorkflowPageQuery): Readonly<Record<string, string>> {

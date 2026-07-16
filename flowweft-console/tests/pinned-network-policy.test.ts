@@ -77,6 +77,82 @@ describe("OIDC pinned network policy", () => {
     })).rejects.toBeInstanceOf(PinnedJsonHttpError);
   });
 
+  it("permits only canonical Workflow mutation precondition headers", async () => {
+    let observedHeaders: Record<string, string | string[] | undefined> = {};
+    const server = createServer((request, response) => {
+      observedHeaders = request.headers;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not expose a TCP port");
+      const base = {
+        url: `http://127.0.0.1:${address.port}/flowweft/v1/workflows/tasks/task-1/claim`,
+        method: "POST" as const,
+        body: "{}",
+        timeoutMillis: 2_000,
+        allowPrivateNetwork: true,
+      };
+      await expect(requestPinnedJson({
+        ...base,
+        headers: {
+          Authorization: "Bearer server-only-token",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "console-claim-safe_1",
+          "If-Match": '"fw-4"',
+        },
+      })).resolves.toEqual({ ok: true });
+      expect(observedHeaders["idempotency-key"]).toBe("console-claim-safe_1");
+      expect(observedHeaders["if-match"]).toBe('"fw-4"');
+
+      await expect(requestPinnedJson({
+        ...base,
+        headers: { "Idempotency-Key": "unsafe key", "If-Match": "*" },
+      })).rejects.toMatchObject({ code: "UNSAFE_ENDPOINT" });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("preserves only an explicitly requested bounded JSON error envelope", async () => {
+    const body = {
+      code: "PRECONDITION_FAILED",
+      message: "Workflow mutation preconditions no longer match.",
+      data: null,
+      error: {
+        code: "PRECONDITION_FAILED",
+        message: "Workflow mutation preconditions no longer match.",
+      },
+      traceId: null,
+    };
+    const server = createServer((_request, response) => {
+      response.writeHead(412, { "content-type": "application/json" });
+      response.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not expose a TCP port");
+      await expect(requestPinnedJson({
+        url: `http://127.0.0.1:${address.port}/flowweft/v1/workflows/tasks/task-1/claim`,
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json" },
+        timeoutMillis: 2_000,
+        allowPrivateNetwork: true,
+        captureJsonErrorResponse: true,
+      })).rejects.toMatchObject({
+        code: "UPSTREAM_FAILURE",
+        statusCode: 412,
+        responseBody: body,
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("keeps the 512 KiB default while allowing reviewed responses up to the 2 MiB absolute cap", async () => {
     const payload = JSON.stringify({ value: "x".repeat(600 * 1_024) });
     let requestCount = 0;

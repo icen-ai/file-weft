@@ -361,6 +361,16 @@ export interface ConsoleWorkflowTaskFormSummary {
   readonly hasProjectedData: boolean;
 }
 
+/** Per-render form material for fixed same-origin Workflow BFF mutations. */
+export interface ConsoleWorkflowMutationFormProtection {
+  readonly csrfToken: string;
+  readonly claimIdempotencyKey: string;
+  readonly decisionIdempotencyKeys: Readonly<Record<"APPROVE" | "REJECT" | "REQUEST_CHANGES", string>>;
+  readonly commentIdempotencyKey: string;
+}
+
+export type ConsoleWorkflowMutationResult = "succeeded" | "rejected" | "unknown";
+
 export interface BffProblem {
   readonly code: "UNAUTHENTICATED" | "FORBIDDEN" | "UNAVAILABLE" | "INVALID_REQUEST" | "INTERNAL_ERROR";
   readonly message: string;

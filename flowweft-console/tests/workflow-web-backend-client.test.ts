@@ -3,11 +3,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/server/security/PinnedJsonHttpClient", () => ({ requestPinnedJson: vi.fn() }));
+vi.mock("@/server/security/PinnedJsonHttpClient", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/server/security/PinnedJsonHttpClient")>(),
+  requestPinnedJson: vi.fn(),
+}));
 
 import type { StoredConsoleSession } from "@/server/auth/ConsoleAuthStore";
 import { parseConsoleServerConfig } from "@/server/config/schema";
 import {
+  claimWorkflowTask,
+  createWorkflowTextComment,
+  decideWorkflowTask,
   readWorkflowCommentPage,
   readWorkflowDefinition,
   readWorkflowDefinitionPage,
@@ -19,6 +25,7 @@ import {
   WorkflowWebBackendClientError,
 } from "@/server/dal/WorkflowWebBackendClient";
 import { requestPinnedJson } from "@/server/security/PinnedJsonHttpClient";
+import { PinnedJsonHttpError } from "@/server/security/PinnedJsonHttpClient";
 import { sourceProfileBindingDigest } from "@/server/sources/SourceProfileBinding";
 
 const requestPinnedJsonMock = vi.mocked(requestPinnedJson);
@@ -154,10 +161,127 @@ describe("explicit FlowWeft Workflow Web DAL", () => {
     await expect(readWorkflowDefinitionPage(profile, storedSession()))
       .rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   });
+
+  it("uses only fixed Workflow v1 mutation routes with strong preconditions and strict receipts", async () => {
+    const profile = backendConfig().sourceProfiles[0]!;
+    const session = storedSession();
+    requestPinnedJsonMock
+      .mockResolvedValueOnce(ok({ resourceType: "TASK", resourceId: "task-1", resourceVersion: 5, state: "CLAIMED" }))
+      .mockResolvedValueOnce(ok({ resourceType: "TASK", resourceId: "task-1", resourceVersion: 6, state: "COMPLETED" }))
+      .mockResolvedValueOnce(ok({ resourceType: "COMMENT", resourceId: "comment-2", resourceVersion: 1, state: "CREATED" }))
+      .mockResolvedValueOnce(ok({
+        items: [{
+          id: "comment-2", instanceId: "instance-1", revision: 1,
+          tokens: [{
+            kind: "TEXT", text: "Reviewed", principalType: null, principalId: null, displayNameSnapshot: null,
+          }],
+          authoredByCurrentUser: true, createdAt: now, updatedAt: now,
+        }],
+        nextCursor: null,
+      }));
+
+    await claimWorkflowTask(profile, session, "task-1", 4, "console-claim-1");
+    await decideWorkflowTask(profile, session, "task-1", 5, "console-approve-1", "APPROVE");
+    await createWorkflowTextComment(profile, session, "instance-1", 11, "console-comment-1", "Reviewed");
+
+    expect(requestPinnedJsonMock.mock.calls.map((call) => call[0].url)).toEqual([
+      "https://flowweft.example/flowweft/v1/workflows/tasks/task-1/claim",
+      "https://flowweft.example/flowweft/v1/workflows/tasks/task-1/decisions",
+      "https://flowweft.example/flowweft/v1/workflows/instances/instance-1/comments",
+      "https://flowweft.example/flowweft/v1/workflows/instances/instance-1/comments",
+    ]);
+    expect(requestPinnedJsonMock.mock.calls.slice(0, 3).map((call) => call[0].headers)).toEqual([
+      expect.objectContaining({ "Idempotency-Key": "console-claim-1", "If-Match": "\"fw-4\"" }),
+      expect.objectContaining({ "Idempotency-Key": "console-approve-1", "If-Match": "\"fw-5\"" }),
+      expect.objectContaining({ "Idempotency-Key": "console-comment-1", "If-Match": "\"fw-11\"" }),
+    ]);
+    expect(requestPinnedJsonMock.mock.calls.slice(0, 3).map((call) => JSON.parse(call[0].body ?? "null"))).toEqual([
+      {},
+      { action: "APPROVE" },
+      { tokens: [{ kind: "TEXT", text: "Reviewed" }] },
+    ]);
+    expect(requestPinnedJsonMock.mock.calls.slice(0, 3).every((call) =>
+      call[0].method === "POST" && call[0].headers?.Authorization === "Bearer server-only-token" &&
+      call[0].headers?.["Content-Type"] === "application/json",
+    )).toBe(true);
+    expect(requestPinnedJsonMock.mock.calls[3]?.[0]).toMatchObject({
+      method: "GET",
+      url: "https://flowweft.example/flowweft/v1/workflows/instances/instance-1/comments",
+      query: { limit: "50" },
+      headers: { Authorization: "Bearer server-only-token" },
+    });
+  });
+
+  it("treats transport failure and unbound mutation receipts as an unknown outcome", async () => {
+    const profile = backendConfig().sourceProfiles[0]!;
+    requestPinnedJsonMock.mockRejectedValueOnce(new Error("connection reset after write"));
+    await expect(claimWorkflowTask(profile, storedSession(), "task-1", 4, "console-claim-1"))
+      .rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+
+    requestPinnedJsonMock.mockResolvedValueOnce(ok({
+      resourceType: "TASK", resourceId: "another-task", resourceVersion: 5, state: "CLAIMED",
+    }));
+    await expect(claimWorkflowTask(profile, storedSession(), "task-1", 4, "console-claim-2"))
+      .rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+
+    requestPinnedJsonMock
+      .mockResolvedValueOnce(ok({
+        resourceType: "COMMENT", resourceId: "comment-other", resourceVersion: 3, state: "CREATED",
+      }))
+      .mockResolvedValueOnce(ok({
+        items: [{
+          id: "comment-other", instanceId: "instance-1", revision: 3,
+          tokens: [{
+            kind: "TEXT", text: "Different", principalType: null, principalId: null, displayNameSnapshot: null,
+          }],
+          authoredByCurrentUser: true, createdAt: now, updatedAt: now,
+        }],
+        nextCursor: null,
+      }));
+    await expect(createWorkflowTextComment(
+      profile, storedSession(), "instance-1", 11, "console-comment-1", "Reviewed",
+    )).rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+    expect(requestPinnedJsonMock.mock.calls.slice(-2).map((call) => call[0].method)).toEqual(["POST", "GET"]);
+  });
+
+  it("separates formal deterministic failures from an explicitly unknown write outcome", async () => {
+    const profile = backendConfig().sourceProfiles[0]!;
+    requestPinnedJsonMock.mockRejectedValueOnce(new PinnedJsonHttpError("UPSTREAM_FAILURE", {
+      statusCode: 412,
+      responseBody: failed("PRECONDITION_FAILED", "Workflow mutation preconditions no longer match."),
+    }));
+    await expect(claimWorkflowTask(profile, storedSession(), "task-1", 4, "console-claim-1"))
+      .rejects.toMatchObject({ code: "MUTATION_REJECTED" });
+
+    requestPinnedJsonMock.mockRejectedValueOnce(new PinnedJsonHttpError("UPSTREAM_FAILURE", {
+      statusCode: 503,
+      responseBody: failed("OUTCOME_UNKNOWN", "Workflow operation outcome requires reconciliation."),
+    }));
+    await expect(claimWorkflowTask(profile, storedSession(), "task-1", 4, "console-claim-2"))
+      .rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+
+    requestPinnedJsonMock.mockRejectedValueOnce(new PinnedJsonHttpError("UPSTREAM_FAILURE", {
+      statusCode: 500,
+      responseBody: failed("INTERNAL_ERROR", "The Workflow request could not be completed."),
+    }));
+    await expect(claimWorkflowTask(profile, storedSession(), "task-1", 4, "console-claim-internal"))
+      .rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+
+    requestPinnedJsonMock.mockRejectedValueOnce(new PinnedJsonHttpError("UPSTREAM_FAILURE", {
+      statusCode: 400,
+      responseBody: failed("PRECONDITION_FAILED", "mismatched status"),
+    }));
+    await expect(claimWorkflowTask(profile, storedSession(), "task-1", 4, "console-claim-3"))
+      .rejects.toMatchObject({ code: "OUTCOME_UNKNOWN" });
+  });
 });
 
 function ok(data: unknown) {
   return { code: "OK", message: "OK", data, error: null, traceId: null };
+}
+
+function failed(code: string, message: string) {
+  return { code, message, data: null, error: { code, message }, traceId: null };
 }
 
 function definitionSummary() {

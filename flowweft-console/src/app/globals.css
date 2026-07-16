@@ -2347,7 +2347,7 @@ a {
   .agent-unavailable__mesh { min-height: 190px; border-right: 0; border-bottom: 1px solid #435047; }
 }
 
-/* Generic Workflow read room */
+/* Generic Workflow control room */
 .workflow-workbench {
   display: grid;
   gap: 24px;
@@ -2437,6 +2437,22 @@ a {
 .workflow-workbench__signal dl div { padding: 14px 10px 0 0; }
 .workflow-workbench__signal dt { font: 800 0.5rem/1.2 var(--mono); text-transform: uppercase; }
 .workflow-workbench__signal dd { margin: 4px 0 0; font: 650 2.8rem/1 var(--display); letter-spacing: -0.08em; }
+
+.workflow-mutation-result {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  border: 1px solid var(--line-dark);
+  background: var(--paper-bright);
+}
+.workflow-mutation-result > span { display: grid; min-height: 46px; place-content: center; color: var(--paper); background: var(--ink); font: 700 1.2rem/1 var(--display); }
+.workflow-mutation-result > p { margin: 0; padding: 12px 16px; font-size: 0.66rem; line-height: 1.55; }
+.workflow-mutation-result--succeeded { border-color: #5d8067; }
+.workflow-mutation-result--succeeded > span { background: #315b3e; }
+.workflow-mutation-result--rejected,
+.workflow-mutation-result--unknown { border-color: #bb7564; background: #f1d7cf; }
+.workflow-mutation-result--rejected > span,
+.workflow-mutation-result--unknown > span { background: var(--coral); }
 
 .workflow-workbench__grid {
   display: grid;
@@ -2592,9 +2608,29 @@ a {
 .workflow-task-dossier__actions { display: grid; grid-template-columns: minmax(190px, 0.4fr) minmax(0, 1fr); border-bottom: 1px solid var(--line-dark); }
 .workflow-task-dossier__actions > header { padding: 20px; border-right: 1px solid var(--line); }
 .workflow-task-dossier__actions > header p { margin: 0; color: var(--muted); font-size: 0.61rem; line-height: 1.6; }
-.workflow-task-dossier__actions > div { display: flex; flex-wrap: wrap; align-content: center; gap: 8px; padding: 20px; }
+.workflow-task-dossier__action-stack { display: grid; min-width: 0; }
+.workflow-task-dossier__action-codes { display: flex; flex-wrap: wrap; align-content: center; gap: 8px; padding: 20px; }
 .workflow-task-dossier__actions code,
-.workflow-task-dossier__actions > div > span { padding: 7px 9px; background: var(--panel); border: 1px solid var(--line); font: 750 0.55rem/1 var(--mono); }
+.workflow-task-dossier__action-codes > span { padding: 7px 9px; background: var(--panel); border: 1px solid var(--line); font: 750 0.55rem/1 var(--mono); }
+
+.workflow-mutation-controls { display: grid; gap: 14px; padding: 18px 20px 20px; border-top: 1px solid var(--line); background: #f1efe5; }
+.workflow-mutation-controls__commands { display: flex; flex-wrap: wrap; gap: 8px; }
+.workflow-mutation-controls button {
+  min-height: 36px;
+  padding: 9px 13px;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  font: 800 0.56rem/1 var(--mono);
+  cursor: pointer;
+}
+.workflow-mutation-controls button:hover,
+.workflow-mutation-controls button:focus-visible { color: var(--ink); background: var(--amber); }
+.workflow-mutation-controls button[data-decision="REJECT"] { background: #8e3e32; border-color: #8e3e32; }
+.workflow-mutation-controls__comment { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.workflow-mutation-controls__comment label { grid-column: 1 / -1; font: 800 0.54rem/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.05em; }
+.workflow-mutation-controls__comment textarea { min-height: 76px; resize: vertical; padding: 10px 11px; color: var(--ink); background: var(--paper-bright); border: 1px solid var(--line-dark); font: 500 0.68rem/1.55 var(--mono); }
+.workflow-mutation-controls__unavailable { margin: 0; padding: 16px 20px; color: #6f3329; background: #f1d7cf; border-top: 1px solid #bb7564; font-size: 0.62rem; line-height: 1.55; }
 
 .workflow-form-boundary { border-bottom: 1px solid var(--line-dark); }
 .workflow-form-boundary > header { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; padding: 18px 20px; background: #ece9dc; }
@@ -2699,6 +2735,7 @@ a {
   .workflow-definition-dossier > dl { grid-template-columns: 1fr; }
   .workflow-task-dossier__actions { grid-template-columns: 1fr; }
   .workflow-task-dossier__actions > header { border-right: 0; border-bottom: 1px solid var(--line); }
+  .workflow-mutation-controls__comment { grid-template-columns: 1fr; }
   .workflow-form-boundary > dl > div,
   .workflow-form-boundary > dl > div:nth-child(3n),
   .workflow-definition-dossier > dl > div { border-right: 0; border-bottom: 1px solid var(--line); }

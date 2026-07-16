@@ -5,6 +5,8 @@ import type {
   ConsoleWorkflowDefinitionPage,
   ConsoleWorkflowHistoryPage,
   ConsoleWorkflowInstance,
+  ConsoleWorkflowMutationFormProtection,
+  ConsoleWorkflowMutationResult,
   ConsoleWorkflowTaskDetail,
   ConsoleWorkflowTaskFormSummary,
   ConsoleWorkflowTaskPage,
@@ -15,6 +17,10 @@ import {
 } from "@/features/workflow/WorkflowWorkbench";
 import { isLocale } from "@/i18n/locale";
 import { getConsoleDataAccess } from "@/server/dal/ConsoleDataAccess";
+import {
+  readWorkflowMutationFlash,
+  readWorkflowMutationFormProtection,
+} from "@/server/security/WorkflowMutationSecurity";
 
 interface WorkflowPageProps {
   readonly params: Promise<{ locale: string }>;
@@ -34,7 +40,8 @@ export default async function WorkflowPage({ params, searchParams }: WorkflowPag
   const raw = await searchParams;
   if (Object.values(raw).some(Array.isArray)) return <WorkflowWorkbenchUnavailable locale={locale} />;
 
-  const taskId = raw.taskId as string | undefined;
+  const mutationFlash = await readWorkflowMutationFlash().catch(() => null);
+  const taskId = mutationFlash?.taskId ?? raw.taskId as string | undefined;
   const definitionId = raw.definitionId as string | undefined;
   const cursors = {
     task: raw.taskCursor as string | undefined,
@@ -53,7 +60,6 @@ export default async function WorkflowPage({ params, searchParams }: WorkflowPag
   const definitions: ConsoleWorkflowDefinitionPage | null = definitionsResult.status === "fulfilled"
     ? definitionsResult.value
     : null;
-  if (!tasks && !definitions) return <WorkflowWorkbenchUnavailable locale={locale} />;
 
   let taskDetail: ConsoleWorkflowTaskDetail | null = null;
   let instance: ConsoleWorkflowInstance | null = null;
@@ -64,8 +70,10 @@ export default async function WorkflowPage({ params, searchParams }: WorkflowPag
   let historyUnavailable = false;
   let commentsUnavailable = false;
   let formUnavailable = false;
+  let freshTaskReadAttempted = false;
 
-  if (taskId && tasks) {
+  if (taskId) {
+    freshTaskReadAttempted = true;
     try {
       taskDetail = await dataAccess.getWorkflowTask(taskId);
       instance = await dataAccess.getWorkflowInstance(taskDetail.task.instanceId);
@@ -103,7 +111,7 @@ export default async function WorkflowPage({ params, searchParams }: WorkflowPag
       commentsUnavailable = false;
       formUnavailable = false;
     }
-  } else if (taskId) selectedTaskUnavailable = true;
+  }
 
   let definitionDetail: ConsoleWorkflowDefinitionDetail | null = null;
   let selectedDefinitionUnavailable = false;
@@ -123,6 +131,24 @@ export default async function WorkflowPage({ params, searchParams }: WorkflowPag
     ...(safeSelectedTaskId && history && cursors.history ? { history: cursors.history } : {}),
     ...(safeSelectedTaskId && comments && cursors.comment ? { comment: cursors.comment } : {}),
   };
+  const flashMatchesFreshTarget = Boolean(mutationFlash && freshTaskReadAttempted &&
+    taskId === mutationFlash.taskId && (taskDetail === null || instance !== null &&
+      taskDetail.task.id === mutationFlash.taskId &&
+      taskDetail.task.instanceId === mutationFlash.instanceId && instance.id === mutationFlash.instanceId));
+  const mutationResult: ConsoleWorkflowMutationResult | undefined = flashMatchesFreshTarget
+    ? mutationFlash!.outcome
+    : undefined;
+  if (!tasks && !definitions && !mutationResult) {
+    return <WorkflowWorkbenchUnavailable locale={locale} />;
+  }
+  let mutationProtection: ConsoleWorkflowMutationFormProtection | null = null;
+  if (taskDetail && instance && safeSelectedTaskId) {
+    try {
+      mutationProtection = await readWorkflowMutationFormProtection();
+    } catch {
+      mutationProtection = null;
+    }
+  }
 
   return <WorkflowWorkbench
     locale={locale}
@@ -144,6 +170,8 @@ export default async function WorkflowPage({ params, searchParams }: WorkflowPag
     commentsUnavailable={commentsUnavailable}
     formUnavailable={formUnavailable}
     cursors={safeCursors}
+    mutationProtection={mutationProtection}
+    mutationResult={mutationResult}
   />;
 }
 

@@ -43,7 +43,7 @@ describe("WorkflowWorkbench", () => {
       taskDetail={{
         task,
         subject,
-        allowedActions: ["APPROVE", "DELEGATE"],
+        allowedActions: ["CLAIM", "APPROVE", "DELEGATE", "CREATE_COMMENT"],
         formId: "expense-form",
         formVersion: "3",
       }}
@@ -102,6 +102,17 @@ describe("WorkflowWorkbench", () => {
         history: "history-current",
         comment: "comment-current",
       }}
+      mutationProtection={{
+        csrfToken: "c".repeat(43),
+        claimIdempotencyKey: "console-claim-1",
+        decisionIdempotencyKeys: {
+          APPROVE: "console-approve-1",
+          REJECT: "console-reject-1",
+          REQUEST_CHANGES: "console-changes-1",
+        },
+        commentIdempotencyKey: "console-comment-1",
+      }}
+      mutationResult="unknown"
     />);
 
     expect(screen.getByRole("heading", { name: "Workflow 流程工作台" })).toBeInTheDocument();
@@ -110,6 +121,18 @@ describe("WorkflowWorkbench", () => {
     expect(screen.getByText("@王经理")).toBeInTheDocument();
     expect(screen.getByText("存在（未下发）")).toBeInTheDocument();
     expect(screen.getByText("SAFE_LINT")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "领取任务" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "通过" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发布评论" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("操作结果未确认");
+    expect(container.querySelector('form[action="/api/bff/workflow/tasks/claim"]')).not.toBeNull();
+    expect(container.querySelector('form[action="/api/bff/workflow/tasks/decide"]')).not.toBeNull();
+    expect(container.querySelector('form[action="/api/bff/workflow/comments/create"]')).not.toBeNull();
+    expect(container.querySelector('form[action*="delegate"]')).toBeNull();
+    expect(container.querySelector('form[action="/api/bff/workflow/tasks/claim"] input[name="expectedTaskVersion"]'))
+      .toHaveValue("4");
+    expect(container.querySelector('form[action="/api/bff/workflow/comments/create"] input[name="expectedInstanceVersion"]'))
+      .toHaveValue("11");
     expect(screen.getByRole("link", { name: /Finance review/u }).getAttribute("href"))
       .toContain("taskCursor=task-current");
     expect(screen.getByRole("link", { name: /Expense approval/u }).getAttribute("href"))

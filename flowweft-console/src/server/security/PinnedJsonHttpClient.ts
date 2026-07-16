@@ -19,15 +19,24 @@ export interface PinnedJsonRequest {
   readonly timeoutMillis: number;
   readonly allowPrivateNetwork: boolean;
   readonly maximumResponseBytes?: number;
+  /** Preserve one bounded JSON error envelope for callers that have a formal status contract. */
+  readonly captureJsonErrorResponse?: boolean;
 }
 
 export class PinnedJsonHttpError extends Error {
   readonly code: "UNSAFE_ENDPOINT" | "DNS_FAILURE" | "UPSTREAM_FAILURE" | "INVALID_RESPONSE";
+  readonly statusCode: number | null;
+  readonly responseBody: unknown | null;
 
-  constructor(code: PinnedJsonHttpError["code"]) {
+  constructor(
+    code: PinnedJsonHttpError["code"],
+    details: Readonly<{ statusCode?: number; responseBody?: unknown }> = {},
+  ) {
     super(`Pinned JSON request failed: ${code}.`);
     this.name = "PinnedJsonHttpError";
     this.code = code;
+    this.statusCode = Number.isSafeInteger(details.statusCode) ? details.statusCode! : null;
+    this.responseBody = details.responseBody ?? null;
   }
 }
 
@@ -81,14 +90,17 @@ export async function requestPinnedJson(request: PinnedJsonRequest): Promise<unk
       const status = response.statusCode ?? 0;
       const contentType = String(response.headers["content-type"] ?? "").toLowerCase();
       const declaredLength = Number(response.headers["content-length"] ?? 0);
-      if (status !== 200) {
+      if (status !== 200 && !request.captureJsonErrorResponse) {
         response.resume();
-        reject(new PinnedJsonHttpError("UPSTREAM_FAILURE"));
+        reject(new PinnedJsonHttpError("UPSTREAM_FAILURE", { statusCode: status }));
         return;
       }
       if (!contentType.includes("application/json") && !contentType.includes("+json")) {
         response.resume();
-        reject(new PinnedJsonHttpError("INVALID_RESPONSE"));
+        reject(new PinnedJsonHttpError(
+          status === 200 ? "INVALID_RESPONSE" : "UPSTREAM_FAILURE",
+          { statusCode: status },
+        ));
         return;
       }
       if (Number.isFinite(declaredLength) && declaredLength > maximumResponseBytes) {
@@ -113,9 +125,20 @@ export async function requestPinnedJson(request: PinnedJsonRequest): Promise<unk
       response.on("end", () => {
         try {
           const text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
-          resolve(JSON.parse(text) as unknown);
+          const parsed = JSON.parse(text) as unknown;
+          if (status === 200) {
+            resolve(parsed);
+          } else {
+            reject(new PinnedJsonHttpError("UPSTREAM_FAILURE", {
+              statusCode: status,
+              responseBody: parsed,
+            }));
+          }
         } catch {
-          reject(new PinnedJsonHttpError("INVALID_RESPONSE"));
+          reject(new PinnedJsonHttpError(
+            status === 200 ? "INVALID_RESPONSE" : "UPSTREAM_FAILURE",
+            { statusCode: status },
+          ));
         }
       });
     });
@@ -154,6 +177,12 @@ function isAllowedRequestHeader(name: string, value: string): boolean {
   }
   if (normalizedName === "authorization") {
     return /^Bearer [\x21-\x7e]{1,16384}$/u.test(value);
+  }
+  if (normalizedName === "idempotency-key") {
+    return /^[A-Za-z0-9][A-Za-z0-9._~:-]{0,127}$/u.test(value);
+  }
+  if (normalizedName === "if-match") {
+    return /^"fw-(?:0|[1-9][0-9]{0,15})"$/u.test(value);
   }
   return false;
 }

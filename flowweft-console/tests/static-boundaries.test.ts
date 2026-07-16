@@ -32,12 +32,18 @@ describe("static security and route boundaries", () => {
     expect(approvals).toContain("getWorkflowDefinitionPage");
     expect(approvals).toContain("getWorkflowHistoryPage");
     expect(approvals).toContain("getWorkflowCommentPage");
+    expect(approvals).toContain("readWorkflowMutationFlash");
+    expect(approvals).not.toContain("raw.mutation");
     expect(approvals).toContain("WorkflowWorkbench");
     const workflowWorkbench = readFileSync(
       join(root, "src", "features", "workflow", "WorkflowWorkbench.tsx"), "utf8",
     );
     expect(workflowWorkbench).not.toMatch(/^["']use client["'];/u);
     expect(workflowWorkbench).not.toMatch(/\b(?:fetch|EventSource|WebSocket)\s*\(/u);
+    expect(workflowWorkbench).toContain('action="/api/bff/workflow/tasks/claim"');
+    expect(workflowWorkbench).toContain('action="/api/bff/workflow/tasks/decide"');
+    expect(workflowWorkbench).toContain('action="/api/bff/workflow/comments/create"');
+    expect(workflowWorkbench).not.toMatch(/name=["'](?:tenant|tenantId|endpoint|accessToken)["']/u);
     const agent = readFileSync(join(routeRoot, "agent", "page.tsx"), "utf8");
     expect(agent).toContain("getAgentConversationPage");
     expect(agent).toContain("getAgentMessagePage");
@@ -54,6 +60,19 @@ describe("static security and route boundaries", () => {
     const apiRoot = join(root, "src", "app", "api");
     const entries = readdirSync(apiRoot, { recursive: true }).map(String);
     expect(entries.some((entry) => entry.includes("[...") || entry.includes("[[..."))).toBe(false);
+  });
+
+  it("consumes the authenticated Workflow flash on the approvals response", () => {
+    const proxy = readFileSync(join(root, "src", "proxy.ts"), "utf8");
+    expect(proxy).toContain("buildContentSecurityPolicy");
+    expect(proxy).toContain('requestHeaders.set("x-flowweft-locale"');
+    expect(proxy).toContain("isWorkflowApprovalsPath(request.nextUrl.pathname)");
+    expect(proxy).toContain('source: "/((?!api|_next/static|_next/image');
+    expect(proxy).toContain('key: "next-router-prefetch"');
+    expect(proxy).toContain("maxAge: 0");
+    expect(proxy).toContain('sameSite: "strict"');
+    expect(proxy).toContain('"Cache-Control", "no-store, max-age=0"');
+    expect(proxy).toContain('"Content-Security-Policy", policy');
   });
 
   it("keeps endpoints and tokens out of browser forms while exposing the reviewed same-origin login routes", () => {
@@ -95,6 +114,8 @@ describe("static security and route boundaries", () => {
       join(root, "src", "server", "auth", "HostTokenExchangeService.ts"),
       join(root, "src", "server", "auth", "LoginAttemptLimiter.ts"),
       join(root, "src", "server", "security", "ConsoleOriginBinding.ts"),
+      join(root, "src", "server", "security", "WorkflowMutationSecurity.ts"),
+      join(root, "src", "server", "workflow", "WorkflowMutationService.ts"),
     ];
 
     for (const file of protectedFiles) {
