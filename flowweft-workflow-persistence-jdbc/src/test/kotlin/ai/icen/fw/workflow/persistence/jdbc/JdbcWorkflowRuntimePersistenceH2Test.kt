@@ -28,6 +28,9 @@ import ai.icen.fw.workflow.runtime.WorkflowEffectJobResultCheckpoint
 import ai.icen.fw.workflow.runtime.WorkflowEffectJobStoreCode
 import ai.icen.fw.workflow.runtime.WorkflowEffectJobStoredResult
 import ai.icen.fw.workflow.runtime.WorkflowEffectObservedOutcome
+import ai.icen.fw.workflow.runtime.WorkflowIncidentCoordinator
+import ai.icen.fw.workflow.runtime.WorkflowIncidentOperationCode
+import ai.icen.fw.workflow.runtime.WorkflowIncidentStatus
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeAction
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeAuthorizationDecision
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeAuthorizationPort
@@ -377,7 +380,7 @@ class JdbcWorkflowRuntimePersistenceH2Test {
     }
 
     @Test
-    fun `expired started provider call without durable result becomes unknown and is never reclaimed`() {
+    fun `expired provider outcome remains blocked until an authorized incident repair`() {
         val dataSource = JdbcDataSource().apply {
             setURL(
                 "jdbc:h2:mem:workflow-unknown-${System.nanoTime()};" +
@@ -507,6 +510,64 @@ class JdbcWorkflowRuntimePersistenceH2Test {
                 }
             }
         }
+
+        val raised = coordinator.raiseReconciliationIncident(
+            workerContext(),
+            claim.effectId,
+            unknown.version,
+            "incident-outcome-unknown",
+            DIGEST_C,
+            22L,
+        )
+        val openIncident = requireNotNull(
+            persistence.loadEffectIncident(TENANT, "incident-outcome-unknown", 22L),
+        )
+        assertSame(WorkflowIncidentStatus.OPEN, openIncident.status)
+        val repairedResult = WorkflowEffectJobStoredResult.of(
+            WorkflowEffectObservedOutcome.SUCCEEDED,
+            "reconciled-result-v1",
+            DIGEST_A,
+            byteArrayOf(9, 8, 7),
+            null,
+            19L,
+        )
+        val incidentCoordinator = WorkflowIncidentCoordinator(allowingAuthorization(), persistence)
+        val resolved = incidentCoordinator.resolveEffectIncident(
+            workerContext(),
+            "incident-outcome-unknown",
+            requireNotNull(raised.record).version,
+            repairedResult,
+            DIGEST_B,
+            23L,
+        )
+        assertSame(WorkflowIncidentOperationCode.RESOLVED, resolved.code)
+        assertSame(WorkflowIncidentStatus.RESOLVED, resolved.incident!!.status)
+        assertSame(WorkflowEffectDeliveryStatus.SUCCEEDED, resolved.incident!!.effect.status)
+        assertSame(
+            WorkflowIncidentOperationCode.REPLAYED,
+            incidentCoordinator.resolveEffectIncident(
+                workerContext(),
+                "incident-outcome-unknown",
+                requireNotNull(raised.record).version,
+                repairedResult,
+                DIGEST_B,
+                24L,
+            ).code,
+        )
+        val applyClaim = queue.claimReady(
+            WorkflowReadyEffectJobClaimRequest.of(
+                TENANT,
+                WorkflowEffectCode.SERVICE_TASK,
+                "repair-worker",
+                "repair-claim",
+                25L,
+                35L,
+                1,
+            ),
+        ).single()
+        assertSame(WorkflowEffectJobExecutionMode.APPLY_SUCCEEDED_RESULT, applyClaim.mode)
+        assertEquals(DIGEST_A, applyClaim.storedResult!!.resultDigest)
+        assertContentEquals(repairedResult.bytes(), applyClaim.storedResult!!.bytes())
     }
 
     private fun workerContext(): WorkflowTrustedCallContext = WorkflowTrustedCallContext.of(

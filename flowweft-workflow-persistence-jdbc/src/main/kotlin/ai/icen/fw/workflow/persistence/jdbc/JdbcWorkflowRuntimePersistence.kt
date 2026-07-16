@@ -15,6 +15,9 @@ import ai.icen.fw.workflow.runtime.WorkflowEffectCheckpoint
 import ai.icen.fw.workflow.runtime.WorkflowEffectClaim
 import ai.icen.fw.workflow.runtime.WorkflowEffectDeliveryStatus
 import ai.icen.fw.workflow.runtime.WorkflowEffectExecutionPhase
+import ai.icen.fw.workflow.runtime.WorkflowEffectIncidentResolution
+import ai.icen.fw.workflow.runtime.WorkflowEffectIncidentSnapshot
+import ai.icen.fw.workflow.runtime.WorkflowEffectJobStoredResult
 import ai.icen.fw.workflow.runtime.WorkflowEffectLease
 import ai.icen.fw.workflow.runtime.WorkflowEffectObservedOutcome
 import ai.icen.fw.workflow.runtime.WorkflowEffectOperationCode
@@ -23,6 +26,10 @@ import ai.icen.fw.workflow.runtime.WorkflowEffectOutcome
 import ai.icen.fw.workflow.runtime.WorkflowEffectReconciliationIncident
 import ai.icen.fw.workflow.runtime.WorkflowEffectRecord
 import ai.icen.fw.workflow.runtime.WorkflowEffectRetry
+import ai.icen.fw.workflow.runtime.WorkflowIncidentOperationCode
+import ai.icen.fw.workflow.runtime.WorkflowIncidentOperationResult
+import ai.icen.fw.workflow.runtime.WorkflowIncidentPersistencePort
+import ai.icen.fw.workflow.runtime.WorkflowIncidentStatus
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeAtomicCommit
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeCommandSnapshot
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeCommitCode
@@ -45,7 +52,7 @@ import javax.sql.DataSource
 class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
     dataSource: DataSource,
     dialect: WorkflowJdbcDialect? = null,
-) : WorkflowRuntimePersistencePort {
+) : WorkflowRuntimePersistencePort, WorkflowIncidentPersistencePort {
     private val transactions = WorkflowJdbcTransactions(dataSource, dialect)
     private val definitions = JdbcWorkflowDefinitionStore(dataSource, dialect)
 
@@ -316,6 +323,132 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
             request.evidenceDigest,
         )
         applied(requireNotNull(loadEffectRow(connection, request.tenantId, request.effectId, false)).record)
+    }
+
+    override fun loadEffectIncident(
+        tenantId: String,
+        incidentId: String,
+        readAt: Long,
+    ): WorkflowEffectIncidentSnapshot? = transactions.read { connection, _ ->
+        require(readAt >= 0L) { "Workflow incident read time is invalid." }
+        val incident = loadIncidentRow(connection, tenantId, incidentId, forUpdate = false)
+            ?: return@read null
+        incident.snapshot(
+            requireNotNull(loadEffectRow(connection, tenantId, incident.effectId, false)) {
+                "Workflow incident references a missing effect."
+            }.record,
+        )
+    }
+
+    override fun resolveEffectIncident(
+        request: WorkflowEffectIncidentResolution,
+    ): WorkflowIncidentOperationResult = transactions.transaction { connection, _ ->
+        val incident = loadIncidentRow(connection, request.tenantId, request.incidentId, forUpdate = true)
+            ?: return@transaction incidentFailed(WorkflowIncidentOperationCode.NOT_FOUND)
+        if (incident.effectId != request.effectId) {
+            return@transaction incidentFailed(WorkflowIncidentOperationCode.NOT_ELIGIBLE)
+        }
+        val effect = loadEffectRow(connection, request.tenantId, request.effectId, true)
+            ?: return@transaction incidentFailed(WorkflowIncidentOperationCode.NOT_FOUND)
+        if (effect.record.intent.instanceId != incident.instanceId) {
+            throw IllegalStateException("Workflow incident and effect instance bindings are inconsistent.")
+        }
+        val storedResult = loadIncidentStoredResult(connection, request.tenantId, request.effectId, true)
+        if (incident.status == WorkflowIncidentStatus.RESOLVED) {
+            return@transaction if (incident.repairDigest == request.repairDigest && storedResult == request.result) {
+                WorkflowIncidentOperationResult.replayed(incident.snapshot(effect.record))
+            } else {
+                incidentFailed(WorkflowIncidentOperationCode.NOT_ELIGIBLE)
+            }
+        }
+        if (incident.status != WorkflowIncidentStatus.OPEN ||
+            effect.record.status != WorkflowEffectDeliveryStatus.RECONCILIATION_INCIDENT
+        ) {
+            return@transaction incidentFailed(WorkflowIncidentOperationCode.NOT_ELIGIBLE)
+        }
+        if (effect.record.version != request.expectedEffectVersion) {
+            return@transaction incidentFailed(WorkflowIncidentOperationCode.VERSION_CONFLICT)
+        }
+        if (storedResult != null && storedResult != request.result) {
+            return@transaction incidentFailed(WorkflowIncidentOperationCode.NOT_ELIGIBLE)
+        }
+        if (storedResult == null) {
+            insertIncidentStoredResult(connection, incident, request)
+        }
+
+        val targetStatus = when (request.result.outcome) {
+            WorkflowEffectObservedOutcome.SUCCEEDED -> WorkflowEffectDeliveryStatus.SUCCEEDED
+            WorkflowEffectObservedOutcome.RETRYABLE_FAILURE -> WorkflowEffectDeliveryStatus.RETRY_WAIT
+            WorkflowEffectObservedOutcome.TERMINAL_FAILURE -> WorkflowEffectDeliveryStatus.TERMINAL_FAILURE
+            else -> return@transaction incidentFailed(WorkflowIncidentOperationCode.NOT_ELIGIBLE)
+        }
+        connection.prepareStatement(RESOLVE_INCIDENT_EFFECT_SQL).use { statement ->
+            statement.setString(1, targetStatus.code)
+            statement.setString(2, request.result.resultDigest)
+            setNullableLong(statement, 3, request.result.retryAt)
+            setNullableString(
+                statement,
+                4,
+                if (request.result.outcome == WorkflowEffectObservedOutcome.RETRYABLE_FAILURE) {
+                    request.repairDigest
+                } else {
+                    null
+                },
+            )
+            statement.setLong(5, request.resolvedAt)
+            statement.setString(6, request.tenantId)
+            statement.setString(7, request.effectId)
+            statement.setLong(8, request.expectedEffectVersion)
+            statement.setString(9, WorkflowEffectDeliveryStatus.RECONCILIATION_INCIDENT.code)
+            check(statement.executeUpdate() == 1) { "Workflow incident effect CAS changed while locked." }
+        }
+        connection.prepareStatement(RESOLVE_INCIDENT_SQL).use { statement ->
+            statement.setString(1, WorkflowIncidentStatus.RESOLVED.code)
+            statement.setString(2, request.repairDigest)
+            statement.setLong(3, request.resolvedAt)
+            statement.setLong(4, request.resolvedAt)
+            statement.setString(5, request.tenantId)
+            statement.setString(6, request.incidentId)
+            statement.setString(7, WorkflowIncidentStatus.OPEN.code)
+            check(statement.executeUpdate() == 1) { "Workflow incident resolution CAS changed while locked." }
+        }
+        val jobStatus: String
+        val availableAt: Long
+        val failureDigest: String?
+        when (request.result.outcome) {
+            WorkflowEffectObservedOutcome.SUCCEEDED -> {
+                jobStatus = WorkflowEffectDeliveryStatus.SUCCEEDED.code
+                availableAt = request.resolvedAt
+                failureDigest = null
+            }
+            WorkflowEffectObservedOutcome.RETRYABLE_FAILURE -> {
+                jobStatus = WorkflowEffectDeliveryStatus.RETRY_WAIT.code
+                availableAt = requireNotNull(request.result.retryAt)
+                failureDigest = request.repairDigest
+            }
+            WorkflowEffectObservedOutcome.TERMINAL_FAILURE -> {
+                jobStatus = WorkflowEffectDeliveryStatus.TERMINAL_FAILURE.code
+                availableAt = request.resolvedAt
+                failureDigest = request.repairDigest
+            }
+            else -> throw IllegalStateException("Unknown workflow incident resolution outcome.")
+        }
+        releaseJob(
+            connection,
+            request.tenantId,
+            request.effectId,
+            jobStatus,
+            request.resolvedAt,
+            availableAt,
+            failureDigest,
+        )
+        val resolvedIncident = requireNotNull(
+            loadIncidentRow(connection, request.tenantId, request.incidentId, forUpdate = false),
+        )
+        val resolvedEffect = requireNotNull(
+            loadEffectRow(connection, request.tenantId, request.effectId, false),
+        ).record
+        WorkflowIncidentOperationResult.resolved(resolvedIncident.snapshot(resolvedEffect))
     }
 
     private fun loadState(
@@ -1061,12 +1194,103 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
         }
     }
 
+    private fun loadIncidentRow(
+        connection: Connection,
+        tenantId: String,
+        incidentId: String,
+        forUpdate: Boolean,
+    ): IncidentRow? {
+        val lock = if (forUpdate) " FOR UPDATE" else ""
+        return connection.prepareStatement(SELECT_INCIDENT_SQL + lock).use { statement ->
+            statement.setString(1, tenantId)
+            statement.setString(2, incidentId)
+            statement.executeQuery().use { result ->
+                if (!result.next()) {
+                    null
+                } else {
+                    IncidentRow(
+                        incidentId = result.getString("id"),
+                        tenantId = result.getString("tenant_id"),
+                        instanceId = result.getString("instance_id"),
+                        effectId = requireNotNull(result.getString("effect_id")) {
+                            "Workflow effect incident is missing its effect binding."
+                        },
+                        incidentCode = result.getString("incident_code"),
+                        status = WorkflowIncidentStatus.of(result.getString("incident_status")),
+                        evidenceDigest = result.getString("evidence_digest"),
+                        repairDigest = result.getString("repair_digest"),
+                        occurredAt = result.getLong("occurred_time"),
+                        resolvedAt = nullableLong(result, "resolved_time"),
+                    ).also { check(!result.next()) { "Workflow incident identity is not unique." } }
+                }
+            }
+        }
+    }
+
+    private fun loadIncidentStoredResult(
+        connection: Connection,
+        tenantId: String,
+        effectId: String,
+        forUpdate: Boolean,
+    ): WorkflowEffectJobStoredResult? {
+        val lock = if (forUpdate) " FOR UPDATE" else ""
+        return connection.prepareStatement(SELECT_INCIDENT_RESULT_SQL + lock).use { statement ->
+            statement.setString(1, tenantId)
+            statement.setString(2, effectId)
+            statement.executeQuery().use { result ->
+                if (!result.next()) {
+                    null
+                } else {
+                    WorkflowEffectJobStoredResult.of(
+                        incidentOutcome(result.getString("outcome_code")),
+                        result.getString("result_type"),
+                        result.getString("result_digest"),
+                        result.getBytes("result_payload"),
+                        nullableLong(result, "retry_time"),
+                        result.getLong("completed_time"),
+                    ).also { check(!result.next()) { "Workflow effect result identity is not unique." } }
+                }
+            }
+        }
+    }
+
+    private fun insertIncidentStoredResult(
+        connection: Connection,
+        incident: IncidentRow,
+        request: WorkflowEffectIncidentResolution,
+    ) {
+        connection.prepareStatement(INSERT_INCIDENT_RESULT_SQL).use { statement ->
+            statement.setString(1, stableRowId("workflow-effect-result", request.effectId))
+            statement.setString(2, request.tenantId)
+            statement.setString(3, incident.instanceId)
+            statement.setString(4, request.effectId)
+            statement.setString(5, request.result.resultType)
+            statement.setString(6, request.result.outcome.code)
+            statement.setString(7, request.result.resultDigest)
+            statement.setBytes(8, request.result.bytes())
+            setNullableLong(statement, 9, request.result.retryAt)
+            statement.setLong(10, request.result.completedAt)
+            statement.setLong(11, 1L)
+            statement.setLong(12, request.resolvedAt)
+            statement.setLong(13, request.resolvedAt)
+            check(statement.executeUpdate() == 1) { "Workflow incident result insert did not affect one row." }
+        }
+    }
+
     private fun outcomeStatus(outcome: WorkflowEffectObservedOutcome): WorkflowEffectDeliveryStatus = when (outcome) {
         WorkflowEffectObservedOutcome.SUCCEEDED -> WorkflowEffectDeliveryStatus.SUCCEEDED
         WorkflowEffectObservedOutcome.RETRYABLE_FAILURE -> WorkflowEffectDeliveryStatus.RETRYABLE_FAILURE
         WorkflowEffectObservedOutcome.TERMINAL_FAILURE -> WorkflowEffectDeliveryStatus.TERMINAL_FAILURE
         WorkflowEffectObservedOutcome.OUTCOME_UNKNOWN -> WorkflowEffectDeliveryStatus.OUTCOME_UNKNOWN
         else -> throw IllegalArgumentException("Unknown workflow effect outcome is unsupported.")
+    }
+
+    private fun incidentOutcome(code: String): WorkflowEffectObservedOutcome = when (code) {
+        WorkflowEffectObservedOutcome.SUCCEEDED.code -> WorkflowEffectObservedOutcome.SUCCEEDED
+        WorkflowEffectObservedOutcome.RETRYABLE_FAILURE.code -> WorkflowEffectObservedOutcome.RETRYABLE_FAILURE
+        WorkflowEffectObservedOutcome.TERMINAL_FAILURE.code -> WorkflowEffectObservedOutcome.TERMINAL_FAILURE
+        WorkflowEffectObservedOutcome.OUTCOME_UNKNOWN.code -> WorkflowEffectObservedOutcome.OUTCOME_UNKNOWN
+        else -> throw IllegalStateException("Persisted workflow incident outcome '$code' is unsupported.")
     }
 
     private fun deliveryStatus(code: String): WorkflowEffectDeliveryStatus = when (code) {
@@ -1097,6 +1321,7 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
 
     private fun applied(record: WorkflowEffectRecord) = WorkflowEffectOperationResult.applied(record)
     private fun failed(code: WorkflowEffectOperationCode) = WorkflowEffectOperationResult.failed(code)
+    private fun incidentFailed(code: WorkflowIncidentOperationCode) = WorkflowIncidentOperationResult.failed(code)
     private fun conflict(code: WorkflowRuntimeCommitCode) = WorkflowRuntimeCommitResult.conflict(code)
 
     private fun stableRowId(vararg components: String): String {
@@ -1120,6 +1345,33 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
         val record: WorkflowEffectRecord,
         val lastFencingToken: Long?,
     )
+
+    private data class IncidentRow(
+        val incidentId: String,
+        val tenantId: String,
+        val instanceId: String,
+        val effectId: String,
+        val incidentCode: String,
+        val status: WorkflowIncidentStatus,
+        val evidenceDigest: String,
+        val repairDigest: String?,
+        val occurredAt: Long,
+        val resolvedAt: Long?,
+    ) {
+        fun snapshot(effect: WorkflowEffectRecord): WorkflowEffectIncidentSnapshot =
+            WorkflowEffectIncidentSnapshot.restore(
+                incidentId,
+                tenantId,
+                instanceId,
+                incidentCode,
+                status,
+                evidenceDigest,
+                repairDigest,
+                occurredAt,
+                resolvedAt,
+                effect,
+            )
+    }
 
     private data class CandidateEvidence(
         val principalType: String,
@@ -1279,6 +1531,34 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
                 id, tenant_id, instance_id, effect_id, incident_code, incident_status,
                 evidence_digest, occurred_time, created_time, updated_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        const val SELECT_INCIDENT_SQL = """
+            SELECT id, tenant_id, instance_id, effect_id, incident_code, incident_status,
+                   evidence_digest, repair_digest, occurred_time, resolved_time
+            FROM fw_wf_incident WHERE tenant_id = ? AND id = ?
+        """
+        const val SELECT_INCIDENT_RESULT_SQL = """
+            SELECT result_type, outcome_code, result_digest, result_payload, retry_time, completed_time
+            FROM fw_wf_effect_result WHERE tenant_id = ? AND effect_id = ?
+        """
+        const val INSERT_INCIDENT_RESULT_SQL = """
+            INSERT INTO fw_wf_effect_result(
+                id, tenant_id, instance_id, effect_id, result_type, outcome_code, result_digest,
+                result_payload, retry_time, completed_time, result_version, created_time, updated_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        const val RESOLVE_INCIDENT_EFFECT_SQL = """
+            UPDATE fw_wf_effect
+            SET delivery_status = ?, outcome_digest = ?, next_attempt_time = ?, retry_reason_digest = ?,
+                record_version = record_version + 1, lease_id = NULL, worker_id = NULL,
+                lease_acquired_time = NULL, lease_expires_time = NULL, execution_phase = NULL,
+                updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND record_version = ? AND delivery_status = ?
+        """
+        const val RESOLVE_INCIDENT_SQL = """
+            UPDATE fw_wf_incident
+            SET incident_status = ?, repair_digest = ?, resolved_time = ?, updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND incident_status = ?
         """
     }
 }
