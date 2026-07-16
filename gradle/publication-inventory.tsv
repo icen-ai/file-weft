@@ -29,6 +29,8 @@ flowweft-agent-runtime	jar	new-physical	8
 flowweft-agent-observability	jar	new-physical	8
 flowweft-agent-web-api	jar	new-physical	8
 flowweft-agent-web-runtime	jar	new-physical	8
+flowweft-agent-web-spring-boot2-starter	jar	new-physical	8
+flowweft-agent-web-spring-boot3-starter	jar	new-physical	17
 flowweft-agent-workflow-tools	jar	new-physical	8
 flowweft-agent-adapter-credential-runtime	jar	new-physical	8
 flowweft-agent-adapter-http	jar	new-physical	8

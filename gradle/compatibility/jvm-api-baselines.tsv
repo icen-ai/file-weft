@@ -67,6 +67,8 @@ version	artifactId	lineage	sourceRef	sourceCommit	jarSha256	apiSha256	exportsSha
 1.0.0	flowweft-agent-testkit	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-agent-web-api	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-agent-web-runtime	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
+1.0.0	flowweft-agent-web-spring-boot2-starter	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
+1.0.0	flowweft-agent-web-spring-boot3-starter	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-agent-workflow-tools	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-capacity-api	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-capacity-runtime	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending

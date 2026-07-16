@@ -15,9 +15,9 @@ class PublicationInventoryVerifierTest {
         withCheckedInInventoryFixture { inventoryFile, repositoryRoot, entries ->
             val verified = PublicationInventoryVerifier(inventoryFile, repositoryRoot).verify()
             assertEquals(entries, verified)
-            assertEquals(66, verified.size)
+            assertEquals(68, verified.size)
             assertEquals(19, verified.count { entry -> entry.lineage == PublicationInventoryVerifier.LEGACY_PHYSICAL })
-            assertEquals(47, verified.count { entry -> entry.lineage == PublicationInventoryVerifier.NEW_PHYSICAL })
+            assertEquals(49, verified.count { entry -> entry.lineage == PublicationInventoryVerifier.NEW_PHYSICAL })
             assertTrue(verified.all { entry -> entry.artifactKind == PublicationInventoryVerifier.JAR_KIND })
             val artifacts = verified.associateBy { entry -> entry.artifactId }
             assertEquals(
