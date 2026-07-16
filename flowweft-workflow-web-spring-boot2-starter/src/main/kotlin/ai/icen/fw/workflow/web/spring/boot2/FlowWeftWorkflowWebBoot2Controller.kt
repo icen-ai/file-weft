@@ -1,6 +1,7 @@
 package ai.icen.fw.workflow.web.spring.boot2
 
 import ai.icen.fw.workflow.web.api.WorkflowInstanceControlOperation
+import ai.icen.fw.workflow.web.api.WorkflowIncidentOperation
 import ai.icen.fw.workflow.web.api.WorkflowWebApplicationResult
 import ai.icen.fw.workflow.web.api.WorkflowWebResponse
 import ai.icen.fw.workflow.web.api.WorkflowWebRoute
@@ -306,46 +307,83 @@ class FlowWeftWorkflowWebBoot2Controller(
 
     @GetMapping("/incidents")
     fun incidents(request: HttpServletRequest): ResponseEntity<WorkflowWebResponse<*>> =
-        unsupportedRead(request, "listWorkflowIncidents") { requests.incidentQuery(request) }
+        requests.handle(request) { _, metadata ->
+            val query = requests.incidentQuery(request)
+            runtime.executeRead(route("listWorkflowIncidents"), metadata) { context ->
+                ports.operations?.listIncidents(context, query)
+                    ?: WorkflowWebApplicationResult.unsupported()
+            }
+        }
 
     @GetMapping("/incidents/{incidentId}")
     fun incident(
         @PathVariable("incidentId") incidentId: String,
         request: HttpServletRequest,
-    ): ResponseEntity<WorkflowWebResponse<*>> = unsupportedRead(request, "getWorkflowIncident") {
+    ): ResponseEntity<WorkflowWebResponse<*>> = requests.handle(request) { _, metadata ->
         requests.noQuery(request)
-        requests.resource(incidentId)
+        val id = requests.resource(incidentId)
+        runtime.executeRead(route("getWorkflowIncident"), metadata) { context ->
+            ports.operations?.getIncident(context, id)
+                ?: WorkflowWebApplicationResult.unsupported()
+        }
     }
 
     @PostMapping("/incidents/{incidentId}/retry")
     fun retryIncident(@PathVariable("incidentId") incidentId: String, request: HttpServletRequest) =
-        unsupportedWrite(request, "retryWorkflowIncident") { requests.resource(incidentId) }
+        actOnIncident(incidentId, request, "retryWorkflowIncident", WorkflowIncidentOperation.RETRY)
 
     @PostMapping("/incidents/{incidentId}/skip")
     fun skipIncident(@PathVariable("incidentId") incidentId: String, request: HttpServletRequest) =
-        unsupportedWrite(request, "skipWorkflowIncident") { requests.resource(incidentId) }
+        actOnIncident(incidentId, request, "skipWorkflowIncident", WorkflowIncidentOperation.SKIP)
 
     @PostMapping("/incidents/{incidentId}/repair")
     fun repairIncident(@PathVariable("incidentId") incidentId: String, request: HttpServletRequest) =
-        unsupportedWrite(request, "repairWorkflowIncident") { requests.resource(incidentId) }
+        actOnIncident(incidentId, request, "repairWorkflowIncident", WorkflowIncidentOperation.REPAIR)
 
     @PostMapping("/migrations/dry-run")
-    fun dryRunMigration(request: HttpServletRequest) = unsupportedWrite(request, "dryRunWorkflowMigration")
-
-    @PostMapping("/migrations")
-    fun executeMigration(request: HttpServletRequest) = unsupportedWrite(request, "executeWorkflowMigration")
-
-    @GetMapping("/migrations/{migrationId}")
-    fun migration(@PathVariable("migrationId") migrationId: String, request: HttpServletRequest) =
-        unsupportedRead(request, "getWorkflowMigration") {
+    fun dryRunMigration(request: HttpServletRequest): ResponseEntity<WorkflowWebResponse<*>> =
+        requests.handle(request) { body, metadata ->
             requests.noQuery(request)
-            requests.resource(migrationId)
+            val command = requests.decode(body, WorkflowMigrationJson::class.java).toCommand()
+            runtime.executeWrite(route("dryRunWorkflowMigration"), metadata) { context, preconditions ->
+                ports.operations?.dryRunMigration(context, preconditions, command)
+                    ?: WorkflowWebApplicationResult.unsupported()
+            }
         }
 
-    @GetMapping("/doctor")
-    fun doctor(request: HttpServletRequest) = unsupportedRead(request, "getWorkflowDoctor") {
+    @PostMapping("/migrations")
+    fun executeMigration(request: HttpServletRequest): ResponseEntity<WorkflowWebResponse<*>> =
+        requests.handle(request) { body, metadata ->
+            requests.noQuery(request)
+            val command = requests.decode(body, WorkflowMigrationJson::class.java).toCommand()
+            runtime.executeWrite(route("executeWorkflowMigration"), metadata) { context, preconditions ->
+                ports.operations?.executeMigration(context, preconditions, command)
+                    ?: WorkflowWebApplicationResult.unsupported()
+            }
+        }
+
+    @GetMapping("/migrations/{migrationId}")
+    fun migration(
+        @PathVariable("migrationId") migrationId: String,
+        request: HttpServletRequest,
+    ): ResponseEntity<WorkflowWebResponse<*>> = requests.handle(request) { _, metadata ->
         requests.noQuery(request)
+        val id = requests.resource(migrationId)
+        runtime.executeRead(route("getWorkflowMigration"), metadata) { context ->
+            ports.operations?.getMigration(context, id)
+                ?: WorkflowWebApplicationResult.unsupported()
+        }
     }
+
+    @GetMapping("/doctor")
+    fun doctor(request: HttpServletRequest): ResponseEntity<WorkflowWebResponse<*>> =
+        requests.handle(request) { _, metadata ->
+            requests.noQuery(request)
+            runtime.executeRead(route("getWorkflowDoctor"), metadata) { context ->
+                ports.operations?.doctor(context)
+                    ?: WorkflowWebApplicationResult.unsupported()
+            }
+        }
 
     private fun definitionLifecycle(
         definitionId: String,
@@ -381,27 +419,18 @@ class FlowWeftWorkflowWebBoot2Controller(
         }
     }
 
-    private fun unsupportedRead(
+    private fun actOnIncident(
+        incidentId: String,
         request: HttpServletRequest,
         operationId: String,
-        validate: () -> Unit = { requests.noQuery(request) },
-    ): ResponseEntity<WorkflowWebResponse<*>> = requests.handle(request) { _, metadata ->
-        validate()
-        runtime.executeRead(route(operationId), metadata) {
-            WorkflowWebApplicationResult.unsupported<Any>()
-        }
-    }
-
-    private fun unsupportedWrite(
-        request: HttpServletRequest,
-        operationId: String,
-        validate: () -> Unit = {},
+        action: WorkflowIncidentOperation,
     ): ResponseEntity<WorkflowWebResponse<*>> = requests.handle(request) { body, metadata ->
         requests.noQuery(request)
-        validate()
-        requests.requireObject(body)
-        runtime.executeWrite(route(operationId), metadata) { _, _ ->
-            WorkflowWebApplicationResult.unsupported<Any>()
+        val id = requests.resource(incidentId)
+        val command = requests.decode(body, WorkflowIncidentActionJson::class.java).toCommand()
+        runtime.executeWrite(route(operationId), metadata) { context, preconditions ->
+            ports.operations?.actOnIncident(context, id, action, preconditions, command)
+                ?: WorkflowWebApplicationResult.unsupported()
         }
     }
 

@@ -1,15 +1,26 @@
 package ai.icen.fw.workflow.web.spring.boot2
 
 import ai.icen.fw.workflow.web.api.WorkflowDefinitionWebApplicationPort
+import ai.icen.fw.workflow.web.api.WorkflowDoctorReportDto
+import ai.icen.fw.workflow.web.api.WorkflowIncidentActionCommand
+import ai.icen.fw.workflow.web.api.WorkflowIncidentDto
+import ai.icen.fw.workflow.web.api.WorkflowIncidentOperation
+import ai.icen.fw.workflow.web.api.WorkflowIncidentQuery
 import ai.icen.fw.workflow.web.api.WorkflowInstanceWebApplicationPort
+import ai.icen.fw.workflow.web.api.WorkflowMigrationCommand
+import ai.icen.fw.workflow.web.api.WorkflowMigrationResultDto
+import ai.icen.fw.workflow.web.api.WorkflowOperationsWebApplicationPort
 import ai.icen.fw.workflow.web.api.WorkflowTaskWebApplicationPort
 import ai.icen.fw.workflow.web.api.WorkflowWebApplicationResult
 import ai.icen.fw.workflow.web.api.WorkflowWebCapabilitiesDto
 import ai.icen.fw.workflow.web.api.WorkflowWebCapabilityApplicationPort
 import ai.icen.fw.workflow.web.api.WorkflowWebCapabilityDto
 import ai.icen.fw.workflow.web.api.WorkflowWebCommandReceiptDto
+import ai.icen.fw.workflow.web.api.WorkflowWebPage
+import ai.icen.fw.workflow.web.api.WorkflowWebResourceId
 import ai.icen.fw.workflow.web.api.WorkflowWebTrustedContext
 import ai.icen.fw.workflow.web.api.WorkflowWebTrustedContextProvider
+import ai.icen.fw.workflow.web.api.WorkflowWebWritePreconditions
 import ai.icen.fw.workflow.web.runtime.WorkflowWebControllerRuntime
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.hamcrest.Matchers.not
@@ -170,13 +181,111 @@ class FlowWeftWorkflowWebBoot2ControllerTest {
             .andExpect(header().string("X-Content-Type-Options", "nosniff"))
     }
 
+    @Test
+    fun `routes incident operations migrations and doctor to the operations port`() {
+        val recordedActions = mutableListOf<WorkflowIncidentOperation>()
+        val operations = object : WorkflowOperationsWebApplicationPort {
+            override fun listIncidents(
+                context: WorkflowWebTrustedContext,
+                query: WorkflowIncidentQuery,
+            ) = WorkflowWebApplicationResult.success(
+                WorkflowWebPage(
+                    listOf(
+                        WorkflowIncidentDto(
+                            "incident-1", "instance-1", "EFFECT_FAILURE", "OPEN",
+                            "EFFECT_RETRYABLE", 1L, 100L, 100L, null, null,
+                        ),
+                    ),
+                    null,
+                ),
+            ).also { observedContexts += context }
+
+            override fun getIncident(context: WorkflowWebTrustedContext, incidentId: WorkflowWebResourceId) =
+                WorkflowWebApplicationResult.success(
+                    WorkflowIncidentDto(
+                        incidentId.value, "instance-1", "EFFECT_FAILURE", "OPEN",
+                        "EFFECT_RETRYABLE", 1L, 100L, 100L, null, null,
+                    ),
+                )
+
+            override fun actOnIncident(
+                context: WorkflowWebTrustedContext,
+                incidentId: WorkflowWebResourceId,
+                action: WorkflowIncidentOperation,
+                preconditions: WorkflowWebWritePreconditions,
+                command: WorkflowIncidentActionCommand,
+            ) = successReceipt("INCIDENT", incidentId.value).also {
+                recordedActions += action
+                observedContexts += context
+            }
+
+            override fun dryRunMigration(
+                context: WorkflowWebTrustedContext,
+                preconditions: WorkflowWebWritePreconditions,
+                command: WorkflowMigrationCommand,
+            ) = WorkflowWebApplicationResult.success(migrationResult(dryRun = true))
+
+            override fun executeMigration(
+                context: WorkflowWebTrustedContext,
+                preconditions: WorkflowWebWritePreconditions,
+                command: WorkflowMigrationCommand,
+            ) = WorkflowWebApplicationResult.success(migrationResult(dryRun = false))
+
+            override fun getMigration(context: WorkflowWebTrustedContext, migrationId: WorkflowWebResourceId) =
+                WorkflowWebApplicationResult.success(migrationResult(dryRun = false))
+
+            override fun doctor(context: WorkflowWebTrustedContext) =
+                WorkflowWebApplicationResult.success(WorkflowDoctorReportDto("HEALTHY", emptyList(), 100L))
+        }
+        val mvc = mvc(operations = operations)
+
+        mvc.perform(get("/flowweft/v1/workflows/incidents").accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.items[0].id").value("incident-1"))
+            .andExpect(jsonPath("$.data.items[0].state").value("OPEN"))
+
+        mvc.perform(get("/flowweft/v1/workflows/incidents/incident-1").accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.id").value("incident-1"))
+
+        mvc.perform(
+            post("/flowweft/v1/workflows/incidents/incident-1/repair")
+                .writeHeaders()
+                .content("""{"reasonCode":"MANUAL_FIX","repairPlanId":"plan-1"}"""),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.resourceId").value("incident-1"))
+
+        mvc.perform(
+            post("/flowweft/v1/workflows/migrations/dry-run")
+                .writeHeaders()
+                .content(
+                    """{"sourceDefinitionId":"def-1","sourceDefinitionVersion":"1","targetDefinitionId":"def-1","targetDefinitionVersion":"2","instances":[{"instanceId":"instance-1","expectedVersion":1}],"nodeMappings":[{"sourceNodeId":"n1","targetNodeId":"n1"}]}""",
+                ),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.dryRun").value(true))
+
+        mvc.perform(get("/flowweft/v1/workflows/doctor").accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.status").value("HEALTHY"))
+
+        assertEquals(listOf(WorkflowIncidentOperation.REPAIR), recordedActions)
+        assertEquals(setOf("tenant-1"), observedContexts.map { it.tenantId }.toSet())
+    }
+
+    private fun migrationResult(dryRun: Boolean): WorkflowMigrationResultDto = WorkflowMigrationResultDto(
+        "migration-1", "COMPLETED", 1L, 1, 1, 1, 0, dryRun, 100L, 100L,
+    )
+
     private fun mvc(
         capabilities: WorkflowWebCapabilityApplicationPort? = null,
         definitions: WorkflowDefinitionWebApplicationPort? = null,
         instances: WorkflowInstanceWebApplicationPort? = null,
         tasks: WorkflowTaskWebApplicationPort? = null,
+        operations: WorkflowOperationsWebApplicationPort? = null,
     ): MockMvc = MockMvcBuilders.standaloneSetup(
-        controller(capabilities, definitions, instances, tasks),
+        controller(capabilities, definitions, instances, tasks, operations),
     ).build()
 
     private fun controller(
@@ -184,10 +293,11 @@ class FlowWeftWorkflowWebBoot2ControllerTest {
         definitions: WorkflowDefinitionWebApplicationPort? = null,
         instances: WorkflowInstanceWebApplicationPort? = null,
         tasks: WorkflowTaskWebApplicationPort? = null,
+        operations: WorkflowOperationsWebApplicationPort? = null,
         contextProvider: WorkflowWebTrustedContextProvider = trustedProvider(),
     ): FlowWeftWorkflowWebBoot2Controller = FlowWeftWorkflowWebBoot2Controller(
         WorkflowWebControllerRuntime(contextProvider),
-        FlowWeftWorkflowWebBoot2ApplicationPorts(capabilities, definitions, instances, tasks, null, null),
+        FlowWeftWorkflowWebBoot2ApplicationPorts(capabilities, definitions, instances, tasks, null, operations),
         FlowWeftWorkflowWebBoot2JsonCodec(ObjectMapper()),
     )
 

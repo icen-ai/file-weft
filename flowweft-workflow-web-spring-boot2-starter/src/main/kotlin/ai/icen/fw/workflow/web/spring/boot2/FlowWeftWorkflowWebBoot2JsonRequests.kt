@@ -5,8 +5,12 @@ import ai.icen.fw.workflow.web.api.WorkflowCommentTokenCommand
 import ai.icen.fw.workflow.web.api.WorkflowDefinitionDraftCommand
 import ai.icen.fw.workflow.web.api.WorkflowDefinitionLifecycleCommand
 import ai.icen.fw.workflow.web.api.WorkflowFormSubmissionCommand
+import ai.icen.fw.workflow.web.api.WorkflowIncidentActionCommand
 import ai.icen.fw.workflow.web.api.WorkflowInstanceControlCommand
 import ai.icen.fw.workflow.web.api.WorkflowInstanceStartCommand
+import ai.icen.fw.workflow.web.api.WorkflowMigrationCommand
+import ai.icen.fw.workflow.web.api.WorkflowMigrationInstanceCommand
+import ai.icen.fw.workflow.web.api.WorkflowMigrationNodeMappingCommand
 import ai.icen.fw.workflow.web.api.WorkflowPrincipalTargetCommand
 import ai.icen.fw.workflow.web.api.WorkflowSubjectDto
 import ai.icen.fw.workflow.web.api.WorkflowTaskAddSignCommand
@@ -135,6 +139,49 @@ internal class WorkflowFormSubmissionJson {
     var dataDigest: String? = null
     fun toCommand(): WorkflowFormSubmissionCommand = WorkflowFormSubmissionCommand(
         required(formId), required(formVersion), required(canonicalData), required(dataDigest),
+    )
+}
+
+internal class WorkflowIncidentActionJson {
+    var reasonCode: String? = null
+    var repairPlanId: String? = null
+    fun toCommand(): WorkflowIncidentActionCommand = WorkflowIncidentActionCommand(
+        required(reasonCode), repairPlanId,
+    )
+}
+
+internal class WorkflowMigrationInstanceJson {
+    var instanceId: String? = null
+    var expectedVersion: Long? = null
+    fun toCommand(): WorkflowMigrationInstanceCommand = WorkflowMigrationInstanceCommand(
+        required(instanceId), required(expectedVersion),
+    )
+}
+
+internal class WorkflowMigrationNodeMappingJson {
+    var sourceNodeId: String? = null
+    var targetNodeId: String? = null
+    fun toCommand(): WorkflowMigrationNodeMappingCommand = WorkflowMigrationNodeMappingCommand(
+        required(sourceNodeId), required(targetNodeId),
+    )
+}
+
+internal class WorkflowMigrationJson {
+    var sourceDefinitionId: String? = null
+    var sourceDefinitionVersion: String? = null
+    var targetDefinitionId: String? = null
+    var targetDefinitionVersion: String? = null
+    var instances: List<WorkflowMigrationInstanceJson>? = null
+    var nodeMappings: List<WorkflowMigrationNodeMappingJson>? = null
+    var variableTransformDescriptorId: String? = null
+    fun toCommand(): WorkflowMigrationCommand = WorkflowMigrationCommand(
+        required(sourceDefinitionId),
+        required(sourceDefinitionVersion),
+        required(targetDefinitionId),
+        required(targetDefinitionVersion),
+        required(instances).map { it.toCommand() },
+        required(nodeMappings).map { it.toCommand() },
+        variableTransformDescriptorId,
     )
 }
 
