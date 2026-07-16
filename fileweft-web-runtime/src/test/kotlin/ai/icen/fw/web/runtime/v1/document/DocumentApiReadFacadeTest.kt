@@ -136,6 +136,7 @@ class DocumentApiReadFacadeTest {
             queries = repository,
             transaction = DirectTransaction,
             folderReadAccess = folderAccess,
+            deletionVisibilityGuard = visibleDeletionGuard(),
         ),
     )
 

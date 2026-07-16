@@ -1,6 +1,10 @@
 package ai.icen.fw.application.document
 
 import ai.icen.fw.application.audit.AuditTrail
+import ai.icen.fw.application.retention.DeletedResourceNotVisibleException
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
@@ -40,6 +44,54 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class DocumentDownloadServiceTest {
+    @Test
+    fun `committed tombstone denies download before storage is opened`() {
+        val storage = RecordingStorage()
+        val guard = DeletionVisibilityGuard.create(
+            object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ) = DeletionVisibilityFence(
+                    Identifier("tombstone-1"), Identifier("plan-1"), tenantId,
+                    resourceType, resourceId, 7, 100,
+                )
+            },
+        )
+        val service = service(storage = storage, deletionVisibility = guard)
+
+        assertThrows<DeletedResourceNotVisibleException> { service.download(Identifier("document-1")) }
+        assertEquals(emptyList(), storage.requested)
+    }
+
+    @Test
+    fun `tombstone committed while storage opens closes the stream before it escapes`() {
+        val stream = CloseTrackingInputStream("document content".encodeToByteArray())
+        val storage = RecordingStorage(downloadContent = stream)
+        var lookups = 0
+        val guard = DeletionVisibilityGuard.create(
+            object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ): DeletionVisibilityFence? {
+                    lookups++
+                    return if (lookups < 3) null else DeletionVisibilityFence(
+                        Identifier("tombstone-1"), Identifier("plan-1"), tenantId,
+                        resourceType, resourceId, 7, 100,
+                    )
+                }
+            },
+        )
+        val service = service(storage = storage, deletionVisibility = guard)
+
+        assertThrows<DeletedResourceNotVisibleException> { service.download(Identifier("document-1")) }
+        assertTrue(stream.closed)
+        assertEquals(3, lookups)
+    }
+
     @Test
     fun `authorizes then streams the selected tenant version and audits the intent`() {
         val storage = RecordingStorage()
@@ -193,11 +245,12 @@ class DocumentDownloadServiceTest {
         files: FileObjectRepository = RecordingFiles(),
         audits: RecordingAudits? = null,
         transaction: ApplicationTransaction = DirectTransaction,
+        deletionVisibility: DeletionVisibilityGuard = visibleDeletionGuard(),
         userRealmProvider: UserRealmProvider = object : UserRealmProvider {
             override fun currentUser(): UserIdentity = UserIdentity(Identifier("user-1"), "Alice")
             override fun findUser(userId: Identifier): UserIdentity? = null
         },
-    ): DocumentDownloadService = DocumentDownloadService(
+    ): DocumentDownloadService = DocumentDownloadService.withDeletionVisibility(
         tenantProvider = object : TenantProvider {
             override fun currentTenant(): TenantContext = TenantContext(Identifier("tenant-1"))
         },
@@ -212,6 +265,7 @@ class DocumentDownloadServiceTest {
         auditTrail = audits?.let { repository ->
             AuditTrail(repository, object : IdentifierGenerator { override fun nextId() = Identifier("audit-1") }, CLOCK)
         },
+        deletionVisibility = deletionVisibility,
     )
 
     private fun document() = Document(

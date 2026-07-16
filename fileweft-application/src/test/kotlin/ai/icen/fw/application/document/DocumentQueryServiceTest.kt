@@ -2,6 +2,11 @@ package ai.icen.fw.application.document
 
 import ai.icen.fw.application.security.ApplicationForbiddenException
 import ai.icen.fw.application.security.ApplicationUnauthenticatedException
+import ai.icen.fw.application.retention.DeletedResourceNotVisibleException
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityUnavailableException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
@@ -21,6 +26,64 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class DocumentQueryServiceTest {
+    @Test
+    fun `tombstone hides detail and page rows without exposing a deleted cursor`() {
+        val blocked = Identifier("document-b")
+        val query = object : DeletionVisibilityQuery {
+            override fun findFence(
+                tenantId: Identifier,
+                resourceType: String,
+                resourceId: Identifier,
+            ): DeletionVisibilityFence? = if (resourceId == blocked) {
+                DeletionVisibilityFence(
+                    Identifier("tombstone-b"), Identifier("plan-b"), tenantId,
+                    resourceType, resourceId, 7, 100,
+                )
+            } else {
+                null
+            }
+        }
+        val guard = DeletionVisibilityGuard.create(query)
+        val detailService = service(
+            RecordingQueries(detail = detail().let { DocumentDetailView(summary("document-b"), it.versions) }),
+            RecordingAuthorization(),
+            RecordingTransaction(),
+            deletionVisibility = guard,
+        )
+        assertThrows<DeletedResourceNotVisibleException> { detailService.detail(blocked) }
+
+        val pageService = service(
+            RecordingQueries(
+                page = DocumentPageResult(
+                    listOf(summary("document-a", updatedTime = 200), summary("document-b", updatedTime = 100)),
+                    DocumentPageCursor(100, blocked),
+                ),
+            ),
+            RecordingAuthorization(),
+            RecordingTransaction(),
+            deletionVisibility = guard,
+        )
+        val page = pageService.page(DocumentPageRequest())
+        assertEquals(listOf("document-a"), page.items.map { it.id.value })
+        assertEquals("document-a", page.nextCursor?.id?.value)
+    }
+
+    @Test
+    fun `missing deletion visibility capability is explicitly unavailable`() {
+        val service = DocumentQueryService(
+            tenantProvider = tenantProvider(),
+            userRealmProvider = object : UserRealmProvider {
+                override fun currentUser() = UserIdentity(Identifier("user-a"), "User A")
+                override fun findUser(userId: Identifier): UserIdentity? = null
+            },
+            authorizationProvider = RecordingAuthorization(),
+            queries = RecordingQueries(detail = detail()),
+            transaction = RecordingTransaction(),
+        )
+
+        assertThrows<DeletionVisibilityUnavailableException> { service.detail(Identifier("document-a")) }
+    }
+
     @Test
     fun `reads a redacted detail through trusted tenant user and document authorization`() {
         val queries = RecordingQueries(detail = detail())
@@ -311,6 +374,7 @@ class DocumentQueryServiceTest {
         authorization: AuthorizationProvider,
         transaction: ApplicationTransaction,
         folderReadAccess: DocumentFolderReadAccess? = null,
+        deletionVisibility: DeletionVisibilityGuard = visibleDeletionGuard(),
     ) = DocumentQueryService(
         tenantProvider = tenantProvider(),
         userRealmProvider = object : UserRealmProvider {
@@ -321,6 +385,7 @@ class DocumentQueryServiceTest {
         queries = queries,
         transaction = transaction,
         folderReadAccess = folderReadAccess,
+        deletionVisibilityGuard = deletionVisibility,
     )
 
     private fun tenantProvider(): TenantProvider = object : TenantProvider {

@@ -1,5 +1,6 @@
 package ai.icen.fw.application.document
 
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
 import ai.icen.fw.application.security.ApplicationAuthorization
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
@@ -24,6 +25,26 @@ class DocumentQueryService @JvmOverloads constructor(
     private val folderReadAccess: DocumentFolderReadAccess? = null,
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
+    private var deletionVisibility = DeletionVisibilityGuard.requireFrom(queries)
+
+    constructor(
+        tenantProvider: TenantProvider,
+        userRealmProvider: UserRealmProvider,
+        authorizationProvider: AuthorizationProvider,
+        queries: DocumentQueryRepository,
+        transaction: ApplicationTransaction,
+        folderReadAccess: DocumentFolderReadAccess?,
+        deletionVisibilityGuard: DeletionVisibilityGuard,
+    ) : this(
+        tenantProvider,
+        userRealmProvider,
+        authorizationProvider,
+        queries,
+        transaction,
+        folderReadAccess,
+    ) {
+        deletionVisibility = deletionVisibilityGuard
+    }
 
     fun detail(documentId: Identifier): DocumentDetailView {
         val tenant = tenantProvider.currentTenant()
@@ -33,7 +54,16 @@ class DocumentQueryService @JvmOverloads constructor(
             throw DocumentNotFoundException(documentId)
         }
         return transaction.execute {
-            queries.findDetail(tenant.tenantId, documentId, folderReadScope) ?: throw DocumentNotFoundException(documentId)
+            deletionVisibility.requireResourceVisible(tenant.tenantId, DOCUMENT_RESOURCE_TYPE, documentId)
+            val detail = queries.findDetail(tenant.tenantId, documentId, folderReadScope)
+                ?: throw DocumentNotFoundException(documentId)
+            if (detail.document.id != documentId) throw DocumentNotFoundException(documentId)
+            deletionVisibility.requireResourceVisible(
+                tenant.tenantId,
+                DOCUMENT_RESOURCE_TYPE,
+                detail.document.id,
+            )
+            detail
         }
     }
 
@@ -54,7 +84,24 @@ class DocumentQueryService @JvmOverloads constructor(
         if (folderReadScope?.isEmpty == true) {
             return DocumentPageResult(emptyList())
         }
-        return transaction.execute { queries.findPage(tenant.tenantId, normalizedRequest, folderReadScope) }
+        return transaction.execute {
+            deletionVisibility.requireAvailable(tenant.tenantId, DOCUMENT_RESOURCE_TYPE)
+            val page = queries.findPage(tenant.tenantId, normalizedRequest, folderReadScope)
+            val visibleIds = deletionVisibility.visibleResourceIds(
+                tenant.tenantId,
+                DOCUMENT_RESOURCE_TYPE,
+                page.items.map { item -> item.id },
+            )
+            if (visibleIds.size == page.items.size) {
+                page
+            } else {
+                val visibleItems = page.items.filter { item -> item.id in visibleIds }
+                val safeNextCursor = page.nextCursor?.let {
+                    visibleItems.lastOrNull()?.let { item -> DocumentPageCursor(item.updatedTime, item.id) }
+                }
+                DocumentPageResult(visibleItems, safeNextCursor)
+            }
+        }
     }
 
     private fun readableFolderScope(): DocumentFolderReadScope? =

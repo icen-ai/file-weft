@@ -7,6 +7,7 @@ import ai.icen.fw.application.idempotency.IdempotencyConflictException
 import ai.icen.fw.application.metadata.DocumentMetadataWriteUnavailableException
 import ai.icen.fw.application.offline.DocumentRestoreConflictException
 import ai.icen.fw.application.publish.ActiveDocumentReviewWorkflowException
+import ai.icen.fw.application.retention.DeletionVisibilityUnavailableException
 import ai.icen.fw.application.security.ApplicationForbiddenException
 import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
@@ -90,6 +91,7 @@ class V1ApiResponseFactory {
             )
             is DocumentMetadataWriteUnavailableException,
             is DocumentFolderReadAccessUnavailableException,
+            is DeletionVisibilityUnavailableException,
             is V1FeatureUnavailableException,
             -> MappedFailure(
                 ApiHttpStatus.SERVICE_UNAVAILABLE,

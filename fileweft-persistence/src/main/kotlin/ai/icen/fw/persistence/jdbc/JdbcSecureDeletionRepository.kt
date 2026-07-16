@@ -2,6 +2,8 @@ package ai.icen.fw.persistence.jdbc
 
 import ai.icen.fw.application.outbox.OutboxEventStatus
 import ai.icen.fw.application.retention.SecureDeletionApplicationService
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.application.retention.SecureDeletionCompletionEvidence
 import ai.icen.fw.application.retention.SecureDeletionExecution
 import ai.icen.fw.application.retention.SecureDeletionExecutionStatus
@@ -33,8 +35,11 @@ import java.util.UUID
  */
 class JdbcSecureDeletionRepository(
     objectMapper: ObjectMapper,
-) : SecureDeletionRepository {
+) : SecureDeletionRepository, DeletionVisibilityQuerySource {
     private val jsonCodec = SecureDeletionJsonCodec(objectMapper)
+    private val visibilityQuery = JdbcDeletionVisibilityQuery()
+
+    override fun deletionVisibilityQuery(): DeletionVisibilityQuery = visibilityQuery
 
     override fun createIfAbsent(plan: SecureDeletionPlan, dispatchEventId: Identifier): Boolean {
         validatePlanBoundary(plan, dispatchEventId)

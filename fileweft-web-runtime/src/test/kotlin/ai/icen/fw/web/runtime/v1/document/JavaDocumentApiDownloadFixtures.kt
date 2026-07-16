@@ -49,7 +49,7 @@ class JavaDocumentApiDownloadFixtures private constructor() {
                 override fun findUser(userId: Identifier): UserIdentity? = null
             }
             return DocumentApiDownloadFacade(
-                DocumentDownloadService(
+                DocumentDownloadService.withDeletionVisibility(
                     tenantProvider = object : TenantProvider {
                         override fun currentTenant() = TenantContext(tenantId)
                     },
@@ -107,6 +107,8 @@ class JavaDocumentApiDownloadFixtures private constructor() {
                     transaction = object : ApplicationTransaction {
                         override fun <T> execute(action: () -> T): T = action()
                     },
+                    auditTrail = null,
+                    deletionVisibility = visibleDeletionGuard(),
                 ),
             )
         }

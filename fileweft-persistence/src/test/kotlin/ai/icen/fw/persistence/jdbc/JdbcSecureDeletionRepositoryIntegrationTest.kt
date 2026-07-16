@@ -5,6 +5,7 @@ import ai.icen.fw.application.retention.SecureDeletionCompletionEvidence
 import ai.icen.fw.application.retention.SecureDeletionExecution
 import ai.icen.fw.application.retention.SecureDeletionExecutionStatus
 import ai.icen.fw.application.retention.StoredSecureDeletionReceipt
+import ai.icen.fw.application.retention.DeletedResourceNotVisibleException
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.retention.DeletionAuthorizationSnapshot
@@ -17,6 +18,7 @@ import ai.icen.fw.domain.retention.RetentionPolicySnapshot
 import ai.icen.fw.domain.retention.SecureDeletionPlan
 import ai.icen.fw.domain.retention.SecureDeletionRequest
 import ai.icen.fw.domain.retention.SecureDeletionStage
+import ai.icen.fw.domain.document.Document
 import ai.icen.fw.persistence.migration.FlywayMigrationRunner
 import ai.icen.fw.spi.retention.SecureDeletionProviderReceipt
 import ai.icen.fw.spi.retention.SecureDeletionProviderStatus
@@ -67,6 +69,14 @@ abstract class SecureDeletionRepositoryDatabaseContract {
         val plan = allowedPlan()
         val dispatchId = SecureDeletionApplicationService.dispatchEventId(plan.tenantId, plan.id)
 
+        insertReadableDocument(plan)
+        assertEquals(
+            plan.resourceId,
+            transaction.execute {
+                JdbcDocumentQueryRepository().findDetail(plan.tenantId, plan.resourceId)
+            }?.document?.id,
+        )
+
         assertTrue(transaction.execute {
             repository.createIfAbsent(plan, dispatchId).also { inserted ->
                 if (inserted) outbox.append(dispatchEvent(plan, dispatchId))
@@ -74,6 +84,45 @@ abstract class SecureDeletionRepositoryDatabaseContract {
         })
         assertFalse(transaction.execute { repository.createIfAbsent(plan, dispatchId) })
         assertNull(transaction.execute { repository.findByPlanId(Identifier("tenant-foreign"), plan.id) })
+        val visibility = repository.deletionVisibilityQuery()
+        val fence = requireNotNull(transaction.execute {
+            visibility.findFence(plan.tenantId, plan.resourceType, plan.resourceId)
+        })
+        assertEquals(plan.tombstone.id, fence.tombstoneId)
+        assertEquals(plan.id, fence.planId)
+        assertEquals(plan.resourceRevision, fence.resourceRevision)
+        assertEquals(
+            setOf(plan.resourceId),
+            transaction.execute {
+                visibility.findFences(
+                    plan.tenantId,
+                    plan.resourceType,
+                    listOf(plan.resourceId, Identifier("resource-visible")),
+                ).keys
+            },
+        )
+        assertNull(transaction.execute {
+            visibility.findFence(Identifier("tenant-foreign"), plan.resourceType, plan.resourceId)
+        })
+        assertNull(transaction.execute {
+            JdbcDocumentQueryRepository().findDetail(plan.tenantId, plan.resourceId)
+        })
+        assertNull(transaction.execute {
+            JdbcDocumentRepository(TEST_CLOCK).findById(plan.tenantId, plan.resourceId)
+        })
+        assertFailsWith<DeletedResourceNotVisibleException> {
+            transaction.execute {
+                JdbcDocumentRepository(TEST_CLOCK).save(
+                    Document(
+                        plan.resourceId,
+                        plan.tenantId,
+                        Identifier("asset-${plan.resourceId.value}"),
+                        "DOC-${plan.resourceId.value}",
+                        "Stale update",
+                    ),
+                )
+            }
+        }
 
         val foreignTenantPlan = allowedPlan(Identifier("tenant-foreign"))
         val foreignDispatchId = SecureDeletionApplicationService.dispatchEventId(
@@ -368,6 +417,29 @@ abstract class SecureDeletionRepositoryDatabaseContract {
             statement.executeQuery("SELECT COUNT(*) FROM $table").use { rows ->
                 rows.next()
                 rows.getInt(1)
+            }
+        }
+    }
+
+    private fun insertReadableDocument(plan: SecureDeletionPlan) {
+        dataSource.connection.use { connection ->
+            val assetId = "asset-${plan.resourceId.value}"
+            connection.prepareStatement(
+                "INSERT INTO fw_asset(id, tenant_id, file_id, asset_type, metadata_json, created_time, updated_time) VALUES (?, ?, ?, 'DOCUMENT', '{}', 1, 1)",
+            ).use { statement ->
+                statement.setString(1, assetId)
+                statement.setString(2, plan.tenantId.value)
+                statement.setString(3, "file-${plan.resourceId.value}")
+                assertEquals(1, statement.executeUpdate())
+            }
+            connection.prepareStatement(
+                "INSERT INTO fw_document(id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, created_time, updated_time) VALUES (?, ?, ?, ?, 'Visible before tombstone', 'DRAFT', NULL, 1, 1)",
+            ).use { statement ->
+                statement.setString(1, plan.resourceId.value)
+                statement.setString(2, plan.tenantId.value)
+                statement.setString(3, assetId)
+                statement.setString(4, "DOC-${plan.resourceId.value}")
+                assertEquals(1, statement.executeUpdate())
             }
         }
     }

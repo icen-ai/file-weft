@@ -1,6 +1,7 @@
 package ai.icen.fw.application.document
 
 import ai.icen.fw.application.audit.AuditTrail
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
 import ai.icen.fw.application.security.ApplicationAuthorization
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
@@ -31,6 +32,7 @@ class DocumentDownloadService(
 ) {
     private val authorization = ApplicationAuthorization(userRealmProvider, authorizationProvider)
     private var downloadVisibility: DocumentDownloadVisibility? = null
+    private var deletionVisibility: DeletionVisibilityGuard = DeletionVisibilityGuard.requireFrom(documentRepository)
 
     constructor(
         tenantProvider: TenantProvider,
@@ -55,6 +57,31 @@ class DocumentDownloadService(
         this.downloadVisibility = downloadVisibility
     }
 
+    constructor(
+        tenantProvider: TenantProvider,
+        userRealmProvider: UserRealmProvider,
+        authorizationProvider: AuthorizationProvider,
+        documentRepository: DocumentRepository,
+        fileObjectRepository: FileObjectRepository,
+        storageAdapter: StorageAdapter,
+        transaction: ApplicationTransaction,
+        auditTrail: AuditTrail?,
+        downloadVisibility: DocumentDownloadVisibility,
+        deletionVisibility: DeletionVisibilityGuard,
+    ) : this(
+        tenantProvider,
+        userRealmProvider,
+        authorizationProvider,
+        documentRepository,
+        fileObjectRepository,
+        storageAdapter,
+        transaction,
+        auditTrail,
+        downloadVisibility,
+    ) {
+        this.deletionVisibility = deletionVisibility
+    }
+
     @JvmOverloads
     fun download(documentId: Identifier, versionId: Identifier? = null): DocumentDownload {
         val tenant = tenantProvider.currentTenant()
@@ -66,7 +93,12 @@ class DocumentDownloadService(
         // waits on identity infrastructure.
         val operator = userRealmProvider.currentUser()
         val target = transaction.execute {
+            deletionVisibility.requireResourceVisible(tenant.tenantId, DOCUMENT_RESOURCE_TYPE, documentId)
             val document = documentRepository.findById(tenant.tenantId, documentId) ?: throw DocumentNotFoundException(documentId)
+            if (document.tenantId != tenant.tenantId || document.id != documentId) {
+                throw DocumentNotFoundException(documentId)
+            }
+            deletionVisibility.requireResourceVisible(tenant.tenantId, DOCUMENT_RESOURCE_TYPE, document.id)
             if (visibility != null) {
                 visibility.verify(tenant.tenantId, document, checkNotNull(visibilityPermit))
             }
@@ -81,6 +113,20 @@ class DocumentDownloadService(
             storageAdapter.download(location)
         } catch (failure: Exception) {
             throw DocumentContentUnavailableException(cause = failure)
+        }
+        try {
+            // Close an object opened concurrently with a committed tombstone
+            // before any stream handle escapes to the transport.
+            transaction.execute {
+                deletionVisibility.requireResourceVisible(tenant.tenantId, DOCUMENT_RESOURCE_TYPE, target.documentId)
+            }
+        } catch (failure: Exception) {
+            try {
+                storageDownload.content.close()
+            } catch (closeFailure: Exception) {
+                failure.addSuppressed(closeFailure)
+            }
+            throw failure
         }
         return DocumentDownload(target.documentId, target.version.id, target.version.versionNumber, target.fileObject, storageDownload)
     }
@@ -111,9 +157,35 @@ class DocumentDownloadService(
         )
     }
 
-    private companion object {
-        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
-        const val DOWNLOAD_ACTION = "document:download"
+    companion object {
+        private const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        private const val DOWNLOAD_ACTION = "document:download"
+
+        /**
+         * Additive injection point that avoids introducing an ambiguous
+         * same-arity Java constructor beside the historical visibility one.
+         */
+        @JvmStatic
+        fun withDeletionVisibility(
+            tenantProvider: TenantProvider,
+            userRealmProvider: UserRealmProvider,
+            authorizationProvider: AuthorizationProvider,
+            documentRepository: DocumentRepository,
+            fileObjectRepository: FileObjectRepository,
+            storageAdapter: StorageAdapter,
+            transaction: ApplicationTransaction,
+            auditTrail: AuditTrail?,
+            deletionVisibility: DeletionVisibilityGuard,
+        ): DocumentDownloadService = DocumentDownloadService(
+            tenantProvider,
+            userRealmProvider,
+            authorizationProvider,
+            documentRepository,
+            fileObjectRepository,
+            storageAdapter,
+            transaction,
+            auditTrail,
+        ).also { service -> service.deletionVisibility = deletionVisibility }
     }
 
     private class DownloadTarget(

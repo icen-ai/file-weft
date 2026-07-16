@@ -209,9 +209,10 @@ class DocumentDownloadVisibilityTest {
                 transaction,
                 auditTrail,
                 visibility,
+                visibleDeletionGuard(),
             )
         } else {
-            DocumentDownloadService(
+            DocumentDownloadService.withDeletionVisibility(
                 tenantProvider(),
                 users,
                 authorization,
@@ -220,10 +221,11 @@ class DocumentDownloadVisibilityTest {
                 storage,
                 transaction,
                 auditTrail,
+                visibleDeletionGuard(),
             )
         }
 
-        fun legacyServiceWithNullAudit(): DocumentDownloadService = DocumentDownloadService(
+        fun legacyServiceWithNullAudit(): DocumentDownloadService = DocumentDownloadService.withDeletionVisibility(
             tenantProvider(),
             users,
             authorization,
@@ -232,6 +234,7 @@ class DocumentDownloadVisibilityTest {
             storage,
             transaction,
             null,
+            visibleDeletionGuard(),
         )
     }
 

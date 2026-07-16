@@ -1,5 +1,8 @@
 package ai.icen.fw.persistence.jdbc
 
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
@@ -11,11 +14,16 @@ import java.time.Clock
 
 class JdbcDocumentRepository(
     private val clock: Clock,
-) : DocumentRepository {
+) : DocumentRepository, DeletionVisibilityQuerySource {
+    private val visibilityQuery = JdbcDeletionVisibilityQuery()
+    private val deletionVisibility = DeletionVisibilityGuard.create(visibilityQuery)
+
+    override fun deletionVisibilityQuery(): DeletionVisibilityQuery = visibilityQuery
+
     override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
         find(
             tenantId,
-            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND id = ?",
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document document WHERE document.tenant_id = ? AND document.id = ? AND ${notTombstonedSql("document")}",
         ) { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentId.value)
@@ -24,7 +32,7 @@ class JdbcDocumentRepository(
     override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
         find(
             tenantId,
-            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND id = ? FOR UPDATE",
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document document WHERE document.tenant_id = ? AND document.id = ? AND ${notTombstonedSql("document")} FOR UPDATE",
         ) { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentId.value)
@@ -33,7 +41,7 @@ class JdbcDocumentRepository(
     override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? =
         find(
             tenantId,
-            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document WHERE tenant_id = ? AND doc_no = ?",
+            "SELECT id, tenant_id, asset_id, doc_no, title, lifecycle_state, current_version_id, delivery_generation FROM fw_document document WHERE document.tenant_id = ? AND document.doc_no = ? AND ${notTombstonedSql("document")}",
         ) { statement ->
             statement.setString(1, tenantId.value)
             statement.setString(2, documentNumber)
@@ -41,6 +49,7 @@ class JdbcDocumentRepository(
 
     override fun save(document: Document) {
         val connection = JdbcConnectionContext.requireCurrent()
+        deletionVisibility.requireResourceVisible(document.tenantId, DOCUMENT_RESOURCE_TYPE, document.id)
         val now = clock.millis()
         val updated = connection.prepareStatement(
             "UPDATE fw_document SET asset_id = ?, doc_no = ?, title = ?, lifecycle_state = ?, current_version_id = ?, delivery_generation = ?, updated_time = ? WHERE tenant_id = ? AND id = ?",
@@ -176,6 +185,7 @@ class JdbcDocumentRepository(
     }
 
     private companion object {
+        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
         const val POSTGRESQL_UNIQUE_VIOLATION_SQL_STATE = "23505"
         const val POSTGRESQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT = "fw_document_tenant_id_doc_no_key"
         const val MYSQL_INTEGRITY_CONSTRAINT_SQL_STATE = "23000"
@@ -189,5 +199,11 @@ class JdbcDocumentRepository(
             """\bfor\s+key\s+['`](?:[^'`]+\.)?${MYSQL_DOCUMENT_NUMBER_UNIQUE_CONSTRAINT}['`]""",
             RegexOption.IGNORE_CASE,
         )
+
+        fun notTombstonedSql(documentAlias: String): String =
+            "NOT EXISTS (SELECT 1 FROM fw_secure_deletion_tombstone deletion_fence " +
+                "WHERE deletion_fence.tenant_id = $documentAlias.tenant_id " +
+                "AND deletion_fence.resource_type = 'DOCUMENT' " +
+                "AND deletion_fence.resource_id = $documentAlias.id)"
     }
 }

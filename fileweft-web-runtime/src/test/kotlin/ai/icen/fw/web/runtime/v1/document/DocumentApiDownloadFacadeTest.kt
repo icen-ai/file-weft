@@ -268,7 +268,7 @@ class DocumentApiDownloadFacadeTest {
             override fun findUser(userId: Identifier): UserIdentity? = null
         }
         val facade = DocumentApiDownloadFacade(
-            DocumentDownloadService(
+            DocumentDownloadService.withDeletionVisibility(
                 tenantProvider = object : TenantProvider {
                     override fun currentTenant() = TenantContext(TENANT_ID)
                 },
@@ -278,6 +278,8 @@ class DocumentApiDownloadFacadeTest {
                 fileObjectRepository = files,
                 storageAdapter = storage,
                 transaction = DirectTransaction,
+                auditTrail = null,
+                deletionVisibility = visibleDeletionGuard(),
             ),
         )
     }

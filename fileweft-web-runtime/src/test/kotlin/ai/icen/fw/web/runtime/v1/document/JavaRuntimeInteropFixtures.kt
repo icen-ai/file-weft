@@ -71,6 +71,8 @@ class JavaRuntimeInteropFixtures private constructor() {
                 transaction = object : ApplicationTransaction {
                     override fun <T> execute(action: () -> T): T = action()
                 },
+                folderReadAccess = null,
+                deletionVisibilityGuard = visibleDeletionGuard(),
             ),
         )
     }

@@ -8,6 +8,8 @@ import ai.icen.fw.application.document.DocumentPageResult
 import ai.icen.fw.application.document.DocumentQueryRepository
 import ai.icen.fw.application.document.DocumentSummaryView
 import ai.icen.fw.application.document.DocumentVersionView
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.LifecycleState
 import java.sql.PreparedStatement
@@ -21,7 +23,11 @@ import java.sql.Array as JdbcArray
  * views. In particular, asset identifiers, object identifiers, storage
  * locations, delivery IDs, errors, and outbox payloads never leave SQL.
  */
-class JdbcDocumentQueryRepository : DocumentQueryRepository {
+class JdbcDocumentQueryRepository : DocumentQueryRepository, DeletionVisibilityQuerySource {
+    private val visibilityQuery = JdbcDeletionVisibilityQuery()
+
+    override fun deletionVisibilityQuery(): DeletionVisibilityQuery = visibilityQuery
+
     override fun findDetail(
         tenantId: Identifier,
         documentId: Identifier,
@@ -184,6 +190,13 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
               ON asset.id = document.asset_id
              AND asset.tenant_id = document.tenant_id
             WHERE document.tenant_id = ?
+              AND NOT EXISTS (
+                    SELECT 1
+                      FROM fw_secure_deletion_tombstone deletion_fence
+                     WHERE deletion_fence.tenant_id = document.tenant_id
+                       AND deletion_fence.resource_type = 'DOCUMENT'
+                       AND deletion_fence.resource_id = document.id
+              )
         """
 
         private fun detailSelectSql(folderExpression: String): String = """
@@ -214,6 +227,13 @@ class JdbcDocumentQueryRepository : DocumentQueryRepository {
              AND file.id = version.file_id
             WHERE document.tenant_id = ?
               AND document.id = ?
+              AND NOT EXISTS (
+                    SELECT 1
+                      FROM fw_secure_deletion_tombstone deletion_fence
+                     WHERE deletion_fence.tenant_id = document.tenant_id
+                       AND deletion_fence.resource_type = 'DOCUMENT'
+                       AND deletion_fence.resource_id = document.id
+              )
         """
 
     }

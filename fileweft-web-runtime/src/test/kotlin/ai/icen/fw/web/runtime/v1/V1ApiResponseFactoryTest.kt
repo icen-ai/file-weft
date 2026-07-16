@@ -8,6 +8,8 @@ import ai.icen.fw.application.idempotency.IdempotencyKeyConflictException
 import ai.icen.fw.application.metadata.DocumentMetadataWriteUnavailableException
 import ai.icen.fw.application.offline.DocumentRestoreConflictException
 import ai.icen.fw.application.offline.DocumentRestoreConflictReason
+import ai.icen.fw.application.retention.DeletedResourceNotVisibleException
+import ai.icen.fw.application.retention.DeletionVisibilityUnavailableException
 import ai.icen.fw.application.workflow.DocumentReviewConflictException
 import ai.icen.fw.application.upload.StoredObjectIntegrityException
 import ai.icen.fw.application.security.ApplicationForbiddenException
@@ -56,6 +58,7 @@ class V1ApiResponseFactoryTest {
             ApplicationForbiddenException("policy=restricted-folder") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             WorkflowTaskAssignmentDeniedException(Identifier("private-task")) to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             DocumentNotFoundException(Identifier("private-document")) to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
+            DeletedResourceNotVisibleException() to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
             WorkflowTaskNotFoundException(Identifier("private-workflow"), Identifier("private-task")) to Triple(
                 404,
                 ApiErrorCodes.NOT_FOUND,
@@ -63,6 +66,11 @@ class V1ApiResponseFactoryTest {
             ),
             DocumentFolderReadAccessUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             DocumentMetadataWriteUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
+            DeletionVisibilityUnavailableException("private migration detail") to Triple(
+                503,
+                ApiErrorCodes.FEATURE_UNAVAILABLE,
+                "The requested feature is unavailable.",
+            ),
             V1FeatureUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             DocumentNumberAlreadyExistsException("private-number") to Triple(
                 409,
