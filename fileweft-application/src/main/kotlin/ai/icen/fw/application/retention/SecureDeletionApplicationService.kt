@@ -7,6 +7,9 @@ import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.retention.RetentionDeletionDecisionEngine
 import ai.icen.fw.domain.retention.SecureDeletionDecision
 import ai.icen.fw.domain.retention.SecureDeletionRequest
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 /**
  * Commits the secure-deletion fence before any external provider is invoked.
@@ -31,7 +34,7 @@ class SecureDeletionApplicationService(
         }
 
         val plan = requireNotNull(decision.plan)
-        val dispatchEventId = dispatchEventId(plan.id)
+        val dispatchEventId = dispatchEventId(plan.tenantId, plan.id)
         transaction.execute {
             if (deletions.createIfAbsent(plan, dispatchEventId)) {
                 outbox.append(
@@ -79,7 +82,27 @@ class SecureDeletionApplicationService(
         const val RESOURCE_REVISION_PAYLOAD_KEY = "resourceRevision"
 
         @JvmStatic
-        fun dispatchEventId(planId: Identifier): Identifier =
-            planId
+        fun dispatchEventId(tenantId: Identifier, planId: Identifier): Identifier {
+            val digest = MessageDigest.getInstance("SHA-256")
+            updateDispatchDigest(digest, "flowweft.secure-deletion.dispatch.v1")
+            updateDispatchDigest(digest, tenantId.value)
+            updateDispatchDigest(digest, planId.value)
+            return Identifier(
+                digest.digest().joinToString(separator = "") { byte ->
+                    (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+                },
+            )
+        }
+
+        /** Legacy helper retained for source and binary compatibility. New code must bind the tenant. */
+        @JvmStatic
+        @Deprecated("Use dispatchEventId(tenantId, planId) so the Outbox identity is tenant-bound")
+        fun dispatchEventId(planId: Identifier): Identifier = planId
+
+        private fun updateDispatchDigest(digest: MessageDigest, value: String) {
+            val bytes = value.toByteArray(StandardCharsets.UTF_8)
+            digest.update(ByteBuffer.allocate(4).putInt(bytes.size).array())
+            digest.update(bytes)
+        }
     }
 }

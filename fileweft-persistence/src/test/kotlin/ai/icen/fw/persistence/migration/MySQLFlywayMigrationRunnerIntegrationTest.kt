@@ -59,7 +59,7 @@ class MySQLFlywayMigrationRunnerIntegrationTest {
     @Test
     fun `applies all mysql migrations and validates`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
-        assertEquals(32, migrations)
+        assertEquals(33, migrations)
 
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
@@ -152,7 +152,7 @@ class MySQLFlywayMigrationRunnerIntegrationTest {
                 }
             }
         }
-        assertEquals(19, tableCollations.size, "Expected every FileWeft business table")
+        assertEquals(23, tableCollations.size, "Expected every FileWeft business table")
         val nonBinaryTableDefaults = tableCollations.filterValues { collation -> collation != "utf8mb4_0900_bin" }
         assertTrue(
             nonBinaryTableDefaults.isEmpty(),

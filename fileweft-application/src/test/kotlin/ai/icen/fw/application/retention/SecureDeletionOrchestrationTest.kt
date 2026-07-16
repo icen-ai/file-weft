@@ -48,9 +48,19 @@ class SecureDeletionOrchestrationTest {
         assertEquals(listOf("create", "outbox", "create", "read"), repositoryAndOutboxEvents(repository, outbox))
         assertEquals(1, outbox.events.size)
         val event = outbox.events.single()
-        assertEquals(SecureDeletionApplicationService.dispatchEventId(Identifier("plan-1")), event.id)
+        assertEquals(SecureDeletionApplicationService.dispatchEventId(TENANT, Identifier("plan-1")), event.id)
         assertEquals("7", event.payload[SecureDeletionApplicationService.RESOURCE_REVISION_PAYLOAD_KEY])
         assertNotNull(repository.execution)
+    }
+
+    @Test
+    fun `dispatch identity is deterministic and tenant bound`() {
+        val planId = Identifier("shared-plan")
+        val first = SecureDeletionApplicationService.dispatchEventId(TENANT, planId)
+
+        assertEquals(first, SecureDeletionApplicationService.dispatchEventId(TENANT, planId))
+        assertFalse(first == SecureDeletionApplicationService.dispatchEventId(Identifier("tenant-2"), planId))
+        assertEquals(64, first.value.length)
     }
 
     @Test
