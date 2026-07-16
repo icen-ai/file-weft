@@ -38,6 +38,7 @@ flowweft-workflow-runtime	jar	new-physical	8
 flowweft-workflow-document-adapter	jar	new-physical	8
 flowweft-workflow-document-fileweft-adapter	jar	new-physical	8
 flowweft-workflow-document-persistence-jdbc	jar	new-physical	8
+flowweft-workflow-document-selection-runtime	jar	new-physical	8
 flowweft-workflow-persistence-jdbc	jar	new-physical	8
 flowweft-workflow-web-api	jar	new-physical	8
 flowweft-workflow-web-runtime	jar	new-physical	8
