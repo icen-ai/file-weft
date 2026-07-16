@@ -68,4 +68,5 @@ include(
     ":fileweft-sample-host",
     ":fileweft-dev",
     ":flowweft-agent-persistence-jdbc",
+    ":flowweft-retrieval-fileweft-adapter",
 )
