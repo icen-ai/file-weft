@@ -29,6 +29,18 @@ class WorkflowSpiContractsTest {
         assertEquals("provider-r7", receipt.providerRevision)
         assertEquals(context.contextDigest, receipt.contextDigest)
         assertEquals(digest('b'), receipt.requestDigest)
+        val restoredContext = receipt.restoreContext()
+        assertEquals(context.contextDigest, restoredContext.contextDigest)
+        assertEquals(context.purpose, restoredContext.purpose)
+        assertEquals(context.deadlineEpochMilli, restoredContext.deadlineEpochMilli)
+        val restoredReceipt = WorkflowProviderReceipt.success(
+            restoredContext,
+            receipt.requestDigest,
+            receipt.resultDigest,
+            receipt.completedAtEpochMilli,
+            receipt.expiresAtEpochMilli,
+        )
+        assertEquals(receipt.receiptDigest, restoredReceipt.receiptDigest)
         assertNotEquals(context(providerRevision = "provider-r8").contextDigest, receipt.contextDigest)
     }
 

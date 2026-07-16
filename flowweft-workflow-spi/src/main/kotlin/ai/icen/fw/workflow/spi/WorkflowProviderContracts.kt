@@ -156,6 +156,12 @@ class WorkflowProviderReceipt private constructor(
     val tenantId: String = context.tenantId
     val providerId: String = context.providerId
     val providerRevision: String = context.providerRevision
+    val purpose: String = context.purpose
+    val requestedAtEpochMilli: Long = context.requestedAtEpochMilli
+    val deadlineEpochMilli: Long = context.deadlineEpochMilli
+    val maximumInputBytes: Int = context.maximumInputBytes
+    val maximumOutputBytes: Int = context.maximumOutputBytes
+    val maximumItems: Int = context.maximumItems
     val contextDigest: String = context.contextDigest
     val requestDigest: String = WorkflowSpiContractSupport.requireCanonicalSha256(
         requestDigest, "Workflow provider request digest is invalid.",
@@ -190,6 +196,24 @@ class WorkflowProviderReceipt private constructor(
     }
 
     override fun toString(): String = "WorkflowProviderReceipt(<redacted>)"
+
+    /** Rebuilds the exact immutable call context needed by durable receipt codecs. */
+    fun restoreContext(): WorkflowProviderCallContext = WorkflowProviderCallContext.of(
+        requestId,
+        tenantId,
+        providerId,
+        providerRevision,
+        purpose,
+        requestedAtEpochMilli,
+        deadlineEpochMilli,
+        maximumInputBytes,
+        maximumOutputBytes,
+        maximumItems,
+    ).also { restored ->
+        require(restored.contextDigest == contextDigest) {
+            "Workflow provider receipt context snapshot is inconsistent."
+        }
+    }
 
     companion object {
         @JvmStatic

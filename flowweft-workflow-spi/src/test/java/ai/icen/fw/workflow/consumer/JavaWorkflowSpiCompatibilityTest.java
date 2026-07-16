@@ -18,6 +18,7 @@ import ai.icen.fw.workflow.spi.WorkflowPayloadValidationReceipt;
 import ai.icen.fw.workflow.spi.WorkflowProviderCallContext;
 import ai.icen.fw.workflow.spi.WorkflowProviderFailure;
 import ai.icen.fw.workflow.spi.WorkflowProviderOutcome;
+import ai.icen.fw.workflow.spi.WorkflowProviderReceipt;
 import ai.icen.fw.workflow.spi.WorkflowSchemaRef;
 import ai.icen.fw.workflow.spi.WorkflowStructuredPayload;
 import java.nio.charset.StandardCharsets;
@@ -65,6 +66,13 @@ class JavaWorkflowSpiCompatibilityTest {
             repeat('b', 64)
         );
         WorkflowStructuredPayload payload = WorkflowStructuredPayload.validated(rawPayload, validationReceipt);
+        WorkflowProviderReceipt providerReceipt = WorkflowProviderReceipt.success(
+            context,
+            repeat('d', 64),
+            repeat('e', 64),
+            1_050L,
+            1_100L
+        );
         WorkflowConformanceFeatureRef feature = WorkflowConformanceFeatureRef.of("node-1", "human-task");
         WorkflowConformanceEntry entry = WorkflowConformanceEntry.of(
             "node-1",
@@ -118,6 +126,7 @@ class JavaWorkflowSpiCompatibilityTest {
         assertFalse(rawPayload.getValidated());
         assertTrue(payload.getValidated());
         assertEquals(0, payload.getFieldCount());
+        assertEquals(context.getContextDigest(), providerReceipt.restoreContext().getContextDigest());
         assertFalse(legacyReport.getExecutable());
         assertTrue(completeReport.getExecutable());
         assertEquals(coverage.getManifestDigest(), completeReport.getCoverage().getManifestDigest());
