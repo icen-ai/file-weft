@@ -20,7 +20,7 @@
 | FW10-022 | 进行中 | `flowweft-agent-api` | 模型/消息/工具/审批/预算/取消/引用/评测契约，Java 8 友好及源码/二进制 baseline |
 | FW10-023 | 进行中 | `flowweft-agent-runtime` 持久编排 | 崩溃恢复、租约、幂等、超时、取消、预算、并发确认、重试分类、无事务外泄 |
 | FW10-024 | 进行中 | Agent 权限与内容安全 | 跨租户、ACL 撤销、间接 prompt injection、tool poisoning、secret exfiltration、越权工具、引用伪造红队套件 |
-| FW10-025 | 未开始 | MCP 与 A2A 可选 adapter | 当前规范互操作、OAuth/TLS、能力 digest、SSRF/重定向/私网阻断、凭据隔离、取消和协议兼容矩阵 |
+| FW10-025 | 进行中 | MCP 与 A2A 可选 adapter | 已建立复用 canonical 远程边界的 MCP 目录、能力 digest、调度证据绑定和无敏感值 Doctor；继续补齐当前规范操作、OAuth/TLS、SSRF/重定向/私网阻断、凭据隔离、取消和协议兼容矩阵 |
 | FW10-026 | 进行中 | Agent 评测与运行诊断 | 固定回归集、检索/引用/工具正确性、安全拒绝、成本/延迟阈值；Provider 不可用与漂移 Doctor |
 | FW10-027 | 进行中 | `flowweft-workflow-api/spi`、中立定义模型与标准支持矩阵 | Java 8 互操作；定义 schema/lint/version/digest；BPMN 2.0.2、DMN 1.5、CMMN 1.1、Open Workflow 1.0.3 元素级 conformance report；未知语义失败关闭 |
 | FW10-028 | 进行中 | 独立 Workflow Domain/Runtime/JDBC 与持久执行 | 无文件模块启动；token/job/timer/subscription/incident/lease/compensation/迁移；幂等和崩溃恢复；三方言 V030+ fresh/upgrade/workflow-only 实库 |
