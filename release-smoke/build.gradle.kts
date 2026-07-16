@@ -141,6 +141,8 @@ project(":boot2-consumer") {
     }
     dependencies {
         add("implementation", "org.springframework.boot:spring-boot-starter-jdbc")
+        // The host owns the web runtime; Boot 2 FlowWeft starters expose Spring only for compilation.
+        add("implementation", "org.springframework.boot:spring-boot-starter-web")
         add("implementation", "ai.icen:fileweft-spring-boot2-starter:${rootProject.version}")
         add("implementation", "ai.icen:fileweft-web-spring-boot2-starter:${rootProject.version}")
         add("testImplementation", platform("org.junit:junit-bom:$junitVersion"))
