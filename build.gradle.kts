@@ -456,6 +456,7 @@ val expectedFileWeftMigrationResources = listOf(
     "V033__claim_completed_upload_asset.sql",
     "V034__create_presigned_upload_session.sql",
     "V035__claim_presigned_upload_asset.sql",
+    "V036__create_secure_deletion.sql",
 ).flatMap { migration ->
     fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
 }
@@ -683,7 +684,9 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
                     relativePath ==
                         "flowweft-migration-cli/src/test/kotlin/ai/icen/fw/migration/cli/FlowWeftMigrationRealDatabaseIntegrationTest.kt" ||
                         relativePath ==
-                        "flowweft-workflow-persistence-jdbc/src/test/kotlin/ai/icen/fw/workflow/persistence/jdbc/WorkflowRealDatabaseIntegrationTest.kt" ->
+                        "flowweft-workflow-persistence-jdbc/src/test/kotlin/ai/icen/fw/workflow/persistence/jdbc/WorkflowRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-agent-persistence-jdbc/src/test/kotlin/ai/icen/fw/agent/persistence/jdbc/AgentRealDatabaseIntegrationTest.kt" ->
                         setOf(
                             "FILEWEFT_RUN_POSTGRES_TESTS",
                             "FILEWEFT_RUN_MYSQL_TESTS",
@@ -1434,7 +1437,7 @@ gradle.projectsEvaluated {
                 val unexpectedSources = sourceFiles.keys - expected
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
                     "FlowWeft compatibility migration source inputs differ from the reviewed legacy " +
-                        "V001-V029 plus V033-V035 set; " +
+                        "V001-V029 plus V033-V036 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
                 }
                 require(archive.isFile) { "FlowWeft persistence JAR was not created: ${archive.absolutePath}" }
@@ -1458,7 +1461,7 @@ gradle.projectsEvaluated {
                     val unexpected = actual - expected
                     require(missing.isEmpty() && unexpected.isEmpty()) {
                         "FlowWeft persistence JAR migration resources differ from the reviewed legacy " +
-                            "V001-V029 plus V033-V035 set; " +
+                            "V001-V029 plus V033-V036 set; " +
                             "missing=$missing, unexpected=$unexpected."
                     }
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }

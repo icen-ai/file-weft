@@ -2,6 +2,9 @@ package ai.icen.fw.web.spring.boot3
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import ai.icen.fw.application.document.DocumentDownloadService
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.context.TraceContext
@@ -403,7 +406,7 @@ internal class V1DocumentContentTestFixture {
         storage.register(CURRENT_STORAGE_PATH, CURRENT_BYTES, "application/pdf")
     }
 
-    internal class MemoryDocuments : DocumentRepository {
+    internal class MemoryDocuments : DocumentRepository, DeletionVisibilityQuerySource {
         val values = linkedMapOf<Identifier, Document>()
         val reads = mutableListOf<Identifier>()
 
@@ -413,6 +416,14 @@ internal class V1DocumentContentTestFixture {
         }
 
         override fun save(document: Document) = Unit
+
+        override fun deletionVisibilityQuery(): DeletionVisibilityQuery = object : DeletionVisibilityQuery {
+            override fun findFence(
+                tenantId: Identifier,
+                resourceType: String,
+                resourceId: Identifier,
+            ): DeletionVisibilityFence? = null
+        }
     }
 
     internal class MemoryFiles : FileObjectRepository {

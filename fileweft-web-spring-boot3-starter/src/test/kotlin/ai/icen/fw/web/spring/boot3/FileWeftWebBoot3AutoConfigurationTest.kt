@@ -15,6 +15,9 @@ import ai.icen.fw.application.document.DocumentSummaryView
 import ai.icen.fw.application.document.DocumentVersionView
 import ai.icen.fw.application.delivery.DocumentSyncStatusQueryService
 import ai.icen.fw.application.delivery.DocumentSyncStatusQueryRepository
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.context.TraceContext
@@ -520,7 +523,7 @@ class FileWeftWebBoot3AutoConfigurationTest {
         private val detail: DocumentDetailView? = null,
         private val page: DocumentPageResult = DocumentPageResult(emptyList()),
         private val failure: Exception? = null,
-    ) : DocumentQueryRepository {
+    ) : DocumentQueryRepository, DeletionVisibilityQuerySource {
         var detailCalls: Int = 0
         var pageCalls: Int = 0
         var lastDetailDocumentId: Identifier? = null
@@ -546,6 +549,14 @@ class FileWeftWebBoot3AutoConfigurationTest {
             lastPageRequest = request
             failure?.let { throw it }
             return page
+        }
+
+        override fun deletionVisibilityQuery(): DeletionVisibilityQuery = object : DeletionVisibilityQuery {
+            override fun findFence(
+                tenantId: Identifier,
+                resourceType: String,
+                resourceId: Identifier,
+            ): DeletionVisibilityFence? = null
         }
     }
 
