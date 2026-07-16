@@ -2,6 +2,14 @@ import "server-only";
 import type {
   ConsoleApprovalInboxPage,
   ConsoleApprovalInboxQuery,
+  ConsoleAgentCitationPage,
+  ConsoleAgentConversationDetail,
+  ConsoleAgentConversationPage,
+  ConsoleAgentEventPage,
+  ConsoleAgentMessagePage,
+  ConsoleAgentPageQuery,
+  ConsoleAgentRun,
+  ConsoleAgentRunPage,
   CapabilitySnapshot,
   ConsoleDocumentDetail,
   ConsoleDocumentPage,
@@ -21,6 +29,15 @@ import {
   readDocumentPage,
   readSystemDoctorReport,
 } from "@/server/dal/FlowWeftBackendClient";
+import {
+  readAgentCitationPage,
+  readAgentConversationDetail,
+  readAgentConversationPage,
+  readAgentEventPage,
+  readAgentMessagePage,
+  readAgentRun,
+  readAgentRunPage,
+} from "@/server/dal/AgentWebBackendClient";
 
 export interface ConsoleDataAccess {
   getSession(): Promise<ConsoleSessionProjection | null>;
@@ -30,6 +47,13 @@ export interface ConsoleDataAccess {
   getDocumentDetail(documentId: string): Promise<ConsoleDocumentDetail>;
   getSystemDoctorReport(): Promise<ConsoleSystemDoctorReport>;
   getApprovalInboxPage(query?: ConsoleApprovalInboxQuery): Promise<ConsoleApprovalInboxPage>;
+  getAgentConversationPage(query?: ConsoleAgentPageQuery): Promise<ConsoleAgentConversationPage>;
+  getAgentConversation(conversationId: string): Promise<ConsoleAgentConversationDetail>;
+  getAgentRunPage(conversationId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentRunPage>;
+  getAgentRun(runId: string): Promise<ConsoleAgentRun>;
+  getAgentMessagePage(runId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentMessagePage>;
+  getAgentEventPage(runId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentEventPage>;
+  getAgentCitationPage(runId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentCitationPage>;
 }
 
 export class ConsoleBackendUnavailableError extends Error {
@@ -52,6 +76,13 @@ export function createUnavailableConsoleDataAccess(): ConsoleDataAccess {
     getDocumentDetail: async () => unavailable(),
     getSystemDoctorReport: async () => unavailable(),
     getApprovalInboxPage: async () => unavailable(),
+    getAgentConversationPage: async () => unavailable(),
+    getAgentConversation: async () => unavailable(),
+    getAgentRunPage: async () => unavailable(),
+    getAgentRun: async () => unavailable(),
+    getAgentMessagePage: async () => unavailable(),
+    getAgentEventPage: async () => unavailable(),
+    getAgentCitationPage: async () => unavailable(),
   });
 }
 
@@ -92,6 +123,57 @@ export function createConfiguredConsoleDataAccess(config: ConsoleServerConfig): 
         throw new ConsoleBackendUnavailableError();
       }
       return readApprovalInboxPage(sources.requireDefinition(session.sourceProfileId), session, query);
+    },
+    getAgentConversationPage: async (query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentConversationPage(sources.requireDefinition(session.sourceProfileId), session, query);
+    },
+    getAgentConversation: async (conversationId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentConversationDetail(
+        sources.requireDefinition(session.sourceProfileId),
+        session,
+        conversationId,
+      );
+    },
+    getAgentRunPage: async (conversationId: string, query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentRunPage(
+        sources.requireDefinition(session.sourceProfileId),
+        session,
+        conversationId,
+        query,
+      );
+    },
+    getAgentRun: async (runId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentRun(sources.requireDefinition(session.sourceProfileId), session, runId);
+    },
+    getAgentMessagePage: async (runId: string, query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentMessagePage(sources.requireDefinition(session.sourceProfileId), session, runId, query);
+    },
+    getAgentEventPage: async (runId: string, query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentEventPage(sources.requireDefinition(session.sourceProfileId), session, runId, query);
+    },
+    getAgentCitationPage: async (runId: string, query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readAgentCitationPage(sources.requireDefinition(session.sourceProfileId), session, runId, query);
     },
   });
 }

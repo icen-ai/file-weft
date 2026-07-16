@@ -296,8 +296,8 @@ const zh: ConsoleMessages = {
         { title: "受控上下文", detail: "仅装载经过两阶段授权的引用和最少正文。", boundary: "检索内容始终是不可信数据，不得提升为系统指令。" },
         { title: "预算与状态", detail: "token、cost、工具、轮数与墙钟预算摘要。", boundary: "模型或 Provider 上报不是唯一权威扣减来源。" },
       ],
-      emptyTitle: "Agent Runtime 尚未交付",
-      emptyDetail: "对话框不会发送请求或产生假回复；Provider 缺失将来必须显示为可诊断的 unavailable。",
+      emptyTitle: "Agent 能力当前不可用",
+      emptyDetail: "只读工作台不会伪造回答或退化为浏览器直连；缺少 Provider、契约或当前授权时会失败关闭。",
       proofs: ["崩溃恢复、租约与取消", "权限撤销与 prompt injection 红队", "引用、预算与双语流式 E2E"],
     },
     toolApprovals: {
@@ -551,8 +551,8 @@ const en: ConsoleMessages = {
         { title: "Controlled context", detail: "Load only two-stage-authorized citations and minimum content.", boundary: "Retrieved content is untrusted data and never becomes system instruction." },
         { title: "Budget & status", detail: "Token, cost, tool, turn, and wall-clock budget summaries.", boundary: "Provider-reported usage is not the only authoritative deduction." },
       ],
-      emptyTitle: "Agent Runtime is not delivered",
-      emptyDetail: "The conversation surface sends no request and fabricates no answer. Missing providers must become a diagnosable unavailable state.",
+      emptyTitle: "Agent capability is unavailable",
+      emptyDetail: "The read-only workbench never fabricates answers or falls back to browser-direct access. Missing providers, contracts or current authority fail closed.",
       proofs: ["Crash recovery, lease, and cancellation", "ACL revocation and prompt-injection red team", "Citation, budget, and bilingual streaming E2E"],
     },
     toolApprovals: {

@@ -11,7 +11,6 @@ describe("static security and route boundaries", () => {
     const requiredRoutes = [
       "sync",
       "audit",
-      "agent",
       "tool-approvals",
       "retrieval",
       "evaluations",
@@ -31,6 +30,16 @@ describe("static security and route boundaries", () => {
     const approvals = readFileSync(join(routeRoot, "approvals", "page.tsx"), "utf8");
     expect(approvals).toContain("getApprovalInboxPage");
     expect(approvals).toContain("ApprovalInbox");
+    const agent = readFileSync(join(routeRoot, "agent", "page.tsx"), "utf8");
+    expect(agent).toContain("getAgentConversationPage");
+    expect(agent).toContain("getAgentMessagePage");
+    expect(agent).toContain("getAgentEventPage");
+    expect(agent).toContain("getAgentCitationPage");
+    expect(agent).toContain("AgentWorkbench");
+    expect(agent).not.toContain("buildCapabilityRoute");
+    const agentWorkbench = readFileSync(join(root, "src", "features", "agent", "AgentWorkbench.tsx"), "utf8");
+    expect(agentWorkbench).not.toMatch(/^["']use client["'];/u);
+    expect(agentWorkbench).not.toMatch(/\b(?:fetch|EventSource|WebSocket)\s*\(/u);
   });
 
   it("does not define a transparent catch-all API proxy", () => {
@@ -66,6 +75,7 @@ describe("static security and route boundaries", () => {
     const protectedFiles = [
       join(root, "src", "server", "config", "index.ts"),
       join(root, "src", "server", "dal", "ConsoleDataAccess.ts"),
+      join(root, "src", "server", "dal", "AgentWebBackendClient.ts"),
       join(root, "src", "server", "sources", "SourceProfilePolicy.ts"),
       join(root, "src", "server", "sources", "SourceProfileRegistry.ts"),
       join(root, "src", "server", "sources", "SourceProfileBinding.ts"),
