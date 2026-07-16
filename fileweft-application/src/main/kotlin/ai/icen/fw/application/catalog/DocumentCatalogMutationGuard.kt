@@ -80,7 +80,7 @@ internal class DocumentCatalogMutationGuard(
             operator,
         )
         // Base authorization and the host-owned folder ACL are intentionally
-        // outside FileWeft's short snapshot transaction.
+        // outside FlowWeft's short snapshot transaction.
         catalogAccess.requireCurrentFolderForDocumentLifecycle(
             permit.tenantId,
             operator,

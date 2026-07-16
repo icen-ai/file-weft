@@ -26,9 +26,9 @@ import org.springframework.context.annotation.Bean
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * Optional Spring Boot 3 MVC surface for the formal FileWeft v1 API.
+ * Optional Spring Boot 3 MVC surface for the formal FlowWeft v1 API.
  *
- * It is intentionally a separate starter from the FileWeft runtime starter:
+ * It is intentionally a separate starter from the FlowWeft runtime starter:
  * hosts must opt in to HTTP routing and retain ownership of authentication,
  * request identity propagation, CORS, CSRF, and all perimeter controls.
  */

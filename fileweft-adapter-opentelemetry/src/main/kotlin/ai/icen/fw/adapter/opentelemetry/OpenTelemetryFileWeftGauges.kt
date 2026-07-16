@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * OpenTelemetry projection of FileWeft gauges.
+ * OpenTelemetry projection of FlowWeft gauges.
  *
  * Gauge observations are bounded to a small, fixed set of tag combinations so
  * that tenant or document identifiers cannot leak into metric labels.
@@ -27,14 +27,14 @@ class OpenTelemetryFileWeftGauges(
             val holder = holders.computeIfAbsent(key) { register(it) }
             holder.set(value)
         } catch (_: Exception) {
-            // Observability failures must not alter FileWeft business processing.
+            // Observability failures must not alter FlowWeft business processing.
         }
     }
 
     private fun register(key: GaugeKey): AtomicReference<Double> {
         val holder = AtomicReference(0.0)
         meter.gaugeBuilder(METRIC_PREFIX + key.gauge.value)
-            .setDescription("FileWeft ${key.gauge.value}")
+            .setDescription("FlowWeft ${key.gauge.value}")
             .buildWithCallback { measurement ->
                 val current = holder.get()
                 if (current.isFinite()) {

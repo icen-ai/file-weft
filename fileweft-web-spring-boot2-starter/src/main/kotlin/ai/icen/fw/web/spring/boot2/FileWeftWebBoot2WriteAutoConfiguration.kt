@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController
  * Optional Boot 2 MVC transport for formal v1 document mutations.
  *
  * It remains independent from the read adapter so a host can expose writes
- * only when its normal FileWeft draft capability is available. A catalog is
+ * only when its normal FlowWeft draft capability is available. A catalog is
  * optional, but a requested folder never silently falls back to a flat draft.
  */
 @AutoConfiguration(afterName = ["ai.icen.fw.starter.boot2.FileWeftAutoConfiguration"])

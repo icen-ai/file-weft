@@ -3,11 +3,11 @@ package ai.icen.fw.spi.catalog
 import ai.icen.fw.core.id.Identifier
 
 /**
- * Resolves the business-system folder tree that contains FileWeft documents.
+ * Resolves the business-system folder tree that contains FlowWeft documents.
  *
- * FileWeft deliberately does not own folders or use folder names in storage
+ * FlowWeft deliberately does not own folders or use folder names in storage
  * keys. The caller retains its namespace and persists the chosen opaque folder
- * reference with the FileWeft asset using [DocumentCatalogBinding.METADATA_KEY].
+ * reference with the FlowWeft asset using [DocumentCatalogBinding.METADATA_KEY].
  *
  * Each [listFolders] invocation must return one complete, non-paged forest
  * visible within that invocation's tenant/user/operation scope; the forest may
@@ -43,7 +43,7 @@ interface DocumentCatalogProvider {
         listFolders(request).firstOrNull { it.id == folderId }
 }
 
-/** Trusted context assembled from FileWeft's tenant and identity providers. */
+/** Trusted context assembled from FlowWeft's tenant and identity providers. */
 class DocumentCatalogAccessRequest(
     val tenantId: Identifier,
     val userId: Identifier,

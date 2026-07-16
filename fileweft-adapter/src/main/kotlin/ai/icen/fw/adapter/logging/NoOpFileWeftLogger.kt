@@ -5,7 +5,7 @@ import ai.icen.fw.spi.observability.LogContext
 
 /**
  * Fallback logger that discards every event. It is used when a host does not
- * supply a structured logger and FileWeft must not fail because of logging.
+ * supply a structured logger and FlowWeft must not fail because of logging.
  */
 object NoOpFileWeftLogger : FileWeftLogger {
     override fun info(message: String, context: LogContext) = Unit

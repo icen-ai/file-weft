@@ -19,7 +19,7 @@ object SqlDialects {
         }
             ?: error(
                 "Unsupported database product '$productName'; " +
-                    "FileWeft supports ${dialects.joinToString { it.productName }}",
+                    "FlowWeft supports ${dialects.joinToString { it.productName }}",
             )
         if (dialect === MySqlDialect) {
             MySqlDatabaseSupport.requireSupported(connection.metaData)

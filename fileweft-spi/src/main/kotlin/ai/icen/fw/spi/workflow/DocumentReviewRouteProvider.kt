@@ -4,11 +4,11 @@ import ai.icen.fw.core.id.Identifier
 import java.util.Collections
 
 /**
- * Resolves a review route outside FileWeft's database transaction. Implementations may consult a
+ * Resolves a review route outside FlowWeft's database transaction. Implementations may consult a
  * host policy service, but must provide their own timeout, retry and diagnostics when doing so.
  */
 interface DocumentReviewRouteProvider {
-    /** Stable route key selected by the host or by FileWeft's configured default. */
+    /** Stable route key selected by the host or by FlowWeft's configured default. */
     fun id(): String
 
     fun resolve(request: DocumentReviewRouteRequest): DocumentReviewRoute
@@ -29,7 +29,7 @@ class DocumentReviewRouteRequest @JvmOverloads constructor(
     }
 }
 
-/** A parallel approval route. FileWeft publishes only after every task is approved. */
+/** A parallel approval route. FlowWeft publishes only after every task is approved. */
 class DocumentReviewRoute(
     val workflowType: String,
     tasks: List<DocumentReviewRouteTask>,
@@ -43,7 +43,7 @@ class DocumentReviewRoute(
     }
 }
 
-/** One assignee in a route; null retains FileWeft's existing unassigned-review behavior. */
+/** One assignee in a route; null retains FlowWeft's existing unassigned-review behavior. */
 class DocumentReviewRouteTask @JvmOverloads constructor(
     val assigneeId: Identifier? = null,
 ) {

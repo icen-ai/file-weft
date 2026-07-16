@@ -7,7 +7,7 @@ import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.metrics.Meter
 
 /**
- * OpenTelemetry projection of FileWeft counters.
+ * OpenTelemetry projection of FlowWeft counters.
  *
  * Only a bounded, low-cardinality allow-list of tags is emitted as OTel
  * attributes. Tenant, document and any other resource identifiers are
@@ -21,7 +21,7 @@ class OpenTelemetryFileWeftMetrics(
     override fun increment(metric: FileWeftMetric, tags: Map<String, String>) {
         try {
             val counter = meter.counterBuilder(METRIC_PREFIX + metric.value)
-                .setDescription("FileWeft ${metric.value}")
+                .setDescription("FlowWeft ${metric.value}")
                 .build()
             counter.add(1, attributes(tags))
         } catch (_: Exception) {

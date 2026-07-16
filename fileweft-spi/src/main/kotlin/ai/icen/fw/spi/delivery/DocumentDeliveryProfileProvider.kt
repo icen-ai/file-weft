@@ -65,7 +65,7 @@ interface DocumentDeliveryProfileProvider {
     fun defaultProfile(tenantId: Identifier): DocumentDeliveryProfile? = listProfiles(tenantId).firstOrNull()
 }
 
-/** Resolves a configured connector ID without exposing the integrating DI container to FileWeft. */
+/** Resolves a configured connector ID without exposing the integrating DI container to FlowWeft. */
 interface DeliveryConnectorResolver {
     fun findConnector(connectorId: String): FileConnector?
 }

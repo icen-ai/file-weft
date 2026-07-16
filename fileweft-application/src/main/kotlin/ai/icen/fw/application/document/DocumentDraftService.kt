@@ -538,7 +538,7 @@ class DocumentDraftService(
     }
 
     /**
-     * Schema metadata is persisted in FileWeft's asset record. It is not
+     * Schema metadata is persisted in FlowWeft's asset record. It is not
      * duplicated into vendor object-user-metadata headers, whose limits and
      * read-back guarantees are adapter-specific. Legacy callers retain the
      * historical behavior of passing their metadata to storage.

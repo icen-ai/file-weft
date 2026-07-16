@@ -66,7 +66,7 @@ class FileWeftProperties {
 
     class PersistenceProperties {
         /**
-         * Explicit startup behavior for FileWeft-owned Flyway migrations.
+         * Explicit startup behavior for FlowWeft-owned Flyway migrations.
          * DISABLED is the safe default and performs no migration database access.
          * Enabled modes require exactly one DataSource unless the host supplies
          * an explicit FlywayMigrationRunner bean.

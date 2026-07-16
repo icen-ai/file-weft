@@ -121,7 +121,7 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         }
     }
 
-    /** Freezes FileWeft-owned target state before resolving an integration SPI. */
+    /** Freezes FlowWeft-owned target state before resolving an integration SPI. */
     private fun freeze(sourceEvent: OutboxEvent, deliveryId: Identifier): Preparation {
         val tenantId = sourceEvent.tenantId
         val delivery = deliveries.findById(tenantId, deliveryId)

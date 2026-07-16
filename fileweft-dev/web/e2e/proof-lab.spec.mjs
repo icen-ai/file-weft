@@ -75,7 +75,7 @@ async function createDocument(page, prefix) {
   await page.locator("#create-form [name='file']").setInputFiles({
     name: "frontend-initial.txt",
     mimeType: "text/plain",
-    buffer: Buffer.from("FileWeft browser acceptance initial version.", "utf8"),
+    buffer: Buffer.from("FlowWeft browser acceptance initial version.", "utf8"),
   });
   await page.locator("#create-form button[type='submit']").click();
   await expect(drawer).toBeHidden();
@@ -395,7 +395,7 @@ test("creates, renames, versions, downloads, and moves a document through the ed
   await page.locator("#version-form [name='file']").setInputFiles({
     name: "frontend-v1.txt",
     mimeType: "text/plain",
-    buffer: Buffer.from("FileWeft browser acceptance version 1.1.", "utf8"),
+    buffer: Buffer.from("FlowWeft browser acceptance version 1.1.", "utf8"),
   });
   await page.locator("#version-form button[type='submit']").click();
   await expect(page.locator("#version-list")).toContainText("1.1");

@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.runApplication
 import org.springframework.scheduling.annotation.EnableScheduling
 
-/** Development-only FileWeft acceptance application. */
+/** Development-only FlowWeft acceptance application. */
 @SpringBootApplication(scanBasePackages = ["ai.icen.fw.dev.api"])
 @EnableScheduling
 @EnableConfigurationProperties(FileWeftDevProperties::class)

@@ -276,8 +276,8 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   const renamedTitle = `正式 v1 已重命名 ${nonce}`;
   const historicalFileName = `正式历史-${nonce}.txt`;
   const currentFileName = `正式当前-${nonce}.txt`;
-  const historicalContent = Buffer.from(`FileWeft 正式 v1 历史字节 ${nonce}\n`, "utf8");
-  const currentContent = Buffer.from(`FileWeft 正式 v1 当前字节 ${nonce}\n`, "utf8");
+  const historicalContent = Buffer.from(`FlowWeft 正式 v1 历史字节 ${nonce}\n`, "utf8");
+  const currentContent = Buffer.from(`FlowWeft 正式 v1 当前字节 ${nonce}\n`, "utf8");
 
   const [editor, reviewer, viewer, betaEditor, betaReviewer] = await Promise.all([
     login(request, "editor@alpha", "dev-editor"),

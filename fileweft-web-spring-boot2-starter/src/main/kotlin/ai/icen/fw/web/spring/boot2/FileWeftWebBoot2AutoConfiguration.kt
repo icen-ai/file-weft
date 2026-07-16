@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * Optional Spring Boot 2 MVC transport for the formal FileWeft v1 read API.
+ * Optional Spring Boot 2 MVC transport for the formal FlowWeft v1 read API.
  *
  * The underlying [DocumentQueryService] remains the security boundary: it
  * obtains the trusted tenant and user from SPI providers rather than from any

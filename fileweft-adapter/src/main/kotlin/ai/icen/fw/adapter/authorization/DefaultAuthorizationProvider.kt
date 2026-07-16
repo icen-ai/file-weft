@@ -6,7 +6,7 @@ import ai.icen.fw.spi.authorization.AuthorizationRequest
 
 /**
  * Fail-closed authorization fallback. Applications must provide their own
- * [AuthorizationProvider] before any protected FileWeft operation can succeed.
+ * [AuthorizationProvider] before any protected FlowWeft operation can succeed.
  */
 class DefaultAuthorizationProvider : AuthorizationProvider {
     override fun authorize(request: AuthorizationRequest): AuthorizationDecision =

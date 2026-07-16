@@ -118,18 +118,18 @@
     {
       "name": "fileweft.persistence.migration-mode",
       "type": "ai.icen.fw.persistence.migration.FileWeftMigrationMode",
-      "description": "Controls FileWeft-owned Flyway startup behavior. DISABLED performs no migration database access, VALIDATE verifies an existing FileWeft schema, and MIGRATE applies pending FileWeft migrations. Enabled modes require exactly one DataSource unless the host supplies an explicit FlywayMigrationRunner. The default is DISABLED.",
+      "description": "Controls FlowWeft-owned Flyway startup behavior. DISABLED performs no migration database access, VALIDATE verifies an existing FlowWeft schema, and MIGRATE applies pending FlowWeft migrations. Enabled modes require exactly one DataSource unless the host supplies an explicit FlywayMigrationRunner. The default is DISABLED.",
       "defaultValue": "DISABLED"
     },
     {
       "name": "fileweft.persistence.schema",
       "type": "java.lang.String",
-      "description": "Explicit FileWeft schema required when migration mode is VALIDATE or MIGRATE. Blank values, implicit schema selection, and leading or trailing whitespace are rejected for enabled Starter migration modes."
+      "description": "Explicit FlowWeft schema required when migration mode is VALIDATE or MIGRATE. Blank values, implicit schema selection, and leading or trailing whitespace are rejected for enabled Starter migration modes."
     },
     {
       "name": "fileweft.persistence.create-schema",
       "type": "java.lang.Boolean",
-      "description": "Allows MIGRATE to create the explicitly configured FileWeft schema. A true value is rejected in DISABLED and VALIDATE modes without database access; leave false when schema ownership belongs to the database operator.",
+      "description": "Allows MIGRATE to create the explicitly configured FlowWeft schema. A true value is rejected in DISABLED and VALIDATE modes without database access; leave false when schema ownership belongs to the database operator.",
       "defaultValue": false
     },
     {

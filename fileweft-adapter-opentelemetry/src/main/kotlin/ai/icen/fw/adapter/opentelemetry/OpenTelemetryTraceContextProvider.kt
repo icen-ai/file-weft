@@ -7,7 +7,7 @@ import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.SpanContext
 
 /**
- * Bridges OpenTelemetry's in-process span context to FileWeft's trace SPI.
+ * Bridges OpenTelemetry's in-process span context to FlowWeft's trace SPI.
  *
  * The provider reads the current [SpanContext] without performing network I/O
  * or remote lookups, satisfying the SPI contract that this method must remain

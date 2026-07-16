@@ -3,7 +3,7 @@ package ai.icen.fw.spi.observability
 import ai.icen.fw.core.id.Identifier
 
 /**
- * Structured logging boundary for FileWeft operations.
+ * Structured logging boundary for FlowWeft operations.
  *
  * Implementations must include the provided [LogContext] fields (tenant id,
  * document id, trace id) in every emitted event without throwing for normal

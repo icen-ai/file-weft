@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 /** Configuration owned by the isolated downstream-platform development process. */
 @ConfigurationProperties(prefix = "fileweft.dev.platform")
 class DevPlatformProperties {
-    /** Required shared credential used by the FileWeft development API and worker. */
+    /** Required shared credential used by the FlowWeft development API and worker. */
     var sharedSecret: String = ""
 
     /** Explicit host allowlist for the one-time source URLs supplied by the connector. */

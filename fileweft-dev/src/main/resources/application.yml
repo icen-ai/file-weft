@@ -9,7 +9,7 @@ spring:
     username: ${FILEWEFT_DEV_DB_USERNAME:fileweft}
     password: ${FILEWEFT_DEV_DB_PASSWORD:fileweft-dev}
   flyway:
-    # FileWeft owns a dedicated migration location and history table. Keeping
+    # FlowWeft owns a dedicated migration location and history table. Keeping
     # Boot's default scanner disabled proves the development application does
     # not accidentally rely on classpath:db/migration.
     enabled: false

@@ -196,11 +196,11 @@ class FileWeftWorkerScheduler(
     private val cleanupUploads: (() -> Unit)? = null,
 ) {
     init {
-        require(properties.enabled) { "FileWeft worker scheduler must be enabled explicitly." }
-        require(properties.fixedDelayMillis > 0) { "FileWeft worker fixed delay must be positive." }
-        require(properties.outboxBatchSize > 0 && properties.taskBatchSize > 0) { "FileWeft worker batch sizes must be positive." }
+        require(properties.enabled) { "FlowWeft worker scheduler must be enabled explicitly." }
+        require(properties.fixedDelayMillis > 0) { "FlowWeft worker fixed delay must be positive." }
+        require(properties.outboxBatchSize > 0 && properties.taskBatchSize > 0) { "FlowWeft worker batch sizes must be positive." }
         require(processOutbox != null || processTasks != null || cleanupUploads != null) {
-            "FileWeft worker is enabled but no durable worker capability is available; configure a database-backed FileWeft runtime."
+            "FlowWeft worker is enabled but no durable worker capability is available; configure a database-backed FlowWeft runtime."
         }
     }
 
@@ -218,7 +218,7 @@ class FileWeftWorkerScheduler(
         try {
             processor()
         } catch (failure: Exception) {
-            logger.log(Level.SEVERE, "FileWeft $role worker cycle failed; durable work remains available for a later retry.", failure)
+            logger.log(Level.SEVERE, "FlowWeft $role worker cycle failed; durable work remains available for a later retry.", failure)
         }
     }
 

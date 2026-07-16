@@ -8,11 +8,11 @@ internal object MySqlDatabaseSupport {
         val productVersion = metadata.databaseProductVersion.orEmpty().trim()
         val match = VERSION_PREFIX.find(productVersion)
             ?: error(
-                "Cannot verify MySQL version '$productVersion'; FileWeft requires MySQL 8.0.17 or newer in the 8.x line",
+                "Cannot verify MySQL version '$productVersion'; FlowWeft requires MySQL 8.0.17 or newer in the 8.x line",
             )
         val (major, minor, patch) = match.destructured.toList().map(String::toInt)
         check(major == 8 && (minor > 0 || patch >= 17)) {
-            "Unsupported MySQL version '$productVersion'; FileWeft requires MySQL 8.0.17 or newer in the 8.x line"
+            "Unsupported MySQL version '$productVersion'; FlowWeft requires MySQL 8.0.17 or newer in the 8.x line"
         }
     }
 

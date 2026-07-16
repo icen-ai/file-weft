@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 /**
  * Reusable contract for tenant-scoped multi-downstream delivery configuration.
  * It validates provider consistency only; connector reachability remains the
- * responsibility of the integration and FileWeft Doctor.
+ * responsibility of the integration and FlowWeft Doctor.
  */
 abstract class DocumentDeliveryProfileProviderContractTest {
     protected abstract val deliveryProfileProvider: DocumentDeliveryProfileProvider

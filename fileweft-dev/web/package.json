@@ -1,8 +1,8 @@
 {
-  "name": "fileweft-dev-ui-e2e",
+  "name": "flowweft-dev-ui-e2e",
   "private": true,
   "version": "0.1.0",
-  "description": "Browser acceptance tests for the FileWeft development proof lab.",
+  "description": "Browser acceptance tests for the FlowWeft development proof lab.",
   "scripts": {
     "test:static": "node --check app.js && node --check i18n.js && node --test test/*.test.mjs",
     "test:e2e": "playwright test",

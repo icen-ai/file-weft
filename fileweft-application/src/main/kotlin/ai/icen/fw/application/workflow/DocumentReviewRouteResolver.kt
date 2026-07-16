@@ -7,7 +7,7 @@ import ai.icen.fw.spi.workflow.DocumentReviewRouteTask
 import java.util.Collections
 import java.util.LinkedHashMap
 
-/** Default route retains FileWeft's original one-reviewer-or-unassigned behavior. */
+/** Default route retains FlowWeft's original one-reviewer-or-unassigned behavior. */
 object DefaultDocumentReviewRouteProvider : DocumentReviewRouteProvider {
     const val ID = "default"
     const val WORKFLOW_TYPE = "DOCUMENT_REVIEW"

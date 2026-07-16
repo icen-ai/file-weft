@@ -1,6 +1,6 @@
 package ai.icen.fw.persistence.migration
 
-/** Startup behavior for FileWeft-owned database migrations. */
+/** Startup behavior for FlowWeft-owned database migrations. */
 enum class FileWeftMigrationMode {
     DISABLED,
     VALIDATE,

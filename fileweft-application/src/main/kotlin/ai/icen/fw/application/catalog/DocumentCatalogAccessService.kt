@@ -18,7 +18,7 @@ import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 
 /**
- * Applies FileWeft's trusted tenant and user context before delegating folder
+ * Applies FlowWeft's trusted tenant and user context before delegating folder
  * visibility and folder-specific ACL decisions to the host-owned catalog.
  */
 class DocumentCatalogAccessService(

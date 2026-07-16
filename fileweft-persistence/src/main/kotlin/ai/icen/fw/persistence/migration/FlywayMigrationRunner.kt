@@ -10,7 +10,7 @@ import java.sql.SQLException
 import javax.sql.DataSource
 
 /**
- * Runs only FileWeft-owned migrations and records them in a FileWeft-owned
+ * Runs only FlowWeft-owned migrations and records them in a FlowWeft-owned
  * schema-history table.
  *
  * [schema] is optional for compatibility with the original single-argument
@@ -30,7 +30,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
 
     init {
         require(!createSchema || configuredSchema != null) {
-            "FileWeft createSchema=true requires an explicit migration schema"
+            "FlowWeft createSchema=true requires an explicit migration schema"
         }
     }
 
@@ -45,10 +45,10 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     }
 
     /**
-     * Applies pending FileWeft migrations and returns the number executed by
+     * Applies pending FlowWeft migrations and returns the number executed by
      * this invocation. Flyway's own schema-history lock makes concurrent calls
-     * safe. The runner never repairs or baselines existing/untracked FileWeft
-     * state. When the dedicated history is absent and no FileWeft sentinel is
+     * safe. The runner never repairs or baselines existing/untracked FlowWeft
+     * state. When the dedicated history is absent and no FlowWeft sentinel is
      * present, it writes only an explicit version-0 namespace marker before
      * applying every versioned migration from V001 onward.
      */
@@ -68,7 +68,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     }
 
     /**
-     * Validates an already migrated FileWeft schema without creating or
+     * Validates an already migrated FlowWeft schema without creating or
      * changing schemas, history, or business tables.
      */
     fun validate() {
@@ -80,7 +80,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         flyway.validate()
         val pending = flyway.info().pending()
         check(pending.isEmpty()) {
-            "FileWeft migration validation failed for schema '$targetSchema': " +
+            "FlowWeft migration validation failed for schema '$targetSchema': " +
                 "${pending.size} migration(s) are pending in $HISTORY_TABLE"
         }
         assertCurrentSchema(targetSchema, "validation")
@@ -134,7 +134,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         val explicitSchema = configuredSchema?.let { validatedSchemaName(it, current.product) }
         if (explicitSchema == null) {
             return checkNotNull(currentSchema) {
-                "FileWeft migration requires the DataSource to expose a non-null current schema"
+                "FlowWeft migration requires the DataSource to expose a non-null current schema"
             }
         }
         if (currentSchema == explicitSchema) {
@@ -142,14 +142,14 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         }
         if (currentSchema == null && allowMissingCurrentSchema) {
             check(current.product != DatabaseProduct.MYSQL) {
-                "FileWeft cannot safely create MySQL database '$explicitSchema' from a DataSource " +
+                "FlowWeft cannot safely create MySQL database '$explicitSchema' from a DataSource " +
                     "whose JDBC URL has no current database. Pre-create the database, bind it in " +
                     "the DataSource URL, and use createSchema=false."
             }
             return explicitSchema
         }
         throw IllegalStateException(
-            "FileWeft migration schema mismatch: configured schema '$explicitSchema' " +
+            "FlowWeft migration schema mismatch: configured schema '$explicitSchema' " +
                 "does not equal DataSource current_schema '${currentSchema ?: "<null>"}'",
         )
     }
@@ -157,14 +157,14 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     private fun assertCurrentSchema(expectedSchema: String, operation: String) {
         val actualSchema = readCurrentSchema().name
         check(actualSchema == expectedSchema) {
-            "FileWeft $operation completed but DataSource current_schema " +
+            "FlowWeft $operation completed but DataSource current_schema " +
                 "'${actualSchema ?: "<null>"}' does not equal '$expectedSchema'"
         }
     }
 
     private fun requireValidNamespaceHistory(targetSchema: String) {
         check(namespaceHistoryExistsAndIsValid(targetSchema)) {
-            "FileWeft migration validation requires $targetSchema.$HISTORY_TABLE; " +
+            "FlowWeft migration validation requires $targetSchema.$HISTORY_TABLE; " +
                 "run migration mode MIGRATE before VALIDATE"
         }
     }
@@ -198,7 +198,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         }
 
         check(namespaceHistoryExistsAndIsValid(targetSchema, awaitEmptyHistory = true)) {
-            "FileWeft namespace bootstrap completed without creating $targetSchema.$HISTORY_TABLE"
+            "FlowWeft namespace bootstrap completed without creating $targetSchema.$HISTORY_TABLE"
         }
     }
 
@@ -210,7 +210,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         NamespaceHistoryState.VALID -> true
         NamespaceHistoryState.EMPTY -> {
             check(awaitEmptyHistory) {
-                "FileWeft migration history $targetSchema.$HISTORY_TABLE exists but contains no rows. " +
+                "FlowWeft migration history $targetSchema.$HISTORY_TABLE exists but contains no rows. " +
                     "Its required namespace marker is missing; refusing to treat an empty history as an untracked namespace."
             }
             awaitNamespaceMarker(targetSchema)
@@ -260,7 +260,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             entry.version == NAMESPACE_BASELINE_VERSION || entry.type == NAMESPACE_BASELINE_TYPE
         }
         check(markers.size == 1) {
-            "FileWeft migration history $targetSchema.$HISTORY_TABLE requires exactly one " +
+            "FlowWeft migration history $targetSchema.$HISTORY_TABLE requires exactly one " +
                 "version-0 BASELINE namespace marker but found ${markers.size}."
         }
         val marker = markers.single()
@@ -273,7 +273,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                 marker.checksum == null &&
                 marker.success == true,
         ) {
-            "FileWeft migration history $targetSchema.$HISTORY_TABLE has an invalid namespace marker: $marker. " +
+            "FlowWeft migration history $targetSchema.$HISTORY_TABLE has an invalid namespace marker: $marker. " +
                 "Expected installed_rank=$NAMESPACE_BASELINE_INSTALLED_RANK, version='$NAMESPACE_BASELINE_VERSION', " +
                 "description='$NAMESPACE_BASELINE_DESCRIPTION', type='$NAMESPACE_BASELINE_TYPE', " +
                 "script='$NAMESPACE_BASELINE_SCRIPT', checksum=NULL, success=true."
@@ -289,7 +289,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
                 error(
-                    "Interrupted while waiting for FileWeft migration history " +
+                    "Interrupted while waiting for FlowWeft migration history " +
                         "$targetSchema.$HISTORY_TABLE to publish its namespace marker",
                 )
             }
@@ -297,13 +297,13 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                 NamespaceHistoryState.VALID -> return true
                 NamespaceHistoryState.EMPTY -> Unit
                 NamespaceHistoryState.ABSENT -> error(
-                    "FileWeft migration history $targetSchema.$HISTORY_TABLE disappeared while " +
+                    "FlowWeft migration history $targetSchema.$HISTORY_TABLE disappeared while " +
                         "waiting for its namespace marker",
                 )
             }
         }
         error(
-            "FileWeft migration history $targetSchema.$HISTORY_TABLE remained empty for " +
+            "FlowWeft migration history $targetSchema.$HISTORY_TABLE remained empty for " +
                 "$BOOTSTRAP_HISTORY_APPEAR_TIMEOUT_MILLIS ms without its required namespace marker; " +
                 "refusing to continue",
         )
@@ -317,9 +317,9 @@ class FlywayMigrationRunner @JvmOverloads constructor(
 
     private fun rejectUntrackedFileWeftSchema(targetSchema: String, discoveredTables: List<String>): Nothing =
         error(
-            "FileWeft tables ${discoveredTables.joinToString()} already exist in schema " +
+            "FlowWeft tables ${discoveredTables.joinToString()} already exist in schema " +
                 "'$targetSchema' without $HISTORY_TABLE. Refusing to baseline or replay " +
-                "an untracked FileWeft schema.",
+                "an untracked FlowWeft schema.",
         )
 
     private fun validNamespaceHistoryAppearedAfterBootstrapFailure(
@@ -399,7 +399,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             .filter { it.startsWith("V") || it.startsWith("R") }
             .toSet()
         check(packagedScripts.isNotEmpty()) {
-            "No packaged FileWeft migrations were resolved for schema '$targetSchema'"
+            "No packaged FlowWeft migrations were resolved for schema '$targetSchema'"
         }
         val placeholders = packagedScripts.joinToString(",") { "?" }
         dataSource.connection.use { connection ->
@@ -553,7 +553,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                 productName.startsWith("Kingbase", ignoreCase = true) -> DatabaseProduct.KINGBASE
                 else -> error(
                     "Unsupported database product '$productName'; " +
-                        "FileWeft supports PostgreSQL, MySQL 8, and Kingbase ES",
+                        "FlowWeft supports PostgreSQL, MySQL 8, and Kingbase ES",
                 )
             }
         }
@@ -569,11 +569,11 @@ class FlywayMigrationRunner @JvmOverloads constructor(
         }
 
         private fun validatedSchemaSyntax(schema: String): String {
-            require(schema.isNotEmpty()) { "FileWeft migration schema must not be empty" }
+            require(schema.isNotEmpty()) { "FlowWeft migration schema must not be empty" }
             val firstCodePoint = schema.codePointAt(0)
             val lastCodePoint = schema.codePointBefore(schema.length)
             require(!isUnicodeWhitespace(firstCodePoint) && !isUnicodeWhitespace(lastCodePoint)) {
-                "FileWeft migration schema must not start or end with Unicode whitespace"
+                "FlowWeft migration schema must not start or end with Unicode whitespace"
             }
             var offset = 0
             while (offset < schema.length) {
@@ -586,7 +586,7 @@ class FlywayMigrationRunner @JvmOverloads constructor(
                         type != Character.PARAGRAPH_SEPARATOR.toInt() &&
                         type != Character.SURROGATE.toInt(),
                 ) {
-                    "FileWeft migration schema contains a forbidden control, format, separator, or surrogate character"
+                    "FlowWeft migration schema contains a forbidden control, format, separator, or surrogate character"
                 }
                 offset += Character.charCount(codePoint)
             }
@@ -599,13 +599,13 @@ class FlywayMigrationRunner @JvmOverloads constructor(
             when (product) {
                 DatabaseProduct.POSTGRESQL,
                 DatabaseProduct.KINGBASE -> require(encodedLength <= POSTGRESQL_IDENTIFIER_MAX_BYTES) {
-                    "FileWeft migration schema is $encodedLength UTF-8 bytes; $product identifiers allow at most " +
+                    "FlowWeft migration schema is $encodedLength UTF-8 bytes; $product identifiers allow at most " +
                         "$POSTGRESQL_IDENTIFIER_MAX_BYTES bytes"
                 }
                 DatabaseProduct.MYSQL -> {
                     val characterCount = schema.codePointCount(0, schema.length)
                     require(characterCount <= MYSQL_IDENTIFIER_MAX_CHARS) {
-                        "FileWeft migration schema is $characterCount characters; $product identifiers allow at most " +
+                        "FlowWeft migration schema is $characterCount characters; $product identifiers allow at most " +
                             "$MYSQL_IDENTIFIER_MAX_CHARS characters"
                     }
                 }
