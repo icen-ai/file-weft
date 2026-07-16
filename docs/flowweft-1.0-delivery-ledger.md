@@ -36,7 +36,7 @@
 | FW10-041 | 进行中 | Source profile、OIDC 与宿主账号登录 | PKCE、AES-GCM 共享 Redis session/密钥轮换/原子 TTL 与容量、单副本降级、临时密码交换、无 localStorage token、CSRF/CSP、SSRF allowlist、tenant alias 安全测试；仍需真实 IdP/宿主和 CNB Redis 故障演练证据 |
 | FW10-042 | 未开始 | 文档工作台 | 目录/搜索/文档/版本/续传/metadata/下载/移动/生命周期全流程 Playwright |
 | FW10-043 | 进行中 | 审批、同步、Doctor、审计与运维 UI | 系统 Doctor 与当前用户审批任务箱已接实时脱敏 DAL；仍需权限隐藏与服务端拒绝、审批 mutation、同步/失败重排/审计和安全导出 E2E |
-| FW10-044 | 未开始 | Agent 对话、检索证据、工具确认、配置和评测 UI | 流式/恢复/取消/确认/引用/预算/secret reference/能力缺失/双语 E2E |
+| FW10-044 | 进行中 | Agent 对话、检索证据、工具确认、配置和评测 UI | 已建立 framework-neutral Web/Application API：可信上下文、对话/run、持久 cursor、取消、权限过滤引用、一次性工具确认、secret-reference 配置、Doctor 与评测；继续实现 runtime/controller/BFF/Console 及流式恢复、能力缺失和双语安全 E2E |
 | FW10-050 | 进行中 | retention、legal hold 与安全删除 | 可控时间、冻结优先级、Outbox/对象/索引删除一致性、审计和三方言测试 |
 | FW10-051 | 未开始 | 容量、分区与背压 | 公开基准环境和上限；队列/索引/上传/Agent 限流、背压、磁盘水位和降级测试 |
 | FW10-052 | 未开始 | SLO、备份恢复、RPO/RTO | 仪表盘/告警可触发；数据库+对象+索引在干净环境恢复并达到声明目标 |
