@@ -36,6 +36,8 @@ final class WorkflowContractSupport {
 
     static final String SELECTOR_DIGEST_DOMAIN = "flowweft-workflow-participant-selector-v1";
     static final String REQUEST_DIGEST_DOMAIN = "flowweft-workflow-participant-resolution-request-v1";
+    static final String AUTHORIZED_REQUEST_DIGEST_DOMAIN =
+        "flowweft-workflow-participant-resolution-request-v2";
     static final String TIER_DIGEST_DOMAIN = "flowweft-workflow-participant-tier-v1";
     static final String RESOLUTION_DIGEST_DOMAIN = "flowweft-workflow-participant-resolution-v1";
     static final String APPROVAL_POLICY_DIGEST_DOMAIN = "flowweft-workflow-approval-policy-v1";

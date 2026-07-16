@@ -13,26 +13,58 @@ class WorkflowParticipantSelectorContractTest {
     fun `models built-in organization selectors without executable expressions`() {
         val user = WorkflowPrincipalRef.of("HUMAN", "用户-甲")
         val exact = WorkflowParticipantSelector.exactUser(user)
+        val canonicalUser = WorkflowParticipantSelector.user(user)
         val group = WorkflowParticipantSelector.group("组-一")
         val role = WorkflowParticipantSelector.role("法务审批人")
         val position = WorkflowParticipantSelector.position("天津区经理")
+        val permission = WorkflowParticipantSelector.permission("legal.document.approve")
+        val members = WorkflowParticipantSelector.organizationUnitMembers("天津水务")
+        val managers = WorkflowParticipantSelector.organizationUnitManagers("天津水务")
         val leaders = WorkflowParticipantSelector.departmentLeaders("水务部门")
         val initiatorManagers = WorkflowParticipantSelector.initiatorManagerChain(1, 3)
         val actorManager = WorkflowParticipantSelector.currentActorManagerChain(2, 2)
+        val initiator = WorkflowParticipantSelector.initiator()
+        val variableUser = WorkflowParticipantSelector.variableUser("legalReviewer")
+        val custom = WorkflowParticipantSelector.custom("legal-risk-owner")
 
         assertSame(WorkflowParticipantSelectorKind.EXACT_USER, exact.kind)
+        assertSame(WorkflowParticipantSelectorKind.USER, canonicalUser.kind)
         assertEquals(user, exact.exactPrincipal)
         assertNull(exact.organizationId)
         assertEquals("组-一", group.organizationId)
         assertEquals("法务审批人", role.organizationId)
         assertEquals("天津区经理", position.organizationId)
+        assertEquals("legal.document.approve", permission.organizationId)
+        assertEquals("天津水务", members.organizationId)
+        assertEquals("天津水务", managers.organizationId)
         assertEquals("水务部门", leaders.organizationId)
         assertEquals(1, initiatorManagers.minimumManagerLevel)
         assertEquals(3, initiatorManagers.maximumManagerLevel)
         assertEquals(2, actorManager.minimumManagerLevel)
         assertEquals(2, actorManager.maximumManagerLevel)
         assertEquals(64, exact.digest.length)
-        assertEquals(7, setOf(exact, group, role, position, leaders, initiatorManagers, actorManager).size)
+        assertNull(initiator.organizationId)
+        assertEquals("legalReviewer", variableUser.organizationId)
+        assertEquals("legal-risk-owner", custom.organizationId)
+        assertEquals(
+            14,
+            setOf(
+                exact,
+                canonicalUser,
+                group,
+                role,
+                position,
+                permission,
+                members,
+                managers,
+                leaders,
+                initiatorManagers,
+                actorManager,
+                initiator,
+                variableUser,
+                custom,
+            ).size,
+        )
 
         val publicMethodNames = WorkflowParticipantSelector::class.java.methods.map { method -> method.name.lowercase() }
         assertFalse(publicMethodNames.any { name -> "expression" in name || "script" in name })

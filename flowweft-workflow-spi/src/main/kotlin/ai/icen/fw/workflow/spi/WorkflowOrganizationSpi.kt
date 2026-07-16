@@ -36,6 +36,10 @@ class WorkflowOrganizationRelationshipKind private constructor(code: String) {
         @JvmField val DIRECT_MANAGER = WorkflowOrganizationRelationshipKind("direct-manager")
         @JvmField val EFFECTIVE_MANAGER = WorkflowOrganizationRelationshipKind("effective-manager")
         @JvmField val ACTIVE_DELEGATE = WorkflowOrganizationRelationshipKind("active-delegate")
+        @JvmField val ASSIGNED_ROLE = WorkflowOrganizationRelationshipKind("assigned-role")
+        @JvmField val HOLDS_POSITION = WorkflowOrganizationRelationshipKind("holds-position")
+        /** Eligibility fact only; it never grants a Workflow action. */
+        @JvmField val HAS_PERMISSION = WorkflowOrganizationRelationshipKind("has-permission")
 
         @JvmStatic
         fun of(code: String): WorkflowOrganizationRelationshipKind = when (code) {
@@ -44,6 +48,9 @@ class WorkflowOrganizationRelationshipKind private constructor(code: String) {
             DIRECT_MANAGER.code -> DIRECT_MANAGER
             EFFECTIVE_MANAGER.code -> EFFECTIVE_MANAGER
             ACTIVE_DELEGATE.code -> ACTIVE_DELEGATE
+            ASSIGNED_ROLE.code -> ASSIGNED_ROLE
+            HOLDS_POSITION.code -> HOLDS_POSITION
+            HAS_PERMISSION.code -> HAS_PERMISSION
             else -> WorkflowOrganizationRelationshipKind(code)
         }
     }
@@ -188,7 +195,10 @@ class WorkflowOrganizationRelationshipRequest private constructor(
             relationship == WorkflowOrganizationRelationshipKind.EFFECTIVE_MEMBER ||
             relationship == WorkflowOrganizationRelationshipKind.DIRECT_MANAGER ||
             relationship == WorkflowOrganizationRelationshipKind.EFFECTIVE_MANAGER ||
-            relationship == WorkflowOrganizationRelationshipKind.ACTIVE_DELEGATE
+            relationship == WorkflowOrganizationRelationshipKind.ACTIVE_DELEGATE ||
+            relationship == WorkflowOrganizationRelationshipKind.ASSIGNED_ROLE ||
+            relationship == WorkflowOrganizationRelationshipKind.HOLDS_POSITION ||
+            relationship == WorkflowOrganizationRelationshipKind.HAS_PERMISSION
         ) { "Unknown workflow organization relationships require future typed support." }
         require(effectiveAtEpochMilli in context.requestedAtEpochMilli..context.deadlineEpochMilli) {
             "Workflow organization relationship effective time is outside the call window."

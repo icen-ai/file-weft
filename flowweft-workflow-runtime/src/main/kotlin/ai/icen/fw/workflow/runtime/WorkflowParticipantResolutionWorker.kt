@@ -40,6 +40,7 @@ class WorkflowParticipantResolutionWorker @JvmOverloads constructor(
             maximumPrincipals,
             retryDelayMillis,
             iterationBudget,
+            authorizationPort,
         ),
         clock,
     )

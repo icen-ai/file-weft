@@ -13,6 +13,7 @@ import ai.icen.fw.workflow.api.WorkflowNodeDefinition
 import ai.icen.fw.workflow.api.WorkflowNodeKind
 import ai.icen.fw.workflow.api.WorkflowParticipantResolutionStage
 import ai.icen.fw.workflow.api.WorkflowParticipantResolution
+import ai.icen.fw.workflow.api.WorkflowParticipantResolutionRequest
 import ai.icen.fw.workflow.api.WorkflowParticipantTier
 import ai.icen.fw.workflow.api.WorkflowParticipantSelector
 import ai.icen.fw.workflow.api.WorkflowPrincipalRef
@@ -206,8 +207,10 @@ class WorkflowDurableRuntimeTest {
             ): java.util.concurrent.CompletionStage<WorkflowOrganizationRelationshipResult> =
                 throw UnsupportedOperationException()
         }
+        var capturedResolutionRequest: WorkflowParticipantResolutionRequest? = null
         val handler = WorkflowParticipantResolutionEffectHandler(
             participantResolver = { request ->
+                capturedResolutionRequest = request
                 handlerNow = 21L
                 CompletableFuture.completedFuture(
                     WorkflowParticipantResolution.resolved(
@@ -230,6 +233,7 @@ class WorkflowDurableRuntimeTest {
             clock = WorkflowWorkerClock { handlerNow },
             providerId = "test-directory",
             providerRevision = "provider-revision-7",
+            participantAuthorizationPort = fixture.authorization,
         )
 
         val result = handler.execute(
@@ -261,6 +265,18 @@ class WorkflowDurableRuntimeTest {
         assertEquals(rule.selector.digest, receipt.selectorDigest)
         assertEquals(result.resultDigest, receipt.receiptDigest)
         assertEquals(2, snapshotCalls)
+        assertSame(WorkflowRuntimeAction.RESOLVE_PARTICIPANTS, fixture.authorization.requests.last().action)
+        assertTrue(requireNotNull(capturedResolutionRequest).hasAuthorizationEvidence)
+        assertEquals("authority-v1", capturedResolutionRequest!!.authorizationAuthorityRevision)
+        assertEquals(context().actor, capturedResolutionRequest!!.currentActor)
+
+        val callsBeforeDenial = snapshotCalls
+        fixture.authorization.allowed = false
+        val denied = handler.execute(
+            WorkflowEffectHandlerRequest.of(context(), claim, effect, state, definition, 20L, 100L),
+        )
+        assertSame(WorkflowEffectObservedOutcome.TERMINAL_FAILURE, denied.outcome)
+        assertEquals(callsBeforeDenial, snapshotCalls)
     }
 
     @Test
@@ -332,6 +348,7 @@ class WorkflowDurableRuntimeTest {
             clock = WorkflowWorkerClock { now },
             providerId = "test-directory",
             providerRevision = "provider-revision-7",
+            participantAuthorizationPort = fixture.authorization,
         )
 
         val result = handler.execute(

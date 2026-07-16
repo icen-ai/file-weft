@@ -14,6 +14,7 @@ class WorkflowRuntimeAction private constructor(code: String) {
     companion object {
         @JvmField val START = WorkflowRuntimeAction("start")
         @JvmField val ACTIVATE_HUMAN_RULE = WorkflowRuntimeAction("activate-human-rule")
+        @JvmField val RESOLVE_PARTICIPANTS = WorkflowRuntimeAction("resolve-participants")
         @JvmField val DECIDE_HUMAN_TASK = WorkflowRuntimeAction("decide-human-task")
         @JvmField val CLAIM_HUMAN_TASK = WorkflowRuntimeAction("claim-human-task")
         @JvmField val UNCLAIM_HUMAN_TASK = WorkflowRuntimeAction("unclaim-human-task")
@@ -35,6 +36,7 @@ class WorkflowRuntimeAction private constructor(code: String) {
         private val builtIns = listOf(
             START,
             ACTIVATE_HUMAN_RULE,
+            RESOLVE_PARTICIPANTS,
             DECIDE_HUMAN_TASK,
             CLAIM_HUMAN_TASK,
             UNCLAIM_HUMAN_TASK,

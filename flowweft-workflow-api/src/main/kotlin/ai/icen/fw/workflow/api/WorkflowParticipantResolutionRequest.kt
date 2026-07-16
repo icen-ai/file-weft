@@ -8,7 +8,9 @@ package ai.icen.fw.workflow.api
  * snapshot; a resolver must fail instead of silently using another revision. [stage] is part of
  * [requestDigest], preventing a result produced for activation from being replayed at claim or
  * decision re-resolution. [maximumPrincipals] bounds flattened principal occurrences rather than
- * distinct identities, preserving independent tier and selector facts.
+ * distinct identities, preserving independent tier and selector facts. The legacy [of] factory
+ * creates an unprivileged transport value for contract/adaptor use; production orchestration must
+ * use [authorized] and reject a request without [hasAuthorizationEvidence].
  */
 class WorkflowParticipantResolutionRequest private constructor(
     requestId: String,
@@ -24,6 +26,8 @@ class WorkflowParticipantResolutionRequest private constructor(
     organizationSnapshotRevision: String,
     selectors: List<WorkflowParticipantSelector>,
     val delegationPolicy: WorkflowDelegationPolicy,
+    authorizationAuthorityRevision: String?,
+    authorizationEvidenceDigest: String?,
     val maximumPrincipals: Int,
     val requestedAtEpochMilli: Long,
     val deadlineEpochMilli: Long,
@@ -52,6 +56,20 @@ class WorkflowParticipantResolutionRequest private constructor(
         WorkflowContractSupport.MAX_SELECTORS,
         "Workflow participant selectors are invalid or exceed the limit.",
     )
+    val authorizationAuthorityRevision: String? = authorizationAuthorityRevision?.let {
+        WorkflowContractSupport.requireText(
+            it,
+            WorkflowContractSupport.MAX_ORGANIZATION_REVISION_UTF8_BYTES,
+            "Workflow participant authorization authority revision is invalid.",
+        )
+    }
+    val authorizationEvidenceDigest: String? = authorizationEvidenceDigest?.let {
+        WorkflowContractSupport.requireCanonicalSha256(
+            it,
+            "Workflow participant authorization evidence digest is invalid.",
+        )
+    }
+    val hasAuthorizationEvidence: Boolean
     val requestDigest: String
 
     init {
@@ -68,8 +86,18 @@ class WorkflowParticipantResolutionRequest private constructor(
         require(deadlineEpochMilli - requestedAtEpochMilli <= WorkflowContractSupport.MAX_RESOLUTION_WINDOW_MILLIS) {
             "Workflow participant resolution window exceeds the limit."
         }
+        require(
+            (this.authorizationAuthorityRevision == null) == (this.authorizationEvidenceDigest == null),
+        ) { "Workflow participant authorization evidence must be complete." }
+        hasAuthorizationEvidence = this.authorizationAuthorityRevision != null
 
-        val writer = WorkflowContractSupport.digest(WorkflowContractSupport.REQUEST_DIGEST_DOMAIN)
+        val writer = WorkflowContractSupport.digest(
+            if (hasAuthorizationEvidence) {
+                WorkflowContractSupport.AUTHORIZED_REQUEST_DIGEST_DOMAIN
+            } else {
+                WorkflowContractSupport.REQUEST_DIGEST_DOMAIN
+            },
+        )
             .text(this.requestId)
             .text(this.tenantId)
             .text(definition.key)
@@ -94,6 +122,11 @@ class WorkflowParticipantResolutionRequest private constructor(
         this.selectors.forEach { selector -> writer.text(selector.digest) }
         writer.text(delegationPolicy.mode.code)
             .integer(delegationPolicy.maximumHops)
+        if (hasAuthorizationEvidence) {
+            writer.text(requireNotNull(this.authorizationAuthorityRevision))
+                .text(requireNotNull(this.authorizationEvidenceDigest))
+        }
+        writer
             .integer(maximumPrincipals)
             .longValue(requestedAtEpochMilli)
             .longValue(deadlineEpochMilli)
@@ -135,6 +168,54 @@ class WorkflowParticipantResolutionRequest private constructor(
             organizationSnapshotRevision,
             selectors,
             delegationPolicy,
+            null,
+            null,
+            maximumPrincipals,
+            requestedAtEpochMilli,
+            deadlineEpochMilli,
+        )
+
+        /**
+         * Production factory. The evidence is a non-bearer digest produced by the trusted runtime
+         * from an exact authorization decision. Its authority revision and digest become part of
+         * [requestDigest], so a result cannot move across principals, definitions or revisions.
+         */
+        @JvmStatic
+        fun authorized(
+            requestId: String,
+            tenantId: String,
+            definition: WorkflowDefinitionRef,
+            instance: WorkflowInstanceRef,
+            workItem: WorkflowWorkItemRef,
+            stage: WorkflowParticipantResolutionStage,
+            subject: WorkflowSubjectSnapshot,
+            initiator: WorkflowPrincipalRef,
+            currentActor: WorkflowPrincipalRef,
+            organizationAuthority: String,
+            organizationSnapshotRevision: String,
+            selectors: List<WorkflowParticipantSelector>,
+            delegationPolicy: WorkflowDelegationPolicy,
+            authorizationAuthorityRevision: String,
+            authorizationEvidenceDigest: String,
+            maximumPrincipals: Int,
+            requestedAtEpochMilli: Long,
+            deadlineEpochMilli: Long,
+        ): WorkflowParticipantResolutionRequest = WorkflowParticipantResolutionRequest(
+            requestId,
+            tenantId,
+            definition,
+            instance,
+            workItem,
+            stage,
+            subject,
+            initiator,
+            currentActor,
+            organizationAuthority,
+            organizationSnapshotRevision,
+            selectors,
+            delegationPolicy,
+            authorizationAuthorityRevision,
+            authorizationEvidenceDigest,
             maximumPrincipals,
             requestedAtEpochMilli,
             deadlineEpochMilli,

@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Production participant-resolution handler. It reuses the public resolver and organization
- * authority SPI, pins the exact directory snapshot, and emits only v2 organization-bound domain
+ * authority SPI, pins the exact directory snapshot, and emits only v3 organization-bound domain
  * receipts. No repository or database dependency is present in this class.
  */
 class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
@@ -43,6 +43,7 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
     maximumPrincipals: Int = 256,
     retryDelayMillis: Long = 5_000L,
     iterationBudget: Int = 256,
+    private val participantAuthorizationPort: WorkflowRuntimeAuthorizationPort? = null,
 ) : WorkflowEffectHandler {
     private val providerId: String = WorkflowRuntimeSupport.code(
         providerId,
@@ -91,8 +92,45 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
             return failure("participant-effect-binding-invalid", false, request.now)
         }
 
+        // Participant discovery can disclose organization membership. Authorize the exact tenant,
+        // principal, definition version, subject, work item and provider before any directory call.
+        // The resulting authority revision/evidence digest is also embedded into the resolver
+        // request, so even a structurally valid response from another authorization revision is
+        // unusable here.
+        val authorizationStart = currentTimeWithin(request)
+            ?: return failure("participant-authorization-expired", false, request.now)
+        val authorizationRequestDigest = participantAuthorizationRequestDigest(request, workItem, rule)
+        val authorizationRequest = WorkflowRuntimeAuthorizationRequest.of(
+            request.callContext,
+            WorkflowRuntimeAction.RESOLVE_PARTICIPANTS,
+            request.state.instanceId,
+            request.state.definitionId,
+            request.state.definitionRef,
+            request.state.subject,
+            authorizationRequestDigest,
+            authorizationStart,
+        )
+        val authorization = try {
+            participantAuthorizationPort?.authorize(authorizationRequest)
+        } catch (_: RuntimeException) {
+            null
+        }
+        if (authorization == null ||
+            authorization.status != WorkflowRuntimeAuthorizationStatus.AUTHORIZED ||
+            !authorization.matches(authorizationRequest, authorizationStart)
+        ) {
+            return failure("participant-authorization-denied", false, authorizationStart)
+        }
+        val authorizationEvidenceDigest = participantAuthorizationEvidenceDigest(
+            authorizationRequest,
+            authorization,
+        )
+
         val snapshotStart = currentTimeWithin(request) ?: return failure("participant-deadline-expired", true, request.now)
-        val snapshotDeadline = minOf(request.deadline, snapshotStart + callWindowMillis)
+        val snapshotDeadline = minOf(request.deadline, authorization.validUntil, snapshotStart + callWindowMillis)
+        if (snapshotDeadline <= snapshotStart) {
+            return failure("participant-authorization-expired", false, snapshotStart)
+        }
         val providerContext = WorkflowProviderCallContext.of(
             stableId("organization-call", intent.effectId, request.claim.lease.fencingToken.toString()),
             request.callContext.tenantId,
@@ -129,11 +167,16 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
         }
 
         val resolutionStart = safeNow(snapshotReceipt.completedAtEpochMilli)
-        val resolutionDeadline = minOf(request.deadline, snapshot.expiresAtEpochMilli, resolutionStart + callWindowMillis)
+        val resolutionDeadline = minOf(
+            request.deadline,
+            authorization.validUntil,
+            snapshot.expiresAtEpochMilli,
+            resolutionStart + callWindowMillis,
+        )
         if (resolutionDeadline <= resolutionStart) {
             return failure("organization-snapshot-expired", true, resolutionStart)
         }
-        val resolutionRequest = WorkflowParticipantResolutionRequest.of(
+        val resolutionRequest = WorkflowParticipantResolutionRequest.authorized(
             stableId("participant-request", intent.effectId, request.claim.lease.fencingToken.toString()),
             request.callContext.tenantId,
             intent.definitionRef,
@@ -147,6 +190,8 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
             snapshot.revision,
             listOf(rule.selector),
             WorkflowDelegationPolicy.disabled(),
+            authorization.authorityRevision,
+            authorizationEvidenceDigest,
             maximumPrincipals,
             resolutionStart,
             resolutionDeadline,
@@ -169,6 +214,7 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
         val confirmationStart = safeNow(resolution.resolvedAtEpochMilli)
         val confirmationDeadline = minOf(
             request.deadline,
+            authorization.validUntil,
             snapshot.expiresAtEpochMilli,
             confirmationStart + callWindowMillis,
         )
@@ -260,6 +306,7 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
                     snapshot.expiresAtEpochMilli,
                     confirmedSnapshot.expiresAtEpochMilli,
                     confirmationReceipt.expiresAtEpochMilli,
+                    authorization.validUntil,
                 ),
             )
         } catch (_: IllegalArgumentException) {
@@ -360,6 +407,9 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
     ): Boolean = result.requestId == request.requestId && result.requestDigest == request.requestDigest &&
         result.tenantId == request.tenantId && result.authority == request.organizationAuthority &&
         result.authorityRevision == request.organizationSnapshotRevision &&
+        request.hasAuthorizationEvidence && result.hasAuthorizationEvidence &&
+        result.authorizationAuthorityRevision == request.authorizationAuthorityRevision &&
+        result.authorizationEvidenceDigest == request.authorizationEvidenceDigest &&
         result.resolvedAtEpochMilli >= request.requestedAtEpochMilli &&
         result.resolvedAtEpochMilli <= observedAt &&
         result.resolvedAtEpochMilli < request.deadlineEpochMilli &&
@@ -376,6 +426,57 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
         rule.selector.digest,
         rule.approvalPolicy.contentDigest,
     )
+
+    private fun participantAuthorizationRequestDigest(
+        request: WorkflowEffectHandlerRequest,
+        workItem: ai.icen.fw.workflow.domain.WorkflowHumanWorkItemState,
+        rule: ai.icen.fw.workflow.api.WorkflowHumanTaskParticipantRule,
+    ): String = WorkflowRuntimeSupport.digest(
+        "flowweft-workflow-runtime-participant-authorization-request-v1",
+    )
+        .text(request.callContext.contextDigest)
+        .text(request.effect.intent.requestDigest)
+        .text(request.state.tenantId)
+        .text(request.state.instanceId)
+        .longValue(request.state.version)
+        .text(request.state.definitionId)
+        .text(request.state.definitionRef.key)
+        .text(request.state.definitionRef.version)
+        .text(request.state.definitionRef.digest)
+        .text(request.state.subject.ref.type)
+        .text(request.state.subject.ref.id)
+        .text(request.state.subject.revision)
+        .text(request.state.subject.digest)
+        .text(request.callContext.actor.type)
+        .text(request.callContext.actor.id)
+        .text(workItem.workItemId)
+        .longValue(workItem.revision)
+        .text(rule.contentDigest)
+        .text(rule.selector.digest)
+        .text(providerId)
+        .text(providerRevision)
+        .finish()
+
+    private fun participantAuthorizationEvidenceDigest(
+        request: WorkflowRuntimeAuthorizationRequest,
+        decision: WorkflowRuntimeAuthorizationDecision,
+    ): String = WorkflowRuntimeSupport.digest(
+        "flowweft-workflow-runtime-participant-authorization-evidence-v1",
+    )
+        .text(request.callContext.contextDigest)
+        .text(request.requestDigest)
+        .text(decision.authorizationId)
+        .text(decision.tenantId)
+        .text(decision.actor.type)
+        .text(decision.actor.id)
+        .text(decision.action.code)
+        .text(decision.instanceId)
+        .text(decision.status.code)
+        .text(decision.authorityRevision)
+        .text(decision.authorityDigest)
+        .longValue(decision.evaluatedAt)
+        .longValue(decision.validUntil)
+        .finish()
 
     private fun failure(code: String, retryable: Boolean, completedAt: Long): WorkflowEffectJobStoredResult {
         val safeCode = try {

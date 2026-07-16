@@ -312,6 +312,67 @@ class WorkflowParticipantResolutionContractTest {
     }
 
     @Test
+    fun `authorized request binds principal definition and authorization revision without becoming a permit`() {
+        val selector = WorkflowParticipantSelector.permission("legal.document.approve")
+        val request = WorkflowParticipantResolutionRequest.authorized(
+            "request-authorized",
+            "tenant",
+            WorkflowDefinitionRef.of("definition", "V7", DIGEST_A),
+            WorkflowInstanceRef.of("instance", 9L),
+            WorkflowWorkItemRef.of("work-item", 10L),
+            WorkflowParticipantResolutionStage.CLAIM,
+            WorkflowSubjectSnapshot.of(WorkflowSubjectRef.of("LEGAL_DOCUMENT", "subject"), "R4", DIGEST_B),
+            principal("initiator"),
+            principal("current-actor"),
+            "corp.hr",
+            "org-r9",
+            listOf(selector),
+            WorkflowDelegationPolicy.disabled(),
+            "authorization-r17",
+            DIGEST_A,
+            16,
+            10_000L,
+            10_100L,
+        )
+        val resolution = WorkflowParticipantResolution.resolved(
+            request,
+            listOf(WorkflowParticipantTier.direct(selector, 0, listOf(principal("reviewer")), DIGEST_B)),
+            10_010L,
+            10_020L,
+        )
+
+        assertTrue(request.hasAuthorizationEvidence)
+        assertEquals("authorization-r17", request.authorizationAuthorityRevision)
+        assertEquals(DIGEST_A, request.authorizationEvidenceDigest)
+        assertTrue(resolution.hasAuthorizationEvidence)
+        assertEquals(request.authorizationAuthorityRevision, resolution.authorizationAuthorityRevision)
+        assertEquals(request.authorizationEvidenceDigest, resolution.authorizationEvidenceDigest)
+        assertNotEquals(
+            request.requestDigest,
+            WorkflowParticipantResolutionRequest.authorized(
+                "request-authorized",
+                "tenant",
+                request.definition,
+                request.instance,
+                request.workItem,
+                request.stage,
+                request.subject,
+                request.initiator,
+                request.currentActor,
+                request.organizationAuthority,
+                request.organizationSnapshotRevision,
+                request.selectors,
+                request.delegationPolicy,
+                "authorization-r18",
+                DIGEST_A,
+                request.maximumPrincipals,
+                request.requestedAtEpochMilli,
+                request.deadlineEpochMilli,
+            ).requestDigest,
+        )
+    }
+
+    @Test
     fun `resolver is a Java-compatible asynchronous boundary and result is not a permit`() {
         val group = WorkflowParticipantSelector.group("group")
         val request = request(listOf(group))

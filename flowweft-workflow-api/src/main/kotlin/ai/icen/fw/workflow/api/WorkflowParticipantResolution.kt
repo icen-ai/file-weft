@@ -31,6 +31,9 @@ class WorkflowParticipantResolution private constructor(
     val tenantId: String = request.tenantId
     val authority: String = request.organizationAuthority
     val authorityRevision: String = request.organizationSnapshotRevision
+    val authorizationAuthorityRevision: String? = request.authorizationAuthorityRevision
+    val authorizationEvidenceDigest: String? = request.authorizationEvidenceDigest
+    val hasAuthorizationEvidence: Boolean = request.hasAuthorizationEvidence
     val tiers: List<WorkflowParticipantTier> = WorkflowContractSupport.immutableList(
         tiers,
         WorkflowContractSupport.MAX_TIERS,
@@ -127,7 +130,8 @@ class WorkflowParticipantResolution private constructor(
             }
             require(tierCount > 0) { "Resolved workflow participant selectors must not be empty." }
             if (
-                selector.kind == WorkflowParticipantSelectorKind.EXACT_USER &&
+                (selector.kind == WorkflowParticipantSelectorKind.EXACT_USER ||
+                    selector.kind == WorkflowParticipantSelectorKind.USER) &&
                 request.delegationPolicy.mode == WorkflowDelegationMode.DISABLED
             ) {
                 require(

@@ -56,6 +56,29 @@ class JavaWorkflowParticipantCompatibilityTest {
         assertEquals("org-r1", request.getOrganizationSnapshotRevision());
         assertSame(WorkflowParticipantResolutionStage.ACTIVATION, request.getStage());
         assertEquals(64, request.getRequestDigest().length());
+        WorkflowParticipantResolutionRequest authorized = WorkflowParticipantResolutionRequest.authorized(
+            "request-java-authorized",
+            "tenant-java",
+            request.getDefinition(),
+            request.getInstance(),
+            request.getWorkItem(),
+            WorkflowParticipantResolutionStage.CLAIM,
+            request.getSubject(),
+            request.getInitiator(),
+            request.getCurrentActor(),
+            "corp.hr",
+            "org-r2",
+            Collections.singletonList(WorkflowParticipantSelector.permission("document.approve")),
+            WorkflowDelegationPolicy.disabled(),
+            "authorization-r3",
+            DIGEST_A,
+            16,
+            10_000L,
+            10_100L
+        );
+        assertTrue(authorized.getHasAuthorizationEvidence());
+        assertEquals("authorization-r3", authorized.getAuthorizationAuthorityRevision());
+        assertEquals("document.approve", authorized.getSelectors().get(0).getTargetId());
         assertSame(WorkflowParticipantSelectorKind.GROUP, group.getKind());
         assertEquals(Integer.valueOf(1), managers.getMinimumManagerLevel());
         assertEquals(Integer.valueOf(2), managers.getMaximumManagerLevel());

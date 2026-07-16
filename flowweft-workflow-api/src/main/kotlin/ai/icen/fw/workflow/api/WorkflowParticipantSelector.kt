@@ -22,11 +22,16 @@ class WorkflowParticipantSelector private constructor(
         )
     }
 
+    /** Canonical opaque target for role/position/org-unit/variable/custom selectors. */
+    val targetId: String?
+        get() = organizationId
+
     val digest: String
 
     init {
         when (kind) {
-            WorkflowParticipantSelectorKind.EXACT_USER -> require(
+            WorkflowParticipantSelectorKind.EXACT_USER,
+            WorkflowParticipantSelectorKind.USER -> require(
                 exactPrincipal != null && this.organizationId == null &&
                     minimumManagerLevel == null && maximumManagerLevel == null,
             ) { "Exact-user workflow selectors require only an exact principal." }
@@ -34,10 +39,20 @@ class WorkflowParticipantSelector private constructor(
             WorkflowParticipantSelectorKind.GROUP,
             WorkflowParticipantSelectorKind.ROLE,
             WorkflowParticipantSelectorKind.POSITION,
+            WorkflowParticipantSelectorKind.PERMISSION,
+            WorkflowParticipantSelectorKind.ORG_UNIT_MEMBER,
+            WorkflowParticipantSelectorKind.ORG_UNIT_MANAGER,
+            WorkflowParticipantSelectorKind.VARIABLE_USER,
+            WorkflowParticipantSelectorKind.CUSTOM,
             WorkflowParticipantSelectorKind.DEPARTMENT_LEADERS -> require(
                 exactPrincipal == null && this.organizationId != null &&
                     minimumManagerLevel == null && maximumManagerLevel == null,
             ) { "Organization workflow selectors require only an organization identifier." }
+
+            WorkflowParticipantSelectorKind.INITIATOR -> require(
+                exactPrincipal == null && this.organizationId == null &&
+                    minimumManagerLevel == null && maximumManagerLevel == null,
+            ) { "Initiator workflow selectors derive their principal from trusted instance state." }
 
             WorkflowParticipantSelectorKind.INITIATOR_MANAGER_CHAIN,
             WorkflowParticipantSelectorKind.CURRENT_ACTOR_MANAGER_CHAIN -> {
@@ -100,6 +115,17 @@ class WorkflowParticipantSelector private constructor(
                 null,
             )
 
+        /** Canonical 1.0 direct-user selector. */
+        @JvmStatic
+        fun user(principal: WorkflowPrincipalRef): WorkflowParticipantSelector =
+            WorkflowParticipantSelector(
+                WorkflowParticipantSelectorKind.USER,
+                principal,
+                null,
+                null,
+                null,
+            )
+
         @JvmStatic
         fun group(groupId: String): WorkflowParticipantSelector =
             organization(WorkflowParticipantSelectorKind.GROUP, groupId)
@@ -111,6 +137,20 @@ class WorkflowParticipantSelector private constructor(
         @JvmStatic
         fun position(positionId: String): WorkflowParticipantSelector =
             organization(WorkflowParticipantSelectorKind.POSITION, positionId)
+
+        /** Resolves principals holding one host-defined permission; it never grants that permission. */
+        @JvmStatic
+        fun permission(permissionId: String): WorkflowParticipantSelector =
+            organization(WorkflowParticipantSelectorKind.PERMISSION, permissionId)
+
+        @JvmStatic
+        fun organizationUnitMembers(organizationUnitId: String): WorkflowParticipantSelector =
+            organization(WorkflowParticipantSelectorKind.ORG_UNIT_MEMBER, organizationUnitId)
+
+        /** Resolves every active manager/leader of one organization unit. */
+        @JvmStatic
+        fun organizationUnitManagers(organizationUnitId: String): WorkflowParticipantSelector =
+            organization(WorkflowParticipantSelectorKind.ORG_UNIT_MANAGER, organizationUnitId)
 
         /** Resolves every active leader in the department; the request-level result cap is strict. */
         @JvmStatic
@@ -126,6 +166,26 @@ class WorkflowParticipantSelector private constructor(
         @JvmStatic
         fun currentActorManagerChain(minimumLevel: Int, maximumLevel: Int): WorkflowParticipantSelector =
             managerChain(WorkflowParticipantSelectorKind.CURRENT_ACTOR_MANAGER_CHAIN, minimumLevel, maximumLevel)
+
+        /** Resolves the trusted workflow initiator, never a caller-supplied form field. */
+        @JvmStatic
+        fun initiator(): WorkflowParticipantSelector = WorkflowParticipantSelector(
+            WorkflowParticipantSelectorKind.INITIATOR,
+            null,
+            null,
+            null,
+            null,
+        )
+
+        /** Resolves one principal from a definition-declared, typed workflow variable key. */
+        @JvmStatic
+        fun variableUser(variableKey: String): WorkflowParticipantSelector =
+            organization(WorkflowParticipantSelectorKind.VARIABLE_USER, variableKey)
+
+        /** Stable generic custom hook; [customSelectorId] is a registry key, never executable text. */
+        @JvmStatic
+        fun custom(customSelectorId: String): WorkflowParticipantSelector =
+            organization(WorkflowParticipantSelectorKind.CUSTOM, customSelectorId)
 
         /** Host extensions receive one opaque target; executable expressions are not accepted. */
         @JvmStatic
@@ -163,10 +223,17 @@ class WorkflowParticipantSelector private constructor(
 
         private fun isBuiltIn(kind: WorkflowParticipantSelectorKind): Boolean =
             kind == WorkflowParticipantSelectorKind.EXACT_USER ||
+                kind == WorkflowParticipantSelectorKind.USER ||
                 kind == WorkflowParticipantSelectorKind.GROUP ||
                 kind == WorkflowParticipantSelectorKind.ROLE ||
                 kind == WorkflowParticipantSelectorKind.POSITION ||
+                kind == WorkflowParticipantSelectorKind.PERMISSION ||
+                kind == WorkflowParticipantSelectorKind.ORG_UNIT_MEMBER ||
+                kind == WorkflowParticipantSelectorKind.ORG_UNIT_MANAGER ||
                 kind == WorkflowParticipantSelectorKind.DEPARTMENT_LEADERS ||
+                kind == WorkflowParticipantSelectorKind.INITIATOR ||
+                kind == WorkflowParticipantSelectorKind.VARIABLE_USER ||
+                kind == WorkflowParticipantSelectorKind.CUSTOM ||
                 isManagerChain(kind)
     }
 }
