@@ -12,10 +12,12 @@ import ai.icen.fw.retrieval.api.RetrievalCancellationReason
 import ai.icen.fw.retrieval.api.RetrievalEvidenceRef
 import ai.icen.fw.retrieval.api.RetrievalExecutionGate
 import ai.icen.fw.retrieval.api.RetrievalExecutionPolicy
+import ai.icen.fw.retrieval.api.RetrievalFailureCode
 import ai.icen.fw.retrieval.api.RetrievalLineageRevisions
 import ai.icen.fw.retrieval.api.RetrievalMode
 import ai.icen.fw.retrieval.api.RetrievalPlanResult
 import ai.icen.fw.retrieval.api.RetrievalPrincipal
+import ai.icen.fw.retrieval.api.RetrievalProviderException
 import ai.icen.fw.retrieval.api.RetrievalRequestSpec
 import ai.icen.fw.retrieval.api.RetrievalResultEnvelope
 import ai.icen.fw.retrieval.spi.FilenameCatalog
@@ -24,6 +26,8 @@ import ai.icen.fw.retrieval.spi.FilenameCatalogEntry
 import ai.icen.fw.retrieval.spi.FilenameCatalogPage
 import ai.icen.fw.retrieval.spi.FilenameCatalogScanRequest
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.function.LongSupplier
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -49,7 +53,7 @@ class SafeFilenameCandidateRetrieverTest {
                 130L,
             )
         }
-        val retriever = SafeFilenameCandidateRetriever.create(catalog)
+        val retriever = safeRetriever(catalog)
         val executable = executable(retriever, RetrievalMode.CONTAINS_FILENAME, "flowweft")
         val envelope = retriever.start(executable).completion().toCompletableFuture().join()
 
@@ -80,7 +84,7 @@ class SafeFilenameCandidateRetrieverTest {
                 130L,
             )
         }
-        val fallback = SafeFilenameCandidateRetriever.createFullTextFallback(catalog)
+        val fallback = safeRetriever(catalog, fullTextFallback = true)
         val executable = executable(fallback, RetrievalMode.FULL_TEXT, "水务")
         val verified = fallback.start(executable).completion().toCompletableFuture().join()
             .verifyFor(executable, fallback.descriptor(), 140L)
@@ -110,7 +114,7 @@ class SafeFilenameCandidateRetrieverTest {
                 130L,
             )
         }
-        val retriever = SafeFilenameCandidateRetriever.create(catalog)
+        val retriever = safeRetriever(catalog)
         val exact = executable(retriever, RetrievalMode.EXACT_FILENAME, "天津水务.pdf")
         val prefix = executable(retriever, RetrievalMode.PREFIX_FILENAME, "天津")
 
@@ -142,7 +146,7 @@ class SafeFilenameCandidateRetrieverTest {
         val drifting = TestFilenameCatalog { request, descriptor ->
             FilenameCatalogPage.success(request, descriptor, "catalog-generation-1", emptyList(), null, 130L)
         }
-        val retriever = SafeFilenameCandidateRetriever.create(drifting)
+        val retriever = safeRetriever(drifting)
         val executable = executable(retriever, RetrievalMode.CONTAINS_FILENAME, "水务")
         drifting.currentDescriptor = descriptor(configurationDigest = "9".repeat(64))
         assertFailsWith<IllegalArgumentException> { retriever.start(executable) }
@@ -150,7 +154,7 @@ class SafeFilenameCandidateRetrieverTest {
         val stable = TestFilenameCatalog { request, descriptor ->
             FilenameCatalogPage.success(request, descriptor, "catalog-generation-1", emptyList(), null, 130L)
         }
-        val cancellable = SafeFilenameCandidateRetriever.create(stable)
+        val cancellable = safeRetriever(stable)
         val cancellableRequest = executable(cancellable, RetrievalMode.CONTAINS_FILENAME, "水务")
         val outcome = cancellable.start(cancellableRequest).cancel(RetrievalCancellationReason.CALLER_CANCELLED)
             .toCompletableFuture().join()
@@ -158,10 +162,63 @@ class SafeFilenameCandidateRetrieverTest {
         assertEquals(listOf(RetrievalCancellationReason.CALLER_CANCELLED), stable.cancellations)
     }
 
+    @Test
+    fun `authoritative tombstone is removed before filename candidates become visible`() {
+        val catalog = TestFilenameCatalog { request, descriptor ->
+            FilenameCatalogPage.success(
+                request,
+                descriptor,
+                "catalog-generation-1",
+                listOf(
+                    entry("水务规划.pdf", "0001", evidence(id("document-1"), 1)),
+                    entry("水务预算.pdf", "0002", evidence(id("document-2"), 2)),
+                ),
+                null,
+                130L,
+            )
+        }
+        val visibility = TestDeletionVisibilityProvider(LongSupplier { 135L }).apply {
+            tombstonedResourceIds.add(id("document-1"))
+        }
+        val retriever = SafeFilenameCandidateRetriever.create(
+            catalog,
+            visibility,
+            LongSupplier { 135L },
+            SequenceIds(),
+        )
+        val executable = executable(retriever, RetrievalMode.CONTAINS_FILENAME, "水务")
+
+        val verified = retriever.start(executable).completion().toCompletableFuture().join()
+            .verifyFor(executable, retriever.descriptor(), 140L)
+
+        assertEquals(listOf(id("document-2")), verified.candidates.map { it.evidence.documentId })
+        assertEquals(1, visibility.requests.size)
+        assertEquals(id("tenant-1"), visibility.requests.single().tenantId)
+    }
+
+    @Test
+    fun `legacy factory remains binary compatible but fails closed without visibility capability`() {
+        val catalog = TestFilenameCatalog { request, descriptor ->
+            FilenameCatalogPage.success(request, descriptor, "catalog-generation-1", emptyList(), null, 130L)
+        }
+        val retriever = SafeFilenameCandidateRetriever.create(catalog)
+        val request = executable(
+            retriever,
+            RetrievalMode.CONTAINS_FILENAME,
+            "水务",
+            requireCancellationSupport = false,
+        )
+
+        val failure = assertFailsWith<RetrievalProviderException> { retriever.start(request) }
+
+        assertEquals(RetrievalFailureCode.DELETION_VISIBILITY_UNAVAILABLE, failure.code)
+    }
+
     private fun executable(
         retriever: SafeFilenameCandidateRetriever,
         mode: RetrievalMode,
         query: String,
+        requireCancellationSupport: Boolean = true,
     ): ExecutableRetrievalRequest {
         val authorization = authorization()
         val plan = RetrievalAccessPlan.authorizedIds(
@@ -179,7 +236,7 @@ class SafeFilenameCandidateRetrieverTest {
             RetrievalPlanResult.allow(plan, 110L),
             RetrievalRequestSpec.create(id("request-1"), mode, query, 3, 500L),
             retriever.descriptor(),
-            RetrievalExecutionPolicy.create(false, true, 10, 1_000L),
+            RetrievalExecutionPolicy.create(false, requireCancellationSupport, 10, 1_000L),
             120L,
         ).requireExecutable()
     }
@@ -192,6 +249,25 @@ class SafeFilenameCandidateRetrieverTest {
         "filename-search",
         100L,
     )
+
+    private fun safeRetriever(
+        catalog: FilenameCatalog,
+        fullTextFallback: Boolean = false,
+    ): SafeFilenameCandidateRetriever {
+        val clock = LongSupplier { 135L }
+        val visibility = TestDeletionVisibilityProvider(clock)
+        return if (fullTextFallback) {
+            SafeFilenameCandidateRetriever.createFullTextFallback(catalog, visibility, clock, SequenceIds())
+        } else {
+            SafeFilenameCandidateRetriever.create(catalog, visibility, clock, SequenceIds())
+        }
+    }
+
+    private class SequenceIds : RetrievalRuntimeIdGenerator {
+        private val sequence = AtomicInteger()
+        override fun nextId(purpose: RetrievalRuntimeIdPurpose): Identifier =
+            id("${purpose.id}-${sequence.incrementAndGet()}")
+    }
 
     private class TestFilenameCatalog(
         sendsMetadataOffHost: Boolean = false,

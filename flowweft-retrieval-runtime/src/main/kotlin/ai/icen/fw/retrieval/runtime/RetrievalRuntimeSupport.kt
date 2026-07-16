@@ -117,6 +117,7 @@ class RetrievalRuntimeIdPurpose private constructor(val id: String) {
         @JvmField val LINEAGE = RetrievalRuntimeIdPurpose("lineage")
         @JvmField val CANDIDATE_AUTHORIZATION_BATCH = RetrievalRuntimeIdPurpose("candidate-authorization-batch")
         @JvmField val CANDIDATE_AUTHORIZATION = RetrievalRuntimeIdPurpose("candidate-authorization")
+        @JvmField val DELETION_VISIBILITY = RetrievalRuntimeIdPurpose("deletion-visibility")
         @JvmField val CONTENT_EGRESS_DECISION = RetrievalRuntimeIdPurpose("content-egress-decision")
         @JvmField val HYDRATION = RetrievalRuntimeIdPurpose("hydration")
         @JvmField val RERANK = RetrievalRuntimeIdPurpose("rerank")

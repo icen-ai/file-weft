@@ -271,6 +271,7 @@ class SecureRetrievalRuntimeTest {
                     }
                 },
                 content,
+                TestDeletionVisibilityProvider(clock),
                 clock,
                 SequenceIds(),
                 executor,
@@ -617,6 +618,30 @@ class SecureRetrievalRuntimeTest {
         assertEquals(null, failure.cause)
     }
 
+    @Test
+    fun `tombstone observed after hydration removes content before result exposure`() {
+        val clock = MutableClock()
+        val content = TestContentProvider()
+        lateinit var visibility: TestDeletionVisibilityProvider
+        visibility = TestDeletionVisibilityProvider(clock) { inspectionOrdinal ->
+            if (inspectionOrdinal == 3) visibility.tombstonedResourceIds.add(id("document-1"))
+        }
+        val runtime = runtime(
+            clock,
+            ManualDeadlineScheduler(),
+            TestCandidateRetriever(clock, listOf(id("document-1"))),
+            content,
+            null,
+            deletionVisibilityProvider = visibility,
+        )
+
+        val result = runtime.start(runtimeRequest()).completion().toCompletableFuture().join()
+
+        assertEquals(listOf(id("document-1")), content.hydratedDocuments)
+        assertTrue(result.items.isEmpty())
+        assertEquals(3, visibility.requests.size)
+    }
+
     private fun runtime(
         clock: MutableClock,
         scheduler: ManualDeadlineScheduler,
@@ -627,6 +652,7 @@ class SecureRetrievalRuntimeTest {
         planner: RetrievalAuthorizationPlanner = allowPlanner(documents),
         lineageResolver: RetrievalLineageResolver = TestLineageResolver(clock),
         authorizer: RetrievalCandidateAuthorizer = allowAuthorizer(clock),
+        deletionVisibilityProvider: TestDeletionVisibilityProvider = TestDeletionVisibilityProvider(clock),
         configuration: RetrievalRuntimeConfiguration = RetrievalRuntimeConfiguration(
             maximumCandidates = 10,
             maximumContentCodePointsPerCandidate = 1_000,
@@ -634,18 +660,22 @@ class SecureRetrievalRuntimeTest {
             maximumRerankItems = 10,
             maximumRerankResults = 10,
         ),
-    ): SecureRetrievalRuntime = SecureRetrievalRuntime.createForTests(
-        planner,
-        candidate,
-        lineageResolver,
-        authorizer,
-        content,
-        reranker,
-        clock,
-        SequenceIds(),
-        scheduler,
-        configuration,
-    )
+    ): SecureRetrievalRuntime {
+        val ids = SequenceIds()
+        return SecureRetrievalRuntime.createForTests(
+            planner,
+            candidate,
+            lineageResolver,
+            authorizer,
+            content,
+            deletionVisibilityProvider,
+            reranker,
+            clock,
+            ids,
+            scheduler,
+            configuration,
+        )
+    }
 
     private fun runtimeRequest(candidateLimit: Int = 1, rerank: Boolean = false): RetrievalRuntimeRequest =
         RetrievalRuntimeRequest.create(

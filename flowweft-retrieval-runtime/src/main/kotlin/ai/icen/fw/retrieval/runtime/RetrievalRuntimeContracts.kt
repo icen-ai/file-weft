@@ -130,6 +130,8 @@ class RetrievalRuntimeFailureCode private constructor(val id: String) {
         @JvmField val DESCRIPTOR_CHANGED = RetrievalRuntimeFailureCode("descriptor-changed")
         @JvmField val EGRESS_FORBIDDEN = RetrievalRuntimeFailureCode("egress-forbidden")
         @JvmField val UNSUPPORTED = RetrievalRuntimeFailureCode("unsupported")
+        @JvmField val DELETION_VISIBILITY_UNAVAILABLE =
+            RetrievalRuntimeFailureCode("deletion-visibility-unavailable")
         @JvmField val CONTENT_LIMIT_EXCEEDED = RetrievalRuntimeFailureCode("content-limit-exceeded")
         @JvmField val DEADLINE_EXCEEDED = RetrievalRuntimeFailureCode("deadline-exceeded")
         @JvmField val CANCELLED = RetrievalRuntimeFailureCode("cancelled")
@@ -169,6 +171,8 @@ class RetrievalRuntimeException private constructor(
             RetrievalRuntimeFailureCode.DESCRIPTOR_CHANGED -> "A retrieval provider capability changed during execution."
             RetrievalRuntimeFailureCode.EGRESS_FORBIDDEN -> "Retrieval egress is forbidden by policy."
             RetrievalRuntimeFailureCode.UNSUPPORTED -> "The requested retrieval capability is unavailable."
+            RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE ->
+                "The authoritative deletion visibility capability is unavailable."
             RetrievalRuntimeFailureCode.CONTENT_LIMIT_EXCEEDED -> "Retrieved content exceeded the runtime budget."
             RetrievalRuntimeFailureCode.DEADLINE_EXCEEDED -> "The retrieval deadline was exceeded."
             RetrievalRuntimeFailureCode.CANCELLED -> "The retrieval operation was cancelled."

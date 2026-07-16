@@ -2,6 +2,7 @@ package ai.icen.fw.retrieval.runtime
 
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.retrieval.api.AuthorizedCandidateBatch
+import ai.icen.fw.retrieval.api.AuthorizedRetrievalCandidate
 import ai.icen.fw.retrieval.api.CandidateRetriever
 import ai.icen.fw.retrieval.api.CandidateRetrieverDescriptor
 import ai.icen.fw.retrieval.api.ExecutableRetrievalRequest
@@ -16,6 +17,9 @@ import ai.icen.fw.retrieval.api.RetrievalCandidateAuthorizer
 import ai.icen.fw.retrieval.api.RetrievalCandidateAuthorizerDescriptor
 import ai.icen.fw.retrieval.api.RetrievalContentEgressDecision
 import ai.icen.fw.retrieval.api.RetrievalContentHydrationGate
+import ai.icen.fw.retrieval.api.RetrievalDeletionVisibilityDescriptor
+import ai.icen.fw.retrieval.api.RetrievalDeletionVisibilityProvider
+import ai.icen.fw.retrieval.api.RetrievalDeletionResourceRef
 import ai.icen.fw.retrieval.api.RetrievalExecutionGate
 import ai.icen.fw.retrieval.api.RetrievalHydrationRequest
 import ai.icen.fw.retrieval.api.RetrievalLineageResolutionGate
@@ -55,12 +59,16 @@ class SecureRetrievalRuntime private constructor(
     private val lineageResolver: RetrievalLineageResolver,
     private val candidateAuthorizer: RetrievalCandidateAuthorizer,
     private val contentProvider: RetrievalContentProvider,
+    deletionVisibilityProvider: RetrievalDeletionVisibilityProvider?,
     private val reranker: Reranker?,
     private val clock: LongSupplier,
     private val ids: RetrievalRuntimeIdGenerator,
     private val deadlineScheduler: RetrievalRuntimeDeadlineScheduler,
     private val configuration: RetrievalRuntimeConfiguration,
 ) {
+    private val deletionVisibility: DeletionVisibilityRuntimeGuard? =
+        deletionVisibilityProvider?.let { provider -> DeletionVisibilityRuntimeGuard.create(provider, clock, ids) }
+
     fun start(request: RetrievalRuntimeRequest): RetrievalRuntimeCall {
         val startedAt = clock.asLong
         val call = RuntimeCall(startedAt)
@@ -202,9 +210,14 @@ class SecureRetrievalRuntime private constructor(
         val content = requireNotNull(contentProvider.descriptor()) {
             "Content provider returned no descriptor."
         }
+        val deletion = deletionVisibility ?: throw RuntimeAbort(
+            RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE,
+        )
+        deletion.requireSameDescriptor()
         if (request.executionPolicy.cancellationRequired &&
             (!candidate.supportsCancellation || !lineage.supportsCancellation ||
-                !authorizer.supportsCancellation || !content.supportsCancellation)
+                !authorizer.supportsCancellation || !content.supportsCancellation ||
+                !deletion.descriptor.supportsCancellation)
         ) {
             throw RuntimeAbort(RetrievalRuntimeFailureCode.UNSUPPORTED)
         }
@@ -226,7 +239,7 @@ class SecureRetrievalRuntime private constructor(
         } else {
             null
         }
-        return ProviderSnapshots(candidate, lineage, authorizer, content, rerankerDescriptor)
+        return ProviderSnapshots(candidate, lineage, authorizer, content, deletion.descriptor, rerankerDescriptor)
     }
 
     private fun verifyEnvelope(call: RuntimeCall, context: RetrievalExecutionContext) {
@@ -319,7 +332,73 @@ class SecureRetrievalRuntime private constructor(
                     fail(call, RuntimeStage.CANDIDATE_AUTHORIZATION, problem)
                     return@whenComplete
                 }
-                hydrateAuthorized(call, context.withResolved(resolved), exactAuthorized)
+                filterDeletedCandidates(call, context.withResolved(resolved), exactAuthorized)
+            }
+        }
+    }
+
+    /** Authorization is necessary but not sufficient: an authoritative tombstone always wins. */
+    private fun filterDeletedCandidates(
+        call: RuntimeCall,
+        context: RetrievalExecutionContext,
+        authorized: AuthorizedCandidateBatch,
+    ) {
+        val candidates = authorized.candidates
+        inspectVisibility(call, context, candidates.map(::deletionResource)) { inspection ->
+            val visible = candidates.filter { candidate -> inspection.isVisible(deletionResource(candidate)) }
+            hydrateAuthorized(call, context, visible)
+        }
+    }
+
+    private fun inspectVisibility(
+        call: RuntimeCall,
+        context: RetrievalExecutionContext,
+        resources: Collection<RetrievalDeletionResourceRef>,
+        onSuccess: (DeletionVisibilityInspection) -> Unit,
+    ) {
+        val visibilityCall = try {
+            call.ensureActive()
+            val guard = deletionVisibility ?: throw RuntimeAbort(
+                RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE,
+            )
+            require(guard.descriptor.digest == context.snapshots.deletionVisibility.digest) {
+                "Deletion visibility descriptor changed during retrieval."
+            }
+            guard.requireSameDescriptor()
+            guard.inspect(resources, context.executable.deadlineEpochMilli)
+        } catch (failure: RuntimeException) {
+            fail(call, RuntimeStage.DELETION_VISIBILITY, failure)
+            return
+        }
+        if (!call.attachProvider(visibilityCall)) return
+        val completion = try {
+            requireNotNull(visibilityCall.completion()) {
+                "Deletion visibility provider returned no completion stage."
+            }
+        } catch (failure: RuntimeException) {
+            call.detachProvider(visibilityCall)
+            fail(call, RuntimeStage.DELETION_VISIBILITY, failure)
+            return
+        }
+        completion.whenComplete { inspection, failure ->
+            call.detachProvider(visibilityCall)
+            if (failure != null) {
+                fail(call, RuntimeStage.DELETION_VISIBILITY, failure)
+            } else if (call.isActive()) {
+                try {
+                    val guard = deletionVisibility ?: throw RuntimeAbort(
+                        RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE,
+                    )
+                    require(guard.descriptor.digest == context.snapshots.deletionVisibility.digest) {
+                        "Deletion visibility descriptor changed during retrieval."
+                    }
+                    guard.requireSameDescriptor()
+                    onSuccess(requireNotNull(inspection) {
+                        "Deletion visibility provider completed without an inspection."
+                    })
+                } catch (problem: RuntimeException) {
+                    fail(call, RuntimeStage.DELETION_VISIBILITY, problem)
+                }
             }
         }
     }
@@ -327,9 +406,8 @@ class SecureRetrievalRuntime private constructor(
     private fun hydrateAuthorized(
         call: RuntimeCall,
         context: RetrievalExecutionContext,
-        authorized: AuthorizedCandidateBatch,
+        candidates: List<AuthorizedRetrievalCandidate>,
     ) {
-        val candidates = authorized.candidates
         if (candidates.size > configuration.maximumCandidates) {
             fail(call, RuntimeStage.CANDIDATE_AUTHORIZATION, RuntimeAbort(RetrievalRuntimeFailureCode.POLICY_REJECTED))
             return
@@ -362,7 +440,11 @@ class SecureRetrievalRuntime private constructor(
                 fail(call, RuntimeStage.HYDRATION, failure)
             } else if (call.isActive()) {
                 val items = requireNotNull(accumulator).items
-                if (context.request.rerankRequested) rerank(call, context, items) else finish(call, context, items, false)
+                if (context.request.rerankRequested && items.isNotEmpty()) {
+                    rerank(call, context, items)
+                } else {
+                    finish(call, context, items, false)
+                }
             }
         }
     }
@@ -370,7 +452,25 @@ class SecureRetrievalRuntime private constructor(
     private fun hydrateOne(
         call: RuntimeCall,
         context: RetrievalExecutionContext,
-        candidate: ai.icen.fw.retrieval.api.AuthorizedRetrievalCandidate,
+        candidate: AuthorizedRetrievalCandidate,
+        perItemLimit: Int,
+        accumulator: HydrationAccumulator,
+    ): CompletionStage<HydrationAccumulator> {
+        val resource = deletionResource(candidate)
+        return visibilityStage(call, context, listOf(resource)).thenCompose { beforeHydration ->
+            if (!beforeHydration.isVisible(resource)) {
+                CompletableFuture.completedFuture(accumulator)
+            } else {
+                hydrateVisibleCandidate(call, context, candidate, resource, perItemLimit, accumulator)
+            }
+        }
+    }
+
+    private fun hydrateVisibleCandidate(
+        call: RuntimeCall,
+        context: RetrievalExecutionContext,
+        candidate: AuthorizedRetrievalCandidate,
+        resource: RetrievalDeletionResourceRef,
         perItemLimit: Int,
         accumulator: HydrationAccumulator,
     ): CompletionStage<HydrationAccumulator> {
@@ -413,21 +513,69 @@ class SecureRetrievalRuntime private constructor(
             call.detachProvider(hydrationCall)
             throw failure
         }
-        return completion.whenComplete { _, _ -> call.detachProvider(hydrationCall) }.thenApply { content ->
+        return completion.whenComplete { _, _ -> call.detachProvider(hydrationCall) }.thenCompose { content ->
             call.ensureActive()
             requireContentDescriptor(context.snapshots.content)
-            val itemCodePoints = content.text.codePointCount(0, content.text.length)
-            val total = Math.addExact(accumulator.consumedCodePoints, itemCodePoints)
-            if (total > configuration.maximumTotalContentCodePoints) {
-                throw RuntimeAbort(RetrievalRuntimeFailureCode.CONTENT_LIMIT_EXCEEDED)
+            visibilityStage(call, context, listOf(resource)).thenApply { afterHydration ->
+                if (!afterHydration.isVisible(resource)) return@thenApply accumulator
+                val itemCodePoints = content.text.codePointCount(0, content.text.length)
+                val total = Math.addExact(accumulator.consumedCodePoints, itemCodePoints)
+                if (total > configuration.maximumTotalContentCodePoints) {
+                    throw RuntimeAbort(RetrievalRuntimeFailureCode.CONTENT_LIMIT_EXCEEDED)
+                }
+                accumulator.items.add(RetrievalRuntimeItem.hydrated(candidate, content))
+                accumulator.consumedCodePoints = total
+                accumulator
             }
-            accumulator.items.add(RetrievalRuntimeItem.hydrated(candidate, content))
-            accumulator.consumedCodePoints = total
-            accumulator
+        }
+    }
+
+    private fun visibilityStage(
+        call: RuntimeCall,
+        context: RetrievalExecutionContext,
+        resources: Collection<RetrievalDeletionResourceRef>,
+    ): CompletionStage<DeletionVisibilityInspection> {
+        call.ensureActive()
+        val guard = deletionVisibility ?: throw RuntimeAbort(
+            RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE,
+        )
+        require(guard.descriptor.digest == context.snapshots.deletionVisibility.digest) {
+            "Deletion visibility descriptor changed during retrieval."
+        }
+        guard.requireSameDescriptor()
+        val visibilityCall = guard.inspect(resources, context.executable.deadlineEpochMilli)
+        if (!call.attachProvider(visibilityCall)) throw RuntimeAbort(RetrievalRuntimeFailureCode.CANCELLED)
+        val completion = try {
+            requireNotNull(visibilityCall.completion()) {
+                "Deletion visibility provider returned no completion stage."
+            }
+        } catch (failure: RuntimeException) {
+            call.detachProvider(visibilityCall)
+            throw failure
+        }
+        return completion.whenComplete { _, _ -> call.detachProvider(visibilityCall) }.thenApply { inspection ->
+            call.ensureActive()
+            guard.requireSameDescriptor()
+            requireNotNull(inspection) { "Deletion visibility provider completed without an inspection." }
         }
     }
 
     private fun rerank(
+        call: RuntimeCall,
+        context: RetrievalExecutionContext,
+        hydrated: List<RetrievalRuntimeItem>,
+    ) {
+        inspectVisibility(call, context, hydrated.map { item -> deletionResource(item.candidate) }) { inspection ->
+            val visible = hydrated.filter { item -> inspection.isVisible(deletionResource(item.candidate)) }
+            if (visible.isEmpty()) {
+                finish(call, context, emptyList(), false)
+            } else {
+                rerankVisible(call, context, visible)
+            }
+        }
+    }
+
+    private fun rerankVisible(
         call: RuntimeCall,
         context: RetrievalExecutionContext,
         hydrated: List<RetrievalRuntimeItem>,
@@ -533,12 +681,27 @@ class SecureRetrievalRuntime private constructor(
         items: Collection<RetrievalRuntimeItem>,
         reranked: Boolean,
     ) {
+        inspectVisibility(call, context, items.map { item -> deletionResource(item.candidate) }) { inspection ->
+            val visible = items.filter { item -> inspection.isVisible(deletionResource(item.candidate)) }
+            finishVisible(call, context, visible, reranked && visible.isNotEmpty())
+        }
+    }
+
+    private fun finishVisible(
+        call: RuntimeCall,
+        context: RetrievalExecutionContext,
+        items: Collection<RetrievalRuntimeItem>,
+        reranked: Boolean,
+    ) {
         try {
             call.ensureActive()
             requireCandidateDescriptor(context.snapshots.candidate)
             requireLineageDescriptor(context.snapshots.lineage)
             requireAuthorizerDescriptor(context.snapshots.authorizer)
             requireContentDescriptor(context.snapshots.content)
+            deletionVisibility?.requireSameDescriptor() ?: throw RuntimeAbort(
+                RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE,
+            )
             context.snapshots.reranker?.let(::requireRerankerDescriptor)
             val completedAt = clock.asLong
             require(completedAt >= call.startedAtEpochMilli &&
@@ -644,7 +807,13 @@ class SecureRetrievalRuntime private constructor(
             )
             is RuntimeAbort -> RetrievalRuntimeException.create(exact.code)
             is RetrievalProviderException -> RetrievalRuntimeException.create(
-                RetrievalRuntimeFailureCode.PROVIDER_FAILED,
+                when (exact.code) {
+                    ai.icen.fw.retrieval.api.RetrievalFailureCode.DELETION_VISIBILITY_UNAVAILABLE ->
+                        RetrievalRuntimeFailureCode.DELETION_VISIBILITY_UNAVAILABLE
+                    ai.icen.fw.retrieval.api.RetrievalFailureCode.DELETION_VISIBILITY_MISMATCH ->
+                        RetrievalRuntimeFailureCode.INVALID_PROVIDER_RESPONSE
+                    else -> RetrievalRuntimeFailureCode.PROVIDER_FAILED
+                },
                 exact.retryability,
                 exact.code,
                 exact.providerRequestId,
@@ -793,6 +962,7 @@ class SecureRetrievalRuntime private constructor(
         val lineage: RetrievalLineageResolverDescriptor,
         val authorizer: RetrievalCandidateAuthorizerDescriptor,
         val content: RetrievalContentProviderDescriptor,
+        val deletionVisibility: RetrievalDeletionVisibilityDescriptor,
         val reranker: RerankerDescriptor?,
     )
 
@@ -824,6 +994,7 @@ class SecureRetrievalRuntime private constructor(
         CANDIDATE_RESPONSE(RetrievalRuntimeFailureCode.INVALID_PROVIDER_RESPONSE),
         LINEAGE(RetrievalRuntimeFailureCode.LINEAGE_FAILED),
         CANDIDATE_AUTHORIZATION(RetrievalRuntimeFailureCode.AUTHORIZATION_FAILED),
+        DELETION_VISIBILITY(RetrievalRuntimeFailureCode.INVALID_PROVIDER_RESPONSE),
         HYDRATION(RetrievalRuntimeFailureCode.INVALID_PROVIDER_RESPONSE),
         RERANK(RetrievalRuntimeFailureCode.INVALID_PROVIDER_RESPONSE),
         FINALIZE(RetrievalRuntimeFailureCode.AUTHORIZATION_FAILED),
@@ -848,6 +1019,34 @@ class SecureRetrievalRuntime private constructor(
             lineageResolver,
             candidateAuthorizer,
             contentProvider,
+            null,
+            null,
+            clock,
+            ids,
+            ExecutorRetrievalRuntimeDeadlineScheduler(deadlineExecutor),
+            configuration,
+        )
+
+        /** Creates a secure runtime with the mandatory authoritative deletion visibility bridge. */
+        @JvmStatic
+        fun create(
+            authorizationPlanner: RetrievalAuthorizationPlanner,
+            candidateRetriever: CandidateRetriever,
+            lineageResolver: RetrievalLineageResolver,
+            candidateAuthorizer: RetrievalCandidateAuthorizer,
+            contentProvider: RetrievalContentProvider,
+            deletionVisibilityProvider: RetrievalDeletionVisibilityProvider,
+            clock: LongSupplier,
+            ids: RetrievalRuntimeIdGenerator,
+            deadlineExecutor: ScheduledExecutorService,
+            configuration: RetrievalRuntimeConfiguration,
+        ): SecureRetrievalRuntime = SecureRetrievalRuntime(
+            authorizationPlanner,
+            candidateRetriever,
+            lineageResolver,
+            candidateAuthorizer,
+            contentProvider,
+            deletionVisibilityProvider,
             null,
             clock,
             ids,
@@ -884,6 +1083,38 @@ class SecureRetrievalRuntime private constructor(
             configuration,
         )
 
+        /** Filename fallback variant with mandatory authoritative deletion fencing. */
+        @JvmStatic
+        fun createWithFilenameFallback(
+            authorizationPlanner: RetrievalAuthorizationPlanner,
+            primaryCandidateRetriever: CandidateRetriever?,
+            filenameCatalog: FilenameCatalog,
+            lineageResolver: RetrievalLineageResolver,
+            candidateAuthorizer: RetrievalCandidateAuthorizer,
+            contentProvider: RetrievalContentProvider,
+            deletionVisibilityProvider: RetrievalDeletionVisibilityProvider,
+            clock: LongSupplier,
+            ids: RetrievalRuntimeIdGenerator,
+            deadlineExecutor: ScheduledExecutorService,
+            configuration: RetrievalRuntimeConfiguration,
+        ): SecureRetrievalRuntime = create(
+            authorizationPlanner,
+            primaryCandidateRetriever ?: SafeFilenameCandidateRetriever.createFullTextFallback(
+                filenameCatalog,
+                deletionVisibilityProvider,
+                clock,
+                ids,
+            ),
+            lineageResolver,
+            candidateAuthorizer,
+            contentProvider,
+            deletionVisibilityProvider,
+            clock,
+            ids,
+            deadlineExecutor,
+            configuration,
+        )
+
         @JvmStatic
         fun create(
             authorizationPlanner: RetrievalAuthorizationPlanner,
@@ -902,6 +1133,35 @@ class SecureRetrievalRuntime private constructor(
             lineageResolver,
             candidateAuthorizer,
             contentProvider,
+            null,
+            reranker,
+            clock,
+            ids,
+            ExecutorRetrievalRuntimeDeadlineScheduler(deadlineExecutor),
+            configuration,
+        )
+
+        /** Creates a reranking runtime with mandatory authoritative deletion visibility. */
+        @JvmStatic
+        fun create(
+            authorizationPlanner: RetrievalAuthorizationPlanner,
+            candidateRetriever: CandidateRetriever,
+            lineageResolver: RetrievalLineageResolver,
+            candidateAuthorizer: RetrievalCandidateAuthorizer,
+            contentProvider: RetrievalContentProvider,
+            deletionVisibilityProvider: RetrievalDeletionVisibilityProvider,
+            reranker: Reranker,
+            clock: LongSupplier,
+            ids: RetrievalRuntimeIdGenerator,
+            deadlineExecutor: ScheduledExecutorService,
+            configuration: RetrievalRuntimeConfiguration,
+        ): SecureRetrievalRuntime = SecureRetrievalRuntime(
+            authorizationPlanner,
+            candidateRetriever,
+            lineageResolver,
+            candidateAuthorizer,
+            contentProvider,
+            deletionVisibilityProvider,
             reranker,
             clock,
             ids,
@@ -927,6 +1187,34 @@ class SecureRetrievalRuntime private constructor(
             lineageResolver,
             candidateAuthorizer,
             contentProvider,
+            null,
+            reranker,
+            clock,
+            ids,
+            deadlineScheduler,
+            configuration,
+        )
+
+        @JvmSynthetic
+        internal fun createForTests(
+            authorizationPlanner: RetrievalAuthorizationPlanner,
+            candidateRetriever: CandidateRetriever,
+            lineageResolver: RetrievalLineageResolver,
+            candidateAuthorizer: RetrievalCandidateAuthorizer,
+            contentProvider: RetrievalContentProvider,
+            deletionVisibilityProvider: RetrievalDeletionVisibilityProvider,
+            reranker: Reranker?,
+            clock: LongSupplier,
+            ids: RetrievalRuntimeIdGenerator,
+            deadlineScheduler: RetrievalRuntimeDeadlineScheduler,
+            configuration: RetrievalRuntimeConfiguration,
+        ): SecureRetrievalRuntime = SecureRetrievalRuntime(
+            authorizationPlanner,
+            candidateRetriever,
+            lineageResolver,
+            candidateAuthorizer,
+            contentProvider,
+            deletionVisibilityProvider,
             reranker,
             clock,
             ids,

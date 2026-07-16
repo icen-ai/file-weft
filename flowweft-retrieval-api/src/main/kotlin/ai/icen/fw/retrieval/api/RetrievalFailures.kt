@@ -27,6 +27,14 @@ class RetrievalFailureCode private constructor(val id: String) {
         @JvmField val INDEX_REQUEST_REPLAY_MISMATCH = RetrievalFailureCode("index.request-replay-mismatch")
         /** The request descriptor, provider instance, schema, source, generation, or receipt belongs elsewhere. */
         @JvmField val INDEX_PROVIDER_BINDING_MISMATCH = RetrievalFailureCode("index.provider-binding-mismatch")
+        /** The host did not configure an authoritative deletion visibility bridge. */
+        @JvmField val DELETION_VISIBILITY_UNAVAILABLE =
+            RetrievalFailureCode("deletion-visibility.unavailable")
+        /** A deletion visibility answer did not bind to the exact request, provider or resource revision. */
+        @JvmField val DELETION_VISIBILITY_MISMATCH =
+            RetrievalFailureCode("deletion-visibility.mismatch")
+        /** The requested immutable resource revision is covered by an authoritative tombstone. */
+        @JvmField val RESOURCE_TOMBSTONED = RetrievalFailureCode("resource-tombstoned")
 
         @JvmStatic
         fun of(id: String): RetrievalFailureCode = RetrievalFailureCode(id)
@@ -81,6 +89,12 @@ class RetrievalProviderException @JvmOverloads constructor(
                 "The retrieval index request identifier is already bound to another request."
             RetrievalFailureCode.INDEX_PROVIDER_BINDING_MISMATCH ->
                 "The retrieval index request does not belong to the selected provider binding."
+            RetrievalFailureCode.DELETION_VISIBILITY_UNAVAILABLE ->
+                "The authoritative deletion visibility capability is unavailable."
+            RetrievalFailureCode.DELETION_VISIBILITY_MISMATCH ->
+                "The deletion visibility provider returned an invalid response."
+            RetrievalFailureCode.RESOURCE_TOMBSTONED ->
+                "The requested resource revision is no longer visible."
             else -> "The retrieval provider operation failed."
         }
     }
