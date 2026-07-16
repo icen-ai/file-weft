@@ -25,6 +25,7 @@ flowweft-retrieval-testkit	jar	new-physical	8
 flowweft-agent-api	jar	new-physical	8
 flowweft-agent-runtime	jar	new-physical	8
 flowweft-agent-observability	jar	new-physical	8
+flowweft-agent-workflow-tools	jar	new-physical	8
 flowweft-agent-testkit	jar	new-physical	8
 flowweft-workflow-api	jar	new-physical	8
 flowweft-workflow-spi	jar	new-physical	8
