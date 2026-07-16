@@ -28,7 +28,7 @@
 | FW10-030 | 进行中 | RustFS 参考集成 | S3 adapter 的真实 RustFS 分片/续传/Range/ETag/预签名/幂等删除/Doctor CNB lane |
 | FW10-031 | 进行中 | Dify 知识库参考集成 | 官方 API 版本矩阵；同步、状态、更新、删除、幂等、限流、错误脱敏；安全检索不满足时失败关闭 |
 | FW10-032 | 进行中 | 阿里云 OSS 参考集成 | 真实 OSS 分片/续传/Range/ETag/预签名/幂等删除/错误分类/Doctor 隔离凭据 lane |
-| FW10-033 | 进行中 | Workflow 表单、评论、安全 `@`、通知、日历与签名边界 | JSON Schema 2020-12/字段 ACL/不可变 submission；结构化 token 无 XSS；用户枚举防护；通知撤权/去重/退信；电子签名只作明确 SPI |
+| FW10-033 | 进行中 | Workflow 表单、评论、安全 `@`、通知、日历与签名边界 | 已补电子签名/见证的同步 ABI 与异步 capability、接收/挂起/终态、原请求对账、取消和无敏感值 Doctor SPI；继续收口 JSON Schema 2020-12/字段 ACL/不可变 submission、结构化 token 无 XSS、用户枚举防护及通知撤权/去重/退信 |
 | FW10-034 | 进行中 | Document Workflow adapter 与流程模板 | 旧 DocumentReview ABI/表/HTTP 不变；活动流唯一；在途补正/revision cycle；请假、报销、知识文件、法律文件模板 lint/simulation/端到端证据 |
 | FW10-035 | 进行中 | Workflow Agent tools | 在当前 principal 权限内覆盖 definition/instance/task/collaboration/operations；跨主体重放、撤权、参数/版本漂移、一次性确认和无文件部署测试 |
 | FW10-036 | 进行中 | 独立 Workflow Web/Boot 2/3、任务中心与运维面 | workflow-only 启动；通用 API；设计/发布/表单/任务/历史/事故/迁移/Doctor 的双语、权限和浏览器 E2E |
