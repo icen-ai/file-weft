@@ -686,7 +686,9 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
                         relativePath ==
                         "flowweft-workflow-persistence-jdbc/src/test/kotlin/ai/icen/fw/workflow/persistence/jdbc/WorkflowRealDatabaseIntegrationTest.kt" ||
                         relativePath ==
-                        "flowweft-agent-persistence-jdbc/src/test/kotlin/ai/icen/fw/agent/persistence/jdbc/AgentRealDatabaseIntegrationTest.kt" ->
+                        "flowweft-agent-persistence-jdbc/src/test/kotlin/ai/icen/fw/agent/persistence/jdbc/AgentRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-governance-persistence-jdbc/src/test/kotlin/ai/icen/fw/governance/persistence/jdbc/GovernanceRealDatabaseIntegrationTest.kt" ->
                         setOf(
                             "FILEWEFT_RUN_POSTGRES_TESTS",
                             "FILEWEFT_RUN_MYSQL_TESTS",
@@ -975,6 +977,8 @@ val postgresIntegrationCheck = tasks.register("postgresIntegrationCheck") {
         ":fileweft-persistence:postgresFlyway11CompatibilityTest",
         ":flowweft-workflow-persistence-jdbc:workflowPostgresIntegrationTest",
         ":flowweft-migration-cli:flowweftMigrationPostgresIntegrationTest",
+        ":flowweft-governance-persistence-jdbc:governancePostgresIntegrationTest",
+        ":flowweft-agent-persistence-jdbc:agentPostgresIntegrationTest",
     )
 }
 
@@ -987,6 +991,8 @@ val mysqlIntegrationCheck = tasks.register("mysqlIntegrationCheck") {
         ":fileweft-persistence:mysqlFlyway11CompatibilityTest",
         ":flowweft-workflow-persistence-jdbc:workflowMySqlIntegrationTest",
         ":flowweft-migration-cli:flowweftMigrationMySqlIntegrationTest",
+        ":flowweft-governance-persistence-jdbc:governanceMySqlIntegrationTest",
+        ":flowweft-agent-persistence-jdbc:agentMySqlIntegrationTest",
     )
 }
 
@@ -1001,6 +1007,8 @@ val kingbaseIntegrationCheck = tasks.register("kingbaseIntegrationCheck") {
         ":fileweft-spring-boot3-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
         ":flowweft-workflow-persistence-jdbc:workflowKingbaseIntegrationTest",
         ":flowweft-migration-cli:flowweftMigrationKingbaseIntegrationTest",
+        ":flowweft-governance-persistence-jdbc:governanceKingbaseIntegrationTest",
+        ":flowweft-agent-persistence-jdbc:agentKingbaseIntegrationTest",
     )
 }
 
