@@ -13,7 +13,7 @@
 | FW10-010 | 进行中 | 完成续传资产一次性认领并安全创建文档/新增版本 | owner/tenant/purpose/expiry/单次消费/并发锁/幂等测试；Boot 2/3 与浏览器 E2E |
 | FW10-011 | 进行中 | 通用 migrate-and-exit CLI/Job | 三方言全新/升级/失败退出码/凭据最小化/容器 Job 验收 |
 | FW10-012 | 进行中 | 宿主目录只读 facade 与受控文档移动 | 动态 ACL、隐藏节点、循环/坏树、竞态、分页、Boot 2/3 合约；无目录 CRUD |
-| FW10-013 | 进行中 | 补齐 TestKit | Logger/Metrics/Gauges/TraceScope、插件冲突、Metadata、Agent/检索 Provider 合约由外部样例宿主运行；已新增 provider-neutral Reliability 与 Governance TestKit，覆盖确定性时钟/ID、单库与多组件拓扑、retention/legal-hold 失败关闭、mutation/精确对账探针、崩溃后最多一次外部变更、tenant/CAS/围栏、持久状态重载及 canonical digest 重建 |
+| FW10-013 | 进行中 | 补齐 TestKit | Logger/Metrics/Gauges/TraceScope、插件冲突、Metadata、Agent/检索 Provider 合约由外部样例宿主运行；已新增 provider-neutral Reliability、Governance 与 Capacity TestKit，覆盖确定性时钟/ID、四类容量准入、安全降级边界、单库与多组件拓扑、retention/legal-hold 失败关闭、mutation/精确对账探针、崩溃后最多一次外部变更、tenant/CAS/围栏、持久状态重载及 canonical digest 重建 |
 | FW10-014 | 进行中 | 生产 Doctor 和可观测性 | DB/history、Worker lease、队列/索引/tombstone lag、容量/readiness；真实 OTel Collector 三信号脱敏证据 |
 | FW10-020 | 进行中 | `flowweft-retrieval-api` 与内建安全文件名搜索 | Java 互操作、tenant/ACL 二次授权、分页/上限/模糊输入、无正文泄漏和 Provider 缺失降级测试 |
 | FW10-021 | 进行中 | 内容抽取、索引、全文、向量、混合、重排 SPI | 契约套件覆盖血缘、版本、generation 切换、失败保留、重建、ACL 更新和删除传播 |
@@ -38,7 +38,7 @@
 | FW10-043 | 进行中 | 审批、同步、Doctor、审计与运维 UI | 系统 Doctor 与通用 Workflow 只读工作台已接实时脱敏 DAL；待办、实例、历史、评论、表单摘要和定义诊断均由当前会话服务端授权投影，且不回退旧审批接口；仍需带 CSRF/幂等/If-Match 的 mutation、同步/失败重排/审计和安全导出 E2E |
 | FW10-044 | 进行中 | Agent 对话、检索证据、工具确认、配置和评测 UI | 已建立 framework-neutral Web/Application API、耐久运行时及 Boot 2/3 HTTP Starter：25 路由后端编排、精确授权 scope、稳定 digest 幂等、ETag/游标/SSE 恢复、权限过滤引用、一次性确认、secret-reference 配置、Doctor/评测，以及 start/cancel/evaluation 未知结果只读对账；Console 已接同源服务端只读工作台，使用固定 Agent Web v1 路由、严格 envelope/游标/对象绑定、当前授权引用最小投影和双语隐藏/能力不可用状态；继续补 persistence、带 CSRF/幂等/If-Match 的 mutation、SSE 断线恢复和安全 E2E |
 | FW10-050 | 进行中 | retention、legal hold 与安全删除 | 已建立公开治理契约、canonical durable rehydration、provider-neutral CAS/outbox 七阶段运行时、V041 JDBC 持久化及可复用 Governance TestKit，含 legal-hold 优先、fresh authorization、tenant-bound ID digest、原子状态/outbox、未知结果原操作对账、并发 CAS、围栏 worker、持久重载、Doctor 与指标；继续补适配器、对象/索引删除一致性、审计和 PostgreSQL/MySQL/Kingbase 实库测试 |
-| FW10-051 | 进行中 | 容量、分区与背压 | 已建立 provider-neutral 容量 API、运行时及三方言 JDBC Provider：严格层级策略快照、标准单位/水位、原子准入、稳定 digest 幂等/CAS、围栏租约、两阶段 intent/canonical outcome/outbox、显式节流/拒绝/容量降级、事务外调用、未知结果只读对账及 Doctor/指标；继续实现分区适配、实库证据、公开基准环境和上限，以及队列/索引/上传/Agent 背压与故障测试 |
+| FW10-051 | 进行中 | 容量、分区与背压 | 已建立 provider-neutral 容量 API、运行时、三方言 JDBC Provider 及可复用 Capacity TestKit：严格层级策略快照、标准单位/水位、原子准入、ADMIT/THROTTLE/DEGRADE/REJECT、安全降级边界、稳定 digest 幂等/CAS、围栏租约、两阶段 intent/canonical outcome/outbox、事务外调用、未知结果只读对账、持久重启及 Doctor/指标；继续实现分区适配、实库证据、公开基准环境和上限，以及队列/索引/上传/Agent 背压与故障测试 |
 | FW10-052 | 进行中 | SLO、备份恢复、RPO/RTO | 已建立 provider-neutral 可靠性 API、耐久运行时、TestKit 及 V040 JDBC 持久化：精确 ppm SLO/error budget/burn rate、单或多组件 consistent-cut 不可变清单、短授权与最长七天异步期限、intent/outbox/CAS/围栏 worker、clean-target 恢复、真实故障时钟 RPO/RTO、原操作只读对账、缺数失败关闭告警、canonical durable rehydration，以及三方言 tenant/CAS/fencing/atomic outbox 仓储；继续实现 Provider、仪表盘并取得 PostgreSQL/MySQL/Kingbase 与数据库+对象+索引真实恢复演练证据 |
 | FW10-060 | 进行中 | 1.0 API/ABI 与配置冻结 | 所有 public 制品/HTTP/event/config baseline，Java/Kotlin/Boot 2/3 消费者兼容门禁 |
 | FW10-061 | 未开始 | 全升级矩阵 | `0.0.1`/`0.0.2`/`0.0.3` 到 1.0 的三方言、JDK、Boot 代际升级与回滚边界证据 |
