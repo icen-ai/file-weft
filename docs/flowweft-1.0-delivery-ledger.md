@@ -38,7 +38,7 @@
 | FW10-043 | 进行中 | 审批、同步、Doctor、审计与运维 UI | 系统 Doctor 与当前用户审批任务箱已接实时脱敏 DAL；仍需权限隐藏与服务端拒绝、审批 mutation、同步/失败重排/审计和安全导出 E2E |
 | FW10-044 | 进行中 | Agent 对话、检索证据、工具确认、配置和评测 UI | 已建立 framework-neutral Web/Application API 及耐久运行时：25 路由后端编排、精确授权 scope、稳定 digest 幂等、权限过滤引用、一次性确认、secret-reference 配置、Doctor/评测，以及 start/cancel/evaluation 未知结果的只读原操作对账；继续实现 persistence/controller/BFF/Console、流式恢复、能力缺失和双语安全 E2E |
 | FW10-050 | 进行中 | retention、legal hold 与安全删除 | 已建立公开治理契约及 provider-neutral CAS/outbox 七阶段运行时，含 legal-hold 优先、fresh authorization、未知结果原操作对账、Doctor 与指标；继续补持久化/适配器、可控时间、对象/索引删除一致性、审计和三方言实库测试 |
-| FW10-051 | 进行中 | 容量、分区与背压 | 已建立 provider-neutral 容量 API：严格层级策略、标准单位/水位、原子准入、digest 幂等/CAS、围栏租约、显式节流/拒绝/容量降级及 Doctor/指标；继续实现运行时/分区适配、公开基准环境和上限，以及队列/索引/上传/Agent 背压与故障测试 |
+| FW10-051 | 进行中 | 容量、分区与背压 | 已建立 provider-neutral 容量 API 与运行时：严格层级策略快照、标准单位/水位、原子准入、稳定 digest 幂等/CAS、围栏租约、显式节流/拒绝/容量降级、事务外调用、未知结果只读对账及 Doctor/指标；继续实现 JDBC/分区适配、公开基准环境和上限，以及队列/索引/上传/Agent 背压与故障测试 |
 | FW10-052 | 进行中 | SLO、备份恢复、RPO/RTO | 已建立 provider-neutral 可靠性 API：精确 ppm SLO/error budget/burn rate、单或多组件 consistent-cut 不可变清单、短授权与长异步期限、clean-target 恢复、真实故障时钟 RPO/RTO、原操作只读对账及 Doctor/指标；继续实现耐久运行时/JDBC/Provider、仪表盘告警和数据库+对象+索引真实恢复演练 |
 | FW10-060 | 进行中 | 1.0 API/ABI 与配置冻结 | 所有 public 制品/HTTP/event/config baseline，Java/Kotlin/Boot 2/3 消费者兼容门禁 |
 | FW10-061 | 未开始 | 全升级矩阵 | `0.0.1`/`0.0.2`/`0.0.3` 到 1.0 的三方言、JDK、Boot 代际升级与回滚边界证据 |

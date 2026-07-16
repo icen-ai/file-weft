@@ -37,6 +37,7 @@ flowweft-agent-adapter-http-runtime	jar	new-physical	8
 flowweft-agent-adapter-network-jdk	jar	new-physical	8
 flowweft-agent-testkit	jar	new-physical	8
 flowweft-capacity-api	jar	new-physical	8
+flowweft-capacity-runtime	jar	new-physical	8
 flowweft-governance-api	jar	new-physical	8
 flowweft-governance-runtime	jar	new-physical	8
 flowweft-observability	jar	new-physical	8
