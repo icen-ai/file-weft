@@ -76,4 +76,35 @@ describe("OIDC pinned network policy", () => {
       allowPrivateNetwork: false,
     })).rejects.toBeInstanceOf(PinnedJsonHttpError);
   });
+
+  it("keeps the 512 KiB default while allowing reviewed responses up to the 2 MiB absolute cap", async () => {
+    const payload = JSON.stringify({ value: "x".repeat(600 * 1_024) });
+    let requestCount = 0;
+    const server = createServer((_request, response) => {
+      requestCount += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(payload);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("test server did not expose a TCP port");
+      }
+      const request = {
+        url: `http://127.0.0.1:${address.port}/large-workflow-document`,
+        method: "GET" as const,
+        timeoutMillis: 2_000,
+        allowPrivateNetwork: true,
+      };
+      await expect(requestPinnedJson(request)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+      await expect(requestPinnedJson({ ...request, maximumResponseBytes: 4 * 1_024 * 1_024 }))
+        .resolves.toEqual({ value: "x".repeat(600 * 1_024) });
+      await expect(requestPinnedJson({ ...request, maximumResponseBytes: 4 * 1_024 * 1_024 + 1 }))
+        .rejects.toMatchObject({ code: "UNSAFE_ENDPOINT" });
+      expect(requestCount).toBe(2);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
 });

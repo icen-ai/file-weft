@@ -28,8 +28,16 @@ describe("static security and route boundaries", () => {
     expect(doctor).toContain("getSystemDoctorReport");
     expect(doctor).toContain("SystemDoctorWorkbench");
     const approvals = readFileSync(join(routeRoot, "approvals", "page.tsx"), "utf8");
-    expect(approvals).toContain("getApprovalInboxPage");
-    expect(approvals).toContain("ApprovalInbox");
+    expect(approvals).toContain("getWorkflowTaskPage");
+    expect(approvals).toContain("getWorkflowDefinitionPage");
+    expect(approvals).toContain("getWorkflowHistoryPage");
+    expect(approvals).toContain("getWorkflowCommentPage");
+    expect(approvals).toContain("WorkflowWorkbench");
+    const workflowWorkbench = readFileSync(
+      join(root, "src", "features", "workflow", "WorkflowWorkbench.tsx"), "utf8",
+    );
+    expect(workflowWorkbench).not.toMatch(/^["']use client["'];/u);
+    expect(workflowWorkbench).not.toMatch(/\b(?:fetch|EventSource|WebSocket)\s*\(/u);
     const agent = readFileSync(join(routeRoot, "agent", "page.tsx"), "utf8");
     expect(agent).toContain("getAgentConversationPage");
     expect(agent).toContain("getAgentMessagePage");
@@ -76,6 +84,7 @@ describe("static security and route boundaries", () => {
       join(root, "src", "server", "config", "index.ts"),
       join(root, "src", "server", "dal", "ConsoleDataAccess.ts"),
       join(root, "src", "server", "dal", "AgentWebBackendClient.ts"),
+      join(root, "src", "server", "dal", "WorkflowWebBackendClient.ts"),
       join(root, "src", "server", "sources", "SourceProfilePolicy.ts"),
       join(root, "src", "server", "sources", "SourceProfileRegistry.ts"),
       join(root, "src", "server", "sources", "SourceProfileBinding.ts"),

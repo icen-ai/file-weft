@@ -1,30 +1,156 @@
 import { notFound } from "next/navigation";
-import { ApprovalInbox } from "@/features/approvals/ApprovalInbox";
-import { CapabilityPage } from "@/features/capabilities/CapabilityPage";
+import type {
+  ConsoleWorkflowCommentPage,
+  ConsoleWorkflowDefinitionDetail,
+  ConsoleWorkflowDefinitionPage,
+  ConsoleWorkflowHistoryPage,
+  ConsoleWorkflowInstance,
+  ConsoleWorkflowTaskDetail,
+  ConsoleWorkflowTaskFormSummary,
+  ConsoleWorkflowTaskPage,
+} from "@/contracts/bff";
+import {
+  WorkflowWorkbench,
+  WorkflowWorkbenchUnavailable,
+} from "@/features/workflow/WorkflowWorkbench";
 import { isLocale } from "@/i18n/locale";
 import { getConsoleDataAccess } from "@/server/dal/ConsoleDataAccess";
 
-interface ApprovalsPageProps {
+interface WorkflowPageProps {
   readonly params: Promise<{ locale: string }>;
-  readonly searchParams: Promise<{ cursor?: string | string[] }>;
+  readonly searchParams: Promise<{
+    taskId?: string | string[];
+    definitionId?: string | string[];
+    taskCursor?: string | string[];
+    definitionCursor?: string | string[];
+    historyCursor?: string | string[];
+    commentCursor?: string | string[];
+  }>;
 }
 
-export default async function ApprovalsPage({ params, searchParams }: ApprovalsPageProps) {
+export default async function WorkflowPage({ params, searchParams }: WorkflowPageProps) {
   const { locale } = await params;
-  if (!isLocale(locale)) {
-    notFound();
-  }
-  const rawCursor = (await searchParams).cursor;
-  if (Array.isArray(rawCursor)) {
-    return <CapabilityPage id="approvals" locale={locale} />;
-  }
-  try {
-    const page = await getConsoleDataAccess().getApprovalInboxPage({
-      ...(rawCursor ? { cursor: rawCursor } : {}),
-      limit: 25,
-    });
-    return <ApprovalInbox locale={locale} page={page} />;
-  } catch {
-    return <CapabilityPage id="approvals" locale={locale} />;
-  }
+  if (!isLocale(locale)) notFound();
+  const raw = await searchParams;
+  if (Object.values(raw).some(Array.isArray)) return <WorkflowWorkbenchUnavailable locale={locale} />;
+
+  const taskId = raw.taskId as string | undefined;
+  const definitionId = raw.definitionId as string | undefined;
+  const cursors = {
+    task: raw.taskCursor as string | undefined,
+    definition: raw.definitionCursor as string | undefined,
+    history: raw.historyCursor as string | undefined,
+    comment: raw.commentCursor as string | undefined,
+  };
+  const dataAccess = getConsoleDataAccess();
+  const [tasksResult, definitionsResult] = await Promise.allSettled([
+    dataAccess.getWorkflowTaskPage({ ...(cursors.task ? { cursor: cursors.task } : {}), limit: 24 }),
+    dataAccess.getWorkflowDefinitionPage({
+      ...(cursors.definition ? { cursor: cursors.definition } : {}), limit: 24,
+    }),
+  ] as const);
+  const tasks: ConsoleWorkflowTaskPage | null = tasksResult.status === "fulfilled" ? tasksResult.value : null;
+  const definitions: ConsoleWorkflowDefinitionPage | null = definitionsResult.status === "fulfilled"
+    ? definitionsResult.value
+    : null;
+  if (!tasks && !definitions) return <WorkflowWorkbenchUnavailable locale={locale} />;
+
+  let taskDetail: ConsoleWorkflowTaskDetail | null = null;
+  let instance: ConsoleWorkflowInstance | null = null;
+  let history: ConsoleWorkflowHistoryPage | null = null;
+  let comments: ConsoleWorkflowCommentPage | null = null;
+  let form: ConsoleWorkflowTaskFormSummary | null = null;
+  let selectedTaskUnavailable = Boolean((cursors.history || cursors.comment) && !taskId);
+  let historyUnavailable = false;
+  let commentsUnavailable = false;
+  let formUnavailable = false;
+
+  if (taskId && tasks) {
+    try {
+      taskDetail = await dataAccess.getWorkflowTask(taskId);
+      instance = await dataAccess.getWorkflowInstance(taskDetail.task.instanceId);
+      if (instance.id !== taskDetail.task.instanceId || !sameSubject(instance.subject, taskDetail.subject)) {
+        throw new Error("Workflow task and instance ownership are inconsistent.");
+      }
+      const [historyResult, commentsResult, formResult] = await Promise.allSettled([
+        dataAccess.getWorkflowHistoryPage(instance.id, {
+          ...(cursors.history ? { cursor: cursors.history } : {}), limit: 50,
+        }),
+        dataAccess.getWorkflowCommentPage(instance.id, {
+          ...(cursors.comment ? { cursor: cursors.comment } : {}), limit: 30,
+        }),
+        taskDetail.formId === null ? Promise.resolve(null) : dataAccess.getWorkflowTaskForm(taskDetail.task.id),
+      ] as const);
+      if (historyResult.status === "fulfilled") history = historyResult.value;
+      else historyUnavailable = true;
+      if (commentsResult.status === "fulfilled") comments = commentsResult.value;
+      else commentsUnavailable = true;
+      if (formResult.status === "fulfilled") {
+        form = formResult.value;
+        if (form && (form.formId !== taskDetail.formId || form.version !== taskDetail.formVersion)) {
+          form = null;
+          formUnavailable = true;
+        }
+      } else formUnavailable = true;
+    } catch {
+      taskDetail = null;
+      instance = null;
+      history = null;
+      comments = null;
+      form = null;
+      selectedTaskUnavailable = true;
+      historyUnavailable = false;
+      commentsUnavailable = false;
+      formUnavailable = false;
+    }
+  } else if (taskId) selectedTaskUnavailable = true;
+
+  let definitionDetail: ConsoleWorkflowDefinitionDetail | null = null;
+  let selectedDefinitionUnavailable = false;
+  if (definitionId && definitions) {
+    try {
+      definitionDetail = await dataAccess.getWorkflowDefinition(definitionId);
+    } catch {
+      selectedDefinitionUnavailable = true;
+    }
+  } else if (definitionId) selectedDefinitionUnavailable = true;
+
+  const safeSelectedTaskId = selectedTaskUnavailable ? null : taskId ?? null;
+  const safeSelectedDefinitionId = selectedDefinitionUnavailable ? null : definitionId ?? null;
+  const safeCursors = {
+    ...(tasks && cursors.task ? { task: cursors.task } : {}),
+    ...(definitions && cursors.definition ? { definition: cursors.definition } : {}),
+    ...(safeSelectedTaskId && history && cursors.history ? { history: cursors.history } : {}),
+    ...(safeSelectedTaskId && comments && cursors.comment ? { comment: cursors.comment } : {}),
+  };
+
+  return <WorkflowWorkbench
+    locale={locale}
+    tasks={tasks}
+    definitions={definitions}
+    selectedTaskId={safeSelectedTaskId}
+    selectedDefinitionId={safeSelectedDefinitionId}
+    taskDetail={taskDetail}
+    instance={instance}
+    history={history}
+    comments={comments}
+    form={form}
+    definitionDetail={definitionDetail}
+    taskCapabilityUnavailable={tasks === null}
+    definitionCapabilityUnavailable={definitions === null}
+    selectedTaskUnavailable={selectedTaskUnavailable}
+    selectedDefinitionUnavailable={selectedDefinitionUnavailable}
+    historyUnavailable={historyUnavailable}
+    commentsUnavailable={commentsUnavailable}
+    formUnavailable={formUnavailable}
+    cursors={safeCursors}
+  />;
+}
+
+function sameSubject(
+  left: ConsoleWorkflowTaskDetail["subject"],
+  right: ConsoleWorkflowTaskDetail["subject"],
+): boolean {
+  return left.type === right.type && left.id === right.id && left.revision === right.revision &&
+    left.digest === right.digest;
 }

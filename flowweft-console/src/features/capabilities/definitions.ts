@@ -10,7 +10,7 @@ export interface CapabilityDefinition {
 
 export const capabilityDefinitions: Record<CapabilityPageId, CapabilityDefinition> = {
   documents: { marker: "DOC", ledger: "FW10-042", tone: "acid" },
-  approvals: { marker: "APR", ledger: "FW10-043", tone: "amber" },
+  approvals: { marker: "WF", ledger: "FW10-027/033/036/040/043", tone: "amber" },
   sync: { marker: "SYN", ledger: "FW10-043", tone: "blue" },
   doctor: { marker: "D/R", ledger: "FW10-043", tone: "acid" },
   audit: { marker: "AUD", ledger: "FW10-043", tone: "coral" },

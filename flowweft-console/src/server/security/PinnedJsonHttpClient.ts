@@ -5,7 +5,8 @@ import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 
 const MAXIMUM_REQUEST_BYTES = 64 * 1_024;
-const MAXIMUM_RESPONSE_BYTES = 512 * 1_024;
+const DEFAULT_MAXIMUM_RESPONSE_BYTES = 512 * 1_024;
+const ABSOLUTE_MAXIMUM_RESPONSE_BYTES = 4 * 1_024 * 1_024;
 const DNS_TIMEOUT_MILLIS = 5_000;
 const blockedAddresses = createBlockedAddressList();
 
@@ -17,6 +18,7 @@ export interface PinnedJsonRequest {
   readonly query?: Readonly<Record<string, string>>;
   readonly timeoutMillis: number;
   readonly allowPrivateNetwork: boolean;
+  readonly maximumResponseBytes?: number;
 }
 
 export class PinnedJsonHttpError extends Error {
@@ -41,6 +43,11 @@ export async function requestPinnedJson(request: PinnedJsonRequest): Promise<unk
   }
   const body = request.body ?? "";
   if (Buffer.byteLength(body, "utf8") > MAXIMUM_REQUEST_BYTES) {
+    throw new PinnedJsonHttpError("UNSAFE_ENDPOINT");
+  }
+  const maximumResponseBytes = request.maximumResponseBytes ?? DEFAULT_MAXIMUM_RESPONSE_BYTES;
+  if (!Number.isSafeInteger(maximumResponseBytes) || maximumResponseBytes < 1 ||
+    maximumResponseBytes > ABSOLUTE_MAXIMUM_RESPONSE_BYTES) {
     throw new PinnedJsonHttpError("UNSAFE_ENDPOINT");
   }
   const customHeaders = request.headers ?? {};
@@ -84,7 +91,7 @@ export async function requestPinnedJson(request: PinnedJsonRequest): Promise<unk
         reject(new PinnedJsonHttpError("INVALID_RESPONSE"));
         return;
       }
-      if (Number.isFinite(declaredLength) && declaredLength > MAXIMUM_RESPONSE_BYTES) {
+      if (Number.isFinite(declaredLength) && declaredLength > maximumResponseBytes) {
         response.destroy();
         reject(new PinnedJsonHttpError("INVALID_RESPONSE"));
         return;
@@ -95,8 +102,9 @@ export async function requestPinnedJson(request: PinnedJsonRequest): Promise<unk
       response.on("data", (chunk: Buffer | string) => {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         received += bytes.length;
-        if (received > MAXIMUM_RESPONSE_BYTES) {
-          response.destroy(new PinnedJsonHttpError("INVALID_RESPONSE"));
+        if (received > maximumResponseBytes) {
+          reject(new PinnedJsonHttpError("INVALID_RESPONSE"));
+          response.destroy();
           return;
         }
         chunks.push(bytes);

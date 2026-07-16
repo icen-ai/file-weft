@@ -17,6 +17,15 @@ import type {
   ConsoleSystemDoctorReport,
   ConsoleSessionProjection,
   SourceProfileSummary,
+  ConsoleWorkflowCommentPage,
+  ConsoleWorkflowDefinitionDetail,
+  ConsoleWorkflowDefinitionPage,
+  ConsoleWorkflowHistoryPage,
+  ConsoleWorkflowInstance,
+  ConsoleWorkflowPageQuery,
+  ConsoleWorkflowTaskDetail,
+  ConsoleWorkflowTaskFormSummary,
+  ConsoleWorkflowTaskPage,
 } from "@/contracts/bff";
 import type { ConsoleServerConfig } from "@/server/config/schema";
 import { loadConsoleServerConfig } from "@/server/config";
@@ -38,6 +47,16 @@ import {
   readAgentRun,
   readAgentRunPage,
 } from "@/server/dal/AgentWebBackendClient";
+import {
+  readWorkflowCommentPage,
+  readWorkflowDefinition,
+  readWorkflowDefinitionPage,
+  readWorkflowHistoryPage,
+  readWorkflowInstance,
+  readWorkflowTask,
+  readWorkflowTaskForm,
+  readWorkflowTaskPage,
+} from "@/server/dal/WorkflowWebBackendClient";
 
 export interface ConsoleDataAccess {
   getSession(): Promise<ConsoleSessionProjection | null>;
@@ -54,6 +73,20 @@ export interface ConsoleDataAccess {
   getAgentMessagePage(runId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentMessagePage>;
   getAgentEventPage(runId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentEventPage>;
   getAgentCitationPage(runId: string, query?: ConsoleAgentPageQuery): Promise<ConsoleAgentCitationPage>;
+  getWorkflowDefinitionPage(query?: ConsoleWorkflowPageQuery): Promise<ConsoleWorkflowDefinitionPage>;
+  getWorkflowDefinition(definitionId: string): Promise<ConsoleWorkflowDefinitionDetail>;
+  getWorkflowTaskPage(query?: ConsoleWorkflowPageQuery): Promise<ConsoleWorkflowTaskPage>;
+  getWorkflowTask(taskId: string): Promise<ConsoleWorkflowTaskDetail>;
+  getWorkflowInstance(instanceId: string): Promise<ConsoleWorkflowInstance>;
+  getWorkflowHistoryPage(
+    instanceId: string,
+    query?: ConsoleWorkflowPageQuery,
+  ): Promise<ConsoleWorkflowHistoryPage>;
+  getWorkflowCommentPage(
+    instanceId: string,
+    query?: ConsoleWorkflowPageQuery,
+  ): Promise<ConsoleWorkflowCommentPage>;
+  getWorkflowTaskForm(taskId: string): Promise<ConsoleWorkflowTaskFormSummary>;
 }
 
 export class ConsoleBackendUnavailableError extends Error {
@@ -83,6 +116,14 @@ export function createUnavailableConsoleDataAccess(): ConsoleDataAccess {
     getAgentMessagePage: async () => unavailable(),
     getAgentEventPage: async () => unavailable(),
     getAgentCitationPage: async () => unavailable(),
+    getWorkflowDefinitionPage: async () => unavailable(),
+    getWorkflowDefinition: async () => unavailable(),
+    getWorkflowTaskPage: async () => unavailable(),
+    getWorkflowTask: async () => unavailable(),
+    getWorkflowInstance: async () => unavailable(),
+    getWorkflowHistoryPage: async () => unavailable(),
+    getWorkflowCommentPage: async () => unavailable(),
+    getWorkflowTaskForm: async () => unavailable(),
   });
 }
 
@@ -174,6 +215,58 @@ export function createConfiguredConsoleDataAccess(config: ConsoleServerConfig): 
       const session = await readStoredConsoleSession(sessionId);
       if (!session) throw new ConsoleBackendUnavailableError();
       return readAgentCitationPage(sources.requireDefinition(session.sourceProfileId), session, runId, query);
+    },
+    getWorkflowDefinitionPage: async (query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowDefinitionPage(sources.requireDefinition(session.sourceProfileId), session, query);
+    },
+    getWorkflowDefinition: async (definitionId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowDefinition(sources.requireDefinition(session.sourceProfileId), session, definitionId);
+    },
+    getWorkflowTaskPage: async (query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowTaskPage(sources.requireDefinition(session.sourceProfileId), session, query);
+    },
+    getWorkflowTask: async (taskId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowTask(sources.requireDefinition(session.sourceProfileId), session, taskId);
+    },
+    getWorkflowInstance: async (instanceId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowInstance(sources.requireDefinition(session.sourceProfileId), session, instanceId);
+    },
+    getWorkflowHistoryPage: async (instanceId: string, query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowHistoryPage(
+        sources.requireDefinition(session.sourceProfileId), session, instanceId, query,
+      );
+    },
+    getWorkflowCommentPage: async (instanceId: string, query = {}) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowCommentPage(
+        sources.requireDefinition(session.sourceProfileId), session, instanceId, query,
+      );
+    },
+    getWorkflowTaskForm: async (taskId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) throw new ConsoleBackendUnavailableError();
+      return readWorkflowTaskForm(sources.requireDefinition(session.sourceProfileId), session, taskId);
     },
   });
 }

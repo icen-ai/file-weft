@@ -236,6 +236,131 @@ export interface ConsoleAgentCitationPage {
   readonly nextCursor: string | null;
 }
 
+export interface ConsoleWorkflowPageQuery {
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface ConsoleWorkflowDefinitionSummary {
+  readonly id: string;
+  readonly key: string;
+  readonly version: string;
+  readonly status: string;
+  readonly title: string;
+  readonly contentDigest: string;
+  readonly recordVersion: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface ConsoleWorkflowDefinitionPage {
+  readonly items: readonly ConsoleWorkflowDefinitionSummary[];
+  readonly nextCursor: string | null;
+}
+
+export interface ConsoleWorkflowDefinitionDiagnostic {
+  readonly code: string;
+  readonly severity: string;
+  readonly nodeId: string | null;
+}
+
+/** Definition source remains in the trusted backend and never enters the browser projection. */
+export interface ConsoleWorkflowDefinitionDetail {
+  readonly summary: ConsoleWorkflowDefinitionSummary;
+  readonly codecId: string;
+  readonly codecVersion: string;
+  readonly sourceDigest: string;
+  readonly diagnostics: readonly ConsoleWorkflowDefinitionDiagnostic[];
+}
+
+export interface ConsoleWorkflowTaskSummary {
+  readonly id: string;
+  readonly instanceId: string;
+  readonly name: string;
+  readonly state: string;
+  readonly recordVersion: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly claimantIsCurrentUser: boolean;
+  readonly actionableByCurrentUser: boolean;
+  readonly dueAt: number | null;
+}
+
+export interface ConsoleWorkflowTaskPage {
+  readonly items: readonly ConsoleWorkflowTaskSummary[];
+  readonly nextCursor: string | null;
+}
+
+export interface ConsoleWorkflowSubject {
+  readonly type: string;
+  readonly id: string;
+  readonly revision: string;
+  readonly digest: string;
+}
+
+export interface ConsoleWorkflowTaskDetail {
+  readonly task: ConsoleWorkflowTaskSummary;
+  readonly subject: ConsoleWorkflowSubject;
+  readonly allowedActions: readonly string[];
+  readonly formId: string | null;
+  readonly formVersion: string | null;
+}
+
+export interface ConsoleWorkflowInstance {
+  readonly id: string;
+  readonly definitionId: string;
+  readonly definitionVersion: string;
+  readonly definitionDigest: string;
+  readonly subject: ConsoleWorkflowSubject;
+  readonly state: string;
+  readonly recordVersion: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface ConsoleWorkflowHistoryEvent {
+  readonly sequence: number;
+  readonly eventType: string;
+  readonly state: string;
+  readonly occurredAt: number;
+  readonly performedByCurrentUser: boolean;
+  readonly resourceId: string | null;
+  readonly reasonCode: string | null;
+}
+
+export interface ConsoleWorkflowHistoryPage {
+  readonly items: readonly ConsoleWorkflowHistoryEvent[];
+  readonly nextCursor: string | null;
+}
+
+export type ConsoleWorkflowCommentToken =
+  | { readonly kind: "TEXT"; readonly text: string }
+  | { readonly kind: "MENTION"; readonly displayName: string };
+
+export interface ConsoleWorkflowComment {
+  readonly id: string;
+  readonly revision: number;
+  readonly tokens: readonly ConsoleWorkflowCommentToken[];
+  readonly authoredByCurrentUser: boolean;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface ConsoleWorkflowCommentPage {
+  readonly items: readonly ConsoleWorkflowComment[];
+  readonly nextCursor: string | null;
+}
+
+/** Form documents and projected values are intentionally omitted from the read-only Console. */
+export interface ConsoleWorkflowTaskFormSummary {
+  readonly formId: string;
+  readonly version: string;
+  readonly schemaDialect: string;
+  readonly schemaDigest: string;
+  readonly uiSchemaDigest: string | null;
+  readonly hasProjectedData: boolean;
+}
+
 export interface BffProblem {
   readonly code: "UNAUTHENTICATED" | "FORBIDDEN" | "UNAVAILABLE" | "INVALID_REQUEST" | "INTERNAL_ERROR";
   readonly message: string;
