@@ -14,6 +14,9 @@ application {
 dependencies {
     implementation(project(":fileweft-persistence"))
     implementation(project(":flowweft-workflow-persistence-jdbc"))
+    implementation(project(":flowweft-capacity-persistence-jdbc"))
+    implementation(project(":flowweft-reliability-persistence-jdbc"))
+    implementation(project(":flowweft-governance-persistence-jdbc"))
 
     runtimeOnly(libs.postgresql)
     runtimeOnly(libs.mysql.connector.j)

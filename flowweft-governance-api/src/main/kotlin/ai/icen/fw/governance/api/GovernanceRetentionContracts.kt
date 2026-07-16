@@ -215,30 +215,54 @@ class GovernanceRetentionReason private constructor(code: String) {
 
 /** Derived decision. Callers cannot directly manufacture an eligible result. */
 class GovernanceRetentionAssessment private constructor(
-    request: GovernanceRetentionEvaluationRequest,
+    tenantId: String,
+    val resource: GovernanceResourceRef,
+    val fence: GovernanceVersionFence,
+    val policy: GovernanceRetentionPolicySnapshot,
+    val legalHolds: GovernanceLegalHoldResolution,
+    val clock: GovernanceEffectiveClock,
+    requestDigest: String,
     val outcome: GovernanceRetentionOutcome,
     val reason: GovernanceRetentionReason,
 ) {
-    val tenantId: String = request.context.tenantId
-    val resource: GovernanceResourceRef = request.resource
-    val fence: GovernanceVersionFence = request.fence
-    val policy: GovernanceRetentionPolicySnapshot = request.policy
-    val legalHolds: GovernanceLegalHoldResolution = request.legalHolds
-    val clock: GovernanceEffectiveClock = request.clock
-    val requestDigest: String = request.requestDigest
+    val tenantId: String = GovernanceContractSupport.requireText(
+        tenantId,
+        GovernanceContractSupport.MAX_ID_UTF8_BYTES,
+        "Governance retention assessment tenant is invalid.",
+    )
+    val requestDigest: String = GovernanceContractSupport.requireSha256(
+        requestDigest,
+        "Governance retention assessment request digest is invalid.",
+    )
     val validUntilEpochMilli: Long = minOf(
-        request.policy.expiresAtEpochMilli,
-        request.legalHolds.expiresAtEpochMilli,
-        request.clock.expiresAtEpochMilli,
+        policy.expiresAtEpochMilli,
+        legalHolds.expiresAtEpochMilli,
+        clock.expiresAtEpochMilli,
     )
-    val assessmentDigest: String = GovernanceContractSupport.digest(
-        "flowweft-governance-api-retention-assessment-v1",
-    )
-        .text(request.requestDigest)
-        .text(outcome.code)
-        .text(reason.code)
-        .longValue(validUntilEpochMilli)
-        .finish()
+    val assessmentDigest: String
+
+    init {
+        require(fence.resource == resource && policy.resource == resource && legalHolds.resource == resource) {
+            "Governance retention assessment evidence does not match its resource snapshot."
+        }
+        require(this.tenantId == policy.tenantId && this.tenantId == legalHolds.tenantId) {
+            "Governance retention assessment evidence does not match its tenant."
+        }
+        require(clock.clockDigest == legalHolds.clock.clockDigest) {
+            "Governance retention assessment evidence uses different effective clocks."
+        }
+        require(decision(policy, legalHolds, clock) == (outcome to reason)) {
+            "Governance retention assessment outcome does not match its canonical evidence."
+        }
+        assessmentDigest = GovernanceContractSupport.digest(
+            "flowweft-governance-api-retention-assessment-v1",
+        )
+            .text(this.requestDigest)
+            .text(outcome.code)
+            .text(reason.code)
+            .longValue(validUntilEpochMilli)
+            .finish()
+    }
 
     fun isDeletionEligible(): Boolean = outcome == GovernanceRetentionOutcome.ELIGIBLE_FOR_DELETION
 
@@ -247,58 +271,78 @@ class GovernanceRetentionAssessment private constructor(
     companion object {
         @JvmStatic
         fun evaluate(request: GovernanceRetentionEvaluationRequest): GovernanceRetentionAssessment {
-            val holds = request.legalHolds
-            if (holds.status == GovernanceLegalHoldResolutionStatus.HELD) {
-                return GovernanceRetentionAssessment(
-                    request,
-                    GovernanceRetentionOutcome.BLOCKED_BY_LEGAL_HOLD,
-                    GovernanceRetentionReason.ACTIVE_LEGAL_HOLD,
-                )
+            val result = decision(request.policy, request.legalHolds, request.clock)
+            return GovernanceRetentionAssessment(
+                request.context.tenantId,
+                request.resource,
+                request.fence,
+                request.policy,
+                request.legalHolds,
+                request.clock,
+                request.requestDigest,
+                result.first,
+                result.second,
+            )
+        }
+
+        /** Restores an assessment from durable evidence and rejects any changed canonical field. */
+        @JvmStatic
+        fun rehydrate(
+            tenantId: String,
+            resource: GovernanceResourceRef,
+            fence: GovernanceVersionFence,
+            policy: GovernanceRetentionPolicySnapshot,
+            legalHolds: GovernanceLegalHoldResolution,
+            clock: GovernanceEffectiveClock,
+            requestDigest: String,
+            outcome: GovernanceRetentionOutcome,
+            reason: GovernanceRetentionReason,
+            expectedAssessmentDigest: String,
+        ): GovernanceRetentionAssessment {
+            val restored = GovernanceRetentionAssessment(
+                tenantId,
+                resource,
+                fence,
+                policy,
+                legalHolds,
+                clock,
+                requestDigest,
+                outcome,
+                reason,
+            )
+            val expected = GovernanceContractSupport.requireSha256(
+                expectedAssessmentDigest,
+                "Governance persisted retention assessment digest is invalid.",
+            )
+            require(restored.assessmentDigest == expected) {
+                "Governance persisted retention assessment digest does not match its canonical evidence."
             }
-            if (holds.status != GovernanceLegalHoldResolutionStatus.CLEAR || !holds.complete ||
-                request.clock.observedAtEpochMilli >= holds.expiresAtEpochMilli) {
-                return GovernanceRetentionAssessment(
-                    request,
-                    GovernanceRetentionOutcome.INCOMPLETE,
-                    GovernanceRetentionReason.INCOMPLETE_LEGAL_HOLD,
-                )
-            }
-            val policy = request.policy
-            val clock = request.clock
-            if (policy.mode == GovernanceRetentionPolicyMode.UNKNOWN) {
-                return GovernanceRetentionAssessment(
-                    request, GovernanceRetentionOutcome.INCOMPLETE, GovernanceRetentionReason.POLICY_UNKNOWN,
-                )
-            }
-            if (clock.effectiveAtEpochMilli < policy.effectiveFromEpochMilli) {
-                return GovernanceRetentionAssessment(
-                    request, GovernanceRetentionOutcome.INCOMPLETE, GovernanceRetentionReason.POLICY_NOT_EFFECTIVE,
-                )
-            }
-            if (policy.capturedAtEpochMilli > clock.observedAtEpochMilli ||
+            return restored
+        }
+
+        private fun decision(
+            policy: GovernanceRetentionPolicySnapshot,
+            holds: GovernanceLegalHoldResolution,
+            clock: GovernanceEffectiveClock,
+        ): Pair<GovernanceRetentionOutcome, GovernanceRetentionReason> = when {
+            holds.status == GovernanceLegalHoldResolutionStatus.HELD ->
+                GovernanceRetentionOutcome.BLOCKED_BY_LEGAL_HOLD to GovernanceRetentionReason.ACTIVE_LEGAL_HOLD
+            holds.status != GovernanceLegalHoldResolutionStatus.CLEAR || !holds.complete ||
+                clock.observedAtEpochMilli >= holds.expiresAtEpochMilli ->
+                GovernanceRetentionOutcome.INCOMPLETE to GovernanceRetentionReason.INCOMPLETE_LEGAL_HOLD
+            policy.mode == GovernanceRetentionPolicyMode.UNKNOWN ->
+                GovernanceRetentionOutcome.INCOMPLETE to GovernanceRetentionReason.POLICY_UNKNOWN
+            clock.effectiveAtEpochMilli < policy.effectiveFromEpochMilli ->
+                GovernanceRetentionOutcome.INCOMPLETE to GovernanceRetentionReason.POLICY_NOT_EFFECTIVE
+            policy.capturedAtEpochMilli > clock.observedAtEpochMilli ||
                 clock.observedAtEpochMilli >= policy.expiresAtEpochMilli ||
-                clock.observedAtEpochMilli >= clock.expiresAtEpochMilli) {
-                return GovernanceRetentionAssessment(
-                    request, GovernanceRetentionOutcome.INCOMPLETE, GovernanceRetentionReason.STALE_EVIDENCE,
-                )
-            }
-            if (policy.mode == GovernanceRetentionPolicyMode.RETAIN_INDEFINITELY) {
-                return GovernanceRetentionAssessment(
-                    request, GovernanceRetentionOutcome.RETAIN, GovernanceRetentionReason.RETAIN_INDEFINITELY,
-                )
-            }
-            val retainUntil = requireNotNull(policy.retainUntilEpochMilli)
-            return if (clock.effectiveAtEpochMilli < retainUntil) {
-                GovernanceRetentionAssessment(
-                    request, GovernanceRetentionOutcome.RETAIN, GovernanceRetentionReason.RETENTION_PERIOD_ACTIVE,
-                )
-            } else {
-                GovernanceRetentionAssessment(
-                    request,
-                    GovernanceRetentionOutcome.ELIGIBLE_FOR_DELETION,
-                    GovernanceRetentionReason.RETENTION_EXPIRED,
-                )
-            }
+                clock.observedAtEpochMilli >= clock.expiresAtEpochMilli ->
+                GovernanceRetentionOutcome.INCOMPLETE to GovernanceRetentionReason.STALE_EVIDENCE
+            policy.mode == GovernanceRetentionPolicyMode.RETAIN_INDEFINITELY ->
+                GovernanceRetentionOutcome.RETAIN to GovernanceRetentionReason.RETAIN_INDEFINITELY
+            clock.effectiveAtEpochMilli < requireNotNull(policy.retainUntilEpochMilli) ->
+                GovernanceRetentionOutcome.RETAIN to GovernanceRetentionReason.RETENTION_PERIOD_ACTIVE
+            else -> GovernanceRetentionOutcome.ELIGIBLE_FOR_DELETION to GovernanceRetentionReason.RETENTION_EXPIRED
         }
     }
 }

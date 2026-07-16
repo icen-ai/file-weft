@@ -396,6 +396,51 @@ class GovernanceDeletionStepReceipt private constructor(
     override fun toString(): String = "GovernanceDeletionStepReceipt(<redacted>)"
 
     companion object {
+        /**
+         * Restores one canonical durable receipt without retaining its original authorization
+         * request. All status invariants are rerun and the independently persisted digest must
+         * match the reconstructed fields.
+         */
+        @JvmStatic
+        fun rehydrate(
+            planDigest: String,
+            stepDigest: String,
+            executionRequestDigest: String,
+            attempt: Int,
+            providerId: String,
+            providerRevision: String,
+            status: GovernanceDeletionStepStatus,
+            receiptReference: String?,
+            resultDigest: String,
+            failure: GovernanceFailure?,
+            observedAtEpochMilli: Long,
+            reconciliationRequestDigest: String?,
+            expectedReceiptDigest: String,
+        ): GovernanceDeletionStepReceipt {
+            val restored = GovernanceDeletionStepReceipt(
+                planDigest,
+                stepDigest,
+                executionRequestDigest,
+                attempt,
+                providerId,
+                providerRevision,
+                status,
+                receiptReference,
+                resultDigest,
+                failure,
+                observedAtEpochMilli,
+                reconciliationRequestDigest,
+            )
+            val expected = GovernanceContractSupport.requireSha256(
+                expectedReceiptDigest,
+                "Governance persisted deletion receipt digest is invalid.",
+            )
+            require(restored.receiptDigest == expected) {
+                "Governance persisted deletion receipt digest does not match its canonical fields."
+            }
+            return restored
+        }
+
         @JvmStatic
         fun success(
             request: GovernanceDeletionExecutionRequest,

@@ -42,6 +42,7 @@ flowweft-capacity-api	jar	new-physical	8
 flowweft-capacity-persistence-jdbc	jar	new-physical	8
 flowweft-capacity-runtime	jar	new-physical	8
 flowweft-governance-api	jar	new-physical	8
+flowweft-governance-persistence-jdbc	jar	new-physical	8
 flowweft-governance-runtime	jar	new-physical	8
 flowweft-observability	jar	new-physical	8
 flowweft-observability-jdbc	jar	new-physical	8

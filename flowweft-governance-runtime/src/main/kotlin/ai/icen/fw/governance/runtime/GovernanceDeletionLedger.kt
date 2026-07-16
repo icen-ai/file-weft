@@ -242,6 +242,48 @@ class GovernanceDeletionRun private constructor(
     override fun toString(): String = "GovernanceDeletionRun(<redacted>)"
 
     companion object {
+        /**
+         * Canonical restart boundary for JDBC and other durable stores. Construction reruns the
+         * complete aggregate invariant set and the independently persisted digest must match.
+         */
+        @JvmStatic
+        fun rehydrate(
+            plan: GovernanceDeletionPlan,
+            commandDigest: String,
+            idempotencyKey: String,
+            status: GovernanceDeletionRunStatus,
+            successfulReceipts: Collection<GovernanceDeletionStepReceipt>,
+            pendingReceipt: GovernanceDeletionStepReceipt?,
+            dispatch: GovernanceDeletionDispatch?,
+            failure: GovernanceFailure?,
+            nextActionAtEpochMilli: Long?,
+            version: Long,
+            updatedAtEpochMilli: Long,
+            expectedStateDigest: String,
+        ): GovernanceDeletionRun {
+            val restored = GovernanceDeletionRun(
+                plan,
+                commandDigest,
+                idempotencyKey,
+                status,
+                successfulReceipts,
+                pendingReceipt,
+                dispatch,
+                failure,
+                nextActionAtEpochMilli,
+                version,
+                updatedAtEpochMilli,
+            )
+            val expected = GovernanceRuntimeSupport.sha256(
+                expectedStateDigest,
+                "Governance persisted deletion run digest is invalid.",
+            )
+            require(restored.stateDigest == expected) {
+                "Governance persisted deletion run digest does not match its canonical fields."
+            }
+            return restored
+        }
+
         @JvmStatic
         fun ready(
             plan: GovernanceDeletionPlan,
