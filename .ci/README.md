@@ -13,7 +13,7 @@
 | MySQL 8 | `.\gradlew.bat mysqlIntegrationCheck` | 要求 `FILEWEFT_RUN_MYSQL_TESTS=true` 和专用 MySQL 8 测试数据库；PostgreSQL 结果不能替代它 |
 | 人大金仓 | `.\gradlew.bat kingbaseIntegrationCheck` | 要求 `FILEWEFT_RUN_KINGBASE_TESTS=true` 和专用 KingbaseES V8 测试数据库；JDBC 驱动由锁定依赖提供，测试不得因驱动缺失静默跳过 |
 | RustFS | `.\gradlew.bat rustFsIntegrationCheck` | 要求 `FILEWEFT_RUN_RUSTFS_TESTS=true` 和可用 RustFS |
-| 阿里云 OSS | `.\gradlew.bat ossIntegrationCheck` | 要求 `FLOWWEFT_RUN_OSS_TESTS=true`、专用私有 bucket 与短期 STS 凭据 |
+| 阿里云 OSS | `.\gradlew.bat ossIntegrationCheck` | 聚合 OSS Adapter 真实对象合同与 Boot 2/3 Starter 真实 ApplicationContext 装配；要求 `FLOWWEFT_RUN_OSS_TESTS=true`、专用私有 bucket 与短期 STS 凭据 |
 | Dev 验收 | `.\gradlew.bat devAcceptanceCheck` | 要求完整 `fw-dev`、API 与 UI 两个开关；先跑 API，再跑 Playwright |
 | Console Redis | `$env:FLOWWEFT_CONSOLE_TEST_REDIS_URL="redis://127.0.0.1:6379/0"; npm.cmd run test:redis --prefix flowweft-console` | 只验证共享、加密、一次性消费与跨实例撤销；要求单独启动 `console` profile 的 Redis |
 | 制品验证 | `.\gradlew.bat releaseArtifactCheck --no-configuration-cache` | 构建并核验本地 Maven 仓库、POM/metadata、SBOM、独立消费者和发布 ZIP，不重复跑外部验收与 JVM 矩阵 |
@@ -32,7 +32,7 @@
 | JDBC、仓储、Flyway、PostgreSQL 方言 | 聚焦 Persistence 测试 | `fastCheck` + `postgresIntegrationCheck` |
 | MySQL 或 Kingbase 方言/迁移 | 聚焦 Persistence 测试 | `fastCheck` + 对应 `mysqlIntegrationCheck` 或 `kingbaseIntegrationCheck` |
 | S3/RustFS | S3 Adapter 聚焦测试 | `fastCheck` + `rustFsIntegrationCheck` |
-| 阿里云 OSS | OSS Adapter 聚焦测试 | `fastCheck` + `ossIntegrationCheck`；凭据只进入独立 CNB stage |
+| 阿里云 OSS | OSS Adapter 或 Boot 2/3 Starter OSS 装配聚焦测试 | `fastCheck` + `ossIntegrationCheck`；凭据只进入独立 CNB stage |
 | Dev API、UI、Boot 3 Compose | 对应 API/UI 用例 | `fastCheck` + `devAcceptanceCheck` |
 | Console Redis 会话、认证路由或其配置 | 对应 Vitest 用例 | Console npm contract + 真实 `Console Redis` contract；不展开 JVM 或其他外部系统 lane |
 | POM、metadata、SBOM、锁文件、发布 ZIP | 聚焦 Build Logic 测试 | `fastCheck` + `releaseArtifactCheck` |
@@ -58,6 +58,8 @@
 - `main` push：文档契约、快速门禁、Console Redis、五条 JDK、五个外部套件和制品契约均按精确路径触发；Build Logic 测试夹具只进入快速门禁，Build Logic 主代码才扩大到运行时、外部套件和制品契约。
 - 夜间：北京时间以仓库所配置时区解释的 `30 2 * * *` 定时任务运行完整质量、制品、Console Redis、五条 JDK 和全部外部验收，用于发现工具链、镜像和依赖环境漂移。
 - `vX.Y.Z` 标签：十三条验证流水线并行（含真实 Redis 与真实 OSS）；发布流水线必须等待全部 resolve 信号后才获得发布阶段。制品验证与上传保留在同一个发布 runner 上只执行一次，避免另开 lane 后重复构建或搬运未验证的 Maven 仓库。发布任务复核标签、版本、40 位提交 SHA、当前 `HEAD`、全部已验证提交与实时远端 `main` HEAD 完全一致，并用全局锁防止两个版本同时写 Maven 仓库。正式发布前还必须在 CNB 启用 `main` 分支保护；CNB 当前没有可替代该约束的标签保护规则，因此文档只称“受发布门禁约束的标签”，不得把标签名称本身视为受保护证据。
+
+真实 OSS 不在普通 PR 或 `main` push 的自动流水线中，也不会通过这些事件导入密钥。`.flowweft-oss-paths` 是按需真实证据的影响范围清单，不是 `ifModify` 自动触发器；它用于判定哪些 Adapter、Boot 2/3 Starter 装配或依赖闭包改动在交付前需要为精确 `main` SHA 点击“验证阿里云 OSS”。稳定标签仍会在受信标签事件中无条件重跑真实 OSS 并把精确提交信号交给发布聚合。
 
 `.ci/test/path-policy.test.mjs` 把代表性 changed path 映射到预期 lane，并由 `verifyCnbPathPolicy` 纳入 `fastCheck`。发布消费者、法律文件、Docker context 和影响全图的 Gradle 锁文件还带有“不得选择零 lane”的回归断言。修改路径组时必须先补或更新代表性用例，再修改 YAML。CNB `ifModify` 在 PR 与非新建分支 push 中按 glob 判断，最多统计 300 个变更文件；超过 300 个文件或新分支 push 时不得只依赖按需结果，必须人工选择完整相关门禁。参见 [CNB `ifModify` 语法](https://docs.cnb.cool/zh/build/grammar.html#ifmodify)。
 
@@ -116,6 +118,8 @@ docker compose -f .docker/docker-compose.dev.yaml rm --force kingbase
 MySQL 与 KingbaseES 服务带独立 Compose profile；显式 `up mysql` / `up kingbase` 会启用对应服务，普通 Dev/API/UI 全栈 `up` 不会额外启动这两个数据库。CNB 也只在路径规则命中、夜间或标签发布时下载并运行金仓，因此不会把日常十分钟开发变成全数据库串行验收。
 
 ### 阿里云 OSS 的按需真实验收
+
+`.flowweft-oss-paths` 覆盖 OSS Adapter，以及 Boot 2/3 Starter 的依赖声明与锁、主自动配置、属性绑定、`FlowWeftOssConfiguration`、本地 Context 合同和真实 Context 集成测试。命中该清单只产生“需要补真实证据”的分类，不会让 PR 或普通 `main` push 自动连接付费环境。`ossIntegrationCheck` 聚合 `:flowweft-adapter-oss:ossIntegrationTest`、`:fileweft-spring-boot2-starter:ossStarterIntegrationTest` 与 `:fileweft-spring-boot3-starter:ossStarterIntegrationTest`：前者验证真实对象、范围读取、覆盖保护和 multipart 合同，后两者分别启动真实 Boot 2/3 ApplicationContext，并证明选择到 OSS Adapter 及其 Doctor 装配。
 
 公开仓库不保存 OSS 凭据，也不在 PR 事件中向不可信代码注入凭据。仓库负责人需先在
 CNB Web 端创建名为 `china.ai/file-weft-ci-secrets` 的**密钥仓库**，再通过受审计的

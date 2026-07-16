@@ -42,6 +42,7 @@ const webTriggerConfiguration = readFileSync(
 const lines = `${sharedConfiguration}\n${knowledgeConfiguration}`.split(/\r?\n/u);
 const prConfiguration = readFileSync(new URL("../pr.yml", import.meta.url), "utf8");
 const mainConfiguration = readFileSync(new URL("../main.yml", import.meta.url), "utf8");
+const ossConfiguration = readFileSync(new URL("../oss.yml", import.meta.url), "utf8");
 const nightlyConfiguration = readFileSync(new URL("../nightly.yml", import.meta.url), "utf8");
 const consoleDockerfile = readFileSync(
   new URL("../Dockerfile.console", import.meta.url),
@@ -601,6 +602,76 @@ test("database, storage, and Boot generations select their real dependency closu
     ".fileweft-jvm-all-paths",
     ".flowweft-oss-paths",
   ]);
+  const boot2OssBuildGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-kingbase-paths",
+    ".flowweft-oss-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot2-starter/build.gradle.kts",
+    "fileweft-spring-boot2-starter/gradle.lockfile",
+  ]) {
+    expectGroups(path, boot2OssBuildGroups);
+  }
+  const boot2OssSourceGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FileWeftAutoConfiguration.kt",
+    "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FileWeftProperties.kt",
+    "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssConfiguration.kt",
+    "fileweft-spring-boot2-starter/src/test/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssConfigurationTest.kt",
+    "fileweft-spring-boot2-starter/src/test/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssStarterIntegrationTest.kt",
+  ]) {
+    expectGroups(path, boot2OssSourceGroups);
+  }
+  const boot3OssBuildGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-kingbase-paths",
+    ".flowweft-oss-paths",
+    ".fileweft-e2e-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot3-starter/build.gradle.kts",
+    "fileweft-spring-boot3-starter/gradle.lockfile",
+  ]) {
+    expectGroups(path, boot3OssBuildGroups);
+  }
+  const boot3OssMainGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+    ".fileweft-e2e-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot3-starter/src/main/kotlin/ai/icen/fw/starter/boot3/FileWeftAutoConfiguration.kt",
+    "fileweft-spring-boot3-starter/src/main/kotlin/ai/icen/fw/starter/boot3/FileWeftProperties.kt",
+    "fileweft-spring-boot3-starter/src/main/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssConfiguration.kt",
+  ]) {
+    expectGroups(path, boot3OssMainGroups);
+  }
+  const boot3OssTestGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot3-starter/src/test/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssConfigurationTest.kt",
+    "fileweft-spring-boot3-starter/src/test/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssStarterIntegrationTest.kt",
+  ]) {
+    expectGroups(path, boot3OssTestGroups);
+  }
   expectGroups("fileweft-metadata-runtime/src/main/kotlin/MetadataValidator.kt", [
     ".fileweft-fast-paths",
     ".fileweft-jvm8-paths",
@@ -630,6 +701,7 @@ test("database, storage, and Boot generations select their real dependency closu
     ".fileweft-fast-paths",
     ".fileweft-jvm8-paths",
     ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
   ]);
   expectGroups(
     "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FileWeftKingbaseFlywayAutoConfiguration.kt",
@@ -752,6 +824,87 @@ test("PR and main expose the path-scoped release artifact lane", () => {
       `${name} must execute the release artifact contract`,
     );
   }
+});
+
+test("real OSS evidence is manual, exact-commit bound, and secret isolated", () => {
+  assert.ok(
+    repositoryConfiguration.includes("- .ci/oss.yml"),
+    "the root CNB configuration must include the on-demand OSS pipeline",
+  );
+
+  for (const [name, configuration] of [
+    ["PR", prConfiguration],
+    ["main push", mainConfiguration],
+  ]) {
+    assert.doesNotMatch(
+      configuration,
+      /\.flowweft-oss-(?:paths|env)|web_trigger_oss|ossIntegrationCheck|oss-integration\.yml|FLOWWEFT_OSS_/u,
+      `${name} must not run real OSS or import its credentials`,
+    );
+  }
+
+  assert.deepEqual(
+    [...ossConfiguration.matchAll(/^([a-z$][a-z0-9$._-]*):\r?$/gmu)].map(
+      (match) => match[1],
+    ),
+    ["main"],
+    "the on-demand OSS pipeline must only be executable on main",
+  );
+  assert.deepEqual(
+    [...ossConfiguration.matchAll(/^  ([a-z][a-z0-9_]*):\r?$/gmu)].map(
+      (match) => match[1],
+    ),
+    ["web_trigger_oss"],
+    "the OSS configuration must not attach the real test to push or PR events",
+  );
+  assert.match(webTriggerConfiguration, /reg: "\^main\$"/u);
+  assert.equal(
+    webTriggerConfiguration.match(/event: web_trigger_oss/gu)?.length,
+    1,
+    "the repository UI must expose one main-only OSS trigger",
+  );
+
+  const pipeline = readPipeline(ossConfiguration, "oss");
+  assert.ok(pipeline.includes("env: !reference [.flowweft-oss-env]"));
+  const identityStageStart = pipeline.indexOf("name: verify-oss-source-identity");
+  const realStageStart = pipeline.indexOf("name: real-oss-integration");
+  assert.ok(identityStageStart >= 0, "the OSS pipeline must verify source identity");
+  assert.ok(
+    realStageStart > identityStageStart,
+    "source identity must be verified before credentials are imported",
+  );
+  const identityStage = pipeline.slice(identityStageStart, realStageStart);
+  const realStage = pipeline.slice(realStageStart);
+  assert.ok(identityStage.includes('test "$CNB_BRANCH" = "main"'));
+  assert.ok(identityStage.includes('test "$(git rev-parse HEAD)" = "$CNB_COMMIT"'));
+  assert.doesNotMatch(identityStage, /imports:|flowweft-oss-secret-file/u);
+  assert.match(
+    realStage,
+    /imports:\r?\n\s+- \*flowweft-oss-secret-file/u,
+    "only the real OSS stage may import the short-lived credential file",
+  );
+  assert.ok(
+    realStage.includes(
+      "bash ./gradlew ossIntegrationCheck --no-daemon --no-configuration-cache --stacktrace",
+    ),
+    "the authorized stage must run the complete Adapter and Boot 2/3 OSS contract",
+  );
+  assert.equal(
+    pipeline.match(/^\s+imports:\r?$/gmu)?.length,
+    1,
+    "the on-demand OSS pipeline must keep exactly one stage-scoped credential import",
+  );
+
+  const publicOssEnvironment = readTopLevelBlock(
+    sharedConfiguration,
+    ".flowweft-oss-env",
+  );
+  assert.ok(publicOssEnvironment.includes('FLOWWEFT_RUN_OSS_TESTS: "true"'));
+  assert.doesNotMatch(
+    publicOssEnvironment,
+    /(?:ACCESS_KEY|SECURITY_TOKEN|CREDENTIAL_EXPIRES|OSS_(?:ENDPOINT|REGION|BUCKET))/u,
+    "the shared environment must contain only public test controls, never OSS credentials",
+  );
 });
 
 test("the repository knowledge base is main-only, curated, and fail-closed", () => {

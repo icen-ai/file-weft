@@ -694,6 +694,11 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
                         "flowweft-adapter-oss/src/test/kotlin/ai/icen/fw/adapter/oss/OssOverwriteGuardIntegrationTest.kt" ->
                         setOf("FLOWWEFT_RUN_OSS_OVERWRITE_TESTS")
                     relativePath ==
+                        "fileweft-spring-boot2-starter/src/test/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssStarterIntegrationTest.kt" ||
+                        relativePath ==
+                        "fileweft-spring-boot3-starter/src/test/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssStarterIntegrationTest.kt" ->
+                        setOf("FLOWWEFT_RUN_OSS_TESTS")
+                    relativePath ==
                         "fileweft-dev/src/test/kotlin/ai/icen/fw/dev/e2e/DevAcceptanceIntegrationTest.kt" ->
                         setOf("FILEWEFT_RUN_DEV_E2E")
                     else -> emptySet()
@@ -991,8 +996,12 @@ val rustFsIntegrationCheck = tasks.register("rustFsIntegrationCheck") {
 
 val ossIntegrationCheck = tasks.register("ossIntegrationCheck") {
     group = "verification"
-    description = "Runs the dedicated Alibaba Cloud OSS storage-adapter integration lane."
-    dependsOn(":flowweft-adapter-oss:ossIntegrationTest")
+    description = "Runs Alibaba Cloud OSS adapter and Boot 2/3 Starter integration against one dedicated bucket."
+    dependsOn(
+        ":flowweft-adapter-oss:ossIntegrationTest",
+        ":fileweft-spring-boot2-starter:ossStarterIntegrationTest",
+        ":fileweft-spring-boot3-starter:ossStarterIntegrationTest",
+    )
 }
 
 val devAcceptanceCheck = tasks.register("devAcceptanceCheck") {

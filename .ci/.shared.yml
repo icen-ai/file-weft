@@ -583,6 +583,20 @@
   - fileweft-application/**
   - fileweft-testkit/**
   - flowweft-adapter-oss/**
+  - fileweft-spring-boot2-starter/build.gradle.kts
+  - fileweft-spring-boot2-starter/gradle.lockfile
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftAutoConfiguration.kt
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftProperties.kt
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FlowWeftOssConfiguration.kt
+  - fileweft-spring-boot2-starter/src/test/kotlin/**/FlowWeftOssConfigurationTest.kt
+  - fileweft-spring-boot2-starter/src/test/kotlin/**/FlowWeftOssStarterIntegrationTest.kt
+  - fileweft-spring-boot3-starter/build.gradle.kts
+  - fileweft-spring-boot3-starter/gradle.lockfile
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FileWeftAutoConfiguration.kt
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FileWeftProperties.kt
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FlowWeftOssConfiguration.kt
+  - fileweft-spring-boot3-starter/src/test/kotlin/**/FlowWeftOssConfigurationTest.kt
+  - fileweft-spring-boot3-starter/src/test/kotlin/**/FlowWeftOssStarterIntegrationTest.kt
 
 .fileweft-e2e-paths:
   - .gitattributes
