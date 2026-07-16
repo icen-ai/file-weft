@@ -657,45 +657,119 @@ class WorkflowHumanInputRuntime @JvmOverloads constructor(
                 false,
             )
         }
+        val checkpointPort = idempotencyPort as? WorkflowMentionNotificationCheckpointPort
+            ?: return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.PROVIDER_UNAVAILABLE,
+                "notification-checkpoint-unsupported",
+                false,
+            )
+        val checkpointRequest = try {
+            WorkflowMentionNotificationProviderCheckpoint.of(
+                reservation.reservation!!,
+                notificationRequest.requestDigest,
+                notificationStart,
+            )
+        } catch (_: RuntimeException) {
+            return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.RECEIPT_INVALID,
+                "notification-checkpoint-request-invalid",
+                false,
+            )
+        }
+        val checkpointResult = try {
+            checkpointPort.checkpointProviderCall(checkpointRequest)
+        } catch (_: Exception) {
+            return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-checkpoint-unknown",
+                false,
+            )
+        }
+        val checkpoint = checkpointResult.checkpoint
+        if (checkpointResult.code != WorkflowMentionNotificationCheckpointCode.APPLIED || checkpoint == null ||
+            checkpoint.status != WorkflowMentionNotificationCheckpointStatus.PROVIDER_CALL_STARTED ||
+            !checkpoint.matches(reservation.reservation!!, notificationRequest.requestDigest)
+        ) {
+            return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-checkpoint-not-new",
+                false,
+            )
+        }
         val notificationResult = try {
             await(notificationProvider.send(notificationRequest), notificationDeadline)
         } catch (error: Exception) {
             restoreInterrupt(error)
+            markNotificationOutcomeUnknown(
+                checkpointPort,
+                checkpoint,
+                "provider-call-failed",
+                currentTime(operation) ?: notificationStart,
+            )
             return notificationFailure(
                 operation,
-                WorkflowHumanInputResultCode.PROVIDER_UNAVAILABLE,
-                "notification-provider-unavailable",
-                true,
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-provider-outcome-unknown",
+                false,
             )
         }
         val completedAt = currentTime(operation)
-            ?: return notificationFailure(operation, WorkflowHumanInputResultCode.INVALID, "clock-invalid", false)
+            ?: run {
+                markNotificationOutcomeUnknown(checkpointPort, checkpoint, "clock-invalid", notificationStart)
+                return notificationFailure(
+                    operation,
+                    WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                    "notification-provider-outcome-unknown",
+                    false,
+                )
+            }
         if (!authDecision.matches(authRequest, completedAt)) {
+            markNotificationOutcomeUnknown(checkpointPort, checkpoint, "authorization-expired", completedAt)
             return notificationFailure(
                 operation,
-                WorkflowHumanInputResultCode.AUTHORIZATION_DENIED,
-                "authorization-expired",
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-provider-outcome-unknown",
                 false,
             )
         }
         if (!receiptMatches(notificationResult.receipt, notificationContext, notificationRequest.requestDigest, completedAt)) {
+            markNotificationOutcomeUnknown(checkpointPort, checkpoint, "receipt-invalid", completedAt)
             return notificationFailure(
                 operation,
-                WorkflowHumanInputResultCode.RECEIPT_INVALID,
-                "notification-receipt-invalid",
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-provider-outcome-unknown",
                 false,
             )
         }
         if (notificationResult.receipt.outcome != WorkflowProviderOutcome.SUCCESS) {
-            return notificationProviderFailure(operation, notificationResult.receipt)
-        }
-        val delivery = notificationResult.delivery
-            ?: return notificationFailure(
+            markNotificationOutcomeUnknown(
+                checkpointPort,
+                checkpoint,
+                "provider-failure-receipt",
+                completedAt,
+                notificationResult.receipt.receiptDigest,
+            )
+            return notificationFailure(
                 operation,
-                WorkflowHumanInputResultCode.RECEIPT_INVALID,
-                "notification-delivery-missing",
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-provider-outcome-unknown",
                 false,
             )
+        }
+        val delivery = notificationResult.delivery
+            ?: run {
+                markNotificationOutcomeUnknown(checkpointPort, checkpoint, "delivery-missing", completedAt)
+                return notificationFailure(
+                    operation,
+                    WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                    "notification-provider-outcome-unknown",
+                    false,
+                )
+            }
         val record = WorkflowHumanInputIdempotencyRecord.notification(
             command.callContext.tenantId,
             command.idempotencyKey,
@@ -704,16 +778,63 @@ class WorkflowHumanInputRuntime @JvmOverloads constructor(
             notificationResult.receipt,
             completedAt,
         )
-        val completion = complete(reservation.reservation!!, record, operation)
-        completion.failure?.let { return WorkflowRuntimeMentionNotificationResult.failed(it.code, it.diagnostic) }
-        val completed = completion.record?.delivery
+        val reconciliation = try {
+            checkpointPort.reconcileProviderCall(WorkflowMentionNotificationReconciliation.of(
+                checkpoint,
+                WorkflowMentionNotificationReconciliationResolution.ACCEPTED,
+                record,
+                notificationResult.receipt.receiptDigest,
+                completedAt,
+            ))
+        } catch (_: Exception) {
+            return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-reconciliation-unknown",
+                false,
+            )
+        }
+        if (reconciliation.code != WorkflowMentionNotificationCheckpointCode.APPLIED &&
+            reconciliation.code != WorkflowMentionNotificationCheckpointCode.REPLAYED
+        ) {
+            return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.OUTCOME_UNKNOWN,
+                "notification-reconciliation-unknown",
+                false,
+            )
+        }
+        val completedRecord = reconciliation.record
             ?: return notificationFailure(
                 operation,
                 WorkflowHumanInputResultCode.RECEIPT_INVALID,
-                "completion-type-invalid",
+                "reconciliation-record-invalid",
                 false,
             )
-        return WorkflowRuntimeMentionNotificationResult.success(completion.resultCode!!, completed)
+        val completed = completedRecord.delivery
+            ?: return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.RECEIPT_INVALID,
+                "reconciliation-record-invalid",
+                false,
+            )
+        if (completedRecord.tenantId != command.callContext.tenantId ||
+            !completedRecord.matches(operation, command.requestDigest) ||
+            completedRecord.resultDigest != record.resultDigest
+        ) {
+            return notificationFailure(
+                operation,
+                WorkflowHumanInputResultCode.RECEIPT_INVALID,
+                "reconciliation-record-invalid",
+                false,
+            )
+        }
+        val resultCode = if (reconciliation.code == WorkflowMentionNotificationCheckpointCode.APPLIED) {
+            WorkflowHumanInputResultCode.SUCCEEDED
+        } else {
+            WorkflowHumanInputResultCode.REPLAYED
+        }
+        return WorkflowRuntimeMentionNotificationResult.success(resultCode, completed)
     }
 
     private fun authorize(
@@ -878,6 +999,36 @@ class WorkflowHumanInputRuntime @JvmOverloads constructor(
             )
         }
         return CompletionOutcome.success(resultCode, returned)
+    }
+
+    private fun markNotificationOutcomeUnknown(
+        port: WorkflowMentionNotificationCheckpointPort,
+        checkpoint: WorkflowMentionNotificationCheckpointRecord,
+        reason: String,
+        observedAt: Long,
+        sourceEvidenceDigest: String? = null,
+    ): Boolean {
+        val safeObservedAt = maxOf(observedAt, checkpoint.updatedAtEpochMilli)
+        val evidence = WorkflowRuntimeSupport.digest(
+            "flowweft-workflow-runtime-mention-provider-outcome-unknown-v1",
+        )
+            .text(checkpoint.checkpointDigest)
+            .text(reason)
+            .bool(sourceEvidenceDigest != null)
+            .also { writer -> sourceEvidenceDigest?.let { writer.text(it) } }
+            .longValue(safeObservedAt)
+            .finish()
+        val result = try {
+            port.markProviderOutcomeUnknown(WorkflowMentionNotificationOutcomeUnknown.of(
+                checkpoint,
+                evidence,
+                safeObservedAt,
+            ))
+        } catch (_: Exception) {
+            return false
+        }
+        return result.code == WorkflowMentionNotificationCheckpointCode.APPLIED ||
+            result.code == WorkflowMentionNotificationCheckpointCode.REPLAYED
     }
 
     private fun providerContext(

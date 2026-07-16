@@ -20,6 +20,16 @@ import ai.icen.fw.workflow.runtime.WorkflowHumanInputReservation
 import ai.icen.fw.workflow.runtime.WorkflowHumanInputReservationCode
 import ai.icen.fw.workflow.runtime.WorkflowHumanInputReservationRequest
 import ai.icen.fw.workflow.runtime.WorkflowHumanInputReservationResult
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointCode
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointPort
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointRecord
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointResult
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointStatus
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationOutcomeUnknown
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationProviderCheckpoint
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationReconciliation
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationReconciliationResolution
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationReconciliationResult
 import ai.icen.fw.workflow.spi.WorkflowNotificationDelivery
 import ai.icen.fw.workflow.spi.WorkflowNotificationDeliveryStatus
 import java.nio.charset.StandardCharsets
@@ -38,7 +48,7 @@ import javax.sql.DataSource
 class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
     dataSource: DataSource,
     dialect: WorkflowJdbcDialect? = null,
-) : WorkflowHumanInputIdempotencyPort {
+) : WorkflowHumanInputIdempotencyPort, WorkflowMentionNotificationCheckpointPort {
     private val transactions = WorkflowJdbcTransactions(dataSource, dialect)
 
     override fun reserve(request: WorkflowHumanInputReservationRequest): WorkflowHumanInputReservationResult =
@@ -76,6 +86,26 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
                     WorkflowHumanInputReservationCode.OUTCOME_UNKNOWN,
                 )
             }
+            if (request.operation == WorkflowHumanInputOperation.MENTION_NOTIFY) {
+                val checkpoint = selectMentionCheckpoint(
+                    connection,
+                    request.tenantId,
+                    request.idempotencyKey,
+                    forUpdate = true,
+                )
+                if (checkpoint != null) {
+                    if (checkpoint.operationRequestDigest != request.requestDigest) {
+                        return@transaction WorkflowHumanInputReservationResult.failed(
+                            WorkflowHumanInputReservationCode.CONFLICT,
+                        )
+                    }
+                    if (checkpoint.status != WorkflowMentionNotificationCheckpointStatus.NOT_SENT) {
+                        return@transaction WorkflowHumanInputReservationResult.failed(
+                            WorkflowHumanInputReservationCode.OUTCOME_UNKNOWN,
+                        )
+                    }
+                }
+            }
             if (current.leaseExpiresAt > request.requestedAtEpochMilli) {
                 return@transaction WorkflowHumanInputReservationResult.failed(
                     WorkflowHumanInputReservationCode.IN_PROGRESS,
@@ -108,6 +138,12 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
         reservation: WorkflowHumanInputReservation,
         record: WorkflowHumanInputIdempotencyRecord,
     ): WorkflowHumanInputIdempotencyWriteResult {
+        if (record.operation == WorkflowHumanInputOperation.MENTION_NOTIFY) {
+            // Mention delivery must atomically close its durable provider-call checkpoint.
+            return WorkflowHumanInputIdempotencyWriteResult.failed(
+                WorkflowHumanInputIdempotencyWriteCode.OUTCOME_UNKNOWN,
+            )
+        }
         val encoded = WorkflowHumanInputJdbcCodec.encode(record)
         return transactions.transaction { connection, _ ->
             val existing = selectIdempotency(
@@ -176,6 +212,286 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
             persistProjection(connection, record, encoded)
             WorkflowHumanInputIdempotencyWriteResult.stored(record)
         }
+    }
+
+    override fun loadProviderCheckpoint(
+        tenantId: String,
+        idempotencyKey: String,
+        readAtEpochMilli: Long,
+    ): WorkflowMentionNotificationCheckpointRecord? {
+        require(readAtEpochMilli >= 0L) { "Workflow mention checkpoint read time is invalid." }
+        return transactions.read { connection, _ ->
+            selectMentionCheckpoint(connection, tenantId, idempotencyKey, forUpdate = false)
+        }
+    }
+
+    override fun checkpointProviderCall(
+        request: WorkflowMentionNotificationProviderCheckpoint,
+    ): WorkflowMentionNotificationCheckpointResult = transactions.transaction { connection, _ ->
+        val reservation = request.reservation
+        val idempotency = selectIdempotency(
+            connection,
+            reservation.tenantId,
+            reservation.idempotencyKey,
+            forUpdate = true,
+        ) ?: return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+            WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+        )
+        if (!idempotencyMatchesReservation(idempotency, reservation) ||
+            idempotency.status != STATUS_RESERVED || request.checkpointedAtEpochMilli < idempotency.updatedAt
+        ) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        val existing = selectMentionCheckpoint(
+            connection,
+            reservation.tenantId,
+            reservation.idempotencyKey,
+            forUpdate = true,
+        )
+        if (existing == null) {
+            val value = WorkflowMentionNotificationCheckpointRecord.of(
+                reservation.tenantId,
+                reservation.idempotencyKey,
+                reservation.requestDigest,
+                reservation.leaseId,
+                reservation.fencingToken,
+                request.providerRequestDigest,
+                WorkflowMentionNotificationCheckpointStatus.PROVIDER_CALL_STARTED,
+                null,
+                1L,
+                request.checkpointedAtEpochMilli,
+                request.checkpointedAtEpochMilli,
+            )
+            insertMentionCheckpoint(connection, value)
+            return@transaction WorkflowMentionNotificationCheckpointResult.applied(value)
+        }
+        if (existing.matches(reservation, request.providerRequestDigest) &&
+            existing.status == WorkflowMentionNotificationCheckpointStatus.PROVIDER_CALL_STARTED
+        ) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.replayed(existing)
+        }
+        if (existing.operationRequestDigest != reservation.requestDigest) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        if (existing.status != WorkflowMentionNotificationCheckpointStatus.NOT_SENT ||
+            reservation.fencingToken <= existing.fencingToken || existing.recordVersion == Long.MAX_VALUE
+        ) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+            )
+        }
+        val value = WorkflowMentionNotificationCheckpointRecord.of(
+            reservation.tenantId,
+            reservation.idempotencyKey,
+            reservation.requestDigest,
+            reservation.leaseId,
+            reservation.fencingToken,
+            request.providerRequestDigest,
+            WorkflowMentionNotificationCheckpointStatus.PROVIDER_CALL_STARTED,
+            null,
+            existing.recordVersion + 1L,
+            request.checkpointedAtEpochMilli,
+            request.checkpointedAtEpochMilli,
+        )
+        if (!updateMentionCheckpoint(connection, existing, value)) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        WorkflowMentionNotificationCheckpointResult.applied(value)
+    }
+
+    override fun markProviderOutcomeUnknown(
+        request: WorkflowMentionNotificationOutcomeUnknown,
+    ): WorkflowMentionNotificationCheckpointResult = transactions.transaction { connection, _ ->
+        val expected = request.checkpoint
+        val current = selectMentionCheckpoint(
+            connection,
+            expected.tenantId,
+            expected.idempotencyKey,
+            forUpdate = true,
+        ) ?: return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+            WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+        )
+        if (expected.recordVersion == Long.MAX_VALUE) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+            )
+        }
+        val value = WorkflowMentionNotificationCheckpointRecord.of(
+            expected.tenantId,
+            expected.idempotencyKey,
+            expected.operationRequestDigest,
+            expected.leaseId,
+            expected.fencingToken,
+            expected.providerRequestDigest,
+            WorkflowMentionNotificationCheckpointStatus.OUTCOME_UNKNOWN,
+            request.evidenceDigest,
+            expected.recordVersion + 1L,
+            expected.checkpointedAtEpochMilli,
+            request.observedAtEpochMilli,
+        )
+        if (current.checkpointDigest == value.checkpointDigest) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.replayed(current)
+        }
+        if (current.checkpointDigest != expected.checkpointDigest ||
+            current.status != WorkflowMentionNotificationCheckpointStatus.PROVIDER_CALL_STARTED
+        ) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        if (!updateMentionCheckpoint(connection, current, value)) {
+            return@transaction WorkflowMentionNotificationCheckpointResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        WorkflowMentionNotificationCheckpointResult.applied(value)
+    }
+
+    override fun reconcileProviderCall(
+        request: WorkflowMentionNotificationReconciliation,
+    ): WorkflowMentionNotificationReconciliationResult = transactions.transaction { connection, _ ->
+        val expected = request.checkpoint
+        val current = selectMentionCheckpoint(
+            connection,
+            expected.tenantId,
+            expected.idempotencyKey,
+            forUpdate = true,
+        ) ?: return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+            WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+        )
+        if (expected.recordVersion == Long.MAX_VALUE) {
+            return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+            )
+        }
+        val targetStatus = when (request.resolution) {
+            WorkflowMentionNotificationReconciliationResolution.ACCEPTED ->
+                WorkflowMentionNotificationCheckpointStatus.ACCEPTED
+            WorkflowMentionNotificationReconciliationResolution.NOT_SENT ->
+                WorkflowMentionNotificationCheckpointStatus.NOT_SENT
+            WorkflowMentionNotificationReconciliationResolution.TERMINAL_FAILURE ->
+                WorkflowMentionNotificationCheckpointStatus.TERMINAL_FAILURE
+            else -> return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        val target = WorkflowMentionNotificationCheckpointRecord.of(
+            expected.tenantId,
+            expected.idempotencyKey,
+            expected.operationRequestDigest,
+            expected.leaseId,
+            expected.fencingToken,
+            expected.providerRequestDigest,
+            targetStatus,
+            request.evidenceDigest,
+            expected.recordVersion + 1L,
+            expected.checkpointedAtEpochMilli,
+            request.reconciledAtEpochMilli,
+        )
+        val idempotency = selectIdempotency(
+            connection,
+            expected.tenantId,
+            expected.idempotencyKey,
+            forUpdate = true,
+        ) ?: return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+            WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+        )
+        if (current.checkpointDigest == target.checkpointDigest) {
+            val replayed = if (targetStatus == WorkflowMentionNotificationCheckpointStatus.ACCEPTED) {
+                if (idempotency.status != STATUS_COMPLETED) {
+                    return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                        WorkflowMentionNotificationCheckpointCode.OUTCOME_UNKNOWN,
+                    )
+                }
+                decode(idempotency).also { value ->
+                    if (value.resultDigest != request.record?.resultDigest) {
+                        return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                            WorkflowMentionNotificationCheckpointCode.CONFLICT,
+                        )
+                    }
+                }
+            } else {
+                null
+            }
+            return@transaction WorkflowMentionNotificationReconciliationResult.replayed(current, replayed)
+        }
+        if (current.checkpointDigest != expected.checkpointDigest ||
+            current.status != WorkflowMentionNotificationCheckpointStatus.PROVIDER_CALL_STARTED &&
+            current.status != WorkflowMentionNotificationCheckpointStatus.OUTCOME_UNKNOWN ||
+            idempotency.operation != WorkflowHumanInputOperation.MENTION_NOTIFY.code ||
+            idempotency.requestDigest != expected.operationRequestDigest ||
+            idempotency.leaseId != expected.leaseId || idempotency.fencingToken != expected.fencingToken
+        ) {
+            return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                WorkflowMentionNotificationCheckpointCode.CONFLICT,
+            )
+        }
+        val completedRecord = request.record
+        if (targetStatus == WorkflowMentionNotificationCheckpointStatus.ACCEPTED) {
+            val record = checkNotNull(completedRecord)
+            if (idempotency.status != STATUS_RESERVED || record.completedAtEpochMilli < idempotency.updatedAt ||
+                record.completedAtEpochMilli > idempotency.leaseExpiresAt || idempotency.recordVersion == Long.MAX_VALUE
+            ) {
+                return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                    WorkflowMentionNotificationCheckpointCode.CONFLICT,
+                )
+            }
+            val encoded = WorkflowHumanInputJdbcCodec.encode(record)
+            connection.prepareStatement(COMPLETE_RESERVATION_SQL).use { statement ->
+                statement.setString(1, STATUS_COMPLETED)
+                statement.setString(2, encoded.kind)
+                statement.setString(3, record.resultDigest)
+                statement.setBytes(4, encoded.payload)
+                setNullableString(statement, 5, encoded.providerReceiptDigest)
+                setNullableLong(statement, 6, encoded.receiptExpiresAt)
+                statement.setLong(7, idempotency.recordVersion + 1L)
+                statement.setLong(8, record.completedAtEpochMilli)
+                statement.setString(9, expected.tenantId)
+                statement.setString(10, idempotency.id)
+                statement.setLong(11, idempotency.recordVersion)
+                statement.setString(12, STATUS_RESERVED)
+                statement.setString(13, expected.leaseId)
+                statement.setLong(14, expected.fencingToken)
+                if (statement.executeUpdate() != 1) {
+                    return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                        WorkflowMentionNotificationCheckpointCode.CONFLICT,
+                    )
+                }
+            }
+            persistProjection(connection, record, encoded)
+        } else {
+            if (idempotency.status != STATUS_RESERVED || idempotency.recordVersion == Long.MAX_VALUE) {
+                return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                    WorkflowMentionNotificationCheckpointCode.CONFLICT,
+                )
+            }
+            connection.prepareStatement(RECONCILE_RESERVATION_SQL).use { statement ->
+                statement.setLong(1, request.reconciledAtEpochMilli)
+                statement.setLong(2, idempotency.recordVersion + 1L)
+                statement.setLong(3, request.reconciledAtEpochMilli)
+                statement.setString(4, expected.tenantId)
+                statement.setString(5, idempotency.id)
+                statement.setLong(6, idempotency.recordVersion)
+                statement.setString(7, STATUS_RESERVED)
+                statement.setString(8, expected.leaseId)
+                statement.setLong(9, expected.fencingToken)
+                if (statement.executeUpdate() != 1) {
+                    return@transaction WorkflowMentionNotificationReconciliationResult.failed(
+                        WorkflowMentionNotificationCheckpointCode.CONFLICT,
+                    )
+                }
+            }
+        }
+        if (!updateMentionCheckpoint(connection, current, target)) {
+            throw IllegalStateException("Workflow mention checkpoint CAS changed while locked.")
+        }
+        WorkflowMentionNotificationReconciliationResult.applied(target, completedRecord)
     }
 
     fun loadFormSubmission(
@@ -276,6 +592,91 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
             statement.executeQuery().use { result -> if (result.next()) mapIdempotency(result) else null }
         }
     }
+
+    private fun selectMentionCheckpoint(
+        connection: Connection,
+        tenantId: String,
+        idempotencyKey: String,
+        forUpdate: Boolean,
+    ): WorkflowMentionNotificationCheckpointRecord? {
+        val suffix = if (forUpdate) " FOR UPDATE" else ""
+        return connection.prepareStatement(SELECT_MENTION_CHECKPOINT_SQL + suffix).use { statement ->
+            statement.setString(1, tenantId)
+            statement.setString(2, idempotencyKey)
+            statement.executeQuery().use { result ->
+                if (result.next()) {
+                    WorkflowMentionNotificationCheckpointRecord.restore(
+                        result.getString("tenant_id"),
+                        result.getString("idempotency_key"),
+                        result.getString("operation_request_digest"),
+                        result.getString("lease_id"),
+                        result.getLong("fencing_token"),
+                        result.getString("provider_request_digest"),
+                        WorkflowMentionNotificationCheckpointStatus.of(result.getString("checkpoint_status")),
+                        result.getString("evidence_digest"),
+                        result.getLong("record_version"),
+                        result.getLong("checkpointed_time"),
+                        result.getLong("updated_time"),
+                        result.getString("checkpoint_digest"),
+                    )
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    private fun insertMentionCheckpoint(
+        connection: Connection,
+        value: WorkflowMentionNotificationCheckpointRecord,
+    ) {
+        connection.prepareStatement(INSERT_MENTION_CHECKPOINT_SQL).use { statement ->
+            statement.setString(1, stableId("workflow-mention-checkpoint", value.tenantId, value.idempotencyKey))
+            statement.setString(2, value.tenantId)
+            statement.setString(3, value.idempotencyKey)
+            statement.setString(4, value.operationRequestDigest)
+            statement.setString(5, value.leaseId)
+            statement.setLong(6, value.fencingToken)
+            statement.setString(7, value.providerRequestDigest)
+            statement.setString(8, value.status.code)
+            setNullableString(statement, 9, value.evidenceDigest)
+            statement.setString(10, value.checkpointDigest)
+            statement.setLong(11, value.recordVersion)
+            statement.setLong(12, value.checkpointedAtEpochMilli)
+            statement.setLong(13, value.checkpointedAtEpochMilli)
+            statement.setLong(14, value.updatedAtEpochMilli)
+            check(statement.executeUpdate() == 1) { "Workflow mention checkpoint insert failed." }
+        }
+    }
+
+    private fun updateMentionCheckpoint(
+        connection: Connection,
+        previous: WorkflowMentionNotificationCheckpointRecord,
+        value: WorkflowMentionNotificationCheckpointRecord,
+    ): Boolean = connection.prepareStatement(UPDATE_MENTION_CHECKPOINT_SQL).use { statement ->
+        statement.setString(1, value.leaseId)
+        statement.setLong(2, value.fencingToken)
+        statement.setString(3, value.providerRequestDigest)
+        statement.setString(4, value.status.code)
+        setNullableString(statement, 5, value.evidenceDigest)
+        statement.setString(6, value.checkpointDigest)
+        statement.setLong(7, value.recordVersion)
+        statement.setLong(8, value.checkpointedAtEpochMilli)
+        statement.setLong(9, value.updatedAtEpochMilli)
+        statement.setString(10, value.tenantId)
+        statement.setString(11, value.idempotencyKey)
+        statement.setLong(12, previous.recordVersion)
+        statement.setString(13, previous.checkpointDigest)
+        statement.executeUpdate() == 1
+    }
+
+    private fun idempotencyMatchesReservation(
+        row: IdempotencyRow,
+        reservation: WorkflowHumanInputReservation,
+    ): Boolean = row.tenantId == reservation.tenantId && row.idempotencyKey == reservation.idempotencyKey &&
+        row.operation == WorkflowHumanInputOperation.MENTION_NOTIFY.code &&
+        row.requestDigest == reservation.requestDigest && row.leaseId == reservation.leaseId &&
+        row.fencingToken == reservation.fencingToken && row.leaseExpiresAt == reservation.expiresAtEpochMilli
 
     private fun decode(row: IdempotencyRow): WorkflowHumanInputIdempotencyRecord {
         require(row.status == STATUS_COMPLETED && row.resultDigest != null && row.resultPayload != null &&
@@ -608,6 +1009,33 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
                 provider_receipt_digest = ?, receipt_expires_time = ?, record_version = ?, updated_time = ?
             WHERE tenant_id = ? AND id = ? AND record_version = ? AND reservation_status = ?
                 AND lease_id = ? AND fencing_token = ?
+        """
+        private const val RECONCILE_RESERVATION_SQL = """
+            UPDATE fw_wf_human_input_idem
+            SET lease_expires_time = ?, record_version = ?, updated_time = ?
+            WHERE tenant_id = ? AND id = ? AND record_version = ? AND reservation_status = ?
+                AND lease_id = ? AND fencing_token = ?
+        """
+        private const val SELECT_MENTION_CHECKPOINT_SQL = """
+            SELECT tenant_id, idempotency_key, operation_request_digest, lease_id, fencing_token,
+                provider_request_digest, checkpoint_status, evidence_digest, checkpoint_digest,
+                record_version, checkpointed_time, updated_time
+            FROM fw_wf_mention_notification_checkpoint
+            WHERE tenant_id = ? AND idempotency_key = ?
+        """
+        private const val INSERT_MENTION_CHECKPOINT_SQL = """
+            INSERT INTO fw_wf_mention_notification_checkpoint(
+                id, tenant_id, idempotency_key, operation_request_digest, lease_id, fencing_token,
+                provider_request_digest, checkpoint_status, evidence_digest, checkpoint_digest,
+                record_version, checkpointed_time, created_time, updated_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        private const val UPDATE_MENTION_CHECKPOINT_SQL = """
+            UPDATE fw_wf_mention_notification_checkpoint
+            SET lease_id = ?, fencing_token = ?, provider_request_digest = ?, checkpoint_status = ?,
+                evidence_digest = ?, checkpoint_digest = ?, record_version = ?, checkpointed_time = ?,
+                updated_time = ?
+            WHERE tenant_id = ? AND idempotency_key = ? AND record_version = ? AND checkpoint_digest = ?
         """
         private const val INSERT_FORM_SUBMISSION_SQL = """
             INSERT INTO fw_wf_form_submission_ref(

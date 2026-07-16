@@ -50,10 +50,30 @@ class WorkflowHumanInputRuntimeJavaCompatibilityTest {
         };
 
         WorkflowHumanInputReservationResult result = port.reserve(request);
+        WorkflowHumanInputReservation mentionReservation = WorkflowHumanInputReservation.of(
+            "tenant-a",
+            "mention-idempotency-1",
+            WorkflowHumanInputOperation.MENTION_NOTIFY,
+            repeat('b', 64),
+            "mention-lease-1",
+            7L,
+            2_000L
+        );
+        WorkflowMentionNotificationProviderCheckpoint checkpoint =
+            WorkflowMentionNotificationProviderCheckpoint.of(
+                mentionReservation,
+                repeat('c', 64),
+                1_100L
+            );
 
         assertEquals("provider-a", profile.getProviderId());
         assertEquals(WorkflowHumanInputReservationCode.RESERVED, result.getCode());
         assertNotNull(result.getReservation());
+        assertEquals(repeat('c', 64), checkpoint.getProviderRequestDigest());
+        assertEquals(
+            WorkflowMentionNotificationReconciliationResolution.NOT_SENT,
+            WorkflowMentionNotificationReconciliationResolution.NOT_SENT
+        );
     }
 
     private static String repeat(char character, int count) {

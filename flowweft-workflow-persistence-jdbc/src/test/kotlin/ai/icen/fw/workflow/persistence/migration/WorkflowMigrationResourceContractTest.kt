@@ -48,6 +48,64 @@ class WorkflowMigrationResourceContractTest {
         assertEquals("flowweft_workflow_schema_history", WorkflowFlywayMigrationRunner.HISTORY_TABLE)
     }
 
+    @Test
+    fun `official V036 through V038 line owns the same tenant scoped extension inventory`() {
+        val expected = mapOf(
+            36 to setOf("fw_wf_mention_notification_checkpoint"),
+            37 to setOf(
+                "fw_wf_cycle_guard_total",
+                "fw_wf_cycle_guard_cycle",
+                "fw_wf_cycle_guard_receipt",
+            ),
+            38 to setOf("fw_wf_sla_schedule", "fw_wf_sla_milestone"),
+        )
+        val suffixes = mapOf(
+            36 to "fence_workflow_mention_notification_provider_calls",
+            37 to "persist_workflow_cycle_guard",
+            38 to "persist_workflow_sla",
+        )
+        listOf("postgres", "mysql", "kingbase").forEach { dialect ->
+            expected.forEach { (version, expectedTables) ->
+                val path = "/ai/icen/fw/workflow/db/migration/$dialect/" +
+                    "V0${version}__${suffixes.getValue(version)}.sql"
+                val sql = requireNotNull(javaClass.getResource(path)).readText(Charsets.UTF_8)
+                val lower = sql.lowercase()
+                assertEquals(
+                    expectedTables,
+                    TABLE.findAll(sql).map { it.groupValues[1].lowercase() }.toSet(),
+                    "$dialect V0$version table inventory",
+                )
+                assertEquals(
+                    expectedTables.size,
+                    Regex("primary key \\(tenant_id, id\\)", RegexOption.IGNORE_CASE).findAll(sql).count(),
+                    "$dialect V0$version must tenant-scope every primary key",
+                )
+                assertFalse(lower.contains("exit code:"), "$path contains captured command output")
+                assertFalse(lower.contains("wall time:"), "$path contains captured command output")
+            }
+            val v36 = resource(dialect, 36, suffixes.getValue(36))
+            listOf("operation_request_digest", "provider_request_digest", "fencing_token", "record_version")
+                .forEach { assertTrue(v36.contains(it), "$dialect V036 misses $it") }
+            val v37 = resource(dialect, 37, suffixes.getValue(37))
+            listOf(
+                "unique (tenant_id, aggregate_digest)",
+                "unique (tenant_id, scope_digest)",
+                "unique (tenant_id, idempotency_key)",
+            ).forEach { assertTrue(v37.contains(it), "$dialect V037 misses $it") }
+            val v38 = resource(dialect, 38, suffixes.getValue(38))
+            listOf(
+                "unique (tenant_id, schedule_id)",
+                "unique (tenant_id, idempotency_key)",
+                "unique (tenant_id, instance_id, work_item_id)",
+            ).forEach { assertTrue(v38.contains(it), "$dialect V038 misses $it") }
+        }
+    }
+
+    private fun resource(dialect: String, version: Int, suffix: String): String {
+        val path = "/ai/icen/fw/workflow/db/migration/$dialect/V0${version}__$suffix.sql"
+        return requireNotNull(javaClass.getResource(path)).readText(Charsets.UTF_8).lowercase()
+    }
+
     private companion object {
         val TABLE = Regex("CREATE TABLE\\s+(fw_wf_[a-z_]+)", RegexOption.IGNORE_CASE)
         val REQUIRED_TABLES = setOf(

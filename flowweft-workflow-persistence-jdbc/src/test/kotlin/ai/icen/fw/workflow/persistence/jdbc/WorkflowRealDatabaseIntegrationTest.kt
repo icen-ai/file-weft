@@ -62,7 +62,7 @@ abstract class WorkflowRealDatabaseIntegrationContract {
         val isolated = createIsolatedDatabase(namespace)
         try {
             val runner = WorkflowFlywayMigrationRunner(isolated.dataSource, namespace)
-            assertEquals(4, runner.migrate())
+            assertEquals(9, runner.migrate())
             runner.validate()
             isolated.dataSource.connection.use { connection ->
                 assertTrue(tableExists(connection, "fw_wf_instance"))

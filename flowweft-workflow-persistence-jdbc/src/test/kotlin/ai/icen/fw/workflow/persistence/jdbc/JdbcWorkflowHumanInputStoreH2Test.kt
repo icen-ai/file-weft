@@ -19,6 +19,12 @@ import ai.icen.fw.workflow.runtime.WorkflowHumanInputIdempotencyWriteCode
 import ai.icen.fw.workflow.runtime.WorkflowHumanInputOperation
 import ai.icen.fw.workflow.runtime.WorkflowHumanInputReservationCode
 import ai.icen.fw.workflow.runtime.WorkflowHumanInputReservationRequest
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointCode
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationCheckpointStatus
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationOutcomeUnknown
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationProviderCheckpoint
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationReconciliation
+import ai.icen.fw.workflow.runtime.WorkflowMentionNotificationReconciliationResolution
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeValidatedForm
 import ai.icen.fw.workflow.spi.WorkflowFormValidationOperation
 import ai.icen.fw.workflow.spi.WorkflowNotificationDelivery
@@ -193,10 +199,19 @@ class JdbcWorkflowHumanInputStoreH2Test {
             3_000L,
             3_100L,
         )).reservation)
-        assertSame(
-            WorkflowHumanInputIdempotencyWriteCode.STORED,
-            store.complete(notificationReservation, notificationRecord).code,
+        val providerCheckpoint = store.checkpointProviderCall(
+            WorkflowMentionNotificationProviderCheckpoint.of(notificationReservation, DIGEST_B, 3_010L),
         )
+        assertSame(WorkflowMentionNotificationCheckpointCode.APPLIED, providerCheckpoint.code)
+        val accepted = store.reconcileProviderCall(WorkflowMentionNotificationReconciliation.of(
+            assertNotNull(providerCheckpoint.checkpoint),
+            WorkflowMentionNotificationReconciliationResolution.ACCEPTED,
+            notificationRecord,
+            notificationReceipt.receiptDigest,
+            3_030L,
+        ))
+        assertSame(WorkflowMentionNotificationCheckpointCode.APPLIED, accepted.code)
+        assertSame(WorkflowMentionNotificationCheckpointStatus.ACCEPTED, accepted.checkpoint!!.status)
 
         val notificationReplay = store.reserve(reservation(
             "tenant-a",
@@ -232,16 +247,91 @@ class JdbcWorkflowHumanInputStoreH2Test {
         }
     }
 
+    @Test
+    fun `provider checkpoint prevents blind resend until exact not-sent reconciliation`() {
+        val dataSource = dataSource()
+        val store = JdbcWorkflowHumanInputStore(dataSource, WorkflowJdbcDialect.MYSQL)
+        val firstReservation = assertNotNull(store.reserve(reservation(
+            "tenant-a",
+            "notify-idem-unknown",
+            WorkflowHumanInputOperation.MENTION_NOTIFY,
+            DIGEST_C,
+            4_000L,
+            4_100L,
+        )).reservation)
+        val started = store.checkpointProviderCall(
+            WorkflowMentionNotificationProviderCheckpoint.of(firstReservation, DIGEST_D, 4_010L),
+        )
+        assertSame(WorkflowMentionNotificationCheckpointCode.APPLIED, started.code)
+        assertSame(
+            WorkflowMentionNotificationCheckpointCode.REPLAYED,
+            store.checkpointProviderCall(
+                WorkflowMentionNotificationProviderCheckpoint.of(firstReservation, DIGEST_D, 4_010L),
+            ).code,
+        )
+        val unknown = store.markProviderOutcomeUnknown(WorkflowMentionNotificationOutcomeUnknown.of(
+            assertNotNull(started.checkpoint),
+            DIGEST_E,
+            4_020L,
+        ))
+        assertSame(WorkflowMentionNotificationCheckpointCode.APPLIED, unknown.code)
+        assertSame(WorkflowMentionNotificationCheckpointStatus.OUTCOME_UNKNOWN, unknown.checkpoint!!.status)
+
+        val blocked = store.reserve(reservation(
+            "tenant-a",
+            "notify-idem-unknown",
+            WorkflowHumanInputOperation.MENTION_NOTIFY,
+            DIGEST_C,
+            4_100L,
+            4_200L,
+        ))
+        assertSame(WorkflowHumanInputReservationCode.OUTCOME_UNKNOWN, blocked.code)
+        assertNull(blocked.reservation)
+
+        val notSent = store.reconcileProviderCall(WorkflowMentionNotificationReconciliation.of(
+            assertNotNull(unknown.checkpoint),
+            WorkflowMentionNotificationReconciliationResolution.NOT_SENT,
+            null,
+            DIGEST_F,
+            4_110L,
+        ))
+        assertSame(WorkflowMentionNotificationCheckpointCode.APPLIED, notSent.code)
+        assertSame(WorkflowMentionNotificationCheckpointStatus.NOT_SENT, notSent.checkpoint!!.status)
+        val retried = store.reserve(reservation(
+            "tenant-a",
+            "notify-idem-unknown",
+            WorkflowHumanInputOperation.MENTION_NOTIFY,
+            DIGEST_C,
+            4_110L,
+            4_210L,
+        ))
+        assertSame(WorkflowHumanInputReservationCode.RESERVED, retried.code)
+        assertEquals(firstReservation.fencingToken + 1L, retried.reservation!!.fencingToken)
+        val secondStarted = store.checkpointProviderCall(WorkflowMentionNotificationProviderCheckpoint.of(
+            assertNotNull(retried.reservation),
+            DIGEST_A,
+            4_120L,
+        ))
+        assertSame(WorkflowMentionNotificationCheckpointCode.APPLIED, secondStarted.code)
+        assertEquals(notSent.checkpoint!!.recordVersion + 1L, secondStarted.checkpoint!!.recordVersion)
+        assertEquals(DIGEST_A, secondStarted.checkpoint!!.providerRequestDigest)
+        assertNull(store.loadProviderCheckpoint("tenant-b", "notify-idem-unknown", 4_130L))
+    }
+
     private fun dataSource(): JdbcDataSource = JdbcDataSource().apply {
         setURL("jdbc:h2:mem:workflow-human-${System.nanoTime()};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")
         user = "sa"
         password = ""
         connection.use { connection ->
-            val path = "/ai/icen/fw/workflow/db/migration/mysql/V034__persist_workflow_human_input.sql"
-            val resource = requireNotNull(
-                JdbcWorkflowHumanInputStoreH2Test::class.java.getResourceAsStream(path),
-            )
-            InputStreamReader(resource, Charsets.UTF_8).use { reader -> RunScript.execute(connection, reader) }
+            listOf(
+                "/ai/icen/fw/workflow/db/migration/mysql/V034__persist_workflow_human_input.sql",
+                "/ai/icen/fw/workflow/db/migration/mysql/V036__fence_workflow_mention_notification_provider_calls.sql",
+            ).forEach { path ->
+                val resource = requireNotNull(
+                    JdbcWorkflowHumanInputStoreH2Test::class.java.getResourceAsStream(path),
+                )
+                InputStreamReader(resource, Charsets.UTF_8).use { reader -> RunScript.execute(connection, reader) }
+            }
         }
     }
 
