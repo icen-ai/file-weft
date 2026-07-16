@@ -79,6 +79,7 @@ version	artifactId	lineage	sourceRef	sourceCommit	jarSha256	apiSha256	exportsSha
 1.0.0	flowweft-observability	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-observability-jdbc	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-reliability-api	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
+1.0.0	flowweft-reliability-persistence-jdbc	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-reliability-runtime	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-reliability-testkit	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
 1.0.0	flowweft-retrieval-api	new-physical	v1.0.0	PENDING	PENDING	PENDING	PENDING	pending
