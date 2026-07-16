@@ -3,6 +3,7 @@ package ai.icen.fw.agent.workflow;
 import ai.icen.fw.agent.api.AgentRunContext;
 import ai.icen.fw.agent.api.ProviderId;
 import ai.icen.fw.core.id.Identifier;
+import ai.icen.fw.workflow.web.api.WorkflowWebApplicationResult;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkflowAgentToolsJavaCompatibilityTest {
     @Test
@@ -53,6 +55,40 @@ class WorkflowAgentToolsJavaCompatibilityTest {
         assertNotNull(suite.executor(WorkflowAgentOperation.TERMINATE_INSTANCE.getToolId()));
         assertNotNull(new WorkflowAgentToolPlanResolver(
             catalog,
+            new ProviderId("authorization.java"),
+            new ProviderId("policy.java")
+        ));
+
+        WorkflowAgentPublicToolDirectory publicDirectory = new WorkflowAgentPublicToolDirectory();
+        assertEquals(33, publicDirectory.getEntries().size());
+        assertEquals(64, publicDirectory.getDirectoryDigest().length());
+        WorkflowAgentUseCaseDescriptor publish = publicDirectory.entry("publishWorkflowDefinition");
+        assertNotNull(publish);
+        assertTrue(publish.getConfirmationRequired());
+
+        WorkflowAgentPublicAuthorizationTarget publicTarget =
+            WorkflowAgentPublicAuthorizationTarget.decode(
+                publicDirectory,
+                publish.getToolId(),
+                publicPublishArguments()
+            );
+        assertEquals("workflow.definition.publish", publicTarget.getAction());
+        assertEquals("definition-java", publicTarget.getResourceId());
+
+        WorkflowAgentPublicApplicationPortRegistry publicRegistry =
+            new WorkflowAgentPublicApplicationPortRegistry(
+                publicDirectory,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ignored -> WorkflowWebApplicationResult.unsupported()
+            );
+        assertEquals(1, publicRegistry.descriptors(context).getDescriptors().size());
+        assertEquals(1, publicRegistry.snapshot().getAvailableCount());
+        assertNotNull(new WorkflowAgentPublicToolPlanResolver(
+            publicDirectory,
             new ProviderId("authorization.java"),
             new ProviderId("policy.java")
         ));
@@ -129,6 +165,16 @@ class WorkflowAgentToolsJavaCompatibilityTest {
             "\"operation\":\"workflow.definition.publish\",\"payload\":{}," +
             "\"purpose\":\"publish-java\",\"resourceId\":\"definition-java\"," +
             "\"resourceType\":\"workflow-definition\",\"workItemId\":\"-\"}";
+        return json.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] publicPublishArguments() {
+        String json = "{\"applicationContractVersion\":" +
+            "\"flowweft.workflow.web.application.v1\",\"executionNonce\":\"nonce-java\"," +
+            "\"expectedResourceVersion\":1,\"idempotencyKey\":\"idem-java\"," +
+            "\"operationId\":\"publishWorkflowDefinition\",\"payload\":{}," +
+            "\"purpose\":\"publish-java\",\"resourceId\":\"definition-java\"," +
+            "\"resourceType\":\"workflow-definition\"}";
         return json.getBytes(StandardCharsets.UTF_8);
     }
 
