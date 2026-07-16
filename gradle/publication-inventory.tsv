@@ -40,6 +40,7 @@ flowweft-workflow-domain	jar	new-physical	8
 flowweft-workflow-reference-templates	jar	new-physical	8
 flowweft-workflow-runtime	jar	new-physical	8
 flowweft-workflow-cycle-guard-runtime	jar	new-physical	8
+flowweft-workflow-cycle-guard-persistence-jdbc	jar	new-physical	8
 flowweft-workflow-sla-runtime	jar	new-physical	8
 flowweft-workflow-document-adapter	jar	new-physical	8
 flowweft-workflow-document-fileweft-adapter	jar	new-physical	8
