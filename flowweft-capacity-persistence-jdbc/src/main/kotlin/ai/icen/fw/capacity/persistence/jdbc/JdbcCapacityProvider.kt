@@ -446,10 +446,15 @@ class JdbcCapacityProvider @JvmOverloads constructor(
             )
             val reservation = loadReservation(connection, tenantId, request.lease.reservationId.value, true)
                 ?: return@transaction failIntent(connection, tenantId, intentId, CapacityProviderErrorCode.NOT_FOUND, now)
-            if (reservation.status != RESERVATION_ACTIVE || reservation.lease.leaseDigest != request.lease.leaseDigest ||
-                !reservation.lease.isCurrent(now)
+            if (reservation.status != RESERVATION_ACTIVE || !reservation.lease.isCurrent(now)
             ) return@transaction failIntent(
                 connection, tenantId, intentId, CapacityProviderErrorCode.LEASE_EXPIRED, now,
+            )
+            if (reservation.lease.leaseDigest != request.lease.leaseDigest ||
+                reservation.lease.stateVersion != request.lease.stateVersion ||
+                reservation.lease.fencingToken != request.lease.fencingToken
+            ) return@transaction failIntent(
+                connection, tenantId, intentId, CapacityProviderErrorCode.STATE_CONFLICT, now,
             )
             val state = loadState(connection, tenantId, reservation.stateId, true)
                 ?: return@transaction failIntent(connection, tenantId, intentId, CapacityProviderErrorCode.NOT_FOUND, now)
@@ -526,10 +531,15 @@ class JdbcCapacityProvider @JvmOverloads constructor(
             )
             val reservation = loadReservation(connection, tenantId, request.lease.reservationId.value, true)
                 ?: return@transaction failIntent(connection, tenantId, intentId, CapacityProviderErrorCode.NOT_FOUND, now)
-            if (reservation.status != RESERVATION_ACTIVE || reservation.lease.leaseDigest != request.lease.leaseDigest ||
-                !reservation.lease.isCurrent(now)
+            if (reservation.status != RESERVATION_ACTIVE || !reservation.lease.isCurrent(now)
             ) return@transaction failIntent(
                 connection, tenantId, intentId, CapacityProviderErrorCode.LEASE_EXPIRED, now,
+            )
+            if (reservation.lease.leaseDigest != request.lease.leaseDigest ||
+                reservation.lease.stateVersion != request.lease.stateVersion ||
+                reservation.lease.fencingToken != request.lease.fencingToken
+            ) return@transaction failIntent(
+                connection, tenantId, intentId, CapacityProviderErrorCode.STATE_CONFLICT, now,
             )
             val state = loadState(connection, tenantId, reservation.stateId, true)
                 ?: return@transaction failIntent(connection, tenantId, intentId, CapacityProviderErrorCode.NOT_FOUND, now)
