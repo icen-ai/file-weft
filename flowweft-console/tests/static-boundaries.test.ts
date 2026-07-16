@@ -23,6 +23,7 @@ describe("static security and route boundaries", () => {
     }
     const documents = readFileSync(join(routeRoot, "documents", "page.tsx"), "utf8");
     expect(documents).toContain("getDocumentPage");
+    expect(documents).toContain("getDocumentDetail");
     expect(documents).toContain("DocumentWorkbench");
     const doctor = readFileSync(join(routeRoot, "doctor", "page.tsx"), "utf8");
     expect(doctor).toContain("getSystemDoctorReport");

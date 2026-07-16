@@ -4,6 +4,7 @@ import { z } from "zod";
 import type {
   ConsoleApprovalInboxPage,
   ConsoleApprovalInboxQuery,
+  ConsoleDocumentDetail,
   ConsoleDocumentPage,
   ConsoleDocumentPageQuery,
   ConsoleDoctorStatus,
@@ -18,14 +19,15 @@ const safeText = (maximumLength: number) => z.string().min(1).max(maximumLength)
   .regex(/^[^\u0000-\u001f\u007f]+$/u);
 const optionalOpaqueText = (maximumLength: number) => z.string().min(1).max(maximumLength)
   .regex(/^[^\s\u0000-\u001f\u007f]+$/u).nullable();
+const epochMillis = z.number().int().min(0).max(8_640_000_000_000_000);
 
 const documentSummarySchema = z.object({
   id: safeText(128),
   documentNumber: safeText(128),
   title: safeText(512),
   lifecycleState: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/u),
-  createdTime: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  updatedTime: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  createdTime: epochMillis,
+  updatedTime: epochMillis,
   currentVersionId: optionalOpaqueText(128),
   folderId: safeText(512).nullable(),
 }).strict().refine((value) => value.updatedTime >= value.createdTime);
@@ -45,6 +47,33 @@ const successEnvelopeSchema = z.object({
   code: z.literal("OK"),
   message: safeText(512),
   data: documentPageSchema,
+  error: z.null(),
+  traceId: safeText(128).nullable().optional(),
+}).strict();
+
+const documentVersionSchema = z.object({
+  id: safeText(128),
+  versionNumber: safeText(32),
+  fileName: safeText(512),
+  contentLength: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  createdTime: epochMillis,
+  updatedTime: epochMillis,
+  contentType: safeText(128).nullable(),
+}).strict().refine((value) => value.updatedTime >= value.createdTime);
+const documentDetailSchema = z.object({
+  document: documentSummarySchema,
+  versions: z.array(documentVersionSchema).max(1_000),
+}).strict().superRefine((value, context) => {
+  const versionIds = value.versions.map((version) => version.id);
+  if (new Set(versionIds).size !== versionIds.length ||
+    value.document.currentVersionId !== null && !versionIds.includes(value.document.currentVersionId)) {
+    context.addIssue({ code: "custom", message: "Document detail is internally inconsistent." });
+  }
+});
+const documentDetailEnvelopeSchema = z.object({
+  code: z.literal("OK"),
+  message: safeText(512),
+  data: documentDetailSchema,
   error: z.null(),
   traceId: safeText(128).nullable().optional(),
 }).strict();
@@ -167,6 +196,36 @@ export async function readDocumentPage(
   });
 }
 
+export async function readDocumentDetail(
+  profile: ConsoleSourceProfileDefinition,
+  session: StoredConsoleSession,
+  documentId: string,
+): Promise<ConsoleDocumentDetail> {
+  requireSessionProfile(profile, session);
+  const safeDocumentId = requirePathSegment(documentId, 128);
+  const endpoint = new URL(`/fileweft/v1/documents/${encodeURIComponent(safeDocumentId)}`, profile.baseUrl);
+  let rawResponse: unknown;
+  try {
+    rawResponse = await requestPinnedJson({
+      url: endpoint.toString(),
+      method: "GET",
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+      timeoutMillis: 10_000,
+      allowPrivateNetwork: profile.api?.allowPrivateNetwork ?? false,
+    });
+  } catch {
+    throw new FlowWeftBackendClientError("UPSTREAM_UNAVAILABLE");
+  }
+  const response = documentDetailEnvelopeSchema.safeParse(rawResponse);
+  if (!response.success) {
+    throw new FlowWeftBackendClientError("INVALID_RESPONSE");
+  }
+  return Object.freeze({
+    document: Object.freeze({ ...response.data.data.document }),
+    versions: Object.freeze(response.data.data.versions.map((version) => Object.freeze({ ...version }))),
+  });
+}
+
 export async function readSystemDoctorReport(
   profile: ConsoleSourceProfileDefinition,
   session: StoredConsoleSession,
@@ -262,6 +321,14 @@ function aggregateDoctorStatus(statuses: readonly ConsoleDoctorStatus[]): Consol
 
 function requireOpaqueQuery(value: string, maximumLength: number): string {
   if (value.length < 1 || value.length > maximumLength || /[\s\u0000-\u001f\u007f]/u.test(value)) {
+    throw new FlowWeftBackendClientError("INVALID_REQUEST");
+  }
+  return value;
+}
+
+function requirePathSegment(value: string, maximumLength: number): string {
+  if (value.length < 1 || value.length > maximumLength ||
+    /[\s\u0000-\u001f\u007f/\\?#]/u.test(value)) {
     throw new FlowWeftBackendClientError("INVALID_REQUEST");
   }
   return value;

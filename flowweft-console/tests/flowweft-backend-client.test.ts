@@ -11,6 +11,7 @@ import type { StoredConsoleSession } from "@/server/auth/ConsoleAuthStore";
 import {
   FlowWeftBackendClientError,
   readApprovalInboxPage,
+  readDocumentDetail,
   readDocumentPage,
   readSystemDoctorReport,
 } from "@/server/dal/FlowWeftBackendClient";
@@ -84,6 +85,60 @@ describe("explicit FlowWeft Console document DAL", () => {
     });
     await expect(readDocumentPage(profile, storedSession()))
       .rejects.toBeInstanceOf(FlowWeftBackendClientError);
+  });
+
+  it("reads an exact document detail and rejects a broken current-version chain", async () => {
+    const profile = backendConfig().sourceProfiles[0]!;
+    const detail = {
+      document: {
+        id: "document:legal-1",
+        documentNumber: "FW-LEGAL-1",
+        title: "Retention policy",
+        lifecycleState: "PUBLISHED",
+        createdTime: 1_700_000_000_000,
+        updatedTime: 1_700_000_100_000,
+        currentVersionId: "version-2",
+        folderId: "legal",
+      },
+      versions: [{
+        id: "version-2",
+        versionNumber: "2.0",
+        fileName: "retention-policy.pdf",
+        contentLength: 2_048,
+        createdTime: 1_700_000_100_000,
+        updatedTime: 1_700_000_100_000,
+        contentType: "application/pdf",
+      }],
+    };
+    requestPinnedJsonMock.mockResolvedValueOnce({
+      code: "OK",
+      message: "OK",
+      data: detail,
+      error: null,
+      traceId: "trace-detail",
+    });
+
+    const result = await readDocumentDetail(profile, storedSession(), "document:legal-1");
+
+    expect(result.versions[0]?.fileName).toBe("retention-policy.pdf");
+    expect(Object.isFrozen(result.document)).toBe(true);
+    expect(Object.isFrozen(result.versions)).toBe(true);
+    expect(requestPinnedJsonMock.mock.calls[0]?.[0]).toMatchObject({
+      url: "https://flowweft.example/fileweft/v1/documents/document%3Alegal-1",
+      method: "GET",
+      headers: { Authorization: "Bearer server-only-token" },
+    });
+
+    requestPinnedJsonMock.mockResolvedValueOnce({
+      code: "OK",
+      message: "OK",
+      data: { ...detail, document: { ...detail.document, currentVersionId: "missing-version" } },
+      error: null,
+    });
+    await expect(readDocumentDetail(profile, storedSession(), "document:legal-1"))
+      .rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    await expect(readDocumentDetail(profile, storedSession(), "../other-tenant"))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST" });
   });
 
   it("reads only the redacted system Doctor contract and rejects inconsistent aggregate status", async () => {

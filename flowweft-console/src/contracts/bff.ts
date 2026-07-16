@@ -44,6 +44,21 @@ export interface ConsoleDocumentPageQuery {
   readonly folderId?: string;
 }
 
+export interface ConsoleDocumentVersion {
+  readonly id: string;
+  readonly versionNumber: string;
+  readonly fileName: string;
+  readonly contentLength: number;
+  readonly contentType: string | null;
+  readonly createdTime: number;
+  readonly updatedTime: number;
+}
+
+export interface ConsoleDocumentDetail {
+  readonly document: ConsoleDocumentSummary;
+  readonly versions: readonly ConsoleDocumentVersion[];
+}
+
 export type ConsoleDoctorStatus = "HEALTHY" | "WARNING" | "ERROR" | "SKIPPED";
 
 export interface ConsoleDoctorCheck {

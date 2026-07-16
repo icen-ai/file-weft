@@ -3,6 +3,7 @@ import type {
   ConsoleApprovalInboxPage,
   ConsoleApprovalInboxQuery,
   CapabilitySnapshot,
+  ConsoleDocumentDetail,
   ConsoleDocumentPage,
   ConsoleDocumentPageQuery,
   ConsoleSystemDoctorReport,
@@ -16,6 +17,7 @@ import { cookies } from "next/headers";
 import { readConsoleSession, readStoredConsoleSession } from "@/server/auth/ConsoleSessionAccess";
 import {
   readApprovalInboxPage,
+  readDocumentDetail,
   readDocumentPage,
   readSystemDoctorReport,
 } from "@/server/dal/FlowWeftBackendClient";
@@ -25,6 +27,7 @@ export interface ConsoleDataAccess {
   listSourceProfiles(): Promise<readonly SourceProfileSummary[]>;
   getCapabilitySnapshot(): Promise<CapabilitySnapshot>;
   getDocumentPage(query?: ConsoleDocumentPageQuery): Promise<ConsoleDocumentPage>;
+  getDocumentDetail(documentId: string): Promise<ConsoleDocumentDetail>;
   getSystemDoctorReport(): Promise<ConsoleSystemDoctorReport>;
   getApprovalInboxPage(query?: ConsoleApprovalInboxQuery): Promise<ConsoleApprovalInboxPage>;
 }
@@ -46,6 +49,7 @@ export function createUnavailableConsoleDataAccess(): ConsoleDataAccess {
     listSourceProfiles: async () => unavailable(),
     getCapabilitySnapshot: async () => unavailable(),
     getDocumentPage: async () => unavailable(),
+    getDocumentDetail: async () => unavailable(),
     getSystemDoctorReport: async () => unavailable(),
     getApprovalInboxPage: async () => unavailable(),
   });
@@ -64,6 +68,14 @@ export function createConfiguredConsoleDataAccess(config: ConsoleServerConfig): 
         throw new ConsoleBackendUnavailableError();
       }
       return readDocumentPage(sources.requireDefinition(session.sourceProfileId), session, query);
+    },
+    getDocumentDetail: async (documentId: string) => {
+      const sessionId = (await cookies()).get(config.sessionCookieName)?.value;
+      const session = await readStoredConsoleSession(sessionId);
+      if (!session) {
+        throw new ConsoleBackendUnavailableError();
+      }
+      return readDocumentDetail(sources.requireDefinition(session.sourceProfileId), session, documentId);
     },
     getSystemDoctorReport: async () => {
       const sessionId = (await cookies()).get(config.sessionCookieName)?.value;

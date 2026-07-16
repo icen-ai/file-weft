@@ -34,7 +34,7 @@
 | FW10-036 | 进行中 | 独立 Workflow Web/Boot 2/3、任务中心与运维面 | workflow-only 启动；通用 API；设计/发布/表单/任务/历史/事故/迁移/Doctor 的双语、权限和浏览器 E2E |
 | FW10-040 | 进行中 | 独立 `flowweft-console` 基础与设计系统 | Next.js/BFF、双语、响应式、主题、WCAG 2.2 AA 基础、组件/视觉回归、独立镜像 |
 | FW10-041 | 进行中 | Source profile、OIDC 与宿主账号登录 | PKCE、AES-GCM 共享 Redis session/密钥轮换/原子 TTL 与容量、单副本降级、临时密码交换、无 localStorage token、CSRF/CSP、SSRF allowlist、tenant alias 安全测试；仍需真实 IdP/宿主和 CNB Redis 故障演练证据 |
-| FW10-042 | 未开始 | 文档工作台 | 目录/搜索/文档/版本/续传/metadata/下载/移动/生命周期全流程 Playwright |
+| FW10-042 | 进行中 | 文档工作台 | 已接服务端会话派生权限下的目录/生命周期筛选、分页、文档详情与严格校验版本链，隐藏与不存在保持不可区分；继续补安全下载、续传上传、metadata、受控移动、生命周期 mutation 与全流程 Playwright |
 | FW10-043 | 进行中 | 审批、同步、Doctor、审计与运维 UI | 系统 Doctor 与当前用户审批任务箱已接实时脱敏 DAL；仍需权限隐藏与服务端拒绝、审批 mutation、同步/失败重排/审计和安全导出 E2E |
 | FW10-044 | 进行中 | Agent 对话、检索证据、工具确认、配置和评测 UI | 已建立 framework-neutral Web/Application API 及耐久运行时：25 路由后端编排、精确授权 scope、稳定 digest 幂等、权限过滤引用、一次性确认、secret-reference 配置、Doctor/评测，以及 start/cancel/evaluation 未知结果的只读原操作对账；继续实现 persistence/controller/BFF/Console、流式恢复、能力缺失和双语安全 E2E |
 | FW10-050 | 进行中 | retention、legal hold 与安全删除 | 已建立公开治理契约及 provider-neutral CAS/outbox 七阶段运行时，含 legal-hold 优先、fresh authorization、未知结果原操作对账、Doctor 与指标；继续补持久化/适配器、可控时间、对象/索引删除一致性、审计和三方言实库测试 |
