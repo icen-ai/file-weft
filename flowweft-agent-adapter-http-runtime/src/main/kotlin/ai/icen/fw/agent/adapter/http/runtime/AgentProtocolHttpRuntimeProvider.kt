@@ -473,15 +473,26 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
         call: RuntimeCall,
     ) {
         val decoded = a2aCodec.decode(wire, response)
+        val operationKind = request.invocation.operation.operation
+        val listTasks = operationKind == AgentRemoteOperationKind.A2A_LIST_TASKS
         require(decoded.requestId == wire.requestId && decoded.operationName == wire.operationName &&
-            decoded.nextPageToken == null
+            (listTasks || decoded.nextPageToken == null)
         ) { "A2A response identity differs from the authorized operation." }
         val remoteError = decoded.error
         if (remoteError != null) {
             completeRemoteError(request, observation, null, wire, evidence, remoteError, call)
             return
         }
-        val status = if (request.invocation.operation.operation == AgentRemoteOperationKind.A2A_CANCEL_TASK) {
+        if (listTasks) {
+            val totalSize = requireNotNull(decoded.totalSize)
+            requireNotNull(decoded.pageSize)
+            val boundPageSize = requireNotNull(wire.boundPageSize)
+            val maximumVisibleTasks = requireNotNull(request.invocation.operation.a2aMaximumVisibleTasks)
+            require(decoded.remoteTaskId == null && decoded.remoteMessageId == null &&
+                boundPageSize <= maximumVisibleTasks && totalSize <= maximumVisibleTasks
+            ) { "A2A task list exceeded its subject-authorized disclosure bound." }
+        }
+        val status = if (operationKind == AgentRemoteOperationKind.A2A_CANCEL_TASK) {
             AgentRemoteProtocolResultStatus.CANCELLATION_CONFIRMED
         } else {
             AgentRemoteProtocolResultStatus.SUCCEEDED
@@ -631,8 +642,7 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
     ): AgentRemoteProtocolDispatchResult {
         requireEvidenceIdentity(request, evidence)
         val duration = (evidence.completedAt - request.requestedAt).coerceAtLeast(0L)
-        val boundEvidence = runtimeDigest(
-            "flowweft.agent.http.runtime-result-evidence.v1",
+        val evidenceFields = mutableListOf(
             requireRuntimeSha256(evidenceDigest),
             request.bindingDigest,
             request.profile.profileDigest,
@@ -658,6 +668,23 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
             wire.boundCursor ?: "-",
             evidence.evidenceDigest,
             status.name,
+        )
+        val hasA2aReadBinding = wire.boundTenantRoutingId != null || wire.boundContextId != null ||
+            wire.boundHistoryLength != null || wire.boundPageSize != null || wire.boundIncludeArtifacts != null
+        if (hasA2aReadBinding) {
+            evidenceFields.add(wire.boundTenantRoutingId ?: "-")
+            evidenceFields.add(wire.boundContextId ?: "-")
+            evidenceFields.add((wire.boundHistoryLength ?: -1).toString())
+            evidenceFields.add((wire.boundPageSize ?: -1).toString())
+            evidenceFields.add(wire.boundIncludeArtifacts?.toString() ?: "-")
+        }
+        val boundEvidence = runtimeDigest(
+            if (hasA2aReadBinding) {
+                "flowweft.agent.http.runtime-result-evidence.v2"
+            } else {
+                "flowweft.agent.http.runtime-result-evidence.v1"
+            },
+            *evidenceFields.toTypedArray(),
         )
         return AgentRemoteProtocolDispatchResult(
             ids.nextId("agent-http-result"),
@@ -730,6 +757,33 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
                     payload,
                     requireNotNull(operation.messageId).value,
                     requireNotNull(operation.messageDigest),
+                    tenantRoutingId = operation.a2aTenantRoutingId,
+                    expectedContextId = operation.a2aContextId,
+                )
+            }
+            AgentRemoteOperationKind.A2A_GET_TASK -> {
+                require(operation.protocol == AgentRemoteProtocolKind.A2A &&
+                    a2aCodec.canonicalDigest(payload) == operation.payloadDigest
+                ) { "A2A GetTask request changed after authorization." }
+                a2aCodec.getTask(
+                    requestId,
+                    payload,
+                    operation.payloadDigest,
+                    requireNotNull(operation.remoteTaskId),
+                    requireNotNull(operation.a2aTenantRoutingId),
+                    requireNotNull(operation.a2aContextId),
+                )
+            }
+            AgentRemoteOperationKind.A2A_LIST_TASKS -> {
+                require(operation.protocol == AgentRemoteProtocolKind.A2A &&
+                    a2aCodec.canonicalDigest(payload) == operation.payloadDigest
+                ) { "A2A ListTasks request changed after authorization." }
+                a2aCodec.listTasks(
+                    requestId,
+                    payload,
+                    operation.payloadDigest,
+                    requireNotNull(operation.a2aTenantRoutingId),
+                    requireNotNull(operation.a2aContextId),
                 )
             }
             AgentRemoteOperationKind.A2A_CANCEL_TASK -> {
@@ -738,7 +792,7 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
                 ) { "A2A cancellation payload changed after authorization." }
                 val remoteTaskId = requireNotNull(operation.remoteTaskId)
                 requireCancellationPayload(payload, remoteTaskId)
-                a2aCodec.cancelTask(requestId, remoteTaskId)
+                a2aCodec.cancelTask(requestId, remoteTaskId, operation.a2aTenantRoutingId)
             }
         }
     }
@@ -750,24 +804,46 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
     ) {
         val operation = request.invocation.operation
         require(wire.protocol == operation.protocol && wire.bindingId == request.profile.bindingId &&
-            wire.requestId == request.requestId.value && wire.boundCursor == null
+            wire.requestId == request.requestId.value
         ) { "Agent protocol wire request changed protocol or identity." }
         when (operation.operation) {
             AgentRemoteOperationKind.INITIALIZE -> require(
-                wire.operationName == "initialize" && wire.headers.value("MCP-Session-Id") == null,
+                wire.operationName == "initialize" && wire.headers.value("MCP-Session-Id") == null &&
+                    wire.boundCursor == null,
             ) { "Agent protocol initialization contains an unbound session." }
             AgentRemoteOperationKind.MCP_TOOL_CALL -> require(
                 wire.operationName == "tools/call" && wire.boundToolName == operation.toolId?.value &&
                     wire.boundArgumentsDigest == operation.toolArgumentsDigest &&
-                    wire.headers.value("MCP-Session-Id") == session?.sessionId,
+                    wire.headers.value("MCP-Session-Id") == session?.sessionId && wire.boundCursor == null,
             ) { "MCP wire request changed tool arguments or session." }
             AgentRemoteOperationKind.A2A_SEND_MESSAGE -> require(
                 wire.operationName == "SendMessage" && wire.boundMessageId == operation.messageId?.value &&
-                    wire.boundMessageDigest == operation.messageDigest && wire.boundTaskId == null,
+                    wire.boundMessageDigest == operation.messageDigest && wire.boundTaskId == null &&
+                    wire.boundCursor == null && wire.boundTenantRoutingId == operation.a2aTenantRoutingId &&
+                    wire.boundContextId == operation.a2aContextId,
             ) { "A2A wire request changed message identity." }
+            AgentRemoteOperationKind.A2A_GET_TASK -> require(
+                wire.operationName == "GetTask" && wire.boundTaskId == operation.remoteTaskId &&
+                    wire.boundArgumentsDigest == operation.payloadDigest && wire.boundCursor == null &&
+                    wire.boundTenantRoutingId == operation.a2aTenantRoutingId &&
+                    wire.boundContextId == operation.a2aContextId && wire.boundHistoryLength != null,
+            ) { "A2A wire task read changed task, tenant, context or history bound." }
+            AgentRemoteOperationKind.A2A_LIST_TASKS -> {
+                val boundPageSize = requireNotNull(wire.boundPageSize)
+                val maximumVisibleTasks = requireNotNull(operation.a2aMaximumVisibleTasks)
+                require(
+                    wire.operationName == "ListTasks" && wire.boundTaskId == null &&
+                        wire.boundMessageId == null && wire.boundMessageDigest == null &&
+                        wire.boundArgumentsDigest == operation.payloadDigest &&
+                        wire.boundTenantRoutingId == operation.a2aTenantRoutingId &&
+                        wire.boundContextId == operation.a2aContextId && wire.boundHistoryLength != null &&
+                        boundPageSize <= maximumVisibleTasks && wire.boundIncludeArtifacts != null,
+                ) { "A2A wire task list changed its authorized filters or pagination." }
+            }
             AgentRemoteOperationKind.A2A_CANCEL_TASK -> require(
                 wire.operationName == "CancelTask" && wire.boundTaskId == operation.remoteTaskId &&
-                    wire.boundMessageId == null && wire.boundMessageDigest == null,
+                    wire.boundMessageId == null && wire.boundMessageDigest == null && wire.boundCursor == null &&
+                    wire.boundTenantRoutingId == operation.a2aTenantRoutingId,
             ) { "A2A wire cancellation changed task identity." }
         }
     }
@@ -942,6 +1018,8 @@ class AgentProtocolHttpRuntimeProvider @JvmOverloads constructor(
             AgentRemoteOperationKind.INITIALIZE -> "protocol.initialize"
             AgentRemoteOperationKind.MCP_TOOL_CALL -> "protocol.mcp-tool-call"
             AgentRemoteOperationKind.A2A_SEND_MESSAGE -> "protocol.a2a-send-message"
+            AgentRemoteOperationKind.A2A_GET_TASK -> "protocol.a2a-get-task"
+            AgentRemoteOperationKind.A2A_LIST_TASKS -> "protocol.a2a-list-tasks"
             AgentRemoteOperationKind.A2A_CANCEL_TASK -> "protocol.a2a-cancel-task"
         }
     }

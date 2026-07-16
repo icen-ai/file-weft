@@ -82,6 +82,20 @@ class AgentRemoteProtocolJavaCompatibilityTest {
                 AgentRemoteOperationKind.MCP_TOOL_CALL
             )
         );
+        assertEquals(
+            AgentRemoteProtocolCapabilities.A2A_GET_TASK,
+            AgentRemoteProtocolCapabilities.requiredFor(
+                AgentRemoteProtocolKind.A2A,
+                AgentRemoteOperationKind.A2A_GET_TASK
+            )
+        );
+        assertEquals(
+            AgentRemoteProtocolCapabilities.A2A_LIST_TASKS,
+            AgentRemoteProtocolCapabilities.requiredFor(
+                AgentRemoteProtocolKind.A2A,
+                AgentRemoteOperationKind.A2A_LIST_TASKS
+            )
+        );
         assertNotNull(profile.getProfileDigest());
         assertFalse(profile.toString().contains(endpoint.getHost()));
         assertFalse(credential.toString().contains(credential.getCredentialReference().getValue()));

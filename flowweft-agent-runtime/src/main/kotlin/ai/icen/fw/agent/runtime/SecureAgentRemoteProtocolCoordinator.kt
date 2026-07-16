@@ -922,7 +922,11 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
         request: AgentRemoteProtocolInvocationRequest,
         profile: AgentRemotePeerProfile,
     ) {
-        if (request.operation.operation != ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_CANCEL_TASK) return
+        val operationKind = request.operation.operation
+        if (operationKind != ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_GET_TASK &&
+            operationKind != ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_LIST_TASKS &&
+            operationKind != ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_CANCEL_TASK
+        ) return
         val parentId = requireNotNull(request.operation.parentInvocationId)
         val parentKey = AgentRemoteProtocolInvocationKey(request.operation.context.tenantId, parentId)
         val parent = journal.load(parentKey)
@@ -941,7 +945,14 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
             parent.profile.profileDigest == profile.profileDigest &&
             parent.invocation.operation.operation == ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_SEND_MESSAGE &&
             parent.invocation.operation.bindingDigest == request.operation.parentOperationDigest
-        ) { "Agent remote cancellation parent belongs to another subject, run, peer or operation." }
+        ) { "Agent remote task parent belongs to another subject, run, peer or operation." }
+        if (operationKind == ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_GET_TASK ||
+            operationKind == ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_LIST_TASKS
+        ) {
+            require(parent.invocation.operation.a2aTenantRoutingId == request.operation.a2aTenantRoutingId &&
+                parent.invocation.operation.a2aContextId == request.operation.a2aContextId
+            ) { "Agent remote task read changed its parent tenant route or context." }
+        }
         val parentReconciliation = parent.reconciliationResult
         val parentDispatchResult = parent.lastDispatchResult
         val boundRemoteTaskId = when {
@@ -952,8 +963,10 @@ class SecureAgentRemoteProtocolCoordinator @JvmOverloads constructor(
                 parentDispatchResult.remoteTaskId
             else -> null
         }
-        require(boundRemoteTaskId != null && boundRemoteTaskId == request.operation.remoteTaskId) {
-            "Agent remote cancellation task was not issued by its bound parent operation."
+        if (operationKind != ai.icen.fw.agent.api.AgentRemoteOperationKind.A2A_LIST_TASKS) {
+            require(boundRemoteTaskId != null && boundRemoteTaskId == request.operation.remoteTaskId) {
+                "Agent remote task was not issued by its bound parent operation."
+            }
         }
     }
 

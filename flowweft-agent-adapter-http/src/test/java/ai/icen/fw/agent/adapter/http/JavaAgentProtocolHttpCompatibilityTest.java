@@ -15,7 +15,18 @@ class JavaAgentProtocolHttpCompatibilityTest {
         A2aJsonRpcHttpCodec a2a = new A2aJsonRpcHttpCodec();
 
         AgentProtocolHttpWireRequest mcpRequest = mcp.cancelTask("request-1", "task-secret");
-        AgentProtocolHttpWireRequest a2aRequest = a2a.listTasks("request-2", "cursor-secret", 10);
+        byte[] listPayload = (
+            "{\"tenant\":\"remote-tenant\",\"contextId\":\"context-secret\"," +
+                "\"pageSize\":10,\"pageToken\":\"cursor-secret\",\"historyLength\":0," +
+                "\"includeArtifacts\":false}"
+        ).getBytes(StandardCharsets.UTF_8);
+        AgentProtocolHttpWireRequest a2aRequest = a2a.listTasks(
+            "request-2",
+            listPayload,
+            a2a.canonicalDigest(listPayload),
+            "remote-tenant",
+            "context-secret"
+        );
         AgentProtocolHttpTransport transport = request -> CompletableFuture.completedFuture(
             new AgentProtocolHttpWireResponse(
                 200,
@@ -26,6 +37,7 @@ class JavaAgentProtocolHttpCompatibilityTest {
 
         assertEquals("tasks/cancel", mcpRequest.getOperationName());
         assertEquals("ListTasks", a2aRequest.getOperationName());
+        assertEquals(Integer.valueOf(10), a2aRequest.getBoundPageSize());
         assertFalse(mcpRequest.toString().contains("task-secret"));
         assertFalse(a2aRequest.toString().contains("cursor-secret"));
         assertFalse(transport.toString().isEmpty());

@@ -131,6 +131,11 @@ class AgentProtocolHttpWireRequest internal constructor(
     val boundMessageDigest: String?,
     val boundTaskId: String?,
     val boundCursor: String?,
+    val boundTenantRoutingId: String? = null,
+    val boundContextId: String? = null,
+    val boundHistoryLength: Int? = null,
+    val boundPageSize: Int? = null,
+    val boundIncludeArtifacts: Boolean? = null,
 ) {
     private val bodySnapshot: ByteArray = body.copyOf()
     val bodySizeBytes: Int = bodySnapshot.size
@@ -222,12 +227,31 @@ class AgentProtocolHttpExchangeRequest(
             AgentRemoteOperationKind.A2A_SEND_MESSAGE -> if (
                 wireRequest.operationName != "SendMessage" ||
                 operation.messageId?.value != wireRequest.boundMessageId ||
-                operation.messageDigest != wireRequest.boundMessageDigest
+                operation.messageDigest != wireRequest.boundMessageDigest ||
+                operation.a2aTenantRoutingId != wireRequest.boundTenantRoutingId ||
+                operation.a2aContextId != wireRequest.boundContextId
             ) {
                 codecFailure("http.dispatch.message-mismatch", AgentProtocolHttpErrorKind.IDENTITY_MISMATCH)
             }
+            AgentRemoteOperationKind.A2A_GET_TASK -> if (
+                wireRequest.operationName != "GetTask" || operation.remoteTaskId != wireRequest.boundTaskId ||
+                operation.payloadDigest != wireRequest.boundArgumentsDigest ||
+                operation.a2aTenantRoutingId != wireRequest.boundTenantRoutingId ||
+                operation.a2aContextId != wireRequest.boundContextId
+            ) {
+                codecFailure("http.dispatch.task-read-mismatch", AgentProtocolHttpErrorKind.IDENTITY_MISMATCH)
+            }
+            AgentRemoteOperationKind.A2A_LIST_TASKS -> if (
+                wireRequest.operationName != "ListTasks" || wireRequest.boundTaskId != null ||
+                operation.payloadDigest != wireRequest.boundArgumentsDigest ||
+                operation.a2aTenantRoutingId != wireRequest.boundTenantRoutingId ||
+                operation.a2aContextId != wireRequest.boundContextId
+            ) {
+                codecFailure("http.dispatch.task-list-mismatch", AgentProtocolHttpErrorKind.IDENTITY_MISMATCH)
+            }
             AgentRemoteOperationKind.A2A_CANCEL_TASK -> if (
-                wireRequest.operationName != "CancelTask" || operation.remoteTaskId != wireRequest.boundTaskId
+                wireRequest.operationName != "CancelTask" || operation.remoteTaskId != wireRequest.boundTaskId ||
+                operation.a2aTenantRoutingId != wireRequest.boundTenantRoutingId
             ) {
                 codecFailure("http.dispatch.task-mismatch", AgentProtocolHttpErrorKind.IDENTITY_MISMATCH)
             }

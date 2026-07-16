@@ -30,11 +30,22 @@ class JavaAgentProtocolHttpRuntimeCompatibilityTest {
             4L,
             10L
         );
+        AgentProtocolHttpRuntimeDiagnostic a2aReadDiagnostic = new AgentProtocolHttpRuntimeDiagnostic(
+            new ProviderId("protocol.http"),
+            new ProviderId("peer.a2a"),
+            AgentRemoteProtocolKind.A2A,
+            "protocol.a2a-list-tasks",
+            "protocol.http.succeeded",
+            AgentProtocolHttpRuntimeDiagnosticOutcome.SUCCEEDED,
+            3L,
+            10L
+        );
 
         assertNotNull(configuration.getConfigurationDigest());
         assertEquals("protocol.http.rejected-before-request", failure.getCode());
         assertFalse(failure.getRequestMayHaveReachedPeer());
         assertFalse(diagnostic.toString().contains("https://"));
+        assertEquals("protocol.a2a-list-tasks", a2aReadDiagnostic.getOperation());
         assertNotNull(AgentProtocolHttpRuntimeIdSource.Companion.randomUuid().nextId("agent-http-result"));
         assertEquals("agent.http.session.stateless", AgentProtocolMcpSessionStore.Companion.stateless().storeId().getValue());
         assertTrue(AgentRemoteProtocolProvider.class.isAssignableFrom(AgentProtocolHttpRuntimeProvider.class));

@@ -18,6 +18,8 @@ object AgentRemoteProtocolCapabilities {
     @JvmField val MCP_TASKS_EXPERIMENTAL = AgentCapabilityId("remote.mcp.tasks.experimental")
     @JvmField val A2A_INITIALIZE = AgentCapabilityId("remote.a2a.initialize")
     @JvmField val A2A_SEND_MESSAGE = AgentCapabilityId("remote.a2a.message.send")
+    @JvmField val A2A_GET_TASK = AgentCapabilityId("remote.a2a.task.get")
+    @JvmField val A2A_LIST_TASKS = AgentCapabilityId("remote.a2a.task.list")
     @JvmField val A2A_CANCEL_TASK = AgentCapabilityId("remote.a2a.task.cancel")
 
     @JvmStatic
@@ -36,6 +38,14 @@ object AgentRemoteProtocolCapabilities {
         AgentRemoteOperationKind.A2A_SEND_MESSAGE -> {
             require(protocol == AgentRemoteProtocolKind.A2A) { "A2A messages require the A2A protocol." }
             A2A_SEND_MESSAGE
+        }
+        AgentRemoteOperationKind.A2A_GET_TASK -> {
+            require(protocol == AgentRemoteProtocolKind.A2A) { "A2A task reads require the A2A protocol." }
+            A2A_GET_TASK
+        }
+        AgentRemoteOperationKind.A2A_LIST_TASKS -> {
+            require(protocol == AgentRemoteProtocolKind.A2A) { "A2A task lists require the A2A protocol." }
+            A2A_LIST_TASKS
         }
         AgentRemoteOperationKind.A2A_CANCEL_TASK -> {
             require(protocol == AgentRemoteProtocolKind.A2A) { "A2A cancellation requires the A2A protocol." }
@@ -71,6 +81,8 @@ enum class AgentRemoteOperationKind {
     INITIALIZE,
     MCP_TOOL_CALL,
     A2A_SEND_MESSAGE,
+    A2A_GET_TASK,
+    A2A_LIST_TASKS,
     A2A_CANCEL_TASK,
 }
 
@@ -432,6 +444,9 @@ class AgentRemoteOperationBinding @JvmOverloads constructor(
     parentOperationDigest: String? = null,
     val executorProviderId: ProviderId? = null,
     val executorToolId: ToolId? = null,
+    a2aTenantRoutingId: String? = null,
+    a2aContextId: String? = null,
+    val a2aMaximumVisibleTasks: Int? = null,
 ) {
     val runId: Identifier = requireOpaqueIdentifier(runId, "Agent remote run identifier is invalid.")
     val stepId: Identifier = requireOpaqueIdentifier(stepId, "Agent remote step identifier is invalid.")
@@ -474,6 +489,17 @@ class AgentRemoteOperationBinding @JvmOverloads constructor(
     val parentOperationDigest: String? = parentOperationDigest?.let {
         requireSha256(it, "Agent remote parent operation digest is invalid.")
     }
+    /**
+     * Opaque A2A AgentInterface tenant alias. It is deliberately distinct from the local tenant ID;
+     * both identities are included in [bindingDigest] and re-authorized before every dispatch.
+     */
+    val a2aTenantRoutingId: String? = a2aTenantRoutingId?.let {
+        requireAgentToken(it, AgentContractLimits.MAX_ID_CODE_POINTS, "Agent remote A2A tenant alias is invalid.")
+    }
+    /** Subject-owned A2A context used to prevent task enumeration outside the authorized context. */
+    val a2aContextId: String? = a2aContextId?.let {
+        requireAgentToken(it, AgentContractLimits.MAX_ID_CODE_POINTS, "Agent remote A2A context is invalid.")
+    }
     val bindingDigest: String
 
     init {
@@ -495,26 +521,52 @@ class AgentRemoteOperationBinding @JvmOverloads constructor(
         when (operation) {
             AgentRemoteOperationKind.INITIALIZE -> require(
                 !completeMessage && !completeTool && this.remoteTaskId == null &&
-                    this.parentInvocationId == null && this.parentOperationDigest == null && !completeExecutor,
+                    this.parentInvocationId == null && this.parentOperationDigest == null && !completeExecutor &&
+                    this.a2aTenantRoutingId == null && this.a2aContextId == null &&
+                    this.a2aMaximumVisibleTasks == null,
             ) { "Agent remote initialization contains another operation binding." }
             AgentRemoteOperationKind.MCP_TOOL_CALL -> require(
                 protocol == AgentRemoteProtocolKind.MCP && completeTool && !completeMessage &&
                     completeExecutor &&
                     this.remoteTaskId == null && this.parentInvocationId == null && this.parentOperationDigest == null &&
-                    this.toolArgumentsDigest == payloadDigest,
+                    this.toolArgumentsDigest == payloadDigest && this.a2aTenantRoutingId == null &&
+                    this.a2aContextId == null && this.a2aMaximumVisibleTasks == null,
             ) { "Agent remote MCP tool binding is incomplete or inconsistent." }
             AgentRemoteOperationKind.A2A_SEND_MESSAGE -> require(
                 protocol == AgentRemoteProtocolKind.A2A && completeMessage && !completeTool && completeExecutor &&
                     this.remoteTaskId == null && this.parentInvocationId == null &&
-                    this.parentOperationDigest == null && this.messageDigest == payloadDigest,
+                    this.parentOperationDigest == null && this.messageDigest == payloadDigest &&
+                    this.a2aMaximumVisibleTasks == null,
             ) { "Agent remote A2A message binding is incomplete or inconsistent." }
+            AgentRemoteOperationKind.A2A_GET_TASK -> require(
+                protocol == AgentRemoteProtocolKind.A2A && !completeMessage && !completeTool && completeExecutor &&
+                    this.remoteTaskId != null && this.parentInvocationId != null &&
+                    this.parentOperationDigest != null && this.a2aTenantRoutingId != null &&
+                    this.a2aContextId != null && this.a2aMaximumVisibleTasks == null,
+            ) { "Agent remote A2A task read binding is incomplete or inconsistent." }
+            AgentRemoteOperationKind.A2A_LIST_TASKS -> require(
+                protocol == AgentRemoteProtocolKind.A2A && !completeMessage && !completeTool && completeExecutor &&
+                    this.remoteTaskId == null && this.parentInvocationId != null &&
+                    this.parentOperationDigest != null && this.a2aTenantRoutingId != null &&
+                    this.a2aContextId != null && this.a2aMaximumVisibleTasks != null &&
+                    this.a2aMaximumVisibleTasks in 1..MAX_AGENT_REMOTE_A2A_VISIBLE_TASKS,
+            ) { "Agent remote A2A task-list binding is incomplete or inconsistent." }
             AgentRemoteOperationKind.A2A_CANCEL_TASK -> require(
                 protocol == AgentRemoteProtocolKind.A2A && completeMessage && !completeTool && completeExecutor &&
                     this.remoteTaskId != null && this.parentInvocationId != null &&
-                    this.parentOperationDigest != null && this.messageDigest == payloadDigest,
+                    this.parentOperationDigest != null && this.messageDigest == payloadDigest &&
+                    this.a2aContextId == null && this.a2aMaximumVisibleTasks == null,
             ) { "Agent remote A2A cancellation binding is incomplete or inconsistent." }
         }
-        bindingDigest = AgentDigestBuilder("flowweft.agent.remote.operation-binding.v1")
+        val hasA2aReadExtension = this.a2aTenantRoutingId != null || this.a2aContextId != null ||
+            this.a2aMaximumVisibleTasks != null
+        val operationHasher = AgentDigestBuilder(
+            if (hasA2aReadExtension) {
+                "flowweft.agent.remote.operation-binding.v2"
+            } else {
+                "flowweft.agent.remote.operation-binding.v1"
+            },
+        )
             .add(context.tenantId.value)
             .add(context.principalType)
             .add(context.principalId.value)
@@ -543,7 +595,13 @@ class AgentRemoteOperationBinding @JvmOverloads constructor(
             .add(this.parentOperationDigest ?: "-")
             .add(this.executorProviderId?.value ?: "-")
             .add(this.executorToolId?.value ?: "-")
-            .finish()
+        if (hasA2aReadExtension) {
+            operationHasher
+                .add(this.a2aTenantRoutingId ?: "-")
+                .add(this.a2aContextId ?: "-")
+                .add(this.a2aMaximumVisibleTasks ?: -1)
+        }
+        bindingDigest = operationHasher.finish()
     }
 
     override fun toString(): String =
@@ -627,9 +685,11 @@ class AgentRemoteProtocolInvocationRequest(
             }
             AgentRemoteOperationKind.MCP_TOOL_CALL,
             AgentRemoteOperationKind.A2A_SEND_MESSAGE,
+            AgentRemoteOperationKind.A2A_GET_TASK,
+            AgentRemoteOperationKind.A2A_LIST_TASKS,
             AgentRemoteOperationKind.A2A_CANCEL_TASK -> {
                 val executable = requireNotNull(executableToolInvocation) {
-                    "Agent remote side effects require an approved one-time executable tool context."
+                    "Agent remote non-initialization operations require an approved one-time executable tool context."
                 }
                 val authorized = executable.invocation
                 require(authorized.tenantId == operation.context.tenantId &&
@@ -1327,6 +1387,9 @@ class AgentRemoteProtocolDispatchResult(
             "Failed or outcome-unknown Agent remote result requires a safe failure code."
         }
         val cancellationOperation = request.invocation.operation.operation == AgentRemoteOperationKind.A2A_CANCEL_TASK
+        val getTaskOperation = request.invocation.operation.operation == AgentRemoteOperationKind.A2A_GET_TASK
+        val listTasksOperation = request.invocation.operation.operation == AgentRemoteOperationKind.A2A_LIST_TASKS
+        val readOperation = getTaskOperation || listTasksOperation
         val cancellationStatus = status == AgentRemoteProtocolResultStatus.CANCELLATION_CONFIRMED ||
             status == AgentRemoteProtocolResultStatus.CANCELLATION_REJECTED
         require(if (cancellationOperation) {
@@ -1351,6 +1414,21 @@ class AgentRemoteProtocolDispatchResult(
             require(this.remoteTaskId == request.invocation.operation.remoteTaskId) {
                 "Agent remote cancellation returned another task identifier."
             }
+        }
+        if (getTaskOperation && this.remoteTaskId != null) {
+            require(this.remoteTaskId == request.invocation.operation.remoteTaskId) {
+                "Agent remote task read returned another task identifier."
+            }
+        }
+        if (listTasksOperation) {
+            require(this.remoteTaskId == null) { "Agent remote task list cannot return one privileged task identity." }
+        }
+        if (readOperation) {
+            require(if (status == AgentRemoteProtocolResultStatus.SUCCEEDED) {
+                this.response != null && (!getTaskOperation || this.remoteTaskId != null)
+            } else {
+                this.response == null
+            }) { "Agent remote read response is missing, ambiguous, or attached to a non-success outcome." }
         }
         when (status) {
             AgentRemoteProtocolResultStatus.REDIRECT -> require(
@@ -1632,6 +1710,25 @@ class AgentRemoteProtocolReconciliationResult(
                 "Agent remote cancellation reconciliation returned another task identifier."
             }
         }
+        val getTaskOperation = operation.operation == AgentRemoteOperationKind.A2A_GET_TASK
+        val listTasksOperation = operation.operation == AgentRemoteOperationKind.A2A_LIST_TASKS
+        if (getTaskOperation && this.remoteTaskId != null) {
+            require(this.remoteTaskId == operation.remoteTaskId) {
+                "Agent remote task-read reconciliation returned another task identifier."
+            }
+        }
+        if (listTasksOperation) {
+            require(this.remoteTaskId == null) {
+                "Agent remote task-list reconciliation cannot return one privileged task identity."
+            }
+        }
+        if (getTaskOperation || listTasksOperation) {
+            require(if (outcome == AgentRemoteProtocolReconciliationOutcome.SUCCEEDED) {
+                this.response != null && (!getTaskOperation || this.remoteTaskId != null)
+            } else {
+                this.response == null
+            }) { "Agent remote reconciled read cannot use unknown or failed data as success." }
+        }
         val reconciliationResultDigest = AgentDigestBuilder("flowweft.agent.remote.protocol-reconciliation-result.v1")
             .add(this.resultId.value)
             .add(this.requestId.value)
@@ -1748,3 +1845,4 @@ private fun isPublicAgentRemoteIpv4(address: ByteArray): Boolean {
 }
 
 private const val MAX_AGENT_REMOTE_RECONCILIATION_WINDOW_MILLIS: Long = 30L * 24L * 60L * 60L * 1_000L
+private const val MAX_AGENT_REMOTE_A2A_VISIBLE_TASKS: Int = 1_000_000

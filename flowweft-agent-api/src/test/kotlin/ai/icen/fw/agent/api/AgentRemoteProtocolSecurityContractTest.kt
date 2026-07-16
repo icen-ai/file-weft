@@ -206,6 +206,110 @@ class AgentRemoteProtocolSecurityContractTest {
     }
 
     @Test
+    fun `A2A task reads bind owner context capability visibility and one-time execution`() {
+        val context = context()
+        val getPayload = payload("{\"historyLength\":0,\"id\":\"remote-1\",\"tenant\":\"remote-tenant-a\"}")
+        val get = AgentRemoteOperationBinding(
+            context,
+            id("run-1"),
+            id("step-get"),
+            A2A_PEER,
+            AgentRemoteProtocolKind.A2A,
+            AgentRemoteOperationKind.A2A_GET_TASK,
+            getPayload.digest,
+            "agent.remote.task.get",
+            "remote-task",
+            id("remote-resource"),
+            "revision-7",
+            "read delegated task",
+            remoteTaskId = "remote-1",
+            parentInvocationId = id("parent-invocation"),
+            parentOperationDigest = digest("parent-operation"),
+            executorProviderId = LOCAL_PROTOCOL_EXECUTOR,
+            executorToolId = ToolId("remote.a2a.get-task"),
+            a2aTenantRoutingId = "remote-tenant-a",
+            a2aContextId = "context-owned-a",
+        )
+        val listPayload = payload(
+            "{\"contextId\":\"context-owned-a\",\"historyLength\":0,\"includeArtifacts\":false," +
+                "\"pageSize\":25,\"tenant\":\"remote-tenant-a\"}",
+        )
+        val list = AgentRemoteOperationBinding(
+            context,
+            id("run-1"),
+            id("step-list"),
+            A2A_PEER,
+            AgentRemoteProtocolKind.A2A,
+            AgentRemoteOperationKind.A2A_LIST_TASKS,
+            listPayload.digest,
+            "agent.remote.task.list",
+            "remote-task-context",
+            id("context-owned-a"),
+            "revision-9",
+            "list delegated tasks in owned context",
+            parentInvocationId = id("parent-invocation"),
+            parentOperationDigest = digest("parent-operation"),
+            executorProviderId = LOCAL_PROTOCOL_EXECUTOR,
+            executorToolId = ToolId("remote.a2a.list-tasks"),
+            a2aTenantRoutingId = "remote-tenant-a",
+            a2aContextId = "context-owned-a",
+            a2aMaximumVisibleTasks = 100,
+        )
+
+        assertEquals(AgentRemoteProtocolCapabilities.A2A_GET_TASK, AgentRemoteProtocolCapabilities.requiredFor(
+            AgentRemoteProtocolKind.A2A,
+            AgentRemoteOperationKind.A2A_GET_TASK,
+        ))
+        assertEquals(AgentRemoteProtocolCapabilities.A2A_LIST_TASKS, AgentRemoteProtocolCapabilities.requiredFor(
+            AgentRemoteProtocolKind.A2A,
+            AgentRemoteOperationKind.A2A_LIST_TASKS,
+        ))
+        assertNotEquals(get.bindingDigest, list.bindingDigest)
+        assertThrows(IllegalArgumentException::class.java) {
+            AgentRemoteProtocolInvocationRequest(
+                id("get-without-one-time-context"),
+                get,
+                getPayload,
+                AgentRemoteProtocolCapabilities.A2A_GET_TASK,
+                digest("approved-profile"),
+                AUTHORIZATION_PROVIDER,
+                AgentBudget(100, 100, 1, 1, 1_000, 0),
+                AgentUsage(),
+                "get-idempotency",
+                20L,
+                200L,
+                1_000L,
+                1_024,
+                AgentCancellationToken.NONE,
+                null,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AgentRemoteOperationBinding(
+                context,
+                id("run-1"),
+                id("step-list-zero"),
+                A2A_PEER,
+                AgentRemoteProtocolKind.A2A,
+                AgentRemoteOperationKind.A2A_LIST_TASKS,
+                listPayload.digest,
+                "agent.remote.task.list",
+                "remote-task-context",
+                id("context-owned-a"),
+                "revision-9",
+                "list delegated tasks in owned context",
+                parentInvocationId = id("parent-invocation"),
+                parentOperationDigest = digest("parent-operation"),
+                executorProviderId = LOCAL_PROTOCOL_EXECUTOR,
+                executorToolId = ToolId("remote.a2a.list-tasks"),
+                a2aTenantRoutingId = "remote-tenant-a",
+                a2aContextId = "context-owned-a",
+                a2aMaximumVisibleTasks = 0,
+            )
+        }
+    }
+
+    @Test
     fun `MCP tool catalog rejects identity descriptor and argument confusion`() {
         val approvedDigest = digest("tool-v1")
         val profile = mcpProfile(approvedDigest)
