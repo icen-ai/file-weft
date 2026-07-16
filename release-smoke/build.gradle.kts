@@ -74,10 +74,12 @@ val kotlinVersion = "2.1.21"
 val slf4jBoot2Version = "1.7.36"
 val flywayBoot2Version = "8.5.13"
 val flywayBoot3Version = "11.7.2"
+val tomcatBoot3Version = "10.1.57"
+val logbackBoot3Version = "1.5.38"
 
 val publicationInventory = readPublicationInventory(rootDir.resolve("../gradle/publication-inventory.tsv"))
 val publishedJarInventory = publicationInventory.filter { entry -> entry.artifactKind == "jar" }
-val expectedPublishedModules = publishedJarInventory.map { entry -> entry.artifactId }.toSet()
+val expectedFlowWeftModules = publishedJarInventory.map { entry -> entry.artifactId }.toSet()
 val releaseInventory = configurations.create("releaseInventory") {
     isCanBeConsumed = false
     isCanBeResolved = true
@@ -89,11 +91,17 @@ val boot3UnmanagedRuntime = configurations.create("boot3UnmanagedRuntime") {
     isCanBeConsumed = false
     isCanBeResolved = true
 }
+val migrationCliRuntime = configurations.create("migrationCliRuntime") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
 dependencies {
-    expectedPublishedModules.forEach { moduleName ->
+    expectedFlowWeftModules.forEach { moduleName ->
         add(releaseInventory.name, "ai.icen:$moduleName:${project.version}")
     }
     add(boot3UnmanagedRuntime.name, "ai.icen:fileweft-spring-boot3-starter:${project.version}")
+    add(boot3UnmanagedRuntime.name, "ai.icen:fileweft-web-spring-boot3-starter:${project.version}")
+    add(migrationCliRuntime.name, "ai.icen:flowweft-migration-cli:${project.version}")
 }
 
 subprojects {
@@ -182,7 +190,7 @@ project(":boot2-consumer") {
 project(":boot3-consumer") {
     targetJvm(JavaVersion.VERSION_17, JvmTarget.JVM_17, 17)
     dependencies {
-        add("implementation", enforcedPlatform("org.springframework.boot:spring-boot-dependencies:$springBoot3Version"))
+        add("implementation", platform("org.springframework.boot:spring-boot-dependencies:$springBoot3Version"))
         add("implementation", "org.springframework.boot:spring-boot-starter-jdbc")
         add("implementation", "ai.icen:fileweft-spring-boot3-starter:${rootProject.version}")
         add("implementation", "ai.icen:fileweft-web-spring-boot3-starter:${rootProject.version}")
@@ -190,6 +198,7 @@ project(":boot3-consumer") {
         add("testImplementation", "org.junit.jupiter:junit-jupiter")
         add("testRuntimeOnly", "org.junit.platform:junit-platform-launcher")
         add("testRuntimeOnly", "com.h2database:h2")
+
     }
 
     val runtimeClasspath = configurations.named("runtimeClasspath")
@@ -198,10 +207,12 @@ project(":boot3-consumer") {
         description = "Asserts the Boot 3 host resolves one coherent Flyway 11 runtime."
         inputs.files(runtimeClasspath)
         doLast {
-            val flyway = runtimeClasspath.get().incoming.resolutionResult.allComponents
+            val resolvedVersions = runtimeClasspath.get().incoming.resolutionResult.allComponents
                 .mapNotNull { component -> component.moduleVersion }
-                .filter { module -> module.group == "org.flywaydb" }
-                .associate { module -> module.name to module.version }
+                .associate { module -> "${module.group}:${module.name}" to module.version }
+            val flyway = resolvedVersions
+                .filterKeys { coordinate -> coordinate.startsWith("org.flywaydb:") }
+                .mapKeys { (coordinate, _) -> coordinate.substringAfter(':') }
             require(
                 flyway == mapOf(
                     "flyway-core" to flywayBoot3Version,
@@ -210,6 +221,18 @@ project(":boot3-consumer") {
                 ),
             ) {
                 "Boot 3 must resolve one coherent Flyway $flywayBoot3Version runtime, but resolved $flyway"
+            }
+            setOf("tomcat-embed-core", "tomcat-embed-el", "tomcat-embed-websocket").forEach { module ->
+                require(resolvedVersions["org.apache.tomcat.embed:$module"] == tomcatBoot3Version) {
+                    "Boot 3 must resolve $module $tomcatBoot3Version, but resolved " +
+                        resolvedVersions["org.apache.tomcat.embed:$module"]
+                }
+            }
+            setOf("logback-classic", "logback-core").forEach { module ->
+                require(resolvedVersions["ch.qos.logback:$module"] == logbackBoot3Version) {
+                    "Boot 3 must resolve $module $logbackBoot3Version, but resolved " +
+                        resolvedVersions["ch.qos.logback:$module"]
+                }
             }
         }
     }
@@ -243,20 +266,20 @@ project(":library-consumer") {
 
 val verifyReleaseInventory = tasks.register("verifyReleaseInventory") {
     group = "verification"
-    description = "Resolves the exact physical publication inventory from the configured Maven repository."
-    inputs.property("expectedPublishedModules", expectedPublishedModules.sorted())
+    description = "Resolves the exact public FlowWeft module inventory from the configured Maven repository."
+    inputs.property("expectedFlowWeftModules", expectedFlowWeftModules.sorted())
     inputs.files(releaseInventory)
 
     doLast {
-        val resolvedPublishedModules = releaseInventory.resolvedConfiguration.resolvedArtifacts
+        val resolvedFlowWeftModules = releaseInventory.resolvedConfiguration.resolvedArtifacts
             .map { artifact -> artifact.moduleVersion.id }
             .filter { component -> component.group == "ai.icen" && component.version == project.version.toString() }
             .map { component -> component.name }
             .toSet()
-        require(resolvedPublishedModules == expectedPublishedModules) {
-            "Resolved publication inventory differs from the release contract; " +
-                "missing=${expectedPublishedModules - resolvedPublishedModules}, " +
-                "unexpected=${resolvedPublishedModules - expectedPublishedModules}."
+        require(resolvedFlowWeftModules == expectedFlowWeftModules) {
+            "Resolved FlowWeft inventory differs from the release contract; " +
+                "missing=${expectedFlowWeftModules - resolvedFlowWeftModules}, " +
+                "unexpected=${resolvedFlowWeftModules - expectedFlowWeftModules}."
         }
     }
 }
@@ -266,10 +289,12 @@ val verifyUnmanagedBoot3FlywayRuntime = tasks.register("verifyUnmanagedBoot3Flyw
     description = "Proves the published Boot 3 starter keeps Flyway coherent even without a host BOM."
     inputs.files(boot3UnmanagedRuntime)
     doLast {
-        val flyway = boot3UnmanagedRuntime.incoming.resolutionResult.allComponents
+        val resolvedVersions = boot3UnmanagedRuntime.incoming.resolutionResult.allComponents
             .mapNotNull { component -> component.moduleVersion }
-            .filter { module -> module.group == "org.flywaydb" }
-            .associate { module -> module.name to module.version }
+            .associate { module -> "${module.group}:${module.name}" to module.version }
+        val flyway = resolvedVersions
+            .filterKeys { coordinate -> coordinate.startsWith("org.flywaydb:") }
+            .mapKeys { (coordinate, _) -> coordinate.substringAfter(':') }
         require(
             flyway == mapOf(
                 "flyway-core" to flywayBoot3Version,
@@ -279,12 +304,52 @@ val verifyUnmanagedBoot3FlywayRuntime = tasks.register("verifyUnmanagedBoot3Flyw
         ) {
             "Unmanaged Boot 3 consumer must resolve one coherent Flyway $flywayBoot3Version runtime, but resolved $flyway"
         }
+        setOf("tomcat-embed-core", "tomcat-embed-el", "tomcat-embed-websocket").forEach { module ->
+            require(resolvedVersions["org.apache.tomcat.embed:$module"] == tomcatBoot3Version) {
+                "Unmanaged Boot 3 consumer must resolve $module $tomcatBoot3Version, but resolved " +
+                    resolvedVersions["org.apache.tomcat.embed:$module"]
+            }
+        }
+        setOf("logback-classic", "logback-core").forEach { module ->
+            require(resolvedVersions["ch.qos.logback:$module"] == logbackBoot3Version) {
+                "Unmanaged Boot 3 consumer must resolve $module $logbackBoot3Version, but resolved " +
+                    resolvedVersions["ch.qos.logback:$module"]
+            }
+        }
+        require("org.apache.tomcat:tomcat-annotations-api" !in resolvedVersions) {
+            "The patched direct Tomcat dependencies must preserve Spring Boot's tomcat-annotations-api exclusion."
+        }
+    }
+}
+
+val verifyMigrationCliRuntime = tasks.register("verifyMigrationCliRuntime") {
+    group = "verification"
+    description = "Verifies the published migration CLI resolves the patched JDBC runtime without optional OCI SDKs."
+    inputs.files(migrationCliRuntime)
+    doLast {
+        val resolvedVersions = migrationCliRuntime.incoming.resolutionResult.allComponents
+            .mapNotNull { component -> component.moduleVersion }
+            .associate { module -> "${module.group}:${module.name}" to module.version }
+        val expected = mapOf(
+            "org.postgresql:postgresql" to "42.7.11",
+            "com.mysql:mysql-connector-j" to "9.7.0",
+            "com.google.protobuf:protobuf-java" to "4.31.1",
+        )
+        expected.forEach { (coordinate, version) ->
+            require(resolvedVersions[coordinate] == version) {
+                "Migration CLI must resolve $coordinate:$version, but resolved ${resolvedVersions[coordinate]}."
+            }
+        }
+        require(resolvedVersions.keys.none { coordinate -> coordinate.startsWith("com.oracle.oci.sdk:") }) {
+            "Optional MySQL OCI SDK dependencies must not enter the migration CLI runtime: " +
+                resolvedVersions.keys.filter { coordinate -> coordinate.startsWith("com.oracle.oci.sdk:") }
+        }
     }
 }
 
 val verifyGradleModuleMetadataConsumer = tasks.register<GradleBuild>("verifyGradleModuleMetadataConsumer") {
     group = "verification"
-    description = "Resolves FlowWeft through Gradle module metadata and verifies API/runtime/source variants."
+    description = "Cold-resolves FlowWeft through Gradle module metadata and verifies API/runtime/source variants."
     dir = file("gradle-module-consumer")
     tasks = listOf("verifyGradleModuleMetadata")
     startParameter.projectProperties = mapOf(
@@ -324,7 +389,7 @@ val mavenConsumerBuildDirectory = layout.buildDirectory.dir("maven-pom-consumer/
 val mavenConsumerLocalRepository = layout.buildDirectory.dir("maven-pom-consumer/repository")
 val verifyMavenPomConsumer = tasks.register<Exec>("verifyMavenPomConsumer") {
     group = "verification"
-    description = "Test-compiles a Java 8 consumer with Maven CLI using only published FlowWeft POM metadata."
+    description = "Test-compiles a Java 8 consumer with Maven CLI using only published FlowWeft POM dependency metadata."
     workingDir(file("maven-consumer"))
     inputs.files(fileTree("maven-consumer") { include("pom.xml", "src/**/*.java") })
         .withPropertyName("mavenConsumerSources")
@@ -351,10 +416,7 @@ val verifyMavenPomConsumer = tasks.register<Exec>("verifyMavenPomConsumer") {
             commandLine(listOf(executable) + arguments)
         }
         val existingMavenOptions = System.getenv("MAVEN_OPTS").orEmpty().trim()
-        environment(
-            "MAVEN_OPTS",
-            listOf(existingMavenOptions, "-Dfile.encoding=UTF-8").filter(String::isNotEmpty).joinToString(" "),
-        )
+        environment("MAVEN_OPTS", listOf(existingMavenOptions, "-Dfile.encoding=UTF-8").filter(String::isNotEmpty).joinToString(" "))
     }
     doLast {
         val compiledMainConsumer = mavenConsumerBuildDirectory.get().asFile
@@ -370,12 +432,77 @@ val verifyMavenPomConsumer = tasks.register<Exec>("verifyMavenPomConsumer") {
     }
 }
 
+val mavenBoot3BuildDirectory = layout.buildDirectory.dir("maven-boot3-consumer/target")
+val mavenBoot3LocalRepository = layout.buildDirectory.dir("maven-boot3-consumer/repository")
+val verifyMavenBoot3Consumer = tasks.register<Exec>("verifyMavenBoot3Consumer") {
+    group = "verification"
+    description = "Compiles a JDK 17 Maven Boot 3 consumer and verifies its POM-only patched runtime graph."
+    workingDir(file("maven-boot3-consumer"))
+    inputs.files(fileTree("maven-boot3-consumer") { include("pom.xml", "src/**/*.java") })
+        .withPropertyName("mavenBoot3ConsumerSources")
+    inputs.property("fileweftVersion", project.version.toString())
+    inputs.property("fileweftRepositoryUrl", flowWeftRepositoryUrl)
+
+    doFirst {
+        project.delete(mavenBoot3BuildDirectory, mavenBoot3LocalRepository)
+        val arguments = listOf(
+            "-B",
+            "-ntp",
+            "-U",
+            "-Dstyle.color=never",
+            "-Dmaven.repo.local=${mavenBoot3LocalRepository.get().asFile.absolutePath}",
+            "-Dflowweft.version=${project.version}",
+            "-Dflowweft.repository.url=${flowWeftRepositoryUrl.get()}",
+            "-Dflowweft.maven.build.directory=${mavenBoot3BuildDirectory.get().asFile.absolutePath}",
+            "compile",
+        )
+        val executable = mavenExecutable.get().absolutePath
+        if (isWindows) {
+            commandLine(listOf(System.getenv("ComSpec") ?: "cmd.exe", "/d", "/c", executable) + arguments)
+        } else {
+            commandLine(listOf(executable) + arguments)
+        }
+        val existingMavenOptions = System.getenv("MAVEN_OPTS").orEmpty().trim()
+        environment(
+            "MAVEN_OPTS",
+            listOf(existingMavenOptions, "-Dfile.encoding=UTF-8").filter(String::isNotEmpty).joinToString(" "),
+        )
+    }
+    doLast {
+        val compiledConsumer = mavenBoot3BuildDirectory.get().asFile
+            .resolve("classes/ai/icen/fw/release/smoke/maven/MavenBoot3Consumer.class")
+        require(compiledConsumer.isFile && compiledConsumer.length() > 0L) {
+            "Maven Boot 3 consumer did not produce the expected JDK 17 class: ${compiledConsumer.absolutePath}"
+        }
+        val dependencyTreeFile = mavenBoot3BuildDirectory.get().asFile.resolve("dependency-tree.txt")
+        require(dependencyTreeFile.isFile && dependencyTreeFile.length() > 0L) {
+            "Maven Boot 3 consumer did not record its runtime dependency tree."
+        }
+        val dependencyTree = dependencyTreeFile.readText(Charsets.UTF_8)
+        setOf("tomcat-embed-core", "tomcat-embed-el", "tomcat-embed-websocket").forEach { module ->
+            require("org.apache.tomcat.embed:$module:jar:$tomcatBoot3Version" in dependencyTree) {
+                "Maven Boot 3 consumer must resolve $module $tomcatBoot3Version."
+            }
+        }
+        setOf("logback-classic", "logback-core").forEach { module ->
+            require("ch.qos.logback:$module:jar:$logbackBoot3Version" in dependencyTree) {
+                "Maven Boot 3 consumer must resolve $module $logbackBoot3Version."
+            }
+        }
+        require("org.apache.tomcat:tomcat-annotations-api" !in dependencyTree) {
+            "Maven Boot 3 consumer must preserve Spring Boot's tomcat-annotations-api exclusion."
+        }
+    }
+}
+
 tasks.register("releaseSmoke") {
     group = "verification"
-    description = "Verifies POM and Gradle metadata consumers, release inventory, and Boot 2/3 hosts."
+    description = "Verifies POM and Gradle metadata consumers, the release inventory, and Boot 2/3 startup."
     dependsOn(verifyReleaseInventory)
     dependsOn(verifyUnmanagedBoot3FlywayRuntime)
+    dependsOn(verifyMigrationCliRuntime)
     dependsOn(verifyGradleModuleMetadataConsumer)
     dependsOn(verifyMavenPomConsumer)
+    dependsOn(verifyMavenBoot3Consumer)
     dependsOn(subprojects.map { consumerProject -> consumerProject.tasks.named("build") })
 }

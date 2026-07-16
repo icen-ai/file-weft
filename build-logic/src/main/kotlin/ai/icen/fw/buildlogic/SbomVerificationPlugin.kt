@@ -6,7 +6,7 @@ import org.gradle.api.Project
 class SbomVerificationPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create(
-            "fileWeftReleaseSbom",
+            "flowWeftReleaseSbom",
             ReleaseSbomExtension::class.java,
         )
         val aggregateJson = project.layout.buildDirectory.file("reports/cyclonedx/bom.json")

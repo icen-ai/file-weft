@@ -1,1 +1,1 @@
-rootProject.name = "fileweft-build-logic"
+rootProject.name = "flowweft-build-logic"

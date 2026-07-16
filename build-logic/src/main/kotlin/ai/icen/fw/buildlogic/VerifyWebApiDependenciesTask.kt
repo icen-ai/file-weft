@@ -25,7 +25,7 @@ abstract class VerifyWebApiDependenciesTask : DefaultTask() {
         if (forbidden.isNotEmpty()) {
             throw GradleException(
                 "fileweft-web-api must remain a pure transport contract and cannot declare " +
-                    "production dependencies on FileWeft runtime modules or HTTP frameworks:\n" +
+                    "production dependencies on FlowWeft runtime modules or HTTP frameworks:\n" +
                     forbidden.joinToString("\n") { dependency -> "  $dependency" },
             )
         }

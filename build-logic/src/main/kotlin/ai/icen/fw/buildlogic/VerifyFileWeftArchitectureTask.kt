@@ -14,7 +14,7 @@ import org.gradle.api.tasks.TaskAction
 import java.nio.charset.StandardCharsets
 
 /**
- * Source-level dependency guard for FileWeft's inward-only module boundaries.
+ * Source-level dependency guard for FlowWeft's inward-only module boundaries.
  *
  * Import scanning makes an architectural violation actionable before compilation;
  * Gradle project dependencies remain the authoritative dependency graph check.
@@ -135,7 +135,7 @@ abstract class VerifyFileWeftArchitectureTask : DefaultTask() {
 
         if (violations.isNotEmpty()) {
             throw GradleException(
-                "FileWeft architecture boundary violations found:\n${violations.joinToString("\n")}" +
+                "FlowWeft architecture boundary violations found:\n${violations.joinToString("\n")}" +
                     "\nUse an SPI, Java-friendly API type, or move the infrastructure concern to the appropriate outer module.",
             )
         }

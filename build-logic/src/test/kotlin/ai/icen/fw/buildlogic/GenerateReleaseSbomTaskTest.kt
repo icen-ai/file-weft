@@ -187,7 +187,7 @@ class GenerateReleaseSbomTaskTest {
             group = "ai.icen"
             version = "0.0.1"
 
-            extensions.configure<ai.icen.fw.buildlogic.ReleaseSbomExtension>("fileWeftReleaseSbom") {
+            extensions.configure<ai.icen.fw.buildlogic.ReleaseSbomExtension>("flowWeftReleaseSbom") {
                 publishableModuleNames.set(listOf("fileweft-core", "fileweft-spi"))
             }
             """.trimIndent(),
