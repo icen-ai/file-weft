@@ -10,6 +10,7 @@ import ai.icen.fw.workflow.api.WorkflowHumanTaskParticipantRule
 import ai.icen.fw.workflow.api.WorkflowHumanTaskPolicy
 import ai.icen.fw.workflow.api.WorkflowNodeDefinition
 import ai.icen.fw.workflow.api.WorkflowNodeKind
+import ai.icen.fw.workflow.api.WorkflowParticipantMembershipStrategy
 import ai.icen.fw.workflow.api.WorkflowParticipantResolutionStage
 import ai.icen.fw.workflow.api.WorkflowParticipantSelector
 import ai.icen.fw.workflow.api.WorkflowPrincipalRef
@@ -117,6 +118,7 @@ class WorkflowJdbcBinaryCodecTest {
             rule.contentDigest,
             rule.selector.digest,
             rule.approvalPolicy.mode,
+            WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP,
             2,
             2,
             listOf(reviewer, addedSigner),
@@ -205,11 +207,16 @@ class WorkflowJdbcBinaryCodecTest {
         assertEquals("revision-42", decodedCollaboration.humanWorkItems.single()
             .ruleSnapshots.single().organizationSnapshotRevision)
         assertEquals(3, decodedCollaboration.humanWorkItems.single().ruleSnapshots.single().evidenceVersion)
+        assertEquals(
+            WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP,
+            decodedCollaboration.humanWorkItems.single().ruleSnapshots.single().membershipStrategy,
+        )
         assertEquals("provider-revision-7", decodedCollaboration.humanWorkItems.single()
             .ruleSnapshots.single().organizationProviderRevision)
         assertEquals(DIGEST_B, decodedCollaboration.humanWorkItems.single()
             .ruleSnapshots.single().organizationConfirmationReceiptDigest)
         assertFailsWith<IllegalArgumentException> { WorkflowJdbcBinaryCodec.encodeState(activeState, 3) }
+        assertFailsWith<IllegalArgumentException> { WorkflowJdbcBinaryCodec.encodeState(activeState, 4) }
         assertFailsWith<IllegalArgumentException> { WorkflowJdbcBinaryCodec.encodeState(activeState, 2) }
         assertEquals(reviewer, decodedCollaboration.humanWorkItems.single().collaboration.claimOwner)
         assertEquals(addedSigner, decodedCollaboration.humanWorkItems.single().collaboration.activeDelegate)
@@ -245,16 +252,47 @@ class WorkflowJdbcBinaryCodecTest {
         assertEquals(v2.contentDigest, decodedV2.contentDigest)
     }
 
-    private fun definition(withEvidence: Boolean = true): WorkflowDefinition {
+    @Test
+    fun `v5 definition preserves current membership while older formats fail closed`() {
+        val current = definition(true, WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP)
+        val decoded = WorkflowJdbcBinaryCodec.decodeDefinition(
+            WorkflowJdbcBinaryCodec.encodeDefinition(current),
+        )
+        assertEquals(current.contentDigest, decoded.contentDigest)
+        assertEquals(
+            WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP,
+            decoded.nodes.single { it.nodeId == "review" }
+                .humanTaskPolicy!!.participantRules.single().membershipStrategy,
+        )
+        assertFailsWith<IllegalArgumentException> {
+            WorkflowJdbcBinaryCodec.encodeDefinition(current, 4)
+        }
+    }
+
+    private fun definition(
+        withEvidence: Boolean = true,
+        membershipStrategy: WorkflowParticipantMembershipStrategy =
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+    ): WorkflowDefinition {
         val rules = listOf(
             WorkflowHumanTaskParticipantRule.of(
                 WorkflowParticipantSelector.group("legal-reviewers"),
                 WorkflowApprovalPolicy.all(),
+                membershipStrategy,
             ),
         )
         val capabilities = WorkflowHumanTaskCapabilities.of(false, true, true, true)
         val separation = WorkflowSeparationOfDutiesPolicy.of(true, true)
-        val stages = listOf(WorkflowParticipantResolutionStage.ACTIVATION, WorkflowParticipantResolutionStage.DECISION)
+        val stages = if (membershipStrategy == WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP) {
+            listOf(
+                WorkflowParticipantResolutionStage.ACTIVATION,
+                WorkflowParticipantResolutionStage.QUERY,
+                WorkflowParticipantResolutionStage.CLAIM,
+                WorkflowParticipantResolutionStage.DECISION,
+            )
+        } else {
+            listOf(WorkflowParticipantResolutionStage.ACTIVATION, WorkflowParticipantResolutionStage.DECISION)
+        }
         val policy = if (withEvidence) {
             WorkflowHumanTaskPolicy.of(
                 rules,

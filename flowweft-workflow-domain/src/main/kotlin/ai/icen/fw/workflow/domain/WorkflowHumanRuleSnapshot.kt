@@ -1,6 +1,7 @@
 package ai.icen.fw.workflow.domain
 
 import ai.icen.fw.workflow.api.WorkflowApprovalMode
+import ai.icen.fw.workflow.api.WorkflowParticipantMembershipStrategy
 import ai.icen.fw.workflow.api.WorkflowPrincipalRef
 
 /**
@@ -13,6 +14,7 @@ class WorkflowHumanRuleSnapshot private constructor(
     ruleDigest: String,
     selectorDigest: String,
     val approvalMode: WorkflowApprovalMode,
+    val membershipStrategy: WorkflowParticipantMembershipStrategy,
     val denominator: Int,
     val requiredApprovals: Int,
     candidates: Collection<WorkflowPrincipalRef>,
@@ -155,6 +157,10 @@ class WorkflowHumanRuleSnapshot private constructor(
             .text(this.ruleDigest)
             .text(this.selectorDigest)
             .text(approvalMode.code)
+        if (membershipStrategy != WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT) {
+            writer.text(membershipStrategy.code)
+        }
+        writer
             .integer(denominator)
             .integer(requiredApprovals)
             .integer(this.candidates.size)
@@ -200,6 +206,44 @@ class WorkflowHumanRuleSnapshot private constructor(
             ruleDigest,
             selectorDigest,
             approvalMode,
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+            denominator,
+            requiredApprovals,
+            candidates,
+            resolutionDigest,
+            activationReceiptDigest,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            activatedAt,
+        )
+
+        @JvmStatic
+        fun of(
+            ruleIndex: Int,
+            ruleDigest: String,
+            selectorDigest: String,
+            approvalMode: WorkflowApprovalMode,
+            membershipStrategy: WorkflowParticipantMembershipStrategy,
+            denominator: Int,
+            requiredApprovals: Int,
+            candidates: Collection<WorkflowPrincipalRef>,
+            resolutionDigest: String,
+            activationReceiptDigest: String,
+            activatedAt: Long,
+        ): WorkflowHumanRuleSnapshot = WorkflowHumanRuleSnapshot(
+            ruleIndex,
+            ruleDigest,
+            selectorDigest,
+            approvalMode,
+            membershipStrategy,
             denominator,
             requiredApprovals,
             candidates,
@@ -238,6 +282,47 @@ class WorkflowHumanRuleSnapshot private constructor(
             ruleDigest,
             selectorDigest,
             approvalMode,
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+            denominator,
+            requiredApprovals,
+            candidates,
+            resolutionDigest,
+            activationReceiptDigest,
+            organizationAuthority,
+            organizationSnapshotRevision,
+            resolutionRequestDigest,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            activatedAt,
+        )
+
+        @JvmStatic
+        fun organizationBound(
+            ruleIndex: Int,
+            ruleDigest: String,
+            selectorDigest: String,
+            approvalMode: WorkflowApprovalMode,
+            membershipStrategy: WorkflowParticipantMembershipStrategy,
+            denominator: Int,
+            requiredApprovals: Int,
+            candidates: Collection<WorkflowPrincipalRef>,
+            resolutionDigest: String,
+            activationReceiptDigest: String,
+            organizationAuthority: String,
+            organizationSnapshotRevision: String,
+            resolutionRequestDigest: String,
+            activatedAt: Long,
+        ): WorkflowHumanRuleSnapshot = WorkflowHumanRuleSnapshot(
+            ruleIndex,
+            ruleDigest,
+            selectorDigest,
+            approvalMode,
+            membershipStrategy,
             denominator,
             requiredApprovals,
             candidates,
@@ -283,6 +368,54 @@ class WorkflowHumanRuleSnapshot private constructor(
             ruleDigest,
             selectorDigest,
             approvalMode,
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+            denominator,
+            requiredApprovals,
+            candidates,
+            resolutionDigest,
+            activationReceiptDigest,
+            organizationAuthority,
+            organizationSnapshotRevision,
+            resolutionRequestDigest,
+            organizationProviderRevision,
+            organizationSnapshotDigest,
+            organizationSnapshotReceiptDigest,
+            organizationConfirmationRevision,
+            organizationConfirmationSnapshotDigest,
+            organizationConfirmationRequestDigest,
+            organizationConfirmationReceiptDigest,
+            activatedAt,
+        )
+
+        @JvmStatic
+        fun organizationDoubleChecked(
+            ruleIndex: Int,
+            ruleDigest: String,
+            selectorDigest: String,
+            approvalMode: WorkflowApprovalMode,
+            membershipStrategy: WorkflowParticipantMembershipStrategy,
+            denominator: Int,
+            requiredApprovals: Int,
+            candidates: Collection<WorkflowPrincipalRef>,
+            resolutionDigest: String,
+            activationReceiptDigest: String,
+            organizationAuthority: String,
+            organizationSnapshotRevision: String,
+            resolutionRequestDigest: String,
+            organizationProviderRevision: String,
+            organizationSnapshotDigest: String,
+            organizationSnapshotReceiptDigest: String,
+            organizationConfirmationRevision: String,
+            organizationConfirmationSnapshotDigest: String,
+            organizationConfirmationRequestDigest: String,
+            organizationConfirmationReceiptDigest: String,
+            activatedAt: Long,
+        ): WorkflowHumanRuleSnapshot = WorkflowHumanRuleSnapshot(
+            ruleIndex,
+            ruleDigest,
+            selectorDigest,
+            approvalMode,
+            membershipStrategy,
             denominator,
             requiredApprovals,
             candidates,

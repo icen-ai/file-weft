@@ -6,6 +6,7 @@ import ai.icen.fw.workflow.api.WorkflowHumanTaskParticipantRule
 import ai.icen.fw.workflow.api.WorkflowHumanCollaborationAction
 import ai.icen.fw.workflow.api.WorkflowNodeDefinition
 import ai.icen.fw.workflow.api.WorkflowNodeKind
+import ai.icen.fw.workflow.api.WorkflowParticipantMembershipStrategy
 import ai.icen.fw.workflow.api.WorkflowPrincipalRef
 import ai.icen.fw.workflow.api.WorkflowSubjectSnapshot
 import ai.icen.fw.workflow.api.WorkflowTransitionDefinition
@@ -82,6 +83,7 @@ class WorkflowDomainEngine private constructor() {
                             rule.contentDigest,
                             rule.selector.digest,
                             rule.approvalPolicy.mode,
+                            rule.membershipStrategy,
                             denominator,
                             required,
                             receipt.candidates,
@@ -105,6 +107,7 @@ class WorkflowDomainEngine private constructor() {
                             rule.contentDigest,
                             rule.selector.digest,
                             rule.approvalPolicy.mode,
+                            rule.membershipStrategy,
                             denominator,
                             required,
                             receipt.candidates,
@@ -121,6 +124,7 @@ class WorkflowDomainEngine private constructor() {
                             rule.contentDigest,
                             rule.selector.digest,
                             rule.approvalPolicy.mode,
+                            rule.membershipStrategy,
                             denominator,
                             required,
                             receipt.candidates,
@@ -155,15 +159,25 @@ class WorkflowDomainEngine private constructor() {
             }
             val snapshot = workItem.ruleSnapshots.getOrNull(workItem.activeRuleIndex)
                 ?: return rejected(command.code, command.commandDigest, command.context, state, FAILURE_STATE_BINDING)
+            val rule = index.findNode(workItem.nodeId)?.humanTaskPolicy?.participantRules
+                ?.getOrNull(workItem.activeRuleIndex)
+                ?: return rejected(command.code, command.commandDigest, command.context, state, FAILURE_STATE_BINDING)
             val receipt = command.authorizationReceipt
-            if (!decisionReceiptMatches(state, workItem, snapshot, command, receipt) ||
+            if (!decisionReceiptMatches(state, workItem, snapshot, rule, command, receipt) ||
                 receipt.evaluatedAt < state.updatedAt ||
                 command.context.now < receipt.evaluatedAt || command.context.now > receipt.validUntil ||
                 receipt.status != WorkflowAuthorizationStatus.AUTHORIZED
             ) {
                 return rejected(command.code, command.commandDigest, command.context, state, FAILURE_AUTHORIZATION)
             }
-            if (!snapshot.candidates.contains(command.actor)) {
+            val actorCurrentlyEligible = when (rule.membershipStrategy) {
+                WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT ->
+                    snapshot.candidates.contains(command.actor)
+                WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP ->
+                    receipt.hasCurrentMembershipEvidence && receipt.actorCurrentlyEligible == true
+                else -> false
+            }
+            if (!actorCurrentlyEligible) {
                 return rejected(command.code, command.commandDigest, command.context, state, FAILURE_NOT_CANDIDATE)
             }
             if (workItem.collaboration.effectiveActor != null &&
@@ -217,10 +231,12 @@ class WorkflowDomainEngine private constructor() {
             ) {
                 return rejected(command.code, command.commandDigest, command.context, state, FAILURE_AUTHORIZATION)
             }
-            val actorEligible = snapshot.candidates.contains(command.actor) &&
+            val dynamicMembership = snapshot.membershipStrategy ==
+                WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP
+            val actorEligible = (dynamicMembership || snapshot.candidates.contains(command.actor)) &&
                 satisfiesSeparationOfDuties(state, workItem, policy.separationOfDuties, command.actor)
             val targetEligible = command.target?.let { target ->
-                snapshot.candidates.contains(target) &&
+                (dynamicMembership || snapshot.candidates.contains(target)) &&
                     satisfiesSeparationOfDuties(state, workItem, policy.separationOfDuties, target)
             } ?: false
             val semanticFailure = when (command.action) {
@@ -446,6 +462,12 @@ class WorkflowDomainEngine private constructor() {
             val definition = index.definition
             val receipt = command.executionReceipt
             if (definition.schemaVersion != 1) return FAILURE_UNSUPPORTED_SCHEMA
+            if (definition.nodes.any { node ->
+                    node.humanTaskPolicy?.participantRules?.any { rule ->
+                        !rule.membershipStrategy.isBuiltin
+                    } == true
+                }
+            ) return FAILURE_MEMBERSHIP_STRATEGY
             if (command.context.expectedInstanceVersion != 0L ||
                 command.context.idempotencyReceipt.status != WorkflowIdempotencyStatus.FRESH
             ) return FAILURE_START_VERSION
@@ -556,6 +578,7 @@ class WorkflowDomainEngine private constructor() {
                     execution?.nodeId != item.nodeId ||
                     execution.tokenId != item.tokenId ||
                     item.createdAt < state.createdAt || item.updatedAt > state.updatedAt ||
+                    !humanRuleSnapshotsMatchPolicy(item, policy) ||
                     !humanStateMatches(item, execution, token) ||
                     !collaborationStateMatches(state, item, policy)
             }) return FAILURE_STATE_BINDING
@@ -616,7 +639,8 @@ class WorkflowDomainEngine private constructor() {
             }
             if (item.status == WorkflowHumanWorkItemStatus.WAITING_PARTICIPANTS) return false
             val snapshot = item.ruleSnapshots.getOrNull(item.activeRuleIndex) ?: return false
-            return collaboration.assignmentPath.all { principal -> snapshot.candidates.contains(principal) } &&
+            return (snapshot.membershipStrategy == WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP ||
+                collaboration.assignmentPath.all { principal -> snapshot.candidates.contains(principal) }) &&
                 satisfiesSeparationOfDuties(state, item, policy.separationOfDuties, collaboration.claimOwner) &&
                 (collaboration.activeDelegate == null ||
                     satisfiesSeparationOfDuties(state, item, policy.separationOfDuties, collaboration.activeDelegate))
@@ -707,6 +731,7 @@ class WorkflowDomainEngine private constructor() {
             state: WorkflowInstanceState,
             workItem: WorkflowHumanWorkItemState,
             snapshot: WorkflowHumanRuleSnapshot,
+            rule: WorkflowHumanTaskParticipantRule,
             command: WorkflowHumanDecisionCommand,
             receipt: WorkflowHumanDecisionAuthorizationReceipt,
         ): Boolean = commonReceiptMatches(
@@ -722,7 +747,32 @@ class WorkflowDomainEngine private constructor() {
             receipt.actor == command.actor &&
             receipt.decision == command.decision &&
             receipt.activationDigest == snapshot.activationDigest &&
-            receipt.authorizationRequestDigest == command.authorizationRequestDigest
+            receipt.authorizationRequestDigest == command.authorizationRequestDigest &&
+            when (rule.membershipStrategy) {
+                WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT ->
+                    !receipt.hasCurrentMembershipEvidence
+                WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP ->
+                    receipt.hasCurrentMembershipEvidence &&
+                        receipt.membershipStrategy == rule.membershipStrategy &&
+                        receipt.activeRuleDigest == rule.contentDigest &&
+                        receipt.selectorDigest == rule.selector.digest &&
+                        receipt.membershipAuthority == snapshot.organizationAuthority &&
+                        !receipt.membershipRevision.isNullOrBlank() &&
+                        !receipt.membershipRequestDigest.isNullOrBlank() &&
+                        !receipt.membershipResolutionDigest.isNullOrBlank()
+                else -> false
+            }
+
+        private fun humanRuleSnapshotsMatchPolicy(
+            item: WorkflowHumanWorkItemState,
+            policy: ai.icen.fw.workflow.api.WorkflowHumanTaskPolicy,
+        ): Boolean = item.ruleSnapshots.all { snapshot ->
+            val rule = policy.participantRules.getOrNull(snapshot.ruleIndex) ?: return@all false
+            snapshot.ruleDigest == rule.contentDigest &&
+                snapshot.selectorDigest == rule.selector.digest &&
+                snapshot.approvalMode == rule.approvalPolicy.mode &&
+                snapshot.membershipStrategy == rule.membershipStrategy
+        }
 
         private fun collaborationReceiptMatches(
             state: WorkflowInstanceState,
@@ -1914,6 +1964,7 @@ private const val FAILURE_IDEMPOTENT_REPLAY = "idempotent-replay"
 private const val FAILURE_INSUFFICIENT_IDS = "insufficient-command-ids"
 private const val FAILURE_IDENTIFIER_BUDGET = "insufficient-command-ids"
 private const val FAILURE_INSTANCE_TERMINAL = "instance-terminal"
+private const val FAILURE_MEMBERSHIP_STRATEGY = "participant-membership-strategy-unsupported"
 private const val FAILURE_NOT_CANDIDATE = "actor-not-candidate"
 private const val FAILURE_NOT_CLAIMED = "work-item-not-claimed"
 private const val FAILURE_NOT_CLAIM_OWNER = "actor-not-claim-owner"

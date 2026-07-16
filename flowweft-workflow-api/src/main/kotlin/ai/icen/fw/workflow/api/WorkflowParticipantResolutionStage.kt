@@ -23,6 +23,10 @@ class WorkflowParticipantResolutionStage private constructor(code: String) {
         @JvmField
         val ACTIVATION = WorkflowParticipantResolutionStage("activation")
 
+        /** Fresh candidate projection used by an authorization-filtered task query. */
+        @JvmField
+        val QUERY = WorkflowParticipantResolutionStage("query")
+
         @JvmField
         val CLAIM = WorkflowParticipantResolutionStage("claim")
 
@@ -32,6 +36,7 @@ class WorkflowParticipantResolutionStage private constructor(code: String) {
         @JvmStatic
         fun of(code: String): WorkflowParticipantResolutionStage = when (code) {
             ACTIVATION.code -> ACTIVATION
+            QUERY.code -> QUERY
             CLAIM.code -> CLAIM
             DECISION.code -> DECISION
             else -> WorkflowParticipantResolutionStage(code)

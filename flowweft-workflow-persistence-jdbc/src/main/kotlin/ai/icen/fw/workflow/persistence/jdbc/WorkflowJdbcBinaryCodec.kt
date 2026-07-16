@@ -11,6 +11,7 @@ import ai.icen.fw.workflow.api.WorkflowHumanTaskParticipantRule
 import ai.icen.fw.workflow.api.WorkflowHumanTaskPolicy
 import ai.icen.fw.workflow.api.WorkflowNodeDefinition
 import ai.icen.fw.workflow.api.WorkflowNodeKind
+import ai.icen.fw.workflow.api.WorkflowParticipantMembershipStrategy
 import ai.icen.fw.workflow.api.WorkflowParticipantResolutionStage
 import ai.icen.fw.workflow.api.WorkflowParticipantSelector
 import ai.icen.fw.workflow.api.WorkflowParticipantSelectorKind
@@ -50,7 +51,7 @@ import java.nio.charset.StandardCharsets
  * It intentionally reconstructs through public factories, so corrupt or obsolete data fails closed.
  */
 internal object WorkflowJdbcBinaryCodec {
-    private const val FORMAT_VERSION = 4
+    private const val FORMAT_VERSION = 5
     private const val STATE_MAGIC = "FW-WORKFLOW-STATE"
     private const val DEFINITION_MAGIC = "FW-WORKFLOW-DEFINITION"
 
@@ -69,6 +70,13 @@ internal object WorkflowJdbcBinaryCodec {
             workItem.ruleSnapshots.all { snapshot -> snapshot.evidenceVersion < 3 }
         }) {
             "Workflow JDBC v1/v2/v3 cannot encode double-checked organization evidence."
+        }
+        require(formatVersion >= 5 || state.humanWorkItems.all { workItem ->
+            workItem.ruleSnapshots.all { snapshot ->
+                snapshot.membershipStrategy == WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT
+            }
+        }) {
+            "Workflow JDBC v1/v2/v3/v4 cannot encode current-membership semantics."
         }
         return Writer(STATE_MAGIC, formatVersion).apply {
         text(state.tenantId)
@@ -120,6 +128,7 @@ internal object WorkflowJdbcBinaryCodec {
                 text(snapshot.ruleDigest)
                 text(snapshot.selectorDigest)
                 text(snapshot.approvalMode.code)
+                if (formatVersion >= 5) text(snapshot.membershipStrategy.code)
                 integer(snapshot.denominator)
                 integer(snapshot.requiredApprovals)
                 list(snapshot.candidates, ::principal)
@@ -245,6 +254,11 @@ internal object WorkflowJdbcBinaryCodec {
                 val ruleDigest = text()
                 val selectorDigest = text()
                 val mode = WorkflowApprovalMode.of(text())
+                val membershipStrategy = if (formatVersion >= 5) {
+                    WorkflowParticipantMembershipStrategy.of(text())
+                } else {
+                    WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT
+                }
                 val denominator = integer()
                 val requiredApprovals = integer()
                 val candidates = list { principal() }
@@ -279,6 +293,7 @@ internal object WorkflowJdbcBinaryCodec {
                                 ruleDigest,
                                 selectorDigest,
                                 mode,
+                                membershipStrategy,
                                 denominator,
                                 requiredApprovals,
                                 candidates,
@@ -301,6 +316,7 @@ internal object WorkflowJdbcBinaryCodec {
                             ruleDigest,
                             selectorDigest,
                             mode,
+                            membershipStrategy,
                             denominator,
                             requiredApprovals,
                             candidates,
@@ -323,6 +339,7 @@ internal object WorkflowJdbcBinaryCodec {
                             ruleDigest,
                             selectorDigest,
                             mode,
+                            membershipStrategy,
                             denominator,
                             requiredApprovals,
                             candidates,
@@ -370,6 +387,7 @@ internal object WorkflowJdbcBinaryCodec {
                         ruleDigest,
                         selectorDigest,
                         mode,
+                        membershipStrategy,
                         denominator,
                         requiredApprovals,
                         candidates,
@@ -689,10 +707,16 @@ internal object WorkflowJdbcBinaryCodec {
         }
 
         fun humanPolicy(policy: WorkflowHumanTaskPolicy) {
+            require(formatVersion >= 5 || policy.participantRules.all { rule ->
+                rule.membershipStrategy == WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT
+            }) {
+                "Workflow JDBC v1/v2/v3/v4 cannot encode current-membership definitions."
+            }
             list(policy.participantRules) { rule ->
                 selector(rule.selector)
                 text(rule.approvalPolicy.mode.code)
                 nullable(rule.approvalPolicy.requiredApprovals, ::integer)
+                if (formatVersion >= 5) text(rule.membershipStrategy.code)
             }
             output.writeBoolean(policy.capabilities.addSignEnabled)
             output.writeBoolean(policy.capabilities.delegationEnabled)
@@ -788,6 +812,11 @@ internal object WorkflowJdbcBinaryCodec {
                 val selector = selector()
                 val mode = WorkflowApprovalMode.of(text())
                 val required = nullable { integer() }
+                val membershipStrategy = if (formatVersion >= 5) {
+                    WorkflowParticipantMembershipStrategy.of(text())
+                } else {
+                    WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT
+                }
                 val approval = when (mode) {
                     WorkflowApprovalMode.ONE -> WorkflowApprovalPolicy.one()
                     WorkflowApprovalMode.ALL -> WorkflowApprovalPolicy.all()
@@ -796,7 +825,7 @@ internal object WorkflowJdbcBinaryCodec {
                     )
                     else -> throw IllegalArgumentException("Persisted workflow approval mode is unsupported.")
                 }
-                WorkflowHumanTaskParticipantRule.of(selector, approval)
+                WorkflowHumanTaskParticipantRule.of(selector, approval, membershipStrategy)
             }
             val capabilities = WorkflowHumanTaskCapabilities.of(bool(), bool(), bool(), bool())
             val separation = WorkflowSeparationOfDutiesPolicy.of(bool(), bool())

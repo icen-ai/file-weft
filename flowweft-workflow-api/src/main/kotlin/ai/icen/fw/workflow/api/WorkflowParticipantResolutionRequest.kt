@@ -19,6 +19,7 @@ class WorkflowParticipantResolutionRequest private constructor(
     val instance: WorkflowInstanceRef,
     val workItem: WorkflowWorkItemRef,
     val stage: WorkflowParticipantResolutionStage,
+    val membershipStrategy: WorkflowParticipantMembershipStrategy,
     val subject: WorkflowSubjectSnapshot,
     val initiator: WorkflowPrincipalRef,
     val currentActor: WorkflowPrincipalRef,
@@ -108,6 +109,10 @@ class WorkflowParticipantResolutionRequest private constructor(
             .text(workItem.id)
             .longValue(workItem.expectedVersion)
             .text(stage.code)
+        if (membershipStrategy != WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT) {
+            writer.text(membershipStrategy.code)
+        }
+        writer
             .text(subject.ref.type)
             .text(subject.ref.id)
             .text(subject.revision)
@@ -161,6 +166,48 @@ class WorkflowParticipantResolutionRequest private constructor(
             instance,
             workItem,
             stage,
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+            subject,
+            initiator,
+            currentActor,
+            organizationAuthority,
+            organizationSnapshotRevision,
+            selectors,
+            delegationPolicy,
+            null,
+            null,
+            maximumPrincipals,
+            requestedAtEpochMilli,
+            deadlineEpochMilli,
+        )
+
+        @JvmStatic
+        fun of(
+            requestId: String,
+            tenantId: String,
+            definition: WorkflowDefinitionRef,
+            instance: WorkflowInstanceRef,
+            workItem: WorkflowWorkItemRef,
+            stage: WorkflowParticipantResolutionStage,
+            membershipStrategy: WorkflowParticipantMembershipStrategy,
+            subject: WorkflowSubjectSnapshot,
+            initiator: WorkflowPrincipalRef,
+            currentActor: WorkflowPrincipalRef,
+            organizationAuthority: String,
+            organizationSnapshotRevision: String,
+            selectors: List<WorkflowParticipantSelector>,
+            delegationPolicy: WorkflowDelegationPolicy,
+            maximumPrincipals: Int,
+            requestedAtEpochMilli: Long,
+            deadlineEpochMilli: Long,
+        ): WorkflowParticipantResolutionRequest = WorkflowParticipantResolutionRequest(
+            requestId,
+            tenantId,
+            definition,
+            instance,
+            workItem,
+            stage,
+            membershipStrategy,
             subject,
             initiator,
             currentActor,
@@ -207,6 +254,50 @@ class WorkflowParticipantResolutionRequest private constructor(
             instance,
             workItem,
             stage,
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+            subject,
+            initiator,
+            currentActor,
+            organizationAuthority,
+            organizationSnapshotRevision,
+            selectors,
+            delegationPolicy,
+            authorizationAuthorityRevision,
+            authorizationEvidenceDigest,
+            maximumPrincipals,
+            requestedAtEpochMilli,
+            deadlineEpochMilli,
+        )
+
+        @JvmStatic
+        fun authorized(
+            requestId: String,
+            tenantId: String,
+            definition: WorkflowDefinitionRef,
+            instance: WorkflowInstanceRef,
+            workItem: WorkflowWorkItemRef,
+            stage: WorkflowParticipantResolutionStage,
+            membershipStrategy: WorkflowParticipantMembershipStrategy,
+            subject: WorkflowSubjectSnapshot,
+            initiator: WorkflowPrincipalRef,
+            currentActor: WorkflowPrincipalRef,
+            organizationAuthority: String,
+            organizationSnapshotRevision: String,
+            selectors: List<WorkflowParticipantSelector>,
+            delegationPolicy: WorkflowDelegationPolicy,
+            authorizationAuthorityRevision: String,
+            authorizationEvidenceDigest: String,
+            maximumPrincipals: Int,
+            requestedAtEpochMilli: Long,
+            deadlineEpochMilli: Long,
+        ): WorkflowParticipantResolutionRequest = WorkflowParticipantResolutionRequest(
+            requestId,
+            tenantId,
+            definition,
+            instance,
+            workItem,
+            stage,
+            membershipStrategy,
             subject,
             initiator,
             currentActor,

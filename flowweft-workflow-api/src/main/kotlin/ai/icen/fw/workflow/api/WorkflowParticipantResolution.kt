@@ -29,6 +29,7 @@ class WorkflowParticipantResolution private constructor(
     val requestId: String = request.requestId
     val requestDigest: String = request.requestDigest
     val tenantId: String = request.tenantId
+    val membershipStrategy: WorkflowParticipantMembershipStrategy = request.membershipStrategy
     val authority: String = request.organizationAuthority
     val authorityRevision: String = request.organizationSnapshotRevision
     val authorizationAuthorityRevision: String? = request.authorizationAuthorityRevision

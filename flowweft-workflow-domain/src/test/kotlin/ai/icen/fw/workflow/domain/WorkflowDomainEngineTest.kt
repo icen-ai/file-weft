@@ -8,6 +8,7 @@ import ai.icen.fw.workflow.api.WorkflowHumanTaskParticipantRule
 import ai.icen.fw.workflow.api.WorkflowHumanTaskPolicy
 import ai.icen.fw.workflow.api.WorkflowNodeDefinition
 import ai.icen.fw.workflow.api.WorkflowNodeKind
+import ai.icen.fw.workflow.api.WorkflowParticipantMembershipStrategy
 import ai.icen.fw.workflow.api.WorkflowParticipantResolutionStage
 import ai.icen.fw.workflow.api.WorkflowParticipantSelector
 import ai.icen.fw.workflow.api.WorkflowPredicateRef
@@ -26,6 +27,78 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 
 class WorkflowDomainEngineTest {
+    @Test
+    fun `current membership decisions require fresh exact evidence instead of activation candidates`() {
+        val participantRule = WorkflowHumanTaskParticipantRule.of(
+            WorkflowParticipantSelector.group("rotating-reviewers"),
+            WorkflowApprovalPolicy.one(),
+            WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP,
+        )
+        val definition = humanDefinition(
+            listOf(participantRule),
+            listOf(
+                WorkflowParticipantResolutionStage.ACTIVATION,
+                WorkflowParticipantResolutionStage.QUERY,
+                WorkflowParticipantResolutionStage.CLAIM,
+                WorkflowParticipantResolutionStage.DECISION,
+            ),
+        )
+        val index = WorkflowDefinitionIndex.compile(definition)
+        val started = start(index, "dynamic-start", 10L)
+        val activated = activate(index, started.state!!, listOf(ALICE), "dynamic-activate", 20L)
+        val state = activated.state!!
+
+        val missingFreshEvidence = decide(index, state, BOB, "dynamic-legacy", 30L).result
+        assertSame(WorkflowResultCode.REJECTED, missingFreshEvidence.code)
+        assertEquals("authorization-denied", missingFreshEvidence.failureCode)
+
+        val item = state.humanWorkItems.single()
+        val snapshot = item.ruleSnapshots.single()
+        val requestDigest = WorkflowHumanDecisionCommand.authorizationRequestDigest(
+            item.workItemId,
+            BOB,
+            WorkflowHumanDecisionCode.APPROVE,
+            item.revision,
+        )
+        val receipt = WorkflowHumanDecisionAuthorizationReceipt.currentMembership(
+            "dynamic-current-authorization",
+            state.tenantId,
+            state.instanceId,
+            state.definitionId,
+            state.definitionRef,
+            state.subject,
+            item.workItemId,
+            item.activeRuleIndex,
+            BOB,
+            WorkflowHumanDecisionCode.APPROVE,
+            snapshot.activationDigest,
+            requestDigest,
+            WorkflowAuthorizationStatus.AUTHORIZED,
+            "authority-v2",
+            DIGEST_E,
+            participantRule.contentDigest,
+            participantRule.selector.digest,
+            requireNotNull(snapshot.organizationAuthority),
+            "revision-2",
+            DIGEST_A,
+            DIGEST_B,
+            true,
+            30L,
+            130L,
+        )
+        val command = WorkflowHumanDecisionCommand.of(
+            freshContext("dynamic-current", state.version, 30L),
+            item.workItemId,
+            BOB,
+            WorkflowHumanDecisionCode.APPROVE,
+            item.revision,
+            receipt,
+        )
+        val decided = WorkflowDomainEngine.decideHumanTask(index, state, command)
+        assertSame(WorkflowResultCode.APPLIED, decided.code)
+        assertSame(WorkflowInstanceStatus.COMPLETED, decided.state!!.status)
+    }
+
     @Test
     fun `ALL human approval fixes its denominator rejects duplicate actors and replays exact command`() {
         val definition = humanDefinition(
@@ -592,12 +665,16 @@ class WorkflowDomainEngineTest {
         (0 until 32).map { index -> "$prefix-scope-$index" },
     )
 
-    private fun humanDefinition(rules: List<WorkflowHumanTaskParticipantRule>): WorkflowDefinition {
+    private fun humanDefinition(
+        rules: List<WorkflowHumanTaskParticipantRule>,
+        resolutionStages: List<WorkflowParticipantResolutionStage> =
+            listOf(WorkflowParticipantResolutionStage.ACTIVATION),
+    ): WorkflowDefinition {
         val policy = WorkflowHumanTaskPolicy.of(
             rules,
             WorkflowHumanTaskCapabilities.of(false, false, false, false),
             WorkflowSeparationOfDutiesPolicy.of(true, true),
-            listOf(WorkflowParticipantResolutionStage.ACTIVATION),
+            resolutionStages,
         )
         return definition(
             listOf(

@@ -42,6 +42,18 @@ class WorkflowHumanTaskPolicy private constructor(
         require(this.resolutionStages.toSet().size == this.resolutionStages.size) {
             "Workflow human-task resolution stages must be unique."
         }
+        if (this.participantRules.any { rule ->
+                rule.membershipStrategy == WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP
+            }
+        ) {
+            require(
+                this.resolutionStages.contains(WorkflowParticipantResolutionStage.QUERY) &&
+                    this.resolutionStages.contains(WorkflowParticipantResolutionStage.CLAIM) &&
+                    this.resolutionStages.contains(WorkflowParticipantResolutionStage.DECISION),
+            ) {
+                "Current-membership workflow rules require query, claim and decision re-resolution stages."
+            }
+        }
 
         val writer = WorkflowContractSupport.digest(WorkflowContractSupport.HUMAN_TASK_POLICY_DIGEST_DOMAIN)
             .integer(this.participantRules.size)

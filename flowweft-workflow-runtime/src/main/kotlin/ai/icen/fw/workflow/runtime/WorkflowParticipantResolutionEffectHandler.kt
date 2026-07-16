@@ -183,6 +183,7 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
             WorkflowInstanceRef.of(intent.instanceId, request.state.version),
             WorkflowWorkItemRef.of(workItem.workItemId, workItem.revision),
             WorkflowParticipantResolutionStage.ACTIVATION,
+            rule.membershipStrategy,
             intent.subject,
             request.state.initiator,
             request.state.initiator,
@@ -407,6 +408,7 @@ class WorkflowParticipantResolutionEffectHandler @JvmOverloads constructor(
     ): Boolean = result.requestId == request.requestId && result.requestDigest == request.requestDigest &&
         result.tenantId == request.tenantId && result.authority == request.organizationAuthority &&
         result.authorityRevision == request.organizationSnapshotRevision &&
+        result.membershipStrategy == request.membershipStrategy &&
         request.hasAuthorizationEvidence && result.hasAuthorizationEvidence &&
         result.authorizationAuthorityRevision == request.authorizationAuthorityRevision &&
         result.authorizationEvidenceDigest == request.authorizationEvidenceDigest &&

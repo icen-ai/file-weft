@@ -12,6 +12,49 @@ import kotlin.test.assertTrue
 
 class WorkflowParticipantResolutionContractTest {
     @Test
+    fun `membership strategy preserves legacy digests and requires every current-membership boundary`() {
+        val selector = WorkflowParticipantSelector.group("legal-reviewers")
+        val legacy = WorkflowHumanTaskParticipantRule.of(selector, WorkflowApprovalPolicy.one())
+        val explicitLegacy = WorkflowHumanTaskParticipantRule.of(
+            selector,
+            WorkflowApprovalPolicy.one(),
+            WorkflowParticipantMembershipStrategy.ACTIVATION_SNAPSHOT,
+        )
+        val current = WorkflowHumanTaskParticipantRule.of(
+            selector,
+            WorkflowApprovalPolicy.one(),
+            WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP,
+        )
+
+        assertEquals(legacy.contentDigest, explicitLegacy.contentDigest)
+        assertNotEquals(legacy.contentDigest, current.contentDigest)
+        assertTrue(WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP.requiresFreshResolution(
+            WorkflowParticipantResolutionStage.QUERY,
+        ))
+        assertFailsWith<IllegalArgumentException> {
+            WorkflowHumanTaskPolicy.of(
+                listOf(current),
+                WorkflowHumanTaskCapabilities.of(false, false, false, true),
+                WorkflowSeparationOfDutiesPolicy.of(false, false),
+                listOf(WorkflowParticipantResolutionStage.ACTIVATION, WorkflowParticipantResolutionStage.DECISION),
+            )
+        }
+        val policy = WorkflowHumanTaskPolicy.of(
+            listOf(current),
+            WorkflowHumanTaskCapabilities.of(false, false, false, true),
+            WorkflowSeparationOfDutiesPolicy.of(false, false),
+            listOf(
+                WorkflowParticipantResolutionStage.ACTIVATION,
+                WorkflowParticipantResolutionStage.QUERY,
+                WorkflowParticipantResolutionStage.CLAIM,
+                WorkflowParticipantResolutionStage.DECISION,
+            ),
+        )
+        assertSame(WorkflowParticipantMembershipStrategy.CURRENT_MEMBERSHIP,
+            policy.participantRules.single().membershipStrategy)
+    }
+
+    @Test
     fun `tiers snapshot non-empty ordered unique principals and bind origin mapping`() {
         val selector = WorkflowParticipantSelector.group("matrix-group")
         val source = mutableListOf(principal("user-a"), principal("user-b"))
