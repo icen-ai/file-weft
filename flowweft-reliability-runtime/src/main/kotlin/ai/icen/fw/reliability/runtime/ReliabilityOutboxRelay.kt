@@ -52,7 +52,7 @@ class ReliabilityOutboxRelay(
                 ReliabilityOutboxRelayResult.of(ReliabilityOutboxRelayStatus.SIGNAL_FAILED, record)
             } else {
                 val acknowledged = try {
-                    repository.acknowledge(record.outboxId, ownerId, claim.fencingToken)
+                    repository.acknowledge(record.tenantId, record.outboxId, ownerId, claim.fencingToken)
                 } catch (_: RuntimeException) {
                     ReliabilityStoreCode.OUTCOME_UNKNOWN
                 }

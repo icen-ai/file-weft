@@ -375,6 +375,53 @@ class ReliabilityErrorBudgetEvaluation private constructor(
                 request.evaluatedAtEpochMilli,
             )
         }
+
+        /**
+         * Rebuilds a previously validated evaluation from canonical durable fields.
+         * The independently stored digest is mandatory so a partial or corrupted record cannot
+         * silently become current SLO evidence.
+         */
+        @JvmStatic
+        fun rehydrate(
+            requestDigest: String,
+            objectiveDigest: String,
+            state: ReliabilitySloDataState,
+            targetPpm: Long,
+            observedPpm: Long?,
+            observedBadCount: Long?,
+            allowedBadPpm: Long,
+            burnRatePpm: Long?,
+            budgetConsumedPpm: Long?,
+            remainingBudgetPpm: Long?,
+            satisfied: Boolean,
+            failure: ReliabilityFailure?,
+            evaluatedAtEpochMilli: Long,
+            expectedEvaluationDigest: String,
+        ): ReliabilityErrorBudgetEvaluation {
+            val restored = ReliabilityErrorBudgetEvaluation(
+                requestDigest,
+                objectiveDigest,
+                state,
+                targetPpm,
+                observedPpm,
+                observedBadCount,
+                allowedBadPpm,
+                burnRatePpm,
+                budgetConsumedPpm,
+                remainingBudgetPpm,
+                satisfied,
+                failure,
+                evaluatedAtEpochMilli,
+            )
+            val expected = ReliabilityContractSupport.sha256(
+                expectedEvaluationDigest,
+                "Reliability persisted SLO evaluation digest is invalid.",
+            )
+            require(restored.evaluationDigest == expected) {
+                "Reliability persisted SLO evaluation digest does not match its canonical fields."
+            }
+            return restored
+        }
     }
 }
 
@@ -495,6 +542,35 @@ class ReliabilityBurnRateAlert private constructor(
                 pair.first != ReliabilityAlertSeverity.NONE,
                 evaluatedAtEpochMilli,
             )
+        }
+
+        /** Restores a canonical alert and rejects a missing, malformed, or mismatched digest. */
+        @JvmStatic
+        fun rehydrate(
+            policyDigest: String,
+            evaluationDigest: String,
+            severity: ReliabilityAlertSeverity,
+            code: ReliabilityAlertCode,
+            triggered: Boolean,
+            evaluatedAtEpochMilli: Long,
+            expectedAlertDigest: String,
+        ): ReliabilityBurnRateAlert {
+            val restored = ReliabilityBurnRateAlert(
+                policyDigest,
+                evaluationDigest,
+                severity,
+                code,
+                triggered,
+                evaluatedAtEpochMilli,
+            )
+            val expected = ReliabilityContractSupport.sha256(
+                expectedAlertDigest,
+                "Reliability persisted burn alert digest is invalid.",
+            )
+            require(restored.alertDigest == expected) {
+                "Reliability persisted burn alert digest does not match its canonical fields."
+            }
+            return restored
         }
     }
 }

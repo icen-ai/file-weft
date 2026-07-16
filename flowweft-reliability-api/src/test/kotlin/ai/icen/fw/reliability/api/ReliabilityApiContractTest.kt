@@ -438,6 +438,208 @@ class ReliabilityApiContractTest {
     }
 
     @Test
+    fun `durable evidence round trips canonical receipts and rejects a changed digest`() {
+        val fixture = recoveryFixture()
+        val verification = verification(fixture, 160_000L)
+        val restoredVerification = ReliabilityDurableEvidenceFactory.rehydrateVerification(
+            verification.requestDigest,
+            verification.manifestDigest,
+            verification.providerId,
+            verification.providerRevision,
+            verification.status,
+            verification.sealVerified,
+            verification.artifactDigestsVerified,
+            verification.encryptionReferencesVerified,
+            verification.consistentCutVerified,
+            verification.recoveryObjectivesVerified,
+            verification.evidenceDigest,
+            verification.verifiedAtEpochMilli,
+            verification.expiresAtEpochMilli,
+            verification.receiptDigest,
+        )
+
+        val createContext = context(
+            ReliabilityPurpose.CREATE_BACKUP,
+            ReliabilityAction.CREATE_BACKUP,
+            fixture.source.resource,
+            requestedAt = 100_000L,
+            deadline = 120_000L,
+        )
+        val createRequest = ReliabilityBackupCreateRequest.of(
+            createContext,
+            fixture.objectives,
+            ReliabilityVersionFence.of(fixture.source.resource, 1L, digest('7')),
+            100_100L,
+            200_000L,
+        )
+        val backup = ReliabilityBackupCreationReceipt.of(
+            createRequest,
+            fixture.manifest,
+            "provider",
+            "1",
+            digest('8'),
+            100_400L,
+        )
+        val restoredBackup = ReliabilityDurableEvidenceFactory.rehydrateBackupReceipt(
+            backup.requestDigest,
+            backup.manifest,
+            backup.providerId,
+            backup.providerRevision,
+            backup.providerEvidenceDigest,
+            backup.completedAtEpochMilli,
+            backup.receiptDigest,
+        )
+
+        val target = recoveryTarget("durable-restore", ReliabilityEnvironmentKind.RECOVERY)
+        val restoreRequest = restoreRequest(fixture, target, 105_000L, 110_000L)
+        val restore = ReliabilityRestoreReceipt.of(restoreRequest, "provider", "1", digest('9'), 112_000L)
+        val restoredRestore = ReliabilityDurableEvidenceFactory.rehydrateRestoreReceipt(
+            restore.requestDigest,
+            restore.targetBindingDigest,
+            restore.assessment.manifestDigest,
+            restore.providerId,
+            restore.providerRevision,
+            restore.providerEvidenceDigest,
+            restore.completedAtEpochMilli,
+            restore.assessment,
+            restore.receiptDigest,
+        )
+
+        val drillTarget = recoveryTarget("durable-drill", ReliabilityEnvironmentKind.DRILL)
+        val drillContext = context(
+            ReliabilityPurpose.RUN_DRILL,
+            ReliabilityAction.RUN_DRILL,
+            drillTarget.resource,
+            requestedAt = 110_000L,
+            deadline = 150_000L,
+        )
+        val drillRequest = ReliabilityDrillRequest.isolated(
+            drillContext,
+            "durable-drill-1",
+            fixture.manifest,
+            verification,
+            drillTarget,
+            cleanProof(drillTarget, 109_000L, 150_000L),
+            ReliabilityVersionFence.of(drillTarget.resource, 0L, digest('a')),
+            105_000L,
+            110_100L,
+            200_000L,
+        )
+        val drill = ReliabilityDrillReport.of(drillRequest, "provider", "1", digest('b'), 112_000L)
+        val restoredDrill = ReliabilityDurableEvidenceFactory.rehydrateDrillReport(
+            drill.requestDigest,
+            drill.drillId,
+            drill.targetBindingDigest,
+            drill.assessment.manifestDigest,
+            drill.providerId,
+            drill.providerRevision,
+            drill.providerEvidenceDigest,
+            drill.completedAtEpochMilli,
+            drill.assessment,
+            drill.reportDigest,
+        )
+
+        val attempt = ReliabilityOperationAttemptReference.forBackup(
+            createRequest,
+            "provider",
+            "1",
+            "durable-operation-1",
+        )
+        val unknown = ReliabilityOutcomeUnknownReference.of(attempt, digest('c'), 120_100L)
+        val reconcileContext = context(
+            ReliabilityPurpose.RECONCILE,
+            ReliabilityAction.RECONCILE_OPERATION,
+            fixture.source.resource,
+            principal = ReliabilityPrincipalRef.of("service", "reconciler"),
+            requestedAt = 130_000L,
+            deadline = 140_000L,
+        )
+        val reconcileRequest = ReliabilityReconciliationRequest.exactOriginal(
+            reconcileContext,
+            unknown,
+            130_100L,
+        )
+        val reconciliation = ReliabilityReconciliationReceipt.of(
+            reconcileRequest,
+            ReliabilityReconciliationStatus.SUCCEEDED,
+            digest('d'),
+            130_200L,
+        )
+        val restoredReconciliation = ReliabilityDurableEvidenceFactory.rehydrateReconciliationReceipt(
+            reconciliation.requestDigest,
+            reconciliation.originalReferenceDigest,
+            reconciliation.status,
+            reconciliation.providerEvidenceDigest,
+            reconciliation.reconciledAtEpochMilli,
+            reconciliation.receiptDigest,
+        )
+
+        val objective = sloObjective(990_000L)
+        val observation = ReliabilitySliObservation.of(
+            objective.objectiveDigest,
+            8_000L,
+            9_000L,
+            995L,
+            1_000L,
+            9_100L,
+        )
+        val evaluation = ReliabilityErrorBudgetEvaluation.evaluate(sloRequest(objective, observation))
+        val restoredEvaluation = ReliabilityErrorBudgetEvaluation.rehydrate(
+            evaluation.requestDigest,
+            evaluation.objectiveDigest,
+            evaluation.state,
+            evaluation.targetPpm,
+            evaluation.observedPpm,
+            evaluation.observedBadCount,
+            evaluation.allowedBadPpm,
+            evaluation.burnRatePpm,
+            evaluation.budgetConsumedPpm,
+            evaluation.remainingBudgetPpm,
+            evaluation.satisfied,
+            evaluation.failure,
+            evaluation.evaluatedAtEpochMilli,
+            evaluation.evaluationDigest,
+        )
+        val policy = ReliabilityBurnRatePolicy.of(
+            "durable-alert",
+            "1",
+            digest('e'),
+            objective.objectiveDigest,
+            1_000_000L,
+            2_000_000L,
+        )
+        val alert = ReliabilityBurnRateAlert.evaluate(policy, evaluation, evaluation.evaluatedAtEpochMilli)
+        val restoredAlert = ReliabilityBurnRateAlert.rehydrate(
+            alert.policyDigest,
+            alert.evaluationDigest,
+            alert.severity,
+            alert.code,
+            alert.triggered,
+            alert.evaluatedAtEpochMilli,
+            alert.alertDigest,
+        )
+
+        assertEquals(verification.receiptDigest, restoredVerification.receiptDigest)
+        assertEquals(backup.receiptDigest, restoredBackup.receiptDigest)
+        assertEquals(restore.receiptDigest, restoredRestore.receiptDigest)
+        assertEquals(drill.reportDigest, restoredDrill.reportDigest)
+        assertEquals(reconciliation.receiptDigest, restoredReconciliation.receiptDigest)
+        assertEquals(evaluation.evaluationDigest, restoredEvaluation.evaluationDigest)
+        assertEquals(alert.alertDigest, restoredAlert.alertDigest)
+        assertFailsWith<IllegalArgumentException> {
+            ReliabilityDurableEvidenceFactory.rehydrateBackupReceipt(
+                backup.requestDigest,
+                backup.manifest,
+                backup.providerId,
+                backup.providerRevision,
+                backup.providerEvidenceDigest,
+                backup.completedAtEpochMilli,
+                digest('0'),
+            )
+        }
+    }
+
+    @Test
     fun `capability and Doctor evidence fail closed without high-cardinality values`() {
         val resource = ReliabilityResourceRef.of("reliability-system", "tenant-a", "1", digest('1'))
         val capabilityContext = context(

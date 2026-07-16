@@ -112,7 +112,8 @@ enum class ReliabilityManifestVerificationStatus { VALID, INVALID }
  * restore cannot accept an INVALID receipt or one that is stale at the authorized dispatch.
  */
 class ReliabilityManifestVerificationReceipt private constructor(
-    request: ReliabilityBackupVerifyRequest,
+    requestDigest: String,
+    manifestDigest: String,
     providerId: String,
     providerRevision: String,
     val status: ReliabilityManifestVerificationStatus,
@@ -125,8 +126,12 @@ class ReliabilityManifestVerificationReceipt private constructor(
     val verifiedAtEpochMilli: Long,
     val expiresAtEpochMilli: Long,
 ) {
-    val requestDigest: String = request.requestDigest
-    val manifestDigest: String = request.manifest.manifestDigest
+    val requestDigest: String = ReliabilityContractSupport.sha256(
+        requestDigest, "Reliability verification request digest is invalid.",
+    )
+    val manifestDigest: String = ReliabilityContractSupport.sha256(
+        manifestDigest, "Reliability verification manifest digest is invalid.",
+    )
     val providerId: String = ReliabilityContractSupport.code(
         providerId, "Reliability verification provider is invalid.",
     )
@@ -149,9 +154,6 @@ class ReliabilityManifestVerificationReceipt private constructor(
         require(verifiedAtEpochMilli >= 0L && expiresAtEpochMilli > verifiedAtEpochMilli &&
             expiresAtEpochMilli - verifiedAtEpochMilli <= MAX_VERIFICATION_TTL_MILLIS
         ) { "Reliability manifest verification lifetime is invalid." }
-        require(verifiedAtEpochMilli >= request.startedAtEpochMilli &&
-            verifiedAtEpochMilli < request.context.deadlineEpochMilli
-        ) { "Reliability manifest verification completed outside its authorized call window." }
         receiptDigest = ReliabilityContractSupport.digest("flowweft-reliability-api-verification-receipt-v1")
             .text(this.requestDigest)
             .text(this.manifestDigest)
@@ -192,8 +194,44 @@ class ReliabilityManifestVerificationReceipt private constructor(
             evidenceDigest: String,
             verifiedAtEpochMilli: Long,
             expiresAtEpochMilli: Long,
+        ): ReliabilityManifestVerificationReceipt {
+            require(verifiedAtEpochMilli >= request.startedAtEpochMilli &&
+                verifiedAtEpochMilli < request.context.deadlineEpochMilli
+            ) { "Reliability manifest verification completed outside its authorized call window." }
+            return ReliabilityManifestVerificationReceipt(
+                request.requestDigest,
+                request.manifest.manifestDigest,
+                providerId,
+                providerRevision,
+                status,
+                sealVerified,
+                artifactDigestsVerified,
+                encryptionReferencesVerified,
+                consistentCutVerified,
+                recoveryObjectivesVerified,
+                evidenceDigest,
+                verifiedAtEpochMilli,
+                expiresAtEpochMilli,
+            )
+        }
+
+        internal fun rehydrate(
+            requestDigest: String,
+            manifestDigest: String,
+            providerId: String,
+            providerRevision: String,
+            status: ReliabilityManifestVerificationStatus,
+            sealVerified: Boolean,
+            artifactDigestsVerified: Boolean,
+            encryptionReferencesVerified: Boolean,
+            consistentCutVerified: Boolean,
+            recoveryObjectivesVerified: Boolean,
+            evidenceDigest: String,
+            verifiedAtEpochMilli: Long,
+            expiresAtEpochMilli: Long,
         ): ReliabilityManifestVerificationReceipt = ReliabilityManifestVerificationReceipt(
-            request,
+            requestDigest,
+            manifestDigest,
             providerId,
             providerRevision,
             status,

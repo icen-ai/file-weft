@@ -1,14 +1,16 @@
 package ai.icen.fw.reliability.api
 
 class ReliabilityBackupCreationReceipt private constructor(
-    request: ReliabilityBackupCreateRequest,
+    requestDigest: String,
     val manifest: ReliabilityBackupManifest,
     providerId: String,
     providerRevision: String,
     providerEvidenceDigest: String,
     val completedAtEpochMilli: Long,
 ) {
-    val requestDigest: String = request.requestDigest
+    val requestDigest: String = ReliabilityContractSupport.sha256(
+        requestDigest, "Reliability backup request digest is invalid.",
+    )
     val providerId: String = ReliabilityContractSupport.code(providerId, "Reliability backup provider is invalid.")
     val providerRevision: String = ReliabilityContractSupport.text(
         providerRevision, ReliabilityContractSupport.MAX_REVISION_BYTES, "Reliability provider revision is invalid.",
@@ -19,16 +21,9 @@ class ReliabilityBackupCreationReceipt private constructor(
     val receiptDigest: String
 
     init {
-        require(manifest.content.objectives.objectiveSetDigest == request.objectives.objectiveSetDigest &&
-            manifest.content.sourceEnvironment == request.objectives.environment
-        ) { "Reliability backup receipt manifest does not implement the exact requested policy and source." }
-        require(completedAtEpochMilli >= request.startedAtEpochMilli &&
-            completedAtEpochMilli < request.executionDeadlineEpochMilli
-        ) {
-            "Reliability backup completion is outside its authorized deadline."
-        }
+        require(completedAtEpochMilli >= 0L) { "Reliability backup completion time is invalid." }
         receiptDigest = ReliabilityContractSupport.digest("flowweft-reliability-api-backup-create-receipt-v1")
-            .text(request.requestDigest)
+            .text(this.requestDigest)
             .text(manifest.manifestDigest)
             .text(this.providerId)
             .text(this.providerRevision)
@@ -48,8 +43,37 @@ class ReliabilityBackupCreationReceipt private constructor(
             providerRevision: String,
             providerEvidenceDigest: String,
             completedAtEpochMilli: Long,
+        ): ReliabilityBackupCreationReceipt {
+            require(manifest.content.objectives.objectiveSetDigest == request.objectives.objectiveSetDigest &&
+                manifest.content.sourceEnvironment == request.objectives.environment
+            ) { "Reliability backup receipt manifest does not implement the exact requested policy and source." }
+            require(completedAtEpochMilli >= request.startedAtEpochMilli &&
+                completedAtEpochMilli < request.executionDeadlineEpochMilli
+            ) { "Reliability backup completion is outside its authorized deadline." }
+            return ReliabilityBackupCreationReceipt(
+                request.requestDigest,
+                manifest,
+                providerId,
+                providerRevision,
+                providerEvidenceDigest,
+                completedAtEpochMilli,
+            )
+        }
+
+        internal fun rehydrate(
+            requestDigest: String,
+            manifest: ReliabilityBackupManifest,
+            providerId: String,
+            providerRevision: String,
+            providerEvidenceDigest: String,
+            completedAtEpochMilli: Long,
         ): ReliabilityBackupCreationReceipt = ReliabilityBackupCreationReceipt(
-            request, manifest, providerId, providerRevision, providerEvidenceDigest, completedAtEpochMilli,
+            requestDigest,
+            manifest,
+            providerId,
+            providerRevision,
+            providerEvidenceDigest,
+            completedAtEpochMilli,
         )
     }
 }
@@ -178,13 +202,20 @@ class ReliabilityRecoveryAssessment private constructor(
 }
 
 class ReliabilityRestoreReceipt private constructor(
-    request: ReliabilityRestoreRequest,
+    requestDigest: String,
+    targetBindingDigest: String,
     providerId: String,
     providerRevision: String,
     providerEvidenceDigest: String,
     val completedAtEpochMilli: Long,
+    val assessment: ReliabilityRecoveryAssessment,
 ) {
-    val requestDigest: String = request.requestDigest
+    val requestDigest: String = ReliabilityContractSupport.sha256(
+        requestDigest, "Reliability restore request digest is invalid.",
+    )
+    val targetBindingDigest: String = ReliabilityContractSupport.sha256(
+        targetBindingDigest, "Reliability restore target binding is invalid.",
+    )
     val providerId: String = ReliabilityContractSupport.code(providerId, "Reliability restore provider is invalid.")
     val providerRevision: String = ReliabilityContractSupport.text(
         providerRevision, ReliabilityContractSupport.MAX_REVISION_BYTES, "Reliability provider revision is invalid.",
@@ -192,21 +223,15 @@ class ReliabilityRestoreReceipt private constructor(
     val providerEvidenceDigest: String = ReliabilityContractSupport.sha256(
         providerEvidenceDigest, "Reliability restore provider evidence digest is invalid.",
     )
-    val assessment: ReliabilityRecoveryAssessment
     val receiptDigest: String
 
     init {
-        require(completedAtEpochMilli >= request.startedAtEpochMilli &&
-            completedAtEpochMilli < request.executionDeadlineEpochMilli
-        ) {
-            "Reliability restore completion is outside its authorized deadline."
+        require(completedAtEpochMilli >= 0L && assessment.operationCompletedAtEpochMilli == completedAtEpochMilli) {
+            "Reliability restore completion and assessment time are inconsistent."
         }
-        assessment = ReliabilityRecoveryAssessment.evaluate(
-            request.manifest, request.recoveryReferenceEpochMilli, completedAtEpochMilli,
-        )
         receiptDigest = ReliabilityContractSupport.digest("flowweft-reliability-api-restore-receipt-v1")
-            .text(request.requestDigest)
-            .text(request.target.bindingDigest)
+            .text(this.requestDigest)
+            .text(this.targetBindingDigest)
             .text(this.providerId)
             .text(this.providerRevision)
             .text(this.providerEvidenceDigest)
@@ -225,21 +250,62 @@ class ReliabilityRestoreReceipt private constructor(
             providerRevision: String,
             providerEvidenceDigest: String,
             completedAtEpochMilli: Long,
+        ): ReliabilityRestoreReceipt {
+            require(completedAtEpochMilli >= request.startedAtEpochMilli &&
+                completedAtEpochMilli < request.executionDeadlineEpochMilli
+            ) { "Reliability restore completion is outside its authorized deadline." }
+            return ReliabilityRestoreReceipt(
+                request.requestDigest,
+                request.target.bindingDigest,
+                providerId,
+                providerRevision,
+                providerEvidenceDigest,
+                completedAtEpochMilli,
+                ReliabilityRecoveryAssessment.evaluate(
+                    request.manifest,
+                    request.recoveryReferenceEpochMilli,
+                    completedAtEpochMilli,
+                ),
+            )
+        }
+
+        internal fun rehydrate(
+            requestDigest: String,
+            targetBindingDigest: String,
+            providerId: String,
+            providerRevision: String,
+            providerEvidenceDigest: String,
+            completedAtEpochMilli: Long,
+            assessment: ReliabilityRecoveryAssessment,
         ): ReliabilityRestoreReceipt = ReliabilityRestoreReceipt(
-            request, providerId, providerRevision, providerEvidenceDigest, completedAtEpochMilli,
+            requestDigest,
+            targetBindingDigest,
+            providerId,
+            providerRevision,
+            providerEvidenceDigest,
+            completedAtEpochMilli,
+            assessment,
         )
     }
 }
 
 class ReliabilityDrillReport private constructor(
-    request: ReliabilityDrillRequest,
+    requestDigest: String,
+    drillId: String,
+    targetBindingDigest: String,
     providerId: String,
     providerRevision: String,
     providerEvidenceDigest: String,
     val completedAtEpochMilli: Long,
+    val assessment: ReliabilityRecoveryAssessment,
 ) {
-    val requestDigest: String = request.requestDigest
-    val drillId: String = request.drillId
+    val requestDigest: String = ReliabilityContractSupport.sha256(
+        requestDigest, "Reliability drill request digest is invalid.",
+    )
+    val drillId: String = ReliabilityContractSupport.opaque(drillId, "Reliability drill id is invalid.")
+    val targetBindingDigest: String = ReliabilityContractSupport.sha256(
+        targetBindingDigest, "Reliability drill target binding is invalid.",
+    )
     val providerId: String = ReliabilityContractSupport.code(providerId, "Reliability drill provider is invalid.")
     val providerRevision: String = ReliabilityContractSupport.text(
         providerRevision, ReliabilityContractSupport.MAX_REVISION_BYTES, "Reliability provider revision is invalid.",
@@ -247,22 +313,16 @@ class ReliabilityDrillReport private constructor(
     val providerEvidenceDigest: String = ReliabilityContractSupport.sha256(
         providerEvidenceDigest, "Reliability drill provider evidence digest is invalid.",
     )
-    val assessment: ReliabilityRecoveryAssessment
     val reportDigest: String
 
     init {
-        require(completedAtEpochMilli >= request.startedAtEpochMilli &&
-            completedAtEpochMilli < request.executionDeadlineEpochMilli
-        ) {
-            "Reliability drill completion is outside its authorized deadline."
+        require(completedAtEpochMilli >= 0L && assessment.operationCompletedAtEpochMilli == completedAtEpochMilli) {
+            "Reliability drill completion and assessment time are inconsistent."
         }
-        assessment = ReliabilityRecoveryAssessment.evaluate(
-            request.manifest, request.simulatedFailureEpochMilli, completedAtEpochMilli,
-        )
         reportDigest = ReliabilityContractSupport.digest("flowweft-reliability-api-drill-report-v1")
-            .text(request.requestDigest)
-            .text(request.drillId)
-            .text(request.target.bindingDigest)
+            .text(this.requestDigest)
+            .text(this.drillId)
+            .text(this.targetBindingDigest)
             .text(this.providerId)
             .text(this.providerRevision)
             .text(this.providerEvidenceDigest)
@@ -281,8 +341,44 @@ class ReliabilityDrillReport private constructor(
             providerRevision: String,
             providerEvidenceDigest: String,
             completedAtEpochMilli: Long,
+        ): ReliabilityDrillReport {
+            require(completedAtEpochMilli >= request.startedAtEpochMilli &&
+                completedAtEpochMilli < request.executionDeadlineEpochMilli
+            ) { "Reliability drill completion is outside its authorized deadline." }
+            return ReliabilityDrillReport(
+                request.requestDigest,
+                request.drillId,
+                request.target.bindingDigest,
+                providerId,
+                providerRevision,
+                providerEvidenceDigest,
+                completedAtEpochMilli,
+                ReliabilityRecoveryAssessment.evaluate(
+                    request.manifest,
+                    request.simulatedFailureEpochMilli,
+                    completedAtEpochMilli,
+                ),
+            )
+        }
+
+        internal fun rehydrate(
+            requestDigest: String,
+            drillId: String,
+            targetBindingDigest: String,
+            providerId: String,
+            providerRevision: String,
+            providerEvidenceDigest: String,
+            completedAtEpochMilli: Long,
+            assessment: ReliabilityRecoveryAssessment,
         ): ReliabilityDrillReport = ReliabilityDrillReport(
-            request, providerId, providerRevision, providerEvidenceDigest, completedAtEpochMilli,
+            requestDigest,
+            drillId,
+            targetBindingDigest,
+            providerId,
+            providerRevision,
+            providerEvidenceDigest,
+            completedAtEpochMilli,
+            assessment,
         )
     }
 }
@@ -290,27 +386,28 @@ class ReliabilityDrillReport private constructor(
 enum class ReliabilityReconciliationStatus { SUCCEEDED, FAILED, STILL_UNKNOWN }
 
 class ReliabilityReconciliationReceipt private constructor(
-    request: ReliabilityReconciliationRequest,
+    requestDigest: String,
+    originalReferenceDigest: String,
     val status: ReliabilityReconciliationStatus,
     providerEvidenceDigest: String,
     val reconciledAtEpochMilli: Long,
 ) {
-    val requestDigest: String = request.requestDigest
-    val originalReferenceDigest: String = request.outcomeUnknown.referenceDigest
+    val requestDigest: String = ReliabilityContractSupport.sha256(
+        requestDigest, "Reliability reconciliation request digest is invalid.",
+    )
+    val originalReferenceDigest: String = ReliabilityContractSupport.sha256(
+        originalReferenceDigest, "Reliability reconciliation original reference is invalid.",
+    )
     val providerEvidenceDigest: String = ReliabilityContractSupport.sha256(
         providerEvidenceDigest, "Reliability reconciliation evidence digest is invalid.",
     )
     val receiptDigest: String
 
     init {
-        require(reconciledAtEpochMilli >= request.startedAtEpochMilli &&
-            reconciledAtEpochMilli < request.context.deadlineEpochMilli
-        ) {
-            "Reliability reconciliation result is outside its authorized deadline."
-        }
+        require(reconciledAtEpochMilli >= 0L) { "Reliability reconciliation time is invalid." }
         receiptDigest = ReliabilityContractSupport.digest("flowweft-reliability-api-reconcile-receipt-v1")
-            .text(request.requestDigest)
-            .text(originalReferenceDigest)
+            .text(this.requestDigest)
+            .text(this.originalReferenceDigest)
             .text(status.name)
             .text(this.providerEvidenceDigest)
             .longValue(reconciledAtEpochMilli)
@@ -326,8 +423,31 @@ class ReliabilityReconciliationReceipt private constructor(
             status: ReliabilityReconciliationStatus,
             providerEvidenceDigest: String,
             reconciledAtEpochMilli: Long,
+        ): ReliabilityReconciliationReceipt {
+            require(reconciledAtEpochMilli >= request.startedAtEpochMilli &&
+                reconciledAtEpochMilli < request.context.deadlineEpochMilli
+            ) { "Reliability reconciliation result is outside its authorized deadline." }
+            return ReliabilityReconciliationReceipt(
+                request.requestDigest,
+                request.outcomeUnknown.referenceDigest,
+                status,
+                providerEvidenceDigest,
+                reconciledAtEpochMilli,
+            )
+        }
+
+        internal fun rehydrate(
+            requestDigest: String,
+            originalReferenceDigest: String,
+            status: ReliabilityReconciliationStatus,
+            providerEvidenceDigest: String,
+            reconciledAtEpochMilli: Long,
         ): ReliabilityReconciliationReceipt = ReliabilityReconciliationReceipt(
-            request, status, providerEvidenceDigest, reconciledAtEpochMilli,
+            requestDigest,
+            originalReferenceDigest,
+            status,
+            providerEvidenceDigest,
+            reconciledAtEpochMilli,
         )
     }
 }

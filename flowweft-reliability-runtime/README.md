@@ -68,6 +68,8 @@ version and expected fence, then store candidate plus outbox in one transaction.
 has the same claim/CAS/outbox rule. Persist all digests, exact provider operation references,
 execution deadlines, cancellation flags, receipts and fencing values; never persist raw
 idempotency keys, authorization tokens, credentials, provider messages or exceptions.
+Outbox acknowledgement must predicate on tenant, outbox id, owner and fencing token; an adapter
+must never discover tenant by first querying a globally supplied outbox id.
 
 ## Verification scope
 

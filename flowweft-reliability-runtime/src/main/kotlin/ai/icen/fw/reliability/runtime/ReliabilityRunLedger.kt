@@ -111,6 +111,28 @@ class ReliabilityDispatch private constructor(
     override fun toString(): String = "ReliabilityDispatch(kind=$kind, <redacted>)"
 
     companion object {
+        internal fun rehydrate(
+            kind: ReliabilityOperationKind,
+            providerId: String,
+            providerRevision: String,
+            providerDescriptorDigest: String,
+            createRequest: ReliabilityBackupCreateRequest?,
+            verifyRequest: ReliabilityBackupVerifyRequest?,
+            restoreRequest: ReliabilityRestoreRequest?,
+            drillRequest: ReliabilityDrillRequest?,
+            originalAttempt: ReliabilityOperationAttemptReference,
+        ): ReliabilityDispatch = ReliabilityDispatch(
+            kind,
+            providerId,
+            providerRevision,
+            providerDescriptorDigest,
+            createRequest,
+            verifyRequest,
+            restoreRequest,
+            drillRequest,
+            originalAttempt,
+        )
+
         internal fun of(
             intent: ReliabilityOperationIntent,
             request: Any,
@@ -286,6 +308,34 @@ class ReliabilityRun private constructor(
     override fun toString(): String = "ReliabilityRun(status=$status, version=$version, <redacted>)"
 
     companion object {
+        internal fun rehydrate(
+            runId: String,
+            intent: ReliabilityOperationIntent,
+            status: ReliabilityRunStatus,
+            version: Long,
+            lease: ReliabilityRunLease?,
+            dispatch: ReliabilityDispatch?,
+            outcomeUnknown: ReliabilityOutcomeUnknownReference?,
+            outcome: ReliabilityRunOutcome?,
+            failure: ReliabilityRunFailure?,
+            cancellationRequested: Boolean,
+            createdAtEpochMilli: Long,
+            updatedAtEpochMilli: Long,
+        ): ReliabilityRun = ReliabilityRun(
+            runId,
+            intent,
+            status,
+            version,
+            lease,
+            dispatch,
+            outcomeUnknown,
+            outcome,
+            failure,
+            cancellationRequested,
+            createdAtEpochMilli,
+            updatedAtEpochMilli,
+        )
+
         @JvmStatic
         fun ready(
             runId: String,

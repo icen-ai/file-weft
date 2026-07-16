@@ -371,7 +371,12 @@ class ReliabilityOutboxClaimResult private constructor(
 
 interface ReliabilityOutboxRepository {
     fun claimNext(ownerId: String, nowEpochMilli: Long, leaseUntilEpochMilli: Long): ReliabilityOutboxClaimResult
-    fun acknowledge(outboxId: String, ownerId: String, fencingToken: Long): ReliabilityStoreCode
+    fun acknowledge(
+        tenantId: String,
+        outboxId: String,
+        ownerId: String,
+        fencingToken: Long,
+    ): ReliabilityStoreCode
 }
 
 fun interface ReliabilityWorkerSignalPort {
