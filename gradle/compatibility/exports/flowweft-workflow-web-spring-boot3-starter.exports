@@ -1,0 +1,30 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-web-spring-boot3-starter
+# state=ready
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3ApplicationPorts
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3AutoConfiguration
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3AutoConfigurationKt
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3Controller
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3Controller$Companion
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3JsonCodec
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3JsonRequestsKt
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3RequestSupport
+ai.icen.fw.workflow.web.spring.boot3.FlowWeftWorkflowWebBoot3RequestSupport$Companion
+ai.icen.fw.workflow.web.spring.boot3.WorkflowCommentDocumentJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowCommentTokenJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowDefinitionDraftJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowFormSubmissionJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowIncidentActionJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowInstanceControlJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowInstanceStartJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowLifecycleJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowMigrationInstanceJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowMigrationJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowMigrationNodeMappingJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowPrincipalTargetJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowSubjectJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowTaskAddSignJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowTaskClaimJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowTaskDecisionJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowTaskDelegateJson
+ai.icen.fw.workflow.web.spring.boot3.WorkflowTaskReturnJson

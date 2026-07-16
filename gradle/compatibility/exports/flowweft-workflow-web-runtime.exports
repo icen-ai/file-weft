@@ -1,0 +1,18 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-web-runtime
+# state=ready
+ai.icen.fw.workflow.web.runtime.WorkflowWebControllerRuntime
+ai.icen.fw.workflow.web.runtime.WorkflowWebHttpResponse
+ai.icen.fw.workflow.web.runtime.WorkflowWebHttpResponse$Companion
+ai.icen.fw.workflow.web.runtime.WorkflowWebReadInvocation
+ai.icen.fw.workflow.web.runtime.WorkflowWebRequestMetadata
+ai.icen.fw.workflow.web.runtime.WorkflowWebRequestMetadata$Companion
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeContractsKt
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservation
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservation$Companion
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservationCode
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservationCode$Companion
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservationPort
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservationPort$Companion
+ai.icen.fw.workflow.web.runtime.WorkflowWebRuntimeObservationPort$DefaultImpls
+ai.icen.fw.workflow.web.runtime.WorkflowWebWriteInvocation

@@ -1,0 +1,16 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-agent-adapter-network-jdk
+# state=ready
+ai.icen.fw.agent.adapter.network.jdk.AgentRemoteDnsLookup
+ai.icen.fw.agent.adapter.network.jdk.AgentRemoteDnsLookup$Companion
+ai.icen.fw.agent.adapter.network.jdk.AgentRemoteDnsLookup$DefaultImpls
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkClock
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkClock$Companion
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkContractsKt
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkIdSource
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkIdSource$Companion
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkIdSource$DefaultImpls
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkResolutionException
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkResolver
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkResolver$validate$$inlined$sortedBy$1
+ai.icen.fw.agent.adapter.network.jdk.JdkAgentRemoteNetworkResolverConfiguration

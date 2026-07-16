@@ -1,3 +1,16 @@
 # flowweft-jvm-exports-v1
 # artifactId=flowweft-migration-cli
-# state=pending
+# state=ready
+ai.icen.fw.migration.cli.FlowWeftMigrationAction
+ai.icen.fw.migration.cli.FlowWeftMigrationAction$DefaultImpls
+ai.icen.fw.migration.cli.FlowWeftMigrationActionFactory
+ai.icen.fw.migration.cli.FlowWeftMigrationCli
+ai.icen.fw.migration.cli.FlowWeftMigrationCli$JDBC_ACTION_FACTORY$1$1
+ai.icen.fw.migration.cli.FlowWeftMigrationCli$JDBC_ACTION_FACTORY$1$2
+ai.icen.fw.migration.cli.FlowWeftMigrationCli$WhenMappings
+ai.icen.fw.migration.cli.FlowWeftMigrationCliKt
+ai.icen.fw.migration.cli.FlowWeftMigrationExitCode
+ai.icen.fw.migration.cli.FlowWeftMigrationLine
+ai.icen.fw.migration.cli.FlowWeftMigrationMode
+ai.icen.fw.migration.cli.FlowWeftMigrationOptions
+ai.icen.fw.migration.cli.FlowWeftMigrationOptions$Companion

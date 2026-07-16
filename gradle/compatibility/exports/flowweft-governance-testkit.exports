@@ -1,0 +1,33 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-governance-testkit
+# state=ready
+ai.icen.fw.testkit.governance.ControllableGovernanceLegalHoldResolver
+ai.icen.fw.testkit.governance.ControllableGovernanceLegalHoldResolver$Companion
+ai.icen.fw.testkit.governance.ControllableGovernanceLegalHoldResolver$WhenMappings
+ai.icen.fw.testkit.governance.DeterministicGovernanceClock
+ai.icen.fw.testkit.governance.DeterministicGovernanceClock$Companion
+ai.icen.fw.testkit.governance.DeterministicGovernanceIds
+ai.icen.fw.testkit.governance.DeterministicGovernanceIds$Companion
+ai.icen.fw.testkit.governance.DeterministicGovernanceRetentionPolicy
+ai.icen.fw.testkit.governance.DeterministicGovernanceRetentionPolicy$Companion
+ai.icen.fw.testkit.governance.GovernanceContractAssertions
+ai.icen.fw.testkit.governance.GovernanceDeletionRecoveryContractTest
+ai.icen.fw.testkit.governance.GovernanceDurableStateAssertions
+ai.icen.fw.testkit.governance.GovernanceLegalHoldFixtureState
+ai.icen.fw.testkit.governance.GovernanceObservableProviderProbe
+ai.icen.fw.testkit.governance.GovernanceRepositoryBundle
+ai.icen.fw.testkit.governance.GovernanceRepositoryBundle$Companion
+ai.icen.fw.testkit.governance.GovernanceRepositoryContractTest
+ai.icen.fw.testkit.governance.GovernanceRetentionLegalHoldContractTest
+ai.icen.fw.testkit.governance.GovernanceRuntimeContractHarness
+ai.icen.fw.testkit.governance.GovernanceRuntimeContractHarness$Companion
+ai.icen.fw.testkit.governance.GovernanceTestKit
+ai.icen.fw.testkit.governance.InMemoryGovernanceRepository
+ai.icen.fw.testkit.governance.InMemoryGovernanceRepository$Companion
+ai.icen.fw.testkit.governance.InMemoryGovernanceRepository$claimReady$lambda$8$$inlined$compareBy$1
+ai.icen.fw.testkit.governance.InMemoryGovernanceRepository$claimReady$lambda$8$$inlined$thenBy$1
+ai.icen.fw.testkit.governance.MutationCountingGovernanceProviderProbe
+ai.icen.fw.testkit.governance.MutationCountingGovernanceProviderProbe$Companion
+ai.icen.fw.testkit.governance.MutationCountingGovernanceProviderProbe$WhenMappings
+ai.icen.fw.testkit.governance.StrictGovernanceAuthorizationFixture
+ai.icen.fw.testkit.governance.StrictGovernanceAuthorizationFixture$Companion

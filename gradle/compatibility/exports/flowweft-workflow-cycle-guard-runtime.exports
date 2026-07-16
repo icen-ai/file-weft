@@ -1,0 +1,45 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-cycle-guard-runtime
+# state=ready
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleBudgetPolicy
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleBudgetPolicy$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleBudgetPolicyPort
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleBudgetPolicyRequest
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleBudgetPolicyRequest$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardCommand
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardCommand$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardConsumeRequest
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardConsumeRequest$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardDiagnostic
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardDiagnostic$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardDiagnosticCode
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardDiagnosticCode$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardDiagnosticQuery
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardDiagnosticQuery$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardLookupCode
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardLookupCode$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardLookupResult
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardLookupResult$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardOperation
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardOperation$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardPersistencePort
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardPhase
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardPhase$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardReceiptLookup
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardReceiptLookup$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardReconciliationRequest
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardReconciliationRequest$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardRecord
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardRecord$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardResult
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardResult$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardResultCode
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardResultCode$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardRuntime
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardScope
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardScope$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardStoreCode
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardStoreCode$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardStoreResult
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardStoreResult$Companion
+ai.icen.fw.workflow.cycle.guard.WorkflowCycleGuardSupport

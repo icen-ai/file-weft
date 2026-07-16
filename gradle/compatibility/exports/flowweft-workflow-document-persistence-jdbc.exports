@@ -1,0 +1,4 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-document-persistence-jdbc
+# state=ready
+ai.icen.fw.workflow.document.persistence.jdbc.JdbcDocumentWorkflowBindingStore

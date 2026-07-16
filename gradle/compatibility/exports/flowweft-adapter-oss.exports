@@ -1,3 +1,36 @@
 # flowweft-jvm-exports-v1
 # artifactId=flowweft-adapter-oss
-# state=pending
+# state=ready
+ai.icen.fw.adapter.oss.AlibabaOssV1Client
+ai.icen.fw.adapter.oss.AlibabaOssV1Client$WhenMappings
+ai.icen.fw.adapter.oss.FlowWeftCredentialsProvider
+ai.icen.fw.adapter.oss.OssClientFacade
+ai.icen.fw.adapter.oss.OssClientFacade$DefaultImpls
+ai.icen.fw.adapter.oss.OssCompletedPart
+ai.icen.fw.adapter.oss.OssCredentials
+ai.icen.fw.adapter.oss.OssCredentialsKt
+ai.icen.fw.adapter.oss.OssCredentialsProvider
+ai.icen.fw.adapter.oss.OssHeadObjectResponse
+ai.icen.fw.adapter.oss.OssListPartsPage
+ai.icen.fw.adapter.oss.OssListedPart
+ai.icen.fw.adapter.oss.OssObjectResponse
+ai.icen.fw.adapter.oss.OssRevisionCondition
+ai.icen.fw.adapter.oss.OssRevisionKind
+ai.icen.fw.adapter.oss.OssStorageAdapter
+ai.icen.fw.adapter.oss.OssStorageAdapter$Companion
+ai.icen.fw.adapter.oss.OssStorageAdapter$WhenMappings
+ai.icen.fw.adapter.oss.OssStorageAdapter$listUploadedParts$$inlined$sortedBy$1
+ai.icen.fw.adapter.oss.OssStorageAdapter$validatedCompletionParts$$inlined$sortedBy$1
+ai.icen.fw.adapter.oss.OssStorageClientPolicy
+ai.icen.fw.adapter.oss.OssStorageConfiguration
+ai.icen.fw.adapter.oss.OssStorageConfigurationKt
+ai.icen.fw.adapter.oss.OssStorageDoctorChecker
+ai.icen.fw.adapter.oss.OssStorageDoctorChecker$Companion
+ai.icen.fw.adapter.oss.OssStorageDoctorChecker$WhenMappings
+ai.icen.fw.adapter.oss.OssStorageFailureCategory
+ai.icen.fw.adapter.oss.OssStorageOperation
+ai.icen.fw.adapter.oss.OssStorageOperationException
+ai.icen.fw.adapter.oss.OssStorageOperationExceptionKt
+ai.icen.fw.adapter.oss.OssStorageSupportKt
+ai.icen.fw.adapter.oss.OssWriteResult
+ai.icen.fw.adapter.oss.StaticOssCredentialsProvider

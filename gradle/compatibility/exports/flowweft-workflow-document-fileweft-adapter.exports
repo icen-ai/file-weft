@@ -1,0 +1,12 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-document-fileweft-adapter
+# state=ready
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentRevisionCycleApplicationFacade
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentRevisionCycleApplicationFacade$Companion
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentRevisionCycleResult
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentRevisionCycleResult$Companion
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentWorkflowBridge
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentWorkflowBridge$WhenMappings
+ai.icen.fw.workflow.document.fileweft.FileWeftDocumentWorkflowSupport
+ai.icen.fw.workflow.document.fileweft.FileWeftOpenDocumentRevisionDraftCommand
+ai.icen.fw.workflow.document.fileweft.FileWeftOpenDocumentRevisionDraftCommand$Companion

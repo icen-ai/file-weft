@@ -1,0 +1,24 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-agent-adapter-http
+# state=ready
+ai.icen.fw.agent.adapter.http.A2aJsonRpcHttpCodec
+ai.icen.fw.agent.adapter.http.A2aJsonRpcHttpResponse
+ai.icen.fw.agent.adapter.http.AgentJsonRpcRemoteError
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpCodecException
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpCodecLimits
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpContractsKt
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpErrorKind
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpExchangeRequest
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpExchangeRequest$WhenMappings
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpHeaders
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpHeaders$Companion
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpMethod
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpTransport
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpUnknownFieldPolicy
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpWireRequest
+ai.icen.fw.agent.adapter.http.AgentProtocolHttpWireResponse
+ai.icen.fw.agent.adapter.http.McpStreamableHttpCodec
+ai.icen.fw.agent.adapter.http.McpStreamableHttpResponse
+ai.icen.fw.agent.adapter.http.StrictJsonRpcResponse
+ai.icen.fw.agent.adapter.http.StrictProtocolJson
+ai.icen.fw.agent.adapter.http.StrictProtocolJsonKt

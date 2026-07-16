@@ -1,0 +1,31 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-agent-adapter-http-runtime
+# state=ready
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpEvidenceQuery
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpPeerObservationProvider
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpPeerObservationRequest
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeClock
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeClock$Companion
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeConfiguration
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeContractsKt
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeDiagnostic
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeDiagnosticOutcome
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeDiagnosticSink
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeDiagnosticSink$Companion
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeDiagnosticSink$DefaultImpls
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeEvidence
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeEvidenceSource
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeException
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeFailurePhase
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeIdSource
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeIdSource$Companion
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeProvider
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeProvider$RuntimeCall$WhenMappings
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeProvider$WhenMappings
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolHttpRuntimeTransportOutcome
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolMcpSessionBinding
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolMcpSessionLoadRequest
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolMcpSessionSaveRequest
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolMcpSessionStore
+ai.icen.fw.agent.adapter.http.runtime.AgentProtocolMcpSessionStore$Companion
+ai.icen.fw.agent.adapter.http.runtime.CorrelatingAgentProtocolHttpEvidencePort

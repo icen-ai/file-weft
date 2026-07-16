@@ -1,0 +1,44 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-agent-interoperability-spi
+# state=ready
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilities
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityProvider
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityRequest
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityRequest$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityResult
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityResult$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityResult$WhenMappings
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilitySnapshot
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilitySnapshot$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilitySnapshot$special$$inlined$sortedBy$1
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityCapabilityStatus
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityContractVersions
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDispatchBinding
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDispatchBinding$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDispatchBinding$special$$inlined$sortedBy$1
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDispatchEvidence
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDispatchEvidence$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctor
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorCode
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorCode$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorFinding
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorFinding$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorMode
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorMode$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorRequest
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorRequest$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorResult
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorResult$Companion
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorResult$WhenMappings
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorSeverity
+ai.icen.fw.agent.interoperability.spi.AgentInteroperabilityDoctorStatus
+ai.icen.fw.agent.interoperability.spi.McpCatalogSnapshot
+ai.icen.fw.agent.interoperability.spi.McpCatalogSnapshot$Companion
+ai.icen.fw.agent.interoperability.spi.McpCatalogSnapshot$special$$inlined$sortedBy$1
+ai.icen.fw.agent.interoperability.spi.McpCatalogSnapshot$special$$inlined$sortedBy$2
+ai.icen.fw.agent.interoperability.spi.McpPromptDescriptor
+ai.icen.fw.agent.interoperability.spi.McpPromptDescriptor$Companion
+ai.icen.fw.agent.interoperability.spi.McpPromptId
+ai.icen.fw.agent.interoperability.spi.McpResourceDescriptor
+ai.icen.fw.agent.interoperability.spi.McpResourceDescriptor$Companion
+ai.icen.fw.agent.interoperability.spi.McpResourceId

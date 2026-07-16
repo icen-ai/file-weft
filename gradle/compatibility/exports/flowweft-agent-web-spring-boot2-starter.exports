@@ -1,0 +1,23 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-agent-web-spring-boot2-starter
+# state=ready
+ai.icen.fw.agent.web.spring.boot2.AgentWebBudgetJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebConversationCreateJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebEvaluationDatasetReferenceJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebEvaluationEvaluatorReferenceJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebEvaluationProviderSnapshotJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebEvaluationTriggerJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebProviderConfigurationJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebRunCancelJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebRunCreateJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebToolConfirmationDecisionJson
+ai.icen.fw.agent.web.spring.boot2.AgentWebUserMessageJson
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2ApplicationPorts
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2AutoConfiguration
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2AutoConfigurationKt
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2Controller
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2JsonCodec
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2JsonRequestsKt
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2RequestSupport
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2RequestSupport$Companion
+ai.icen.fw.agent.web.spring.boot2.FlowWeftAgentWebBoot2Response

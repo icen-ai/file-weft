@@ -1,0 +1,28 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-governance-persistence-jdbc
+# state=ready
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcCanonicalCodec
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcCanonicalCodec$Reader$holdResolution$$inlined$compareByDescending$1
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcCanonicalCodec$Reader$holdResolution$$inlined$thenBy$1
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcCommitOutcomeUnknownException
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcDialect
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcDialect$Companion
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcDigests
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcMigrationDialect
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcMigrations
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcMigrations$Companion
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcPersistenceException
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcSupportKt
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcTransactions
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcTransactions$Companion
+ai.icen.fw.governance.persistence.jdbc.GovernanceJdbcValues
+ai.icen.fw.governance.persistence.jdbc.GovernanceMySqlDatabaseSupport
+ai.icen.fw.governance.persistence.jdbc.GovernanceTargetJdbcCanonicalCodec
+ai.icen.fw.governance.persistence.jdbc.JdbcGovernanceDeletionTargetLedger
+ai.icen.fw.governance.persistence.jdbc.JdbcGovernancePersistence
+ai.icen.fw.governance.persistence.jdbc.JdbcGovernancePersistence$Companion
+ai.icen.fw.governance.persistence.migration.GovernanceFlywayMigrationRunner
+ai.icen.fw.governance.persistence.migration.GovernanceFlywayMigrationRunner$Companion
+ai.icen.fw.governance.persistence.migration.GovernanceFlywayMigrationRunner$Companion$WhenMappings
+ai.icen.fw.governance.persistence.migration.GovernanceFlywayMigrationRunner$DatabaseProduct
+ai.icen.fw.governance.persistence.migration.GovernanceKingbaseFlywayDataSource

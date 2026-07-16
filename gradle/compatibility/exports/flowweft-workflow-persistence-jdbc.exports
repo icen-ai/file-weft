@@ -1,3 +1,29 @@
 # flowweft-jvm-exports-v1
 # artifactId=flowweft-workflow-persistence-jdbc
-# state=pending
+# state=ready
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowDefinitionStore
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowHumanInputStore
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowHumanInputStore$Companion
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowHumanInputStore$Companion$WhenMappings
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowNotificationStore
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowNotificationStore$Companion$WhenMappings
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowNotificationStoreKt
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowReadyEffectJobQueue
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowReadyEffectJobQueueKt
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowRuntimeComposition
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowRuntimePersistence
+ai.icen.fw.workflow.persistence.jdbc.JdbcWorkflowRuntimePersistenceKt
+ai.icen.fw.workflow.persistence.jdbc.WorkflowHumanInputJdbcCodec
+ai.icen.fw.workflow.persistence.jdbc.WorkflowHumanInputJdbcEncodedResult
+ai.icen.fw.workflow.persistence.jdbc.WorkflowJdbcBinaryCodec
+ai.icen.fw.workflow.persistence.jdbc.WorkflowJdbcDialect
+ai.icen.fw.workflow.persistence.jdbc.WorkflowJdbcDialect$Companion
+ai.icen.fw.workflow.persistence.jdbc.WorkflowJdbcDialect$WhenMappings
+ai.icen.fw.workflow.persistence.jdbc.WorkflowJdbcTransactions
+ai.icen.fw.workflow.persistence.jdbc.WorkflowNotificationJdbcCodec
+ai.icen.fw.workflow.persistence.jdbc.WorkflowNotificationJdbcProviderEvidence
+ai.icen.fw.workflow.persistence.migration.WorkflowFlywayMigrationRunner
+ai.icen.fw.workflow.persistence.migration.WorkflowFlywayMigrationRunner$Companion
+ai.icen.fw.workflow.persistence.migration.WorkflowFlywayMigrationRunner$Companion$WhenMappings
+ai.icen.fw.workflow.persistence.migration.WorkflowFlywayMigrationRunner$DatabaseProduct
+ai.icen.fw.workflow.persistence.migration.WorkflowKingbaseFlywayDataSource

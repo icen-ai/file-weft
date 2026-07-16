@@ -1,3 +1,25 @@
 # flowweft-jvm-exports-v1
 # artifactId=flowweft-retrieval-testkit
-# state=pending
+# state=ready
+ai.icen.fw.testkit.retrieval.CandidateRetrieverContractTest
+ai.icen.fw.testkit.retrieval.ContentChunkerContractTest
+ai.icen.fw.testkit.retrieval.ContentExtractorContractTest
+ai.icen.fw.testkit.retrieval.EmbeddingProviderContractTest
+ai.icen.fw.testkit.retrieval.RerankerContractTest
+ai.icen.fw.testkit.retrieval.RetrievalAuthorizationPlannerContractTest
+ai.icen.fw.testkit.retrieval.RetrievalCandidateAuthorizerContractTest
+ai.icen.fw.testkit.retrieval.RetrievalContentProviderContractTest
+ai.icen.fw.testkit.retrieval.RetrievalContractAssertions
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationFailureScenario
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationFailureScenario$Companion
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationRaceScenario
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationRaceScenario$Companion
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationReplayMismatchScenario
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationReplayMismatchScenario$Companion
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationReplayScenario
+ai.icen.fw.testkit.retrieval.RetrievalIndexActivationReplayScenario$Companion
+ai.icen.fw.testkit.retrieval.RetrievalIndexContractScenariosKt
+ai.icen.fw.testkit.retrieval.RetrievalIndexProviderBindingMismatchScenario
+ai.icen.fw.testkit.retrieval.RetrievalIndexProviderBindingMismatchScenario$Companion
+ai.icen.fw.testkit.retrieval.RetrievalIndexProviderContractTest
+ai.icen.fw.testkit.retrieval.RetrievalLineageResolverContractTest
