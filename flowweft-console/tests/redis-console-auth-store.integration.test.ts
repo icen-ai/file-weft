@@ -30,6 +30,7 @@ describe("shared encrypted Redis Console authentication store", () => {
     const inspector = createClient({ url: String(redisUrl) });
     inspector.on("error", () => {});
     try {
+      await expect(first.checkAvailability()).resolves.toBeUndefined();
       const authorization = authorizationRecord(now);
       await first.createAuthorization(authorization);
       await expect(second.consumeAuthorization(authorization.stateDigest, now + 1))
@@ -42,7 +43,7 @@ describe("shared encrypted Redis Console authentication store", () => {
       await first.createSession(active);
       await inspector.connect();
       const raw = await inspector.get(`${prefix}:{session}:record:${active.sessionIdDigest}`);
-      expect(raw).toMatch(/^v1\.test_key\./u);
+      expect(raw).toMatch(/^v2\.test_key\./u);
       expect(raw).not.toContain(active.accessToken);
       await expect(second.createSession(next)).rejects.toBeInstanceOf(ConsoleAuthStoreCapacityError);
       await expect(second.readSession(active.sessionIdDigest, now + 1)).resolves.toEqual(active);
@@ -62,7 +63,9 @@ describe("shared encrypted Redis Console authentication store", () => {
 function authorizationRecord(now: number): PendingOidcAuthorization {
   return Object.freeze({
     stateDigest: sha256Base64Url("redis-state"),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: "B".repeat(43),
     nonce: "nonce-value",
     pkceVerifier: "a".repeat(64),
     redirectUri: "https://console.example/api/auth/oidc/callback",
@@ -75,7 +78,9 @@ function authorizationRecord(now: number): PendingOidcAuthorization {
 function sessionRecord(key: string, now: number): StoredConsoleSession {
   return Object.freeze({
     sessionIdDigest: sha256Base64Url(key),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: "B".repeat(43),
     subjectId: `user-${key}`,
     subjectDisplayName: "Alice",
     tenantAlias: "Tianjin",

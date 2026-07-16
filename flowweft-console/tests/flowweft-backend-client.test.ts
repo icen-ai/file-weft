@@ -16,6 +16,7 @@ import {
 } from "@/server/dal/FlowWeftBackendClient";
 import { parseConsoleServerConfig } from "@/server/config/schema";
 import { requestPinnedJson } from "@/server/security/PinnedJsonHttpClient";
+import { sourceProfileBindingDigest } from "@/server/sources/SourceProfileBinding";
 
 const requestPinnedJsonMock = vi.mocked(requestPinnedJson);
 
@@ -66,6 +67,12 @@ describe("explicit FlowWeft Console document DAL", () => {
     const profile = backendConfig().sourceProfiles[0]!;
     await expect(readDocumentPage(profile, { ...storedSession(), sourceProfileId: "other" }))
       .rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    expect(requestPinnedJsonMock).not.toHaveBeenCalled();
+
+    await expect(readDocumentPage(profile, {
+      ...storedSession(),
+      sourceProfileBindingDigest: "C".repeat(43),
+    })).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
     expect(requestPinnedJsonMock).not.toHaveBeenCalled();
 
     requestPinnedJsonMock.mockResolvedValueOnce({
@@ -230,9 +237,12 @@ function backendConfig() {
 }
 
 function storedSession(): StoredConsoleSession {
+  const profile = backendConfig().sourceProfiles[0]!;
   return Object.freeze({
     sessionIdDigest: "A".repeat(43),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: sourceProfileBindingDigest(profile),
     subjectId: "user-1",
     subjectDisplayName: "Alice",
     tenantAlias: "Tianjin",

@@ -8,6 +8,8 @@ import { createSessionId, sha256Base64Url } from "@/server/auth/OidcCrypto";
 import { projectSession } from "@/server/auth/OidcLoginService";
 import type { ConsoleServerConfig, ConsoleSourceProfileDefinition } from "@/server/config/schema";
 import { requestPinnedJson } from "@/server/security/PinnedJsonHttpClient";
+import { consoleOriginBindingDigest } from "@/server/security/ConsoleOriginBinding";
+import { sourceProfileBindingDigest } from "@/server/sources/SourceProfileBinding";
 
 const exchangeResponseSchema = z.object({
   access_token: z.string().min(1).max(16_384).regex(/^[\x21-\x7e]+$/u),
@@ -109,7 +111,9 @@ export class HostTokenExchangeService {
     );
     const session: StoredConsoleSession = Object.freeze({
       sessionIdDigest: sha256Base64Url(sessionId),
+      consoleOriginBindingDigest: consoleOriginBindingDigest(this.config),
       sourceProfileId: profile.id,
+      sourceProfileBindingDigest: sourceProfileBindingDigest(profile),
       subjectId: response.data.subject_id,
       subjectDisplayName: response.data.subject_display_name,
       tenantAlias: response.data.tenant_alias,

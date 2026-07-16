@@ -65,6 +65,17 @@ export class RedisConsoleAuthStore implements ConsoleAuthStore {
     this.client.on("error", () => {});
   }
 
+  async checkAvailability(): Promise<void> {
+    await this.ensureConnected();
+    try {
+      if (await this.client.ping() !== "PONG") {
+        throw new ConsoleAuthStoreUnavailableError();
+      }
+    } catch {
+      throw new ConsoleAuthStoreUnavailableError();
+    }
+  }
+
   async createAuthorization(authorization: PendingOidcAuthorization): Promise<void> {
     assertPendingOidcAuthorization(authorization);
     const wire = this.codec.encodeAuthorization(authorization);

@@ -11,6 +11,10 @@ import {
 import { sha256Base64Url } from "@/server/auth/OidcCrypto";
 
 describe("bounded Console authentication store", () => {
+  it("reports its process-local availability without exposing records", async () => {
+    await expect(new InMemoryConsoleAuthStore().checkAvailability()).resolves.toBeUndefined();
+  });
+
   it("consumes an authorization exactly once and rejects expiry", async () => {
     const store = new InMemoryConsoleAuthStore();
     const active = authorization("active", 100, 200);
@@ -57,7 +61,9 @@ describe("bounded Console authentication store", () => {
 function authorization(key: string, createdAt: number, expiresAt: number): PendingOidcAuthorization {
   return Object.freeze({
     stateDigest: sha256Base64Url(key),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: "B".repeat(43),
     nonce: "nonce-value",
     pkceVerifier: "a".repeat(64),
     redirectUri: "https://console.example/api/auth/oidc/callback",
@@ -70,7 +76,9 @@ function authorization(key: string, createdAt: number, expiresAt: number): Pendi
 function session(key: string, createdAt: number, expiresAt: number): StoredConsoleSession {
   return Object.freeze({
     sessionIdDigest: sha256Base64Url(key),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: "B".repeat(43),
     subjectId: "user-1",
     subjectDisplayName: "王小明",
     tenantAlias: "天津水务",

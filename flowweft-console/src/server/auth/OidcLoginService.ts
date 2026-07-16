@@ -15,6 +15,8 @@ import {
   sha256Base64Url,
 } from "@/server/auth/OidcCrypto";
 import { requestPinnedJson } from "@/server/security/PinnedJsonHttpClient";
+import { consoleOriginBindingDigest } from "@/server/security/ConsoleOriginBinding";
+import { sourceProfileBindingDigest } from "@/server/sources/SourceProfileBinding";
 
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1).max(16_384).regex(/^[\x21-\x7e]+$/u),
@@ -71,7 +73,9 @@ export class OidcLoginService {
     const redirectUri = `${this.config.publicOrigin}/api/auth/oidc/callback`;
     await this.store.createAuthorization(Object.freeze({
       stateDigest: sha256Base64Url(state),
+      consoleOriginBindingDigest: consoleOriginBindingDigest(this.config),
       sourceProfileId: profile.id,
+      sourceProfileBindingDigest: sourceProfileBindingDigest(profile),
       nonce,
       pkceVerifier,
       redirectUri,
@@ -119,7 +123,9 @@ export class OidcLoginService {
       throw new OidcLoginError("NOT_CONFIGURED");
     }
     const oidc = profile.oidc;
-    if (!oidc) {
+    if (!oidc ||
+      authorization.consoleOriginBindingDigest !== consoleOriginBindingDigest(this.config) ||
+      authorization.sourceProfileBindingDigest !== sourceProfileBindingDigest(profile)) {
       throw new OidcLoginError("NOT_CONFIGURED");
     }
 
@@ -164,7 +170,9 @@ export class OidcLoginService {
     }
     const session: StoredConsoleSession = Object.freeze({
       sessionIdDigest: sha256Base64Url(sessionId),
+      consoleOriginBindingDigest: consoleOriginBindingDigest(this.config),
       sourceProfileId: profile.id,
+      sourceProfileBindingDigest: sourceProfileBindingDigest(profile),
       subjectId: identity.subjectId,
       subjectDisplayName: identity.subjectDisplayName,
       tenantAlias: identity.tenantAlias,

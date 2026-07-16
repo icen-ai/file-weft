@@ -10,23 +10,29 @@ import {
 import type { ConsoleSessionEncryptionKeyDefinition } from "@/server/config/schema";
 
 type RecordKind = "authorization" | "session";
-const WIRE_VERSION = "v1";
+// v1 records did not bind credentials to the full Source Profile policy and
+// are intentionally rejected instead of being upgraded into trusted sessions.
+const WIRE_VERSION = "v2";
 const MAXIMUM_WIRE_BYTES = 96 * 1_024;
 const AUTHORIZATION_KEYS = [
+  "consoleOriginBindingDigest",
   "createdAtEpochMillis",
   "expiresAtEpochMillis",
   "nonce",
   "pkceVerifier",
   "redirectUri",
   "returnPath",
+  "sourceProfileBindingDigest",
   "sourceProfileId",
   "stateDigest",
 ] as const;
 const SESSION_KEYS = [
   "accessToken",
+  "consoleOriginBindingDigest",
   "createdAtEpochMillis",
   "expiresAtEpochMillis",
   "sessionIdDigest",
+  "sourceProfileBindingDigest",
   "sourceProfileId",
   "subjectDisplayName",
   "subjectId",

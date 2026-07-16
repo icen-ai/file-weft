@@ -12,6 +12,7 @@ import type {
 import type { StoredConsoleSession } from "@/server/auth/ConsoleAuthStore";
 import type { ConsoleSourceProfileDefinition } from "@/server/config/schema";
 import { requestPinnedJson } from "@/server/security/PinnedJsonHttpClient";
+import { sourceProfileBindingDigest } from "@/server/sources/SourceProfileBinding";
 
 const safeText = (maximumLength: number) => z.string().min(1).max(maximumLength)
   .regex(/^[^\u0000-\u001f\u007f]+$/u);
@@ -121,9 +122,7 @@ export async function readDocumentPage(
   session: StoredConsoleSession,
   query: ConsoleDocumentPageQuery = {},
 ): Promise<ConsoleDocumentPage> {
-  if (session.sourceProfileId !== profile.id) {
-    throw new FlowWeftBackendClientError("UNAUTHENTICATED");
-  }
+  requireSessionProfile(profile, session);
   const endpoint = new URL("/fileweft/v1/documents", profile.baseUrl);
   const queryParameters: Record<string, string> = {};
   if (query.cursor !== undefined) {
@@ -248,7 +247,8 @@ function requireSessionProfile(
   profile: ConsoleSourceProfileDefinition,
   session: StoredConsoleSession,
 ): void {
-  if (session.sourceProfileId !== profile.id) {
+  if (session.sourceProfileId !== profile.id ||
+    session.sourceProfileBindingDigest !== sourceProfileBindingDigest(profile)) {
     throw new FlowWeftBackendClientError("UNAUTHENTICATED");
   }
 }

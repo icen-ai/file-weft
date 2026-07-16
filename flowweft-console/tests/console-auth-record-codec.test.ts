@@ -27,6 +27,7 @@ describe("encrypted shared authentication record codec", () => {
     const sessionWire = codec.encodeSession(session);
 
     expect(first).not.toBe(second);
+    expect(first).toMatch(/^v2\./u);
     expect(first).not.toContain(authorization.pkceVerifier);
     expect(sessionWire).not.toContain(session.accessToken);
     expect(codec.decodeAuthorization(first, authorization.stateDigest)).toEqual(authorization);
@@ -34,6 +35,8 @@ describe("encrypted shared authentication record codec", () => {
     expect(() => codec.decodeAuthorization(first, sha256Base64Url("other")))
       .toThrow(ConsoleAuthRecordCodecError);
     expect(() => codec.decodeAuthorization(sessionWire, session.sessionIdDigest))
+      .toThrow(ConsoleAuthRecordCodecError);
+    expect(() => codec.decodeAuthorization(first.replace(/^v2\./u, "v1."), authorization.stateDigest))
       .toThrow(ConsoleAuthRecordCodecError);
   });
 
@@ -58,7 +61,9 @@ describe("encrypted shared authentication record codec", () => {
 function authorizationRecord(): PendingOidcAuthorization {
   return Object.freeze({
     stateDigest: sha256Base64Url("state"),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: "B".repeat(43),
     nonce: "nonce-value",
     pkceVerifier: "a".repeat(64),
     redirectUri: "https://console.example/api/auth/oidc/callback",
@@ -71,7 +76,9 @@ function authorizationRecord(): PendingOidcAuthorization {
 function sessionRecord(): StoredConsoleSession {
   return Object.freeze({
     sessionIdDigest: sha256Base64Url("session"),
+    consoleOriginBindingDigest: "D".repeat(43),
     sourceProfileId: "primary",
+    sourceProfileBindingDigest: "B".repeat(43),
     subjectId: "user-1",
     subjectDisplayName: "Alice",
     tenantAlias: "Tianjin",

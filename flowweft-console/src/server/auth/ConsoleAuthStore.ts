@@ -2,7 +2,9 @@ import "server-only";
 
 export interface PendingOidcAuthorization {
   readonly stateDigest: string;
+  readonly consoleOriginBindingDigest: string;
   readonly sourceProfileId: string;
+  readonly sourceProfileBindingDigest: string;
   readonly nonce: string;
   readonly pkceVerifier: string;
   readonly redirectUri: string;
@@ -13,7 +15,9 @@ export interface PendingOidcAuthorization {
 
 export interface StoredConsoleSession {
   readonly sessionIdDigest: string;
+  readonly consoleOriginBindingDigest: string;
   readonly sourceProfileId: string;
+  readonly sourceProfileBindingDigest: string;
   readonly subjectId: string;
   readonly subjectDisplayName: string;
   readonly tenantAlias: string;
@@ -24,6 +28,7 @@ export interface StoredConsoleSession {
 }
 
 export interface ConsoleAuthStore {
+  checkAvailability(): Promise<void>;
   createAuthorization(authorization: PendingOidcAuthorization): Promise<void>;
   consumeAuthorization(stateDigest: string, nowEpochMillis: number): Promise<PendingOidcAuthorization | null>;
   createSession(session: StoredConsoleSession): Promise<void>;
@@ -56,6 +61,11 @@ export class InMemoryConsoleAuthStore implements ConsoleAuthStore {
   constructor(options: InMemoryConsoleAuthStoreOptions = {}) {
     this.maximumAuthorizations = requireCapacity(options.maximumAuthorizations ?? 1_000);
     this.maximumSessions = requireCapacity(options.maximumSessions ?? 10_000);
+  }
+
+  async checkAvailability(): Promise<void> {
+    // Process-local state is available for the lifetime of this instance.
+    return;
   }
 
   async createAuthorization(authorization: PendingOidcAuthorization): Promise<void> {
@@ -131,7 +141,9 @@ export class InMemoryConsoleAuthStore implements ConsoleAuthStore {
 
 export function assertPendingOidcAuthorization(value: PendingOidcAuthorization): void {
   requireDigest(value.stateDigest);
+  requireDigest(value.consoleOriginBindingDigest);
   requireOpaqueText(value.sourceProfileId, 80);
+  requireDigest(value.sourceProfileBindingDigest);
   requireOpaqueText(value.nonce, 256);
   if (!/^[A-Za-z0-9._~-]{43,128}$/u.test(value.pkceVerifier)) {
     throw new Error("OIDC PKCE verifier is invalid.");
@@ -145,7 +157,9 @@ export function assertPendingOidcAuthorization(value: PendingOidcAuthorization):
 
 export function assertStoredConsoleSession(value: StoredConsoleSession): void {
   requireDigest(value.sessionIdDigest);
+  requireDigest(value.consoleOriginBindingDigest);
   requireOpaqueText(value.sourceProfileId, 80);
+  requireDigest(value.sourceProfileBindingDigest);
   requireOpaqueText(value.subjectId, 512);
   requireDisplayText(value.subjectDisplayName, 256);
   requireDisplayText(value.tenantAlias, 256);

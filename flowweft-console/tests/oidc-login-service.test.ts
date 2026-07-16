@@ -52,6 +52,38 @@ describe("OIDC authorization start", () => {
     await expect(service.begin(sources.requireDefinition("primary"), "//attacker.example", 1_000)).rejects.toThrow();
   });
 
+  it("rejects a pending authorization after its administrator profile policy changes", async () => {
+    const store = new InMemoryConsoleAuthStore();
+    const firstConfig = oidcConfig();
+    const firstSources = createSourceProfileRegistry(firstConfig);
+    const redirect = await new OidcLoginService(firstConfig, store, firstSources)
+      .begin(firstSources.requireDefinition("primary"), "/zh", 1_000);
+    const state = new URL(redirect.location).searchParams.get("state")!;
+
+    const changedConfig = oidcConfig("flowweft-console-v2");
+    const changedSources = createSourceProfileRegistry(changedConfig);
+    await expect(new OidcLoginService(changedConfig, store, changedSources)
+      .complete(state, "authorization-code", 1_001))
+      .rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+    expect(requestPinnedJsonMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pending authorization after its same-origin session boundary changes", async () => {
+    const store = new InMemoryConsoleAuthStore();
+    const firstConfig = oidcConfig();
+    const firstSources = createSourceProfileRegistry(firstConfig);
+    const redirect = await new OidcLoginService(firstConfig, store, firstSources)
+      .begin(firstSources.requireDefinition("primary"), "/zh", 1_000);
+    const state = new URL(redirect.location).searchParams.get("state")!;
+
+    const changedConfig = oidcConfig("flowweft-console", "https://console.example", "900");
+    const changedSources = createSourceProfileRegistry(changedConfig);
+    await expect(new OidcLoginService(changedConfig, store, changedSources)
+      .complete(state, "authorization-code", 1_001))
+      .rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+    expect(requestPinnedJsonMock).not.toHaveBeenCalled();
+  });
+
   it("verifies signature, issuer, audience, nonce and at_hash before creating a server-only session", async () => {
     const now = 1_700_000_000_000;
     const config = oidcConfig();
@@ -102,10 +134,15 @@ describe("OIDC authorization start", () => {
   });
 });
 
-function oidcConfig() {
+function oidcConfig(
+  clientId = "flowweft-console",
+  publicOrigin = "https://console.example",
+  sessionTtlSeconds = "3600",
+) {
   return parseConsoleServerConfig({
     NODE_ENV: "test",
-    FLOWWEFT_CONSOLE_PUBLIC_ORIGIN: "https://console.example",
+    FLOWWEFT_CONSOLE_PUBLIC_ORIGIN: publicOrigin,
+    FLOWWEFT_CONSOLE_SESSION_TTL_SECONDS: sessionTtlSeconds,
     FLOWWEFT_CONSOLE_SOURCE_PROFILE_IDS: "primary",
     FLOWWEFT_CONSOLE_SOURCE_PROFILES_JSON: JSON.stringify({
       version: 1,
@@ -119,7 +156,7 @@ function oidcConfig() {
           authorizationEndpoint: "https://id.example/authorize",
           tokenEndpoint: "https://id.example/token",
           jwksUri: "https://id.example/jwks",
-          clientId: "flowweft-console",
+          clientId,
           scopes: ["openid", "profile"],
           tenantAliasClaim: "tenant_alias",
         },

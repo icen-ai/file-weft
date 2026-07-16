@@ -50,17 +50,31 @@ describe("static security and route boundaries", () => {
     expect(loginSource).toContain('autoComplete="current-password"');
   });
 
+  it("has no browser persistence surface for passwords, tokens, or provider secrets", () => {
+    const sourceRoot = join(root, "src");
+    const applicationSource = readdirSync(sourceRoot, { recursive: true })
+      .map(String)
+      .filter((entry) => /\.(?:ts|tsx)$/u.test(entry))
+      .map((entry) => readFileSync(join(sourceRoot, entry), "utf8"))
+      .join("\n");
+    expect(applicationSource).not.toMatch(/\b(?:localStorage|sessionStorage|indexedDB)\b/u);
+    expect(applicationSource).not.toMatch(/NEXT_PUBLIC_[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|CREDENTIAL)/u);
+  });
+
   it("marks DAL, runtime config, and source policy modules as server-only", () => {
     const protectedFiles = [
       join(root, "src", "server", "config", "index.ts"),
       join(root, "src", "server", "dal", "ConsoleDataAccess.ts"),
       join(root, "src", "server", "sources", "SourceProfilePolicy.ts"),
       join(root, "src", "server", "sources", "SourceProfileRegistry.ts"),
+      join(root, "src", "server", "sources", "SourceProfileBinding.ts"),
+      join(root, "src", "server", "diagnostics", "ConsoleSecurityReadiness.ts"),
       join(root, "src", "server", "auth", "ConsoleAuthRuntime.ts"),
       join(root, "src", "server", "auth", "ConsoleSessionAccess.ts"),
       join(root, "src", "server", "auth", "OidcLoginService.ts"),
       join(root, "src", "server", "auth", "HostTokenExchangeService.ts"),
       join(root, "src", "server", "auth", "LoginAttemptLimiter.ts"),
+      join(root, "src", "server", "security", "ConsoleOriginBinding.ts"),
     ];
 
     for (const file of protectedFiles) {
