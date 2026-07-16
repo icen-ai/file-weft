@@ -39,7 +39,7 @@
 | FW10-044 | 进行中 | Agent 对话、检索证据、工具确认、配置和评测 UI | 已建立 framework-neutral Web/Application API：可信上下文、对话/run、持久 cursor、取消、权限过滤引用、一次性工具确认、secret-reference 配置、Doctor 与评测；继续实现 runtime/controller/BFF/Console 及流式恢复、能力缺失和双语安全 E2E |
 | FW10-050 | 进行中 | retention、legal hold 与安全删除 | 已建立公开治理契约及 provider-neutral CAS/outbox 七阶段运行时，含 legal-hold 优先、fresh authorization、未知结果原操作对账、Doctor 与指标；继续补持久化/适配器、可控时间、对象/索引删除一致性、审计和三方言实库测试 |
 | FW10-051 | 进行中 | 容量、分区与背压 | 已建立 provider-neutral 容量 API：严格层级策略、标准单位/水位、原子准入、digest 幂等/CAS、围栏租约、显式节流/拒绝/容量降级及 Doctor/指标；继续实现运行时/分区适配、公开基准环境和上限，以及队列/索引/上传/Agent 背压与故障测试 |
-| FW10-052 | 未开始 | SLO、备份恢复、RPO/RTO | 仪表盘/告警可触发；数据库+对象+索引在干净环境恢复并达到声明目标 |
+| FW10-052 | 进行中 | SLO、备份恢复、RPO/RTO | 已建立 provider-neutral 可靠性 API：精确 ppm SLO/error budget/burn rate、单或多组件 consistent-cut 不可变清单、短授权与长异步期限、clean-target 恢复、真实故障时钟 RPO/RTO、原操作只读对账及 Doctor/指标；继续实现耐久运行时/JDBC/Provider、仪表盘告警和数据库+对象+索引真实恢复演练 |
 | FW10-060 | 进行中 | 1.0 API/ABI 与配置冻结 | 所有 public 制品/HTTP/event/config baseline，Java/Kotlin/Boot 2/3 消费者兼容门禁 |
 | FW10-061 | 未开始 | 全升级矩阵 | `0.0.1`/`0.0.2`/`0.0.3` 到 1.0 的三方言、JDK、Boot 代际升级与回滚边界证据 |
 | FW10-062 | 进行中 | 安全与供应链收口 | 威胁模型、高危清零、OSV 策略、完整 SBOM、签名、SLSA provenance、可复现构建 |
