@@ -40,6 +40,8 @@ flowweft-workflow-document-persistence-jdbc	jar	new-physical	8
 flowweft-workflow-persistence-jdbc	jar	new-physical	8
 flowweft-workflow-web-api	jar	new-physical	8
 flowweft-workflow-web-runtime	jar	new-physical	8
+flowweft-workflow-web-spring-boot2-starter	jar	new-physical	8
+flowweft-workflow-web-spring-boot3-starter	jar	new-physical	17
 flowweft-migration-cli	jar	new-physical	8
 flowweft-adapter-dify	jar	new-physical	8
 flowweft-adapter-oss	jar	new-physical	8
