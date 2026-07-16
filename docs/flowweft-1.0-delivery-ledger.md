@@ -13,7 +13,7 @@
 | FW10-010 | 进行中 | 完成续传资产一次性认领并安全创建文档/新增版本 | owner/tenant/purpose/expiry/单次消费/并发锁/幂等测试；Boot 2/3 与浏览器 E2E |
 | FW10-011 | 进行中 | 通用 migrate-and-exit CLI/Job | 三方言全新/升级/失败退出码/凭据最小化/容器 Job 验收 |
 | FW10-012 | 进行中 | 宿主目录只读 facade 与受控文档移动 | 动态 ACL、隐藏节点、循环/坏树、竞态、分页、Boot 2/3 合约；无目录 CRUD |
-| FW10-013 | 进行中 | 补齐 TestKit | Logger/Metrics/Gauges/TraceScope、插件冲突、Metadata、Agent/检索 Provider 合约由外部样例宿主运行 |
+| FW10-013 | 进行中 | 补齐 TestKit | Logger/Metrics/Gauges/TraceScope、插件冲突、Metadata、Agent/检索 Provider 合约由外部样例宿主运行；已新增 provider-neutral Reliability TestKit，覆盖确定性时钟/ID、单库与多组件拓扑、mutation/精确对账探针、崩溃后最多一次外部变更、tenant/CAS/围栏、SLO 缺数失败关闭及 durable digest 重建 |
 | FW10-014 | 进行中 | 生产 Doctor 和可观测性 | DB/history、Worker lease、队列/索引/tombstone lag、容量/readiness；真实 OTel Collector 三信号脱敏证据 |
 | FW10-020 | 进行中 | `flowweft-retrieval-api` 与内建安全文件名搜索 | Java 互操作、tenant/ACL 二次授权、分页/上限/模糊输入、无正文泄漏和 Provider 缺失降级测试 |
 | FW10-021 | 进行中 | 内容抽取、索引、全文、向量、混合、重排 SPI | 契约套件覆盖血缘、版本、generation 切换、失败保留、重建、ACL 更新和删除传播 |

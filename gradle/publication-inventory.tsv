@@ -47,6 +47,7 @@ flowweft-observability	jar	new-physical	8
 flowweft-observability-jdbc	jar	new-physical	8
 flowweft-reliability-api	jar	new-physical	8
 flowweft-reliability-runtime	jar	new-physical	8
+flowweft-reliability-testkit	jar	new-physical	8
 flowweft-workflow-api	jar	new-physical	8
 flowweft-workflow-spi	jar	new-physical	8
 flowweft-workflow-domain	jar	new-physical	8
