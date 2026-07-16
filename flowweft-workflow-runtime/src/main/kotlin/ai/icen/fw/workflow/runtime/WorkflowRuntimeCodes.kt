@@ -35,6 +35,7 @@ class WorkflowRuntimeAction private constructor(code: String) {
         @JvmField val RECONCILE_EFFECT = WorkflowRuntimeAction("reconcile-effect")
         @JvmField val RESOLVE_EFFECT_INCIDENT = WorkflowRuntimeAction("resolve-effect-incident")
         @JvmField val EVALUATE_BUSINESS_TIME = WorkflowRuntimeAction("evaluate-business-time")
+        @JvmField val ATTEST_HUMAN_DECISION = WorkflowRuntimeAction("attest-human-decision")
 
         @JvmStatic fun of(code: String): WorkflowRuntimeAction = builtIns.firstOrNull { it.code == code }
             ?: WorkflowRuntimeAction(code)
@@ -63,6 +64,7 @@ class WorkflowRuntimeAction private constructor(code: String) {
             RECONCILE_EFFECT,
             RESOLVE_EFFECT_INCIDENT,
             EVALUATE_BUSINESS_TIME,
+            ATTEST_HUMAN_DECISION,
         )
     }
 }
