@@ -26,7 +26,9 @@ final class GovernanceRuntimeSupport {
         require(value.equals(value.trim()), message);
         for (int offset = 0; offset < value.length();) {
             int codePoint = value.codePointAt(offset);
-            require(!Character.isISOControl(codePoint) && Character.getType(codePoint) != Character.FORMAT, message);
+            int type = Character.getType(codePoint);
+            require(!Character.isISOControl(codePoint) && type != Character.FORMAT && type != Character.SURROGATE,
+                message);
             offset += Character.charCount(codePoint);
         }
         return value;

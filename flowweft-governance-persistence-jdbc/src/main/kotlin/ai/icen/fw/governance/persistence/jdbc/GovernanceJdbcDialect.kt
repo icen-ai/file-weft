@@ -41,18 +41,25 @@ enum class GovernanceJdbcDialect {
     }
 }
 
-enum class GovernanceJdbcMigrationDialect(val location: String, val resourcePath: String) {
+enum class GovernanceJdbcMigrationDialect(
+    val location: String,
+    val resourcePath: String,
+    val targetLedgerResourcePath: String,
+) {
     POSTGRESQL(
         "classpath:ai/icen/fw/workflow/db/migration/postgres",
         "/ai/icen/fw/workflow/db/migration/postgres/V041__persist_governance_runtime.sql",
+        "/ai/icen/fw/workflow/db/migration/postgres/V042__persist_governance_deletion_targets.sql",
     ),
     MYSQL(
         "classpath:ai/icen/fw/workflow/db/migration/mysql",
         "/ai/icen/fw/workflow/db/migration/mysql/V041__persist_governance_runtime.sql",
+        "/ai/icen/fw/workflow/db/migration/mysql/V042__persist_governance_deletion_targets.sql",
     ),
     KINGBASE(
         "classpath:ai/icen/fw/workflow/db/migration/kingbase",
         "/ai/icen/fw/workflow/db/migration/kingbase/V041__persist_governance_runtime.sql",
+        "/ai/icen/fw/workflow/db/migration/kingbase/V042__persist_governance_deletion_targets.sql",
     ),
 }
 
@@ -63,5 +70,12 @@ class GovernanceJdbcMigrations private constructor() {
 
         @JvmStatic
         fun resourcePath(dialect: GovernanceJdbcMigrationDialect): String = dialect.resourcePath
+
+        /** Ordered resources for embedders that do not use Flyway location scanning. */
+        @JvmStatic
+        fun resourcePaths(dialect: GovernanceJdbcMigrationDialect): List<String> = listOf(
+            dialect.resourcePath,
+            dialect.targetLedgerResourcePath,
+        )
     }
 }

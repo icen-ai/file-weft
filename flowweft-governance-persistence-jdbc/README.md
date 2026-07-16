@@ -1,9 +1,11 @@
 # FlowWeft Governance JDBC Persistence
 
 This module is the Spring-free, JDK 8 durable store for the FlowWeft 1.0
-governance runtime. One `JdbcGovernancePersistence` implements the deletion-run
+governance runtime. `JdbcGovernancePersistence` implements the deletion-run
 repository, durable outbox repository, and a value-free Doctor source for
-PostgreSQL, MySQL 8, and KingbaseES.
+PostgreSQL, MySQL 8, and KingbaseES. `JdbcGovernanceDeletionTargetLedger`
+persists immutable pre-plan target manifests and exact per-item operation
+checkpoints for the same three dialects.
 
 ## Composition
 
@@ -30,18 +32,29 @@ records.
 
 ## Migration
 
-Apply V041 from the shared FlowWeft workflow migration history for the selected
-dialect:
+Apply V041 and then V042 from the shared FlowWeft workflow migration history
+for the selected dialect. `GovernanceJdbcMigrations.resourcePath(...)` remains
+the V041 compatibility entry; new embedders that do not scan the location use
+the ordered `resourcePaths(...)` result.
 
 - `ai/icen/fw/workflow/db/migration/postgres/V041__persist_governance_runtime.sql`
 - `ai/icen/fw/workflow/db/migration/mysql/V041__persist_governance_runtime.sql`
 - `ai/icen/fw/workflow/db/migration/kingbase/V041__persist_governance_runtime.sql`
+
+V042 resources are:
+
+- `ai/icen/fw/workflow/db/migration/postgres/V042__persist_governance_deletion_targets.sql`
+- `ai/icen/fw/workflow/db/migration/mysql/V042__persist_governance_deletion_targets.sql`
+- `ai/icen/fw/workflow/db/migration/kingbase/V042__persist_governance_deletion_targets.sql`
 
 The migration creates only `fw_governance_deletion_run` and
 `fw_governance_deletion_outbox`. A run CAS and its outbox record commit in one
 serializable transaction. Outbox workers claim ready records with a monotonic
 fencing token and bounded lease; acknowledgements require the exact tenant,
 claim digest, worker digest, fence, record digest, and unexpired lease.
+V042 creates the target manifest and item-operation tables. Every operation is
+tenant-qualified and foreign-keyed to its manifest; operation transitions use
+the exact version and canonical state digest as a compare-and-set fence.
 
 ## Failure semantics
 

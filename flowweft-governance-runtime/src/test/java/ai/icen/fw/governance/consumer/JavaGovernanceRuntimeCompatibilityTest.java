@@ -10,6 +10,8 @@ import ai.icen.fw.governance.runtime.GovernanceAuthorizedCallFactory;
 import ai.icen.fw.governance.runtime.GovernanceClockObservationRequest;
 import ai.icen.fw.governance.runtime.GovernanceDeletionPlanCommand;
 import ai.icen.fw.governance.runtime.GovernanceDeletionProviderRegistry;
+import ai.icen.fw.governance.runtime.GovernanceDeletionTargetItem;
+import ai.icen.fw.governance.runtime.GovernanceDeletionTargetItemKind;
 import ai.icen.fw.governance.runtime.GovernanceMetricsPort;
 import ai.icen.fw.governance.runtime.GovernanceRuntimeAuthorizationPort;
 import ai.icen.fw.governance.runtime.GovernanceRuntimeClockPort;
@@ -69,6 +71,17 @@ class JavaGovernanceRuntimeCompatibilityTest {
             false
         );
         assertFalse(command.getDryRun());
+        GovernanceDeletionTargetItem targetItem = GovernanceDeletionTargetItem.of(
+            1,
+            GovernanceDeletionTargetItemKind.OBJECT_CONTENT,
+            "file-object-1",
+            "storage-r1",
+            DIGEST,
+            "storage-provider",
+            "provider-r1"
+        );
+        assertNotNull(targetItem.getItemIdentityDigest());
+        assertNotNull(targetItem.getItemBindingDigest());
 
         GovernanceRuntimeClockPort clock = new GovernanceRuntimeClockPort() {
             @Override

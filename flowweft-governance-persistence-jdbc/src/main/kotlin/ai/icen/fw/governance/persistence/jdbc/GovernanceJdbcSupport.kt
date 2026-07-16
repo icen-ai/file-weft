@@ -154,8 +154,14 @@ internal object GovernanceJdbcValues {
     }
 }
 
-internal fun SQLException.isGovernanceUniqueViolation(): Boolean =
-    sqlState == "23505" || errorCode == 1062
+internal fun SQLException.isGovernanceUniqueViolation(): Boolean {
+    var current: SQLException? = this
+    while (current != null) {
+        if (current.sqlState == "23505" || current.errorCode == 1062) return true
+        current = current.nextException
+    }
+    return false
+}
 
 internal fun SQLException.isGovernanceRetryableRollback(): Boolean {
     var current: SQLException? = this

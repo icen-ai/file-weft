@@ -64,6 +64,18 @@ class GovernanceJdbcTransactionsTest {
         assertFalse(SQLException("connection", "08006").isGovernanceRetryableRollback())
     }
 
+    @Test
+    fun `unique violations are recognized through the JDBC exception chain`() {
+        val wrapper = SQLException("statement failed", "HY000")
+        wrapper.setNextException(SQLException("duplicate", "23505"))
+        assertTrue(wrapper.isGovernanceUniqueViolation())
+
+        val mysqlWrapper = SQLException("statement failed", "HY000")
+        mysqlWrapper.setNextException(SQLException("duplicate", "23000", 1062))
+        assertTrue(mysqlWrapper.isGovernanceUniqueViolation())
+        assertFalse(SQLException("constraint", "23503").isGovernanceUniqueViolation())
+    }
+
     private class CommitUnknownConnection(
         private val failCommit: Boolean = true,
         private val failStateRead: Boolean = false,

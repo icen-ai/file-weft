@@ -4,10 +4,12 @@ import ai.icen.fw.governance.api.GovernanceAuthorizationSnapshot
 import ai.icen.fw.governance.api.GovernanceCallContext
 import ai.icen.fw.governance.api.GovernanceDeletionExecutionRequest
 import ai.icen.fw.governance.api.GovernanceDeletionPlan
+import ai.icen.fw.governance.api.GovernanceDeletionReconciliationRequest
 import ai.icen.fw.governance.api.GovernanceDeletionStep
 import ai.icen.fw.governance.api.GovernanceDeletionStepReceipt
 import ai.icen.fw.governance.api.GovernanceDeletionStepStatus
 import ai.icen.fw.governance.api.GovernanceEffectiveClock
+import ai.icen.fw.governance.api.GovernanceFailure
 import ai.icen.fw.governance.api.GovernanceLegalHoldResolution
 import ai.icen.fw.governance.api.GovernancePrincipalRef
 import ai.icen.fw.governance.api.GovernancePurpose
@@ -19,6 +21,18 @@ import ai.icen.fw.governance.api.GovernanceRetentionPolicySnapshot
 import ai.icen.fw.governance.api.GovernanceVersionFence
 import ai.icen.fw.governance.runtime.GovernanceDeletionDispatch
 import ai.icen.fw.governance.runtime.GovernanceDeletionRun
+import ai.icen.fw.governance.runtime.GovernanceDeletionTarget
+import ai.icen.fw.governance.runtime.GovernanceDeletionTargetItem
+import ai.icen.fw.governance.runtime.GovernanceDeletionTargetItemKind
+import ai.icen.fw.governance.runtime.GovernanceDeletionTargetManifest
+import ai.icen.fw.governance.runtime.GovernanceDeletionTargetRequest
+
+internal class GovernanceTargetLedgerScenario(
+    val manifest: GovernanceDeletionTargetManifest,
+    val item: GovernanceDeletionTargetItem,
+    val secondItem: GovernanceDeletionTargetItem,
+    val request: GovernanceDeletionExecutionRequest,
+)
 
 internal object GovernanceJdbcTestFixture {
     const val TENANT = "tenant-1"
@@ -64,7 +78,121 @@ internal object GovernanceJdbcTestFixture {
         )
     }
 
-    private fun executionRequest(
+    fun targetLedgerScenario(): GovernanceTargetLedgerScenario {
+        val assessment = assessment()
+        val planContext = context(
+            GovernancePurpose.PLAN_SECURE_DELETION,
+            "plan-target-ledger-document-1",
+            1_000L,
+            1_100L,
+        )
+        val targetRequest = GovernanceDeletionTargetRequest.of(planContext, assessment.assessmentDigest)
+        val item = GovernanceDeletionTargetItem.of(
+            1,
+            GovernanceDeletionTargetItemKind.OBJECT_CONTENT,
+            "file-object-1",
+            "storage-version-1",
+            digest('7'),
+            "storage-provider",
+            "provider-r1",
+        )
+        val secondItem = GovernanceDeletionTargetItem.of(
+            2,
+            GovernanceDeletionTargetItemKind.OBJECT_CONTENT,
+            "file-object-2",
+            "storage-version-2",
+            digest('8'),
+            "storage-provider",
+            "provider-r1",
+        )
+        val targetRevision = "manifest-r1"
+        val target = GovernanceDeletionTarget.of(
+            ai.icen.fw.governance.api.GovernanceDeletionStage.PURGE_OBJECT_CONTENT,
+            "target-object-content-1",
+            targetRevision,
+            GovernanceDeletionTargetManifest.calculateTargetDigest(
+                ai.icen.fw.governance.api.GovernanceDeletionStage.PURGE_OBJECT_CONTENT,
+                targetRevision,
+                listOf(item, secondItem),
+            ),
+        )
+        val manifest = GovernanceDeletionTargetManifest.of(targetRequest, target, listOf(item, secondItem))
+        val steps = GovernanceDeletionPlan.REQUIRED_STAGE_ORDER.mapIndexed { index, stage ->
+            if (stage == target.stage) {
+                GovernanceDeletionStep.of(
+                    "target-ledger-step-${index + 1}",
+                    index + 1,
+                    stage,
+                    target.targetRef,
+                    target.targetRevision,
+                    target.targetDigest,
+                    "target-ledger-delete-step-${index + 1}",
+                )
+            } else {
+                GovernanceDeletionStep.of(
+                    "target-ledger-step-${index + 1}",
+                    index + 1,
+                    stage,
+                    "target-ledger-${index + 1}",
+                    "target-r1",
+                    ((index % 6) + 1).toString().repeat(64),
+                    "target-ledger-delete-step-${index + 1}",
+                )
+            }
+        }
+        val plan = GovernanceDeletionPlan.of(
+            "target-ledger-plan-1",
+            planContext,
+            fence,
+            assessment,
+            steps,
+            false,
+            1_001L,
+            50_000L,
+        )
+        var run = GovernanceDeletionRun.ready(
+            plan,
+            digest('8'),
+            "target-ledger-delete-document-1",
+            1_001L,
+        )
+        repeat(4) { index ->
+            val requestedAt = 1_200L + index * 100L
+            val request = executionRequest(run, index, requestedAt)
+            val prepared = GovernanceDeletionRun.prepare(
+                run,
+                GovernanceDeletionDispatch.prepared(
+                    request,
+                    "prior-stage-provider",
+                    "provider-r1",
+                    request.context.idempotencyKey,
+                    requestedAt + 1L,
+                ),
+                requestedAt + 1L,
+            )
+            val started = GovernanceDeletionRun.markProviderCallStarted(prepared, requestedAt + 2L)
+            val successfulStatus = if (
+                request.step.stage == ai.icen.fw.governance.api.GovernanceDeletionStage.PURGE_INDEX_PROJECTIONS
+            ) {
+                GovernanceDeletionStepStatus.VERIFIED_ABSENT
+            } else {
+                GovernanceDeletionStepStatus.COMPLETED
+            }
+            val receipt = GovernanceDeletionStepReceipt.success(
+                request,
+                "prior-stage-provider",
+                "provider-r1",
+                successfulStatus,
+                "prior-stage-receipt-${index + 1}",
+                digest(('a'.code + index).toChar()),
+                requestedAt + 3L,
+            )
+            run = GovernanceDeletionRun.recordExecution(started, receipt, requestedAt + 4L)
+        }
+        return GovernanceTargetLedgerScenario(manifest, item, secondItem, executionRequest(run, 4, 2_000L))
+    }
+
+    fun executionRequest(
         run: GovernanceDeletionRun,
         stepIndex: Int,
         requestedAt: Long,
@@ -87,7 +215,44 @@ internal object GovernanceJdbcTestFixture {
         )
     }
 
-    private fun plan(): GovernanceDeletionPlan {
+    /**
+     * Builds the exact read-only reconciliation request for the scenario's target step. Its
+     * previous receipt is the outcome-unknown observation of that step, bound to the exact
+     * execution request that prepared the target item operation.
+     */
+    fun reconciliationRequest(
+        scenario: GovernanceTargetLedgerScenario,
+        unknownFailure: GovernanceFailure,
+        reconciliationRequestedAt: Long,
+        observedAtEpochMilli: Long,
+    ): GovernanceDeletionReconciliationRequest {
+        val previousReceipt = GovernanceDeletionStepReceipt.failure(
+            scenario.request,
+            scenario.item.providerId,
+            scenario.item.providerRevision,
+            GovernanceDeletionStepStatus.OUTCOME_UNKNOWN,
+            "target-ledger-object-operation-1",
+            digest('9'),
+            unknownFailure,
+            observedAtEpochMilli,
+        )
+        val reconcileContext = context(
+            GovernancePurpose.RECONCILE_SECURE_DELETION,
+            "reconcile-target-ledger-1",
+            reconciliationRequestedAt,
+            reconciliationRequestedAt + 100L,
+        )
+        return GovernanceDeletionReconciliationRequest.of(
+            reconcileContext,
+            scenario.request.plan,
+            scenario.request.step,
+            previousReceipt,
+            scenario.request.plan.assessment,
+            scenario.request.expectedPlanVersion,
+        )
+    }
+
+    fun plan(): GovernanceDeletionPlan {
         val assessment = assessment()
         val planContext = context(
             GovernancePurpose.PLAN_SECURE_DELETION,
