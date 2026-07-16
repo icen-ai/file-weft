@@ -15,6 +15,8 @@ import ai.icen.fw.workflow.runtime.WorkflowEffectJobStoredResult;
 import ai.icen.fw.workflow.runtime.WorkflowEffectObservedOutcome;
 import ai.icen.fw.workflow.runtime.WorkflowEffectWorkerBatchResult;
 import ai.icen.fw.workflow.runtime.WorkflowParticipantResolutionWorker;
+import ai.icen.fw.workflow.runtime.WorkflowNotificationEnvelope;
+import ai.icen.fw.workflow.runtime.WorkflowNotificationStore;
 import ai.icen.fw.workflow.runtime.WorkflowReadyEffectJobClaimRequest;
 import ai.icen.fw.workflow.runtime.WorkflowReadyEffectJobPort;
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeAction;
@@ -79,6 +81,13 @@ class JavaWorkflowRuntimeCompatibilityTest {
             "poll", WorkflowTrustedCallContext.class, String.class, String.class,
             long.class, long.class, int.class);
         assertEquals(WorkflowEffectWorkerBatchResult.class, poll.getReturnType());
+        assertSame(WorkflowRuntimeAction.ENQUEUE_NOTIFICATION, WorkflowRuntimeAction.of("enqueue-notification"));
+        assertEquals(List.class, WorkflowNotificationEnvelope.class.getMethod(
+            "fanOut", ai.icen.fw.workflow.spi.WorkflowNotificationIntent.class,
+            WorkflowPrincipalRef.class, long.class).getReturnType());
+        assertEquals(ai.icen.fw.workflow.runtime.WorkflowNotificationRecord.class,
+            WorkflowNotificationStore.class.getMethod(
+                "load", String.class, String.class, long.class).getReturnType());
     }
 
     private static WorkflowExecutionIds ids() {
