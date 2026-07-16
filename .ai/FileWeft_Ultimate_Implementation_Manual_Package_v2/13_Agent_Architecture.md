@@ -1,12 +1,12 @@
 
 # Agent Architecture
 
-> **SUPERSEDED — HISTORICAL DESIGN ONLY.** `0.0.2` does not provide Agent
-> product capability. Redesign is deferred indefinitely and may be reassessed
-> only after `1.0.0` is released; this does not promise a `1.x` or other
-> delivery. Existing artifact, SPI/public ABI, and V012/V026 schema are retained
-> only for compatibility, and default runtime/Doctor/plugin/HTTP/Dev surfaces
-> must not expose Agent.
+> **CURRENT NOTICE — HISTORICAL DESIGN ONLY.** `0.0.2` and `0.0.3` did not
+> provide Agent product capability. The old indefinite deferral is superseded
+> by root `AGENTS.md` and ADR 0001: FlowWeft 1.0 includes a redesigned,
+> additive Agent product. Existing artifact, SPI/public ABI, and V012/V026
+> schema remain compatibility-only; do not repurpose them or implement the
+> historical model below as the current architecture.
 
 ## Historical design (superseded)
 
