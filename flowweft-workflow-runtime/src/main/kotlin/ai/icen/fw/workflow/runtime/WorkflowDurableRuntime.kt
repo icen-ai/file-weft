@@ -11,6 +11,8 @@ import ai.icen.fw.workflow.domain.WorkflowHumanDecisionCode
 import ai.icen.fw.workflow.domain.WorkflowHumanDecisionCommand
 import ai.icen.fw.workflow.domain.WorkflowHumanCollaborationCommand
 import ai.icen.fw.workflow.domain.WorkflowIdempotencyReceipt
+import ai.icen.fw.workflow.domain.WorkflowInstanceControlAuthorizationReceipt
+import ai.icen.fw.workflow.domain.WorkflowInstanceControlCommand
 import ai.icen.fw.workflow.domain.WorkflowInstanceState
 import ai.icen.fw.workflow.domain.WorkflowResultCode
 import ai.icen.fw.workflow.domain.WorkflowStartCommand
@@ -419,6 +421,56 @@ class WorkflowDurableRuntime(
         )
     }
 
+    fun controlInstance(request: WorkflowRuntimeControlInstanceRequest): WorkflowRuntimeResult {
+        val prepared = prepare(
+            request.callContext,
+            request.options,
+            request.instanceId,
+            request.action,
+            request.requestDigest,
+        )
+        prepared.terminal?.let { result -> return result }
+        val loaded = prepared.loaded!!
+        val authorization = loaded.authorization
+        val receipt = try {
+            WorkflowInstanceControlAuthorizationReceipt.of(
+                authorization.authorizationId,
+                loaded.state.tenantId,
+                loaded.state.instanceId,
+                request.callContext.actor,
+                request.controlAction,
+                loaded.state.stateDigest,
+                loaded.state.version,
+                request.requestDigest,
+                request.reasonDigest,
+                WorkflowAuthorizationStatus.AUTHORIZED,
+                authorization.authorityRevision,
+                authorization.authorityDigest,
+                authorization.evaluatedAt,
+                authorization.validUntil,
+            )
+        } catch (_: IllegalArgumentException) {
+            return authorizationDenied()
+        }
+        val domainResult = try {
+            WorkflowDomainEngine.controlInstance(
+                loaded.definition.index,
+                loaded.state,
+                WorkflowInstanceControlCommand.of(
+                    commandContext(request.callContext, request.instanceId, request.options),
+                    request.callContext.actor,
+                    request.controlAction,
+                    request.reasonDigest,
+                    request.requestDigest,
+                    receipt,
+                ),
+            )
+        } catch (_: IllegalArgumentException) {
+            return authorizationDenied()
+        }
+        return commit(request.requestDigest, request.options, loaded.state, domainResult, null)
+    }
+
     private fun prepare(
         context: WorkflowTrustedCallContext,
         options: WorkflowRuntimeCommandOptions,
@@ -717,7 +769,7 @@ class WorkflowDurableRuntime(
     private class LoadedCommand(
         val state: WorkflowInstanceState,
         val definition: WorkflowRuntimeDefinitionRecord,
-        @Suppress("unused") val authorization: WorkflowRuntimeAuthorizationDecision,
+        val authorization: WorkflowRuntimeAuthorizationDecision,
     )
 
     private class Preparation(

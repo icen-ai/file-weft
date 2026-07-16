@@ -107,6 +107,32 @@ class WorkflowJdbcBinaryCodecTest {
         assertEquals(state.stateDigest, legacyState.stateDigest)
         val v2State = WorkflowJdbcBinaryCodec.decodeState(WorkflowJdbcBinaryCodec.encodeState(state, 2))
         assertEquals(state.stateDigest, v2State.stateDigest)
+        val suspendedState = WorkflowInstanceState.restore(
+            state.tenantId,
+            state.instanceId,
+            state.definitionId,
+            state.definitionRef,
+            state.subject,
+            state.initiator,
+            ai.icen.fw.workflow.domain.WorkflowInstanceStatus.SUSPENDED,
+            state.version + 1L,
+            state.createdAt,
+            state.updatedAt + 1L,
+            state.tokens,
+            state.nodeExecutions,
+            state.humanWorkItems,
+            state.pendingContinuationEffectId,
+            state.pendingContinuationRequestDigest,
+            state.status,
+        )
+        val decodedSuspended = WorkflowJdbcBinaryCodec.decodeState(
+            WorkflowJdbcBinaryCodec.encodeState(suspendedState),
+        )
+        assertEquals(suspendedState.stateDigest, decodedSuspended.stateDigest)
+        assertEquals(state.status, decodedSuspended.suspendedFromStatus)
+        assertFailsWith<IllegalArgumentException> {
+            WorkflowJdbcBinaryCodec.encodeState(suspendedState, 5)
+        }
 
         val reviewer = WorkflowPrincipalRef.of("user", "reviewer-1")
         val addedSigner = WorkflowPrincipalRef.of("user", "reviewer-2")

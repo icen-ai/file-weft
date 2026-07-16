@@ -115,6 +115,35 @@ class JdbcWorkflowRuntimePersistenceH2Test {
         assertNotNull(persistence.loadEffect(TENANT, started.effects.single().effectId, 11L))
 
         val queue = JdbcWorkflowReadyEffectJobQueue(dataSource, WorkflowJdbcDialect.MYSQL)
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "UPDATE fw_wf_instance SET status = 'suspended' WHERE tenant_id = ? AND id = ?",
+            ).use { statement ->
+                statement.setString(1, TENANT)
+                statement.setString(2, INSTANCE_ID)
+                assertEquals(1, statement.executeUpdate())
+            }
+        }
+        assertTrue(queue.claimReady(
+            WorkflowReadyEffectJobClaimRequest.of(
+                TENANT,
+                WorkflowEffectCode.SERVICE_TASK,
+                "worker-suspended",
+                "claim-suspended",
+                11L,
+                20L,
+                1,
+            ),
+        ).isEmpty())
+        dataSource.connection.use { connection ->
+            connection.prepareStatement(
+                "UPDATE fw_wf_instance SET status = 'waiting' WHERE tenant_id = ? AND id = ?",
+            ).use { statement ->
+                statement.setString(1, TENANT)
+                statement.setString(2, INSTANCE_ID)
+                assertEquals(1, statement.executeUpdate())
+            }
+        }
         val firstRequest = WorkflowReadyEffectJobClaimRequest.of(
             TENANT,
             WorkflowEffectCode.SERVICE_TASK,

@@ -51,7 +51,7 @@ import java.nio.charset.StandardCharsets
  * It intentionally reconstructs through public factories, so corrupt or obsolete data fails closed.
  */
 internal object WorkflowJdbcBinaryCodec {
-    private const val FORMAT_VERSION = 5
+    private const val FORMAT_VERSION = 6
     private const val STATE_MAGIC = "FW-WORKFLOW-STATE"
     private const val DEFINITION_MAGIC = "FW-WORKFLOW-DEFINITION"
 
@@ -77,6 +77,14 @@ internal object WorkflowJdbcBinaryCodec {
             }
         }) {
             "Workflow JDBC v1/v2/v3/v4 cannot encode current-membership semantics."
+        }
+        require(formatVersion >= 6 ||
+            (state.suspendedFromStatus == null &&
+                state.status != WorkflowInstanceStatus.SUSPENDED &&
+                state.status != WorkflowInstanceStatus.CANCELLED &&
+                state.status != WorkflowInstanceStatus.TERMINATED)
+        ) {
+            "Workflow JDBC v1/v2/v3/v4/v5 cannot encode instance lifecycle controls."
         }
         return Writer(STATE_MAGIC, formatVersion).apply {
         text(state.tenantId)
@@ -192,6 +200,7 @@ internal object WorkflowJdbcBinaryCodec {
         }
         nullableText(state.pendingContinuationEffectId)
         nullableText(state.pendingContinuationRequestDigest)
+        if (formatVersion >= 6) nullableText(state.suspendedFromStatus?.code)
         }.finish()
     }
 
@@ -468,6 +477,11 @@ internal object WorkflowJdbcBinaryCodec {
         }
         val continuationEffectId = reader.nullableText()
         val continuationRequestDigest = reader.nullableText()
+        val suspendedFromStatus = if (reader.formatVersion >= 6) {
+            reader.nullableText()?.let(WorkflowInstanceStatus::of)
+        } else {
+            null
+        }
         reader.end()
         WorkflowInstanceState.restore(
             tenantId,
@@ -485,6 +499,7 @@ internal object WorkflowJdbcBinaryCodec {
             workItems,
             continuationEffectId,
             continuationRequestDigest,
+            suspendedFromStatus,
         )
     }
 

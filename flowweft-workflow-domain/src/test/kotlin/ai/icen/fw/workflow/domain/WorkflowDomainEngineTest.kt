@@ -28,6 +28,69 @@ import org.junit.jupiter.api.Test
 
 class WorkflowDomainEngineTest {
     @Test
+    fun `instance lifecycle controls suspend resume and terminate with exact authorization`() {
+        val definition = humanDefinition(listOf(rule("operators", WorkflowApprovalPolicy.one())))
+        val index = WorkflowDefinitionIndex.compile(definition)
+        val started = start(index, "control-start", 10L)
+        assertSame(WorkflowInstanceStatus.WAITING, started.state!!.status)
+
+        val suspended = control(
+            index,
+            started.state!!,
+            WorkflowInstanceControlAction.SUSPEND,
+            "control-suspend",
+            20L,
+        )
+        assertSame(WorkflowResultCode.APPLIED, suspended.code)
+        assertSame(WorkflowInstanceStatus.SUSPENDED, suspended.state!!.status)
+        assertSame(WorkflowInstanceStatus.WAITING, suspended.state!!.suspendedFromStatus)
+        assertSame(WorkflowEventCode.INSTANCE_SUSPENDED, suspended.events.single().code)
+
+        val blockedReceipt = activationReceipt(index, suspended.state!!, listOf(ALICE), 30L, "control-blocked")
+        val blocked = WorkflowDomainEngine.activateHumanRule(
+            index,
+            suspended.state!!,
+            WorkflowActivateHumanRuleCommand.of(
+                freshContext("control-blocked", suspended.state!!.version, 30L),
+                suspended.state!!.humanWorkItems.single().workItemId,
+                blockedReceipt,
+            ),
+        )
+        assertSame(WorkflowResultCode.REJECTED, blocked.code)
+        assertEquals("instance-suspended", blocked.failureCode)
+
+        val resumed = control(
+            index,
+            suspended.state!!,
+            WorkflowInstanceControlAction.RESUME,
+            "control-resume",
+            40L,
+        )
+        assertSame(WorkflowInstanceStatus.WAITING, resumed.state!!.status)
+        assertNull(resumed.state!!.suspendedFromStatus)
+        assertSame(WorkflowEventCode.INSTANCE_RESUMED, resumed.events.single().code)
+
+        val terminated = control(
+            index,
+            resumed.state!!,
+            WorkflowInstanceControlAction.TERMINATE,
+            "control-terminate",
+            50L,
+        )
+        assertSame(WorkflowInstanceStatus.TERMINATED, terminated.state!!.status)
+        assertSame(WorkflowEventCode.INSTANCE_TERMINATED, terminated.events.single().code)
+        val invalidResume = control(
+            index,
+            terminated.state!!,
+            WorkflowInstanceControlAction.RESUME,
+            "control-invalid-resume",
+            60L,
+        )
+        assertSame(WorkflowResultCode.REJECTED, invalidResume.code)
+        assertEquals("instance-control-transition-invalid", invalidResume.failureCode)
+    }
+
+    @Test
     fun `current membership decisions require fresh exact evidence instead of activation candidates`() {
         val participantRule = WorkflowHumanTaskParticipantRule.of(
             WorkflowParticipantSelector.group("rotating-reviewers"),
@@ -612,6 +675,43 @@ class WorkflowDomainEngineTest {
             receipt,
         )
         return DecisionResult(WorkflowDomainEngine.decideHumanTask(index, state, command), command)
+    }
+
+    private fun control(
+        index: WorkflowDefinitionIndex,
+        state: WorkflowInstanceState,
+        action: WorkflowInstanceControlAction,
+        prefix: String,
+        now: Long,
+    ): WorkflowDomainResult {
+        val receipt = WorkflowInstanceControlAuthorizationReceipt.of(
+            "$prefix-authorization",
+            state.tenantId,
+            state.instanceId,
+            INITIATOR,
+            action,
+            state.stateDigest,
+            state.version,
+            DIGEST_A,
+            DIGEST_B,
+            WorkflowAuthorizationStatus.AUTHORIZED,
+            "authority-control-v1",
+            DIGEST_E,
+            now,
+            now + 100L,
+        )
+        return WorkflowDomainEngine.controlInstance(
+            index,
+            state,
+            WorkflowInstanceControlCommand.of(
+                freshContext(prefix, state.version, now),
+                INITIATOR,
+                action,
+                DIGEST_B,
+                DIGEST_A,
+                receipt,
+            ),
+        )
     }
 
     private fun effectSuccess(

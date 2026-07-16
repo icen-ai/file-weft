@@ -395,9 +395,11 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
                     WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS completed_time
             FROM fw_wf_job j
             JOIN fw_wf_effect e ON e.tenant_id = j.tenant_id AND e.id = j.effect_id
+            JOIN fw_wf_instance i ON i.tenant_id = j.tenant_id AND i.id = j.instance_id
         """
         const val SELECT_READY_SQL = SELECT_COLUMNS + """
             WHERE j.tenant_id = ? AND j.job_type = ? AND j.available_time <= ?
+                AND i.status IN ('running', 'waiting')
                 AND (j.lease_expires_time IS NULL OR j.lease_expires_time <= ?)
                 AND (
                     e.delivery_status = ? OR
@@ -417,6 +419,7 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         """
         const val SELECT_EXPIRED_PROVIDER_SQL = SELECT_COLUMNS + """
             WHERE j.tenant_id = ? AND j.job_type = ? AND e.delivery_status = ?
+                AND i.status IN ('running', 'waiting')
                 AND e.execution_phase = ? AND e.lease_expires_time <= ?
             ORDER BY e.lease_expires_time, j.created_time, j.id
             LIMIT ? FOR UPDATE SKIP LOCKED

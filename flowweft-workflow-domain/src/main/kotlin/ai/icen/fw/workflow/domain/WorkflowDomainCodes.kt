@@ -14,6 +14,7 @@ class WorkflowCommandCode private constructor(code: String) {
         @JvmField val COLLABORATE_HUMAN_TASK = WorkflowCommandCode("collaborate-human-task")
         @JvmField val COMPLETE_EFFECT = WorkflowCommandCode("complete-effect")
         @JvmField val CONTINUE_EXECUTION = WorkflowCommandCode("continue-execution")
+        @JvmField val CONTROL_INSTANCE = WorkflowCommandCode("control-instance")
 
         @JvmStatic fun of(code: String): WorkflowCommandCode = when (code) {
             START_INSTANCE.code -> START_INSTANCE
@@ -22,7 +23,35 @@ class WorkflowCommandCode private constructor(code: String) {
             COLLABORATE_HUMAN_TASK.code -> COLLABORATE_HUMAN_TASK
             COMPLETE_EFFECT.code -> COMPLETE_EFFECT
             CONTINUE_EXECUTION.code -> CONTINUE_EXECUTION
+            CONTROL_INSTANCE.code -> CONTROL_INSTANCE
             else -> WorkflowCommandCode(code)
+        }
+    }
+}
+
+/** Explicit lifecycle operation; unknown values remain serializable but are never executed. */
+class WorkflowInstanceControlAction private constructor(code: String) {
+    val code: String = WorkflowDomainSupport.requireCode(code, "Workflow instance control action is invalid.")
+    val isBuiltin: Boolean
+        get() = this == SUSPEND || this == RESUME || this == CANCEL || this == TERMINATE
+
+    override fun equals(other: Any?): Boolean =
+        this === other || other is WorkflowInstanceControlAction && code == other.code
+    override fun hashCode(): Int = code.hashCode()
+    override fun toString(): String = "WorkflowInstanceControlAction(<redacted>)"
+
+    companion object {
+        @JvmField val SUSPEND = WorkflowInstanceControlAction("suspend")
+        @JvmField val RESUME = WorkflowInstanceControlAction("resume")
+        @JvmField val CANCEL = WorkflowInstanceControlAction("cancel")
+        @JvmField val TERMINATE = WorkflowInstanceControlAction("terminate")
+
+        @JvmStatic fun of(code: String): WorkflowInstanceControlAction = when (code) {
+            SUSPEND.code -> SUSPEND
+            RESUME.code -> RESUME
+            CANCEL.code -> CANCEL
+            TERMINATE.code -> TERMINATE
+            else -> WorkflowInstanceControlAction(code)
         }
     }
 }
@@ -56,6 +85,10 @@ class WorkflowEventCode private constructor(code: String) {
         @JvmField val CONTINUATION_REQUESTED = WorkflowEventCode("continuation-requested")
         @JvmField val INSTANCE_COMPLETED = WorkflowEventCode("instance-completed")
         @JvmField val INCIDENT_RAISED = WorkflowEventCode("incident-raised")
+        @JvmField val INSTANCE_SUSPENDED = WorkflowEventCode("instance-suspended")
+        @JvmField val INSTANCE_RESUMED = WorkflowEventCode("instance-resumed")
+        @JvmField val INSTANCE_CANCELLED = WorkflowEventCode("instance-cancelled")
+        @JvmField val INSTANCE_TERMINATED = WorkflowEventCode("instance-terminated")
 
         @JvmStatic fun of(code: String): WorkflowEventCode = builtIns.firstOrNull { it.code == code }
             ?: WorkflowEventCode(code)
@@ -82,6 +115,10 @@ class WorkflowEventCode private constructor(code: String) {
             CONTINUATION_REQUESTED,
             INSTANCE_COMPLETED,
             INCIDENT_RAISED,
+            INSTANCE_SUSPENDED,
+            INSTANCE_RESUMED,
+            INSTANCE_CANCELLED,
+            INSTANCE_TERMINATED,
         )
     }
 }
@@ -145,12 +182,18 @@ class WorkflowInstanceStatus private constructor(code: String) {
         @JvmField val WAITING = WorkflowInstanceStatus("waiting")
         @JvmField val COMPLETED = WorkflowInstanceStatus("completed")
         @JvmField val INCIDENT = WorkflowInstanceStatus("incident")
+        @JvmField val SUSPENDED = WorkflowInstanceStatus("suspended")
+        @JvmField val CANCELLED = WorkflowInstanceStatus("cancelled")
+        @JvmField val TERMINATED = WorkflowInstanceStatus("terminated")
 
         @JvmStatic fun of(code: String): WorkflowInstanceStatus = when (code) {
             RUNNING.code -> RUNNING
             WAITING.code -> WAITING
             COMPLETED.code -> COMPLETED
             INCIDENT.code -> INCIDENT
+            SUSPENDED.code -> SUSPENDED
+            CANCELLED.code -> CANCELLED
+            TERMINATED.code -> TERMINATED
             else -> WorkflowInstanceStatus(code)
         }
     }

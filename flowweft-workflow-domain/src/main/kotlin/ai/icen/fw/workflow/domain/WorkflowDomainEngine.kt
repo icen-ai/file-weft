@@ -458,6 +458,137 @@ class WorkflowDomainEngine private constructor() {
             }
         }
 
+        /**
+         * Applies one explicitly authorized operational lifecycle transition. Suspension preserves
+         * the exact runnable/waiting state; cancellation and termination are terminal audit facts
+         * and clear only a pending internal continuation, never historical tokens or work items.
+         */
+        @JvmStatic
+        fun controlInstance(
+            index: WorkflowDefinitionIndex,
+            state: WorkflowInstanceState,
+            command: WorkflowInstanceControlCommand,
+        ): WorkflowDomainResult {
+            val checked = precheck(
+                index,
+                state,
+                command.code,
+                command.commandDigest,
+                command.context,
+                allowControlState = true,
+            )
+            if (checked != null) return checked
+            val receipt = command.authorizationReceipt
+            if (receipt.tenantId != state.tenantId || receipt.instanceId != state.instanceId ||
+                receipt.actor != command.actor || receipt.action != command.action ||
+                receipt.stateDigest != state.stateDigest || receipt.expectedInstanceVersion != state.version ||
+                receipt.runtimeRequestDigest != command.runtimeRequestDigest ||
+                receipt.reasonDigest != command.reasonDigest ||
+                receipt.status != WorkflowAuthorizationStatus.AUTHORIZED ||
+                receipt.evaluatedAt < state.updatedAt || command.context.now < receipt.evaluatedAt ||
+                command.context.now > receipt.validUntil
+            ) {
+                return rejected(command.code, command.commandDigest, command.context, state, FAILURE_AUTHORIZATION)
+            }
+            val transition = when (command.action) {
+                WorkflowInstanceControlAction.SUSPEND -> if (
+                    state.status == WorkflowInstanceStatus.RUNNING || state.status == WorkflowInstanceStatus.WAITING
+                ) {
+                    ControlTransition(
+                        WorkflowInstanceStatus.SUSPENDED,
+                        state.status,
+                        WorkflowEventCode.INSTANCE_SUSPENDED,
+                        false,
+                    )
+                } else null
+                WorkflowInstanceControlAction.RESUME -> state.suspendedFromStatus?.let { previous ->
+                    if (state.status == WorkflowInstanceStatus.SUSPENDED &&
+                        (previous == WorkflowInstanceStatus.RUNNING || previous == WorkflowInstanceStatus.WAITING)
+                    ) {
+                        ControlTransition(previous, null, WorkflowEventCode.INSTANCE_RESUMED, false)
+                    } else null
+                }
+                WorkflowInstanceControlAction.CANCEL -> if (!isTerminalControlStatus(state.status) &&
+                    state.status != WorkflowInstanceStatus.COMPLETED
+                ) {
+                    ControlTransition(
+                        WorkflowInstanceStatus.CANCELLED,
+                        null,
+                        WorkflowEventCode.INSTANCE_CANCELLED,
+                        true,
+                    )
+                } else null
+                WorkflowInstanceControlAction.TERMINATE -> if (!isTerminalControlStatus(state.status) &&
+                    state.status != WorkflowInstanceStatus.COMPLETED
+                ) {
+                    ControlTransition(
+                        WorkflowInstanceStatus.TERMINATED,
+                        null,
+                        WorkflowEventCode.INSTANCE_TERMINATED,
+                        true,
+                    )
+                } else null
+                else -> null
+            } ?: return rejected(
+                command.code,
+                command.commandDigest,
+                command.context,
+                state,
+                FAILURE_CONTROL_TRANSITION,
+            )
+            val eventId = command.context.ids.eventIds.firstOrNull() ?: return rejected(
+                command.code,
+                command.commandDigest,
+                command.context,
+                state,
+                FAILURE_IDENTIFIER_BUDGET,
+            )
+            val next = WorkflowInstanceState.restore(
+                state.tenantId,
+                state.instanceId,
+                state.definitionId,
+                state.definitionRef,
+                state.subject,
+                state.initiator,
+                transition.status,
+                state.version + 1L,
+                state.createdAt,
+                command.context.now,
+                state.tokens,
+                state.nodeExecutions,
+                state.humanWorkItems,
+                if (transition.clearContinuation) null else state.pendingContinuationEffectId,
+                if (transition.clearContinuation) null else state.pendingContinuationRequestDigest,
+                transition.suspendedFromStatus,
+            )
+            val event = WorkflowDomainEvent.of(
+                eventId,
+                transition.eventCode,
+                next.tenantId,
+                next.instanceId,
+                next.definitionId,
+                next.definitionRef,
+                next.subject,
+                null,
+                null,
+                null,
+                null,
+                receipt.receiptDigest,
+                command.context.now,
+                next.version,
+            )
+            return WorkflowDomainResult.of(
+                WorkflowResultCode.APPLIED,
+                command.code,
+                command.commandDigest,
+                command.context.idempotencyKey,
+                next,
+                listOf(event),
+                emptyList(),
+                null,
+            )
+        }
+
         private fun validateStart(index: WorkflowDefinitionIndex, command: WorkflowStartCommand): String? {
             val definition = index.definition
             val receipt = command.executionReceipt
@@ -494,6 +625,7 @@ class WorkflowDomainEngine private constructor() {
             commandCode: WorkflowCommandCode,
             commandDigest: String,
             context: WorkflowCommandContext,
+            allowControlState: Boolean = false,
         ): WorkflowDomainResult? {
             val bindingFailure = validateStateBinding(index, state)
             if (bindingFailure != null) {
@@ -532,8 +664,16 @@ class WorkflowDomainEngine private constructor() {
             if (context.expectedInstanceVersion != state.version) {
                 return versionConflict(commandCode, commandDigest, context, state)
             }
-            if (state.status == WorkflowInstanceStatus.COMPLETED || state.status == WorkflowInstanceStatus.INCIDENT) {
-                return rejected(commandCode, commandDigest, context, state, FAILURE_INSTANCE_TERMINAL)
+            if (!allowControlState) {
+                if (state.status == WorkflowInstanceStatus.SUSPENDED) {
+                    return rejected(commandCode, commandDigest, context, state, FAILURE_INSTANCE_SUSPENDED)
+                }
+                if (state.status == WorkflowInstanceStatus.COMPLETED ||
+                    state.status == WorkflowInstanceStatus.INCIDENT ||
+                    isTerminalControlStatus(state.status)
+                ) {
+                    return rejected(commandCode, commandDigest, context, state, FAILURE_INSTANCE_TERMINAL)
+                }
             }
             return null
         }
@@ -598,7 +738,13 @@ class WorkflowDomainEngine private constructor() {
                 state.tokens.any { token -> token.status == WorkflowTokenStatus.ACTIVE } -> WorkflowInstanceStatus.RUNNING
                 else -> WorkflowInstanceStatus.WAITING
             }
-            if (state.status != derivedStatus ||
+            val statusMatches = when (state.status) {
+                WorkflowInstanceStatus.SUSPENDED -> state.suspendedFromStatus == derivedStatus
+                WorkflowInstanceStatus.CANCELLED,
+                WorkflowInstanceStatus.TERMINATED -> state.suspendedFromStatus == null
+                else -> state.suspendedFromStatus == null && state.status == derivedStatus
+            }
+            if (!statusMatches ||
                 (state.pendingContinuationEffectId != null &&
                     state.tokens.none { token -> token.status == WorkflowTokenStatus.ACTIVE })
             ) return FAILURE_STATE_BINDING
@@ -890,6 +1036,16 @@ class WorkflowDomainEngine private constructor() {
             emptyList(),
             emptyList(),
             FAILURE_VERSION_CONFLICT,
+        )
+
+        private fun isTerminalControlStatus(status: WorkflowInstanceStatus): Boolean =
+            status == WorkflowInstanceStatus.CANCELLED || status == WorkflowInstanceStatus.TERMINATED
+
+        private class ControlTransition(
+            val status: WorkflowInstanceStatus,
+            val suspendedFromStatus: WorkflowInstanceStatus?,
+            val eventCode: WorkflowEventCode,
+            val clearContinuation: Boolean,
         )
     }
 }
@@ -1945,6 +2101,7 @@ private fun payload(domainSuffix: String, vararg values: String): String {
 
 private const val FAILURE_AUTHORIZATION = "authorization-denied"
 private const val FAILURE_COMMAND_TIME = "command-time-before-state"
+private const val FAILURE_CONTROL_TRANSITION = "instance-control-transition-invalid"
 private const val FAILURE_ALREADY_CLAIMED = "work-item-already-claimed"
 private const val FAILURE_COLLABORATION_CONFLICT = "human-collaboration-conflict"
 private const val FAILURE_COLLABORATION_DISABLED = "human-collaboration-disabled"
@@ -1964,6 +2121,7 @@ private const val FAILURE_IDEMPOTENT_REPLAY = "idempotent-replay"
 private const val FAILURE_INSUFFICIENT_IDS = "insufficient-command-ids"
 private const val FAILURE_IDENTIFIER_BUDGET = "insufficient-command-ids"
 private const val FAILURE_INSTANCE_TERMINAL = "instance-terminal"
+private const val FAILURE_INSTANCE_SUSPENDED = "instance-suspended"
 private const val FAILURE_MEMBERSHIP_STRATEGY = "participant-membership-strategy-unsupported"
 private const val FAILURE_NOT_CANDIDATE = "actor-not-candidate"
 private const val FAILURE_NOT_CLAIMED = "work-item-not-claimed"

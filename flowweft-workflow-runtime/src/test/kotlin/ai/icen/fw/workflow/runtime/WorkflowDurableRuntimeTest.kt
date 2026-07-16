@@ -33,6 +33,7 @@ import ai.icen.fw.workflow.domain.WorkflowHumanDecisionAuthorizationReceipt
 import ai.icen.fw.workflow.domain.WorkflowHumanCollaborationAuthorizationReceipt
 import ai.icen.fw.workflow.domain.WorkflowHumanDecisionCode
 import ai.icen.fw.workflow.domain.WorkflowHumanWorkItemStatus
+import ai.icen.fw.workflow.domain.WorkflowInstanceControlAction
 import ai.icen.fw.workflow.domain.WorkflowInstanceStatus
 import ai.icen.fw.workflow.domain.WorkflowParticipantActivationReceipt
 import ai.icen.fw.workflow.spi.WorkflowOrganizationAuthority
@@ -52,6 +53,55 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 
 class WorkflowDurableRuntimeTest {
+    @Test
+    fun `runtime lifecycle controls use distinct permissions and persist exact state`() {
+        val fixture = Fixture()
+        val definition = fixture.install(humanDefinition())
+        val instanceId = "instance-control"
+        val started = fixture.runtime.start(
+            startRequest(definition, instanceId, "control-start-key", "control-start", 10L),
+        )
+
+        val suspended = fixture.runtime.controlInstance(
+            WorkflowRuntimeControlInstanceRequest.of(
+                context(),
+                options("control-suspend", "control-suspend-key", started.state!!.version, 20L),
+                instanceId,
+                WorkflowInstanceControlAction.SUSPEND,
+                DIGEST_A,
+            ),
+        )
+        assertSame(WorkflowRuntimeResultCode.COMMITTED, suspended.code)
+        assertSame(WorkflowInstanceStatus.SUSPENDED, suspended.state!!.status)
+        assertSame(WorkflowRuntimeAction.SUSPEND_INSTANCE, fixture.authorization.requests.last().action)
+
+        val resumed = fixture.runtime.controlInstance(
+            WorkflowRuntimeControlInstanceRequest.of(
+                context(),
+                options("control-resume", "control-resume-key", suspended.state!!.version, 30L),
+                instanceId,
+                WorkflowInstanceControlAction.RESUME,
+                DIGEST_B,
+            ),
+        )
+        assertSame(WorkflowRuntimeResultCode.COMMITTED, resumed.code)
+        assertSame(WorkflowInstanceStatus.WAITING, resumed.state!!.status)
+        assertSame(WorkflowRuntimeAction.RESUME_INSTANCE, fixture.authorization.requests.last().action)
+
+        val cancelled = fixture.runtime.controlInstance(
+            WorkflowRuntimeControlInstanceRequest.of(
+                context(),
+                options("control-cancel", "control-cancel-key", resumed.state!!.version, 40L),
+                instanceId,
+                WorkflowInstanceControlAction.CANCEL,
+                DIGEST_A,
+            ),
+        )
+        assertSame(WorkflowRuntimeResultCode.COMMITTED, cancelled.code)
+        assertSame(WorkflowInstanceStatus.CANCELLED, cancelled.state!!.status)
+        assertSame(WorkflowRuntimeAction.CANCEL_INSTANCE, fixture.authorization.requests.last().action)
+    }
+
     @Test
     fun `effect worker checkpoints before provider call and stores result after transaction`() {
         val fixture = Fixture()

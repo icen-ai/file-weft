@@ -24,6 +24,10 @@ class WorkflowRuntimeAction private constructor(code: String) {
         @JvmField val RETURN_HUMAN_TASK = WorkflowRuntimeAction("return-human-task")
         @JvmField val COMPLETE_EFFECT = WorkflowRuntimeAction("complete-effect")
         @JvmField val CONTINUE_EXECUTION = WorkflowRuntimeAction("continue-execution")
+        @JvmField val SUSPEND_INSTANCE = WorkflowRuntimeAction("suspend-instance")
+        @JvmField val RESUME_INSTANCE = WorkflowRuntimeAction("resume-instance")
+        @JvmField val CANCEL_INSTANCE = WorkflowRuntimeAction("cancel-instance")
+        @JvmField val TERMINATE_INSTANCE = WorkflowRuntimeAction("terminate-instance")
         @JvmField val CLAIM_EFFECT = WorkflowRuntimeAction("claim-effect")
         @JvmField val CHECKPOINT_EFFECT = WorkflowRuntimeAction("checkpoint-effect")
         @JvmField val RECORD_EFFECT_OUTCOME = WorkflowRuntimeAction("record-effect-outcome")
@@ -46,6 +50,10 @@ class WorkflowRuntimeAction private constructor(code: String) {
             RETURN_HUMAN_TASK,
             COMPLETE_EFFECT,
             CONTINUE_EXECUTION,
+            SUSPEND_INSTANCE,
+            RESUME_INSTANCE,
+            CANCEL_INSTANCE,
+            TERMINATE_INSTANCE,
             CLAIM_EFFECT,
             CHECKPOINT_EFFECT,
             RECORD_EFFECT_OUTCOME,

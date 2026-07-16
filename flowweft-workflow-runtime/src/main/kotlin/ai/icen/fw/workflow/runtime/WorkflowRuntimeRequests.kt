@@ -5,6 +5,7 @@ import ai.icen.fw.workflow.api.WorkflowSubjectSnapshot
 import ai.icen.fw.workflow.domain.WorkflowContinuationReceipt
 import ai.icen.fw.workflow.domain.WorkflowEffectCompletionReceipt
 import ai.icen.fw.workflow.domain.WorkflowHumanDecisionCode
+import ai.icen.fw.workflow.domain.WorkflowInstanceControlAction
 import ai.icen.fw.workflow.domain.WorkflowParticipantActivationReceipt
 
 class WorkflowRuntimeStartRequest private constructor(
@@ -222,6 +223,53 @@ class WorkflowRuntimeContinueRequest private constructor(
             instanceId,
             receipt,
         )
+    }
+}
+
+/** One exact, tenant/principal/version-bound operational lifecycle request. */
+class WorkflowRuntimeControlInstanceRequest private constructor(
+    val callContext: WorkflowTrustedCallContext,
+    val options: WorkflowRuntimeCommandOptions,
+    instanceId: String,
+    val controlAction: WorkflowInstanceControlAction,
+    reasonDigest: String,
+) {
+    val action: WorkflowRuntimeAction = runtimeAction(controlAction)
+    val instanceId: String = id(instanceId, "instance")
+    val reasonDigest: String = WorkflowRuntimeSupport.sha256(
+        reasonDigest,
+        "Workflow runtime control reason digest is invalid.",
+    )
+    val requestDigest: String = baseDigest(action, callContext, options, this.instanceId)
+        .text(controlAction.code)
+        .text(this.reasonDigest)
+        .finish()
+
+    override fun toString(): String = "WorkflowRuntimeControlInstanceRequest(<redacted>)"
+
+    companion object {
+        @JvmStatic
+        fun of(
+            callContext: WorkflowTrustedCallContext,
+            options: WorkflowRuntimeCommandOptions,
+            instanceId: String,
+            controlAction: WorkflowInstanceControlAction,
+            reasonDigest: String,
+        ): WorkflowRuntimeControlInstanceRequest = WorkflowRuntimeControlInstanceRequest(
+            callContext,
+            options,
+            instanceId,
+            controlAction,
+            reasonDigest,
+        )
+
+        private fun runtimeAction(action: WorkflowInstanceControlAction): WorkflowRuntimeAction = when (action) {
+            WorkflowInstanceControlAction.SUSPEND -> WorkflowRuntimeAction.SUSPEND_INSTANCE
+            WorkflowInstanceControlAction.RESUME -> WorkflowRuntimeAction.RESUME_INSTANCE
+            WorkflowInstanceControlAction.CANCEL -> WorkflowRuntimeAction.CANCEL_INSTANCE
+            WorkflowInstanceControlAction.TERMINATE -> WorkflowRuntimeAction.TERMINATE_INSTANCE
+            else -> throw IllegalArgumentException("Unknown workflow instance control action is unsupported.")
+        }
     }
 }
 

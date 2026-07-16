@@ -1,5 +1,6 @@
 package ai.icen.fw.workflow.runtime
 
+import ai.icen.fw.workflow.domain.WorkflowInstanceStatus
 import java.nio.charset.StandardCharsets
 
 class WorkflowEffectWorkerItemCode private constructor(code: String) {
@@ -152,6 +153,7 @@ class WorkflowEffectWorker constructor(
         // version, token and definition checks before any domain mutation.
         val loaded = loadContext(callContext, claim, effect, now)
             ?: return item(claim, WorkflowEffectWorkerItemCode.DEFERRED, "worker-context-unavailable")
+        executionBlocked(claim, loaded.state)?.let { blocked -> return blocked }
 
         now = clock.currentTimeMillis()
         val checkpointDigest = WorkflowRuntimeSupport.digest("flowweft-workflow-runtime-worker-checkpoint-v1")
@@ -291,6 +293,7 @@ class WorkflowEffectWorker constructor(
         val now = clock.currentTimeMillis()
         val loaded = loadContext(callContext, claim, effect, now)
             ?: return item(claim, WorkflowEffectWorkerItemCode.DEFERRED, "worker-context-unavailable")
+        executionBlocked(claim, loaded.state)?.let { blocked -> return blocked }
         val request = try {
             WorkflowEffectApplyRequest.of(
                 callContext,
@@ -388,6 +391,22 @@ class WorkflowEffectWorker constructor(
         LoadedContext(state, definition)
     } catch (_: RuntimeException) {
         null
+    }
+
+    private fun executionBlocked(
+        claim: WorkflowClaimedEffectJob,
+        state: ai.icen.fw.workflow.domain.WorkflowInstanceState,
+    ): WorkflowEffectWorkerItemResult? = when (state.status) {
+        WorkflowInstanceStatus.RUNNING,
+        WorkflowInstanceStatus.WAITING -> null
+        WorkflowInstanceStatus.SUSPENDED ->
+            item(claim, WorkflowEffectWorkerItemCode.DEFERRED, "instance-suspended")
+        WorkflowInstanceStatus.COMPLETED,
+        WorkflowInstanceStatus.INCIDENT,
+        WorkflowInstanceStatus.CANCELLED,
+        WorkflowInstanceStatus.TERMINATED ->
+            item(claim, WorkflowEffectWorkerItemCode.TERMINAL_FAILURE, "instance-not-executable")
+        else -> item(claim, WorkflowEffectWorkerItemCode.TERMINAL_FAILURE, "instance-status-unsupported")
     }
 
     private fun resolveEffectMutationUnknown(

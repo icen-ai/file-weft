@@ -25,6 +25,7 @@ class WorkflowInstanceState private constructor(
     humanWorkItems: Collection<WorkflowHumanWorkItemState>,
     pendingContinuationEffectId: String?,
     pendingContinuationRequestDigest: String?,
+    val suspendedFromStatus: WorkflowInstanceStatus?,
 ) {
     val tenantId: String = text(tenantId, "tenant")
     val instanceId: String = text(instanceId, "instance")
@@ -85,18 +86,32 @@ class WorkflowInstanceState private constructor(
         }) { "Workflow human work items must reference aggregate token executions." }
         when (status) {
             WorkflowInstanceStatus.COMPLETED -> require(
-                this.pendingContinuationEffectId == null &&
+                suspendedFromStatus == null && this.pendingContinuationEffectId == null &&
                     this.tokens.all { token ->
                         token.status == WorkflowTokenStatus.COMPLETED || token.status == WorkflowTokenStatus.CONSUMED
                     },
             ) { "Completed workflow instances cannot retain live tokens or continuations." }
 
-            WorkflowInstanceStatus.INCIDENT -> require(this.pendingContinuationEffectId == null) {
+            WorkflowInstanceStatus.INCIDENT -> require(
+                suspendedFromStatus == null && this.pendingContinuationEffectId == null,
+            ) {
                 "Incident workflow instances cannot retain a continuation."
             }
 
+            WorkflowInstanceStatus.SUSPENDED -> require(
+                suspendedFromStatus == WorkflowInstanceStatus.RUNNING ||
+                    suspendedFromStatus == WorkflowInstanceStatus.WAITING,
+            ) { "Suspended workflow instances require their exact prior operational status." }
+
+            WorkflowInstanceStatus.CANCELLED,
+            WorkflowInstanceStatus.TERMINATED -> require(
+                this.pendingContinuationEffectId == null && suspendedFromStatus == null,
+            ) { "Terminally controlled workflow instances cannot retain continuation state." }
+
             WorkflowInstanceStatus.RUNNING,
-            WorkflowInstanceStatus.WAITING -> Unit
+            WorkflowInstanceStatus.WAITING -> require(suspendedFromStatus == null) {
+                "Active workflow instances cannot retain a suspended origin."
+            }
             else -> throw IllegalArgumentException("Unknown workflow instance status is unsupported.")
         }
         val writer = WorkflowDomainSupport.digest("flowweft-workflow-domain-instance-state-v1")
@@ -122,9 +137,10 @@ class WorkflowInstanceState private constructor(
         this.nodeExecutions.forEach { execution -> writer.text(execution.contentDigest) }
         writer.integer(this.humanWorkItems.size)
         this.humanWorkItems.forEach { workItem -> writer.text(workItem.contentDigest) }
-        stateDigest = writer.optionalText(this.pendingContinuationEffectId)
+        writer.optionalText(this.pendingContinuationEffectId)
             .optionalText(this.pendingContinuationRequestDigest)
-            .finish()
+        if (suspendedFromStatus != null) writer.text(suspendedFromStatus.code)
+        stateDigest = writer.finish()
     }
 
     override fun equals(other: Any?): Boolean =
@@ -155,6 +171,43 @@ class WorkflowInstanceState private constructor(
             humanWorkItems: Collection<WorkflowHumanWorkItemState>,
             pendingContinuationEffectId: String?,
             pendingContinuationRequestDigest: String?,
+        ): WorkflowInstanceState = restore(
+            tenantId,
+            instanceId,
+            definitionId,
+            definitionRef,
+            subject,
+            initiator,
+            status,
+            version,
+            createdAt,
+            updatedAt,
+            tokens,
+            nodeExecutions,
+            humanWorkItems,
+            pendingContinuationEffectId,
+            pendingContinuationRequestDigest,
+            null,
+        )
+
+        @JvmStatic
+        fun restore(
+            tenantId: String,
+            instanceId: String,
+            definitionId: String,
+            definitionRef: WorkflowDefinitionRef,
+            subject: WorkflowSubjectSnapshot,
+            initiator: WorkflowPrincipalRef,
+            status: WorkflowInstanceStatus,
+            version: Long,
+            createdAt: Long,
+            updatedAt: Long,
+            tokens: Collection<WorkflowTokenState>,
+            nodeExecutions: Collection<WorkflowNodeExecutionState>,
+            humanWorkItems: Collection<WorkflowHumanWorkItemState>,
+            pendingContinuationEffectId: String?,
+            pendingContinuationRequestDigest: String?,
+            suspendedFromStatus: WorkflowInstanceStatus?,
         ): WorkflowInstanceState = WorkflowInstanceState(
             tenantId,
             instanceId,
@@ -171,6 +224,7 @@ class WorkflowInstanceState private constructor(
             humanWorkItems,
             pendingContinuationEffectId,
             pendingContinuationRequestDigest,
+            suspendedFromStatus,
         )
 
         private fun text(value: String, label: String): String = WorkflowDomainSupport.requireText(
