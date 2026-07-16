@@ -688,7 +688,11 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
                         relativePath ==
                         "flowweft-agent-persistence-jdbc/src/test/kotlin/ai/icen/fw/agent/persistence/jdbc/AgentRealDatabaseIntegrationTest.kt" ||
                         relativePath ==
-                        "flowweft-governance-persistence-jdbc/src/test/kotlin/ai/icen/fw/governance/persistence/jdbc/GovernanceRealDatabaseIntegrationTest.kt" ->
+                        "flowweft-governance-persistence-jdbc/src/test/kotlin/ai/icen/fw/governance/persistence/jdbc/GovernanceRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-capacity-persistence-jdbc/src/test/kotlin/ai/icen/fw/capacity/persistence/jdbc/CapacityRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-reliability-persistence-jdbc/src/test/kotlin/ai/icen/fw/reliability/persistence/jdbc/ReliabilityRealDatabaseIntegrationTest.kt" ->
                         setOf(
                             "FILEWEFT_RUN_POSTGRES_TESTS",
                             "FILEWEFT_RUN_MYSQL_TESTS",
@@ -978,6 +982,8 @@ val postgresIntegrationCheck = tasks.register("postgresIntegrationCheck") {
         ":flowweft-workflow-persistence-jdbc:workflowPostgresIntegrationTest",
         ":flowweft-migration-cli:flowweftMigrationPostgresIntegrationTest",
         ":flowweft-governance-persistence-jdbc:governancePostgresIntegrationTest",
+        ":flowweft-capacity-persistence-jdbc:capacityPostgresIntegrationTest",
+        ":flowweft-reliability-persistence-jdbc:reliabilityPostgresIntegrationTest",
         ":flowweft-agent-persistence-jdbc:agentPostgresIntegrationTest",
     )
 }
@@ -992,6 +998,8 @@ val mysqlIntegrationCheck = tasks.register("mysqlIntegrationCheck") {
         ":flowweft-workflow-persistence-jdbc:workflowMySqlIntegrationTest",
         ":flowweft-migration-cli:flowweftMigrationMySqlIntegrationTest",
         ":flowweft-governance-persistence-jdbc:governanceMySqlIntegrationTest",
+        ":flowweft-capacity-persistence-jdbc:capacityMySqlIntegrationTest",
+        ":flowweft-reliability-persistence-jdbc:reliabilityMySqlIntegrationTest",
         ":flowweft-agent-persistence-jdbc:agentMySqlIntegrationTest",
     )
 }
@@ -1008,6 +1016,8 @@ val kingbaseIntegrationCheck = tasks.register("kingbaseIntegrationCheck") {
         ":flowweft-workflow-persistence-jdbc:workflowKingbaseIntegrationTest",
         ":flowweft-migration-cli:flowweftMigrationKingbaseIntegrationTest",
         ":flowweft-governance-persistence-jdbc:governanceKingbaseIntegrationTest",
+        ":flowweft-capacity-persistence-jdbc:capacityKingbaseIntegrationTest",
+        ":flowweft-reliability-persistence-jdbc:reliabilityKingbaseIntegrationTest",
         ":flowweft-agent-persistence-jdbc:agentKingbaseIntegrationTest",
     )
 }
