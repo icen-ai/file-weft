@@ -37,7 +37,7 @@
 | FW10-042 | 未开始 | 文档工作台 | 目录/搜索/文档/版本/续传/metadata/下载/移动/生命周期全流程 Playwright |
 | FW10-043 | 进行中 | 审批、同步、Doctor、审计与运维 UI | 系统 Doctor 与当前用户审批任务箱已接实时脱敏 DAL；仍需权限隐藏与服务端拒绝、审批 mutation、同步/失败重排/审计和安全导出 E2E |
 | FW10-044 | 进行中 | Agent 对话、检索证据、工具确认、配置和评测 UI | 已建立 framework-neutral Web/Application API：可信上下文、对话/run、持久 cursor、取消、权限过滤引用、一次性工具确认、secret-reference 配置、Doctor 与评测；继续实现 runtime/controller/BFF/Console 及流式恢复、能力缺失和双语安全 E2E |
-| FW10-050 | 进行中 | retention、legal hold 与安全删除 | 可控时间、冻结优先级、Outbox/对象/索引删除一致性、审计和三方言测试 |
+| FW10-050 | 进行中 | retention、legal hold 与安全删除 | 已建立公开治理契约及 provider-neutral CAS/outbox 七阶段运行时，含 legal-hold 优先、fresh authorization、未知结果原操作对账、Doctor 与指标；继续补持久化/适配器、可控时间、对象/索引删除一致性、审计和三方言实库测试 |
 | FW10-051 | 未开始 | 容量、分区与背压 | 公开基准环境和上限；队列/索引/上传/Agent 限流、背压、磁盘水位和降级测试 |
 | FW10-052 | 未开始 | SLO、备份恢复、RPO/RTO | 仪表盘/告警可触发；数据库+对象+索引在干净环境恢复并达到声明目标 |
 | FW10-060 | 进行中 | 1.0 API/ABI 与配置冻结 | 所有 public 制品/HTTP/event/config baseline，Java/Kotlin/Boot 2/3 消费者兼容门禁 |
