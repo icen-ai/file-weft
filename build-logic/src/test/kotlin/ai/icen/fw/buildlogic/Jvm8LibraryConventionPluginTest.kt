@@ -33,6 +33,10 @@ class Jvm8LibraryConventionPluginTest {
                 id("fileweft.jvm8-library")
             }
 
+            dependencies {
+                testImplementation("com.h2database:h2:2.3.232")
+            }
+
             tasks.register("assertExternalTestsPartitioned") {
                 doLast {
                     listOf("test", "java8Test", "java11Test", "java21Test", "java25Test").forEach { taskName ->
@@ -43,6 +47,22 @@ class Jvm8LibraryConventionPluginTest {
                     }
                 }
             }
+
+            tasks.register("assertJava8H2Compatibility") {
+                doLast {
+                    val classpathNames = tasks.named<org.gradle.api.tasks.testing.Test>("java8Test")
+                        .get()
+                        .classpath
+                        .files
+                        .map { it.name }
+                    check("h2-1.4.200.jar" in classpathNames) {
+                        "Java 8 test classpath must contain the Java 8-compatible H2 runtime."
+                    }
+                    check("h2-2.3.232.jar" !in classpathNames) {
+                        "Java 8 test classpath must not contain the Java 11+ H2 runtime."
+                    }
+                }
+            }
             """.trimIndent(),
         )
 
@@ -50,6 +70,12 @@ class Jvm8LibraryConventionPluginTest {
             .withProjectDir(projectDir)
             .withPluginClasspath()
             .withArguments("assertExternalTestsPartitioned")
+            .build()
+
+        GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("assertJava8H2Compatibility")
             .build()
 
         val normalCheck = GradleRunner.create()

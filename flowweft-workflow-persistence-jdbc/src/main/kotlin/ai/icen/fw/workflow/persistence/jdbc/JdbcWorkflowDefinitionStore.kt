@@ -253,7 +253,7 @@ class JdbcWorkflowDefinitionStore @JvmOverloads constructor(
                     definition.ref == ref && definition.contentDigest == ref.digest
                 ) { "Persisted workflow definition payload does not match its indexed identity." }
                 val receipt = WorkflowDefinitionExecutionReceipt.of(
-                    result.getString("execution_receipt_id"),
+                    requireNotNull(result.getBytes("execution_receipt_id")).toString(StandardCharsets.UTF_8),
                     tenantId,
                     definitionId,
                     ref,

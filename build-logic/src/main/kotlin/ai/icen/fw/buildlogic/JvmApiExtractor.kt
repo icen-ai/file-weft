@@ -16,6 +16,10 @@ import java.util.jar.JarFile
 
 /** Extracts the externally linkable JVM surface without loading any candidate class. */
 object JvmApiExtractor {
+    private val externallyLinkableBinaryName = Regex(
+        "^[A-Za-z_\$][A-Za-z0-9_\$]*(?:\\.[A-Za-z_\$][A-Za-z0-9_\$]*)*$",
+    )
+
     @JvmStatic
     fun extract(jarFile: File, artifactId: String, baselineVersion: String): JvmApiSnapshot {
         require(jarFile.isFile && jarFile.length() > 0L) {
@@ -84,8 +88,12 @@ object JvmApiExtractor {
             permittedSubclasses += binaryName(permittedSubclass)
         }
 
-        override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor =
-            annotationVisitor(descriptor) { annotation ->
+        override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor {
+            if (descriptor == SOURCE_DEBUG_EXTENSION_DESCRIPTOR) {
+                // SMAP line mappings are compiler debug data, not a public API contract.
+                return object : AnnotationVisitor(Opcodes.ASM9) {}
+            }
+            return annotationVisitor(descriptor) { annotation ->
                 classAnnotations += annotation
                 annotationRecords += annotationRecord(
                     owner = className,
@@ -95,6 +103,7 @@ object JvmApiExtractor {
                     annotation = annotation,
                 )
             }
+        }
 
         override fun visitTypeAnnotation(
             typeRef: Int,
@@ -283,7 +292,9 @@ object JvmApiExtractor {
 
         fun records(): List<JvmApiRecord> {
             val effectiveAccess = innerClassAccess ?: classAccess
-            if (!isExternallyVisible(effectiveAccess)) return emptyList()
+            if (!isExternallyVisible(effectiveAccess) || !externallyLinkableBinaryName.matches(className)) {
+                return emptyList()
+            }
             val classAttributes = linkedMapOf(
                 "access" to accessText(effectiveAccess, AccessTarget.CLASS),
                 "kind" to classKind(effectiveAccess),
@@ -571,4 +582,5 @@ object JvmApiExtractor {
     }
 
     private const val KOTLIN_METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
+    private const val SOURCE_DEBUG_EXTENSION_DESCRIPTOR = "Lkotlin/jvm/internal/SourceDebugExtension;"
 }

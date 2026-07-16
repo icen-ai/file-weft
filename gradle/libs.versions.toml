@@ -38,6 +38,7 @@ postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" 
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql" }
 kingbase-jdbc = { module = "cn.com.kingbase:kingbase8", version.ref = "kingbase" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-bom = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson-kotlin" }
 spring-boot2-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot2" }
 spring-boot2-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot2" }

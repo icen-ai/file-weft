@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 class JvmApiBaselineInventoryTest {
 
     @Test
-    fun `checked in inventory covers every reviewed release coordinate`() {
+    fun `checked in inventory covers every reviewed release coordinate with trusted provenance`() {
         val entries = JvmApiBaselineInventory.parse(checkedIn("gradle/compatibility/jvm-api-baselines.tsv"))
         val publications = PublicationInventoryVerifier.parse(checkedIn("gradle/publication-inventory.tsv"))
 
@@ -36,8 +36,7 @@ class JvmApiBaselineInventoryTest {
         }
         assertEquals(preMetadataLegacyArtifacts * 2 + legacyArtifacts + newArtifacts, entries.size)
         assertEquals(setOf("0.0.1", "0.0.2", "0.0.3", "1.0.0"), entries.map { it.version }.toSet())
-        assertTrue(entries.filter { it.version == "1.0.0" }.all { it.state == JvmApiBaselineState.PENDING })
-        assertTrue(entries.filter { it.version != "1.0.0" }.all { it.state == JvmApiBaselineState.READY })
+        assertTrue(entries.all { it.state == JvmApiBaselineState.READY })
     }
 
     @Test

@@ -137,6 +137,15 @@ class FileWeftAutoConfiguration {
         FileWeftPluginRegistry(plugins)
     }
 
+    /**
+     * Retains the 0.0.x Java-callable factory signature without registering a
+     * second Spring bean. The environment-aware overload above remains the
+     * sole auto-configuration entry point.
+     */
+    @Deprecated("Use fileWeftPluginRegistry(plugins, environment) through Spring auto-configuration.")
+    fun fileWeftPluginRegistry(plugins: List<FileWeftPlugin>): FileWeftPluginRegistry =
+        FileWeftPluginRegistry(plugins)
+
     @Bean
     @ConditionalOnMissingBean(PluginInventoryQueryService::class)
     @Conditional(TrustedPluginInventoryBoundariesCondition::class)

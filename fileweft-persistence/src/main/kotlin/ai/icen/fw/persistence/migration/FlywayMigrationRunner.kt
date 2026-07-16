@@ -488,6 +488,14 @@ class FlywayMigrationRunner @JvmOverloads constructor(
     companion object {
         const val HISTORY_TABLE: String = "fileweft_schema_history"
 
+        /**
+         * Legacy single-location constant retained for already compiled FileWeft
+         * clients. New code must use [migrationLocation] because 1.0 selects a
+         * database-specific migration directory.
+         */
+        @Deprecated("Use migrationLocation(DatabaseProduct) for the target database.")
+        const val MIGRATION_LOCATION: String = "classpath:ai/icen/fw/db/migration"
+
         private const val LEGACY_HISTORY_TABLE: String = "flyway_schema_history"
         private const val NAMESPACE_BASELINE_INSTALLED_RANK: Int = 1
         private const val NAMESPACE_BASELINE_VERSION: String = "0"

@@ -74,8 +74,9 @@ object JvmApiCompatibilityVerifier {
         violations: MutableSet<String>,
     ) {
         val candidateBySymbol = candidate.records.groupBy(JvmApiRecord::symbolKey)
+        val deprecatedSymbols = deprecatedSymbolKeys(baseline)
         baseline.records.forEach { oldRecord ->
-            if (isRawKotlinMetadataAnnotation(oldRecord)) return@forEach
+            if (isLegacyIgnoredRecord(oldRecord) || oldRecord.symbolKey in deprecatedSymbols) return@forEach
             val matches = candidateBySymbol[oldRecord.symbolKey].orEmpty()
             if (matches.isEmpty()) {
                 violations += "${baseline.baselineVersion}: removed ${display(oldRecord)}"
@@ -109,8 +110,23 @@ object JvmApiCompatibilityVerifier {
         if (old.attributes["kind"] != candidate.attributes["kind"]) return false
         if (old.attributes["signature"] != candidate.attributes["signature"]) return false
         if (old.attributes["super"] != candidate.attributes["super"]) return false
-        if (old.attributes["interfaces"] != candidate.attributes["interfaces"]) return false
-        return exactAccessFlags(old, candidate, CLASS_EXACT_ACCESS_FLAGS)
+        if (!interfacesCompatible(old, candidate)) return false
+        return compatibleAccessFlags(old, candidate, CLASS_EXACT_ACCESS_FLAGS, CLASS_FLAGS_MUST_NOT_BE_ADDED)
+    }
+
+    private fun interfacesCompatible(old: JvmApiRecord, candidate: JvmApiRecord): Boolean {
+        val oldInterfaces = old.attributes["interfaces"].orEmpty().split(',').filter(String::isNotEmpty).toSet()
+        val candidateInterfaces = candidate.attributes["interfaces"].orEmpty()
+            .split(',')
+            .filter(String::isNotEmpty)
+            .toSet()
+        return if (old.attributes["kind"] == "class") {
+            // A class may implement extra interfaces without invalidating callers compiled
+            // against the released class; losing a released interface remains incompatible.
+            candidateInterfaces.containsAll(oldInterfaces)
+        } else {
+            candidateInterfaces == oldInterfaces
+        }
     }
 
     private fun memberCompatible(
@@ -119,9 +135,10 @@ object JvmApiCompatibilityVerifier {
         exactFlags: Set<String>,
     ): Boolean {
         if (!visibilityCompatible(old, candidate)) return false
-        if (!exactAccessFlags(old, candidate, exactFlags)) return false
-        return old.attributes.filterKeys { key -> key != "access" } ==
-            candidate.attributes.filterKeys { key -> key != "access" }
+        if (!compatibleAccessFlags(old, candidate, exactFlags, MEMBER_FLAGS_MUST_NOT_BE_ADDED)) return false
+        val ignoredAttributes = if (old.kind == JvmApiSnapshot.FIELD) setOf("access", "constant") else setOf("access")
+        return old.attributes.filterKeys { key -> key !in ignoredAttributes } ==
+            candidate.attributes.filterKeys { key -> key !in ignoredAttributes }
     }
 
     private fun visibilityCompatible(old: JvmApiRecord, candidate: JvmApiRecord): Boolean {
@@ -130,11 +147,17 @@ object JvmApiCompatibilityVerifier {
         return candidateVisibility >= oldVisibility
     }
 
-    private fun exactAccessFlags(
+    private fun compatibleAccessFlags(
         old: JvmApiRecord,
         candidate: JvmApiRecord,
         exactFlags: Set<String>,
-    ): Boolean = accessFlags(old).intersect(exactFlags) == accessFlags(candidate).intersect(exactFlags)
+        flagsThatMustNotBeAdded: Set<String>,
+    ): Boolean {
+        val oldFlags = accessFlags(old)
+        val candidateFlags = accessFlags(candidate)
+        return oldFlags.intersect(exactFlags) == candidateFlags.intersect(exactFlags) &&
+            flagsThatMustNotBeAdded.none { flag -> flag in candidateFlags && flag !in oldFlags }
+    }
 
     private fun rejectNewAbstractInterfaceMethods(
         historicalSnapshots: List<JvmApiSnapshot>,
@@ -161,8 +184,42 @@ object JvmApiCompatibilityVerifier {
             }
     }
 
-    private fun isRawKotlinMetadataAnnotation(record: JvmApiRecord): Boolean =
-        record.kind == JvmApiSnapshot.ANNOTATION && record.descriptor == KOTLIN_METADATA_DESCRIPTOR
+    private fun isLegacyIgnoredRecord(record: JvmApiRecord): Boolean =
+        record.kind == JvmApiSnapshot.ANNOTATION ||
+            isSyntheticBytecodeMember(record) ||
+            isKotlinInlineImplementation(record)
+
+    private fun deprecatedSymbolKeys(baseline: JvmApiSnapshot): Set<String> = baseline.records.asSequence()
+        .filter { record ->
+            record.kind == JvmApiSnapshot.ANNOTATION && record.descriptor == JAVA_DEPRECATED_DESCRIPTOR
+        }
+        .mapNotNull(::deprecatedSymbolKey)
+        .toSet()
+
+    private fun deprecatedSymbolKey(annotation: JvmApiRecord): String? = when {
+        annotation.name == "CLASS" -> symbolKey(JvmApiSnapshot.CLASS, annotation.owner, "", "")
+        annotation.name.startsWith("FIELD:") -> memberSymbolKey(annotation, JvmApiSnapshot.FIELD)
+        annotation.name.startsWith("METHOD:") -> memberSymbolKey(annotation, JvmApiSnapshot.METHOD)
+        annotation.name.startsWith("RECORD_COMPONENT:") -> memberSymbolKey(annotation, JvmApiSnapshot.RECORD_COMPONENT)
+        else -> null
+    }
+
+    private fun memberSymbolKey(annotation: JvmApiRecord, kind: String): String? {
+        val member = annotation.name.substringAfter(':')
+        val separator = member.indexOf(':')
+        if (separator <= 0) return null
+        return symbolKey(kind, annotation.owner, member.substring(0, separator), member.substring(separator + 1))
+    }
+
+    private fun symbolKey(kind: String, owner: String, name: String, descriptor: String): String =
+        listOf(kind, owner, name, descriptor).joinToString("\u0000")
+
+    private fun isSyntheticBytecodeMember(record: JvmApiRecord): Boolean =
+        record.kind in setOf(JvmApiSnapshot.CLASS, JvmApiSnapshot.FIELD, JvmApiSnapshot.METHOD) &&
+            "synthetic" in accessFlags(record)
+
+    private fun isKotlinInlineImplementation(record: JvmApiRecord): Boolean =
+        record.owner.contains(KOTLIN_INLINE_IMPLEMENTATION_MARKER)
 
     private fun accessFlags(record: JvmApiRecord): Set<String> = record.attributes["access"]
         .orEmpty()
@@ -185,24 +242,23 @@ object JvmApiCompatibilityVerifier {
 
     private val CLASS_EXACT_ACCESS_FLAGS = setOf(
         "static",
-        "final",
         "interface",
-        "abstract",
         "annotation",
         "enum",
         "record",
     )
-    private val FIELD_EXACT_ACCESS_FLAGS = setOf("static", "final", "volatile", "transient", "enum")
+    private val CLASS_FLAGS_MUST_NOT_BE_ADDED = setOf("final", "abstract")
+    private val FIELD_EXACT_ACCESS_FLAGS = setOf("static", "volatile", "transient", "enum")
     private val METHOD_EXACT_ACCESS_FLAGS = setOf(
         "static",
-        "final",
-        "abstract",
         "synchronized",
         "bridge",
         "varargs",
         "native",
         "strict",
     )
-    private const val KOTLIN_METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
+    private val MEMBER_FLAGS_MUST_NOT_BE_ADDED = setOf("final", "abstract")
+    private const val JAVA_DEPRECATED_DESCRIPTOR = "Ljava/lang/Deprecated;"
+    private const val KOTLIN_INLINE_IMPLEMENTATION_MARKER = "\$\$inlined\$"
     private const val MAX_DIFF_SAMPLE = 20
 }

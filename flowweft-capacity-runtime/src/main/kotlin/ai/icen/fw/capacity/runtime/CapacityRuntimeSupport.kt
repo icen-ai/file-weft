@@ -113,7 +113,10 @@ internal fun hashRawIdempotencyKey(rawKey: CharSequence): String {
         }
     } finally {
         Arrays.fill(bytes, 0)
-        encoded.clear()
+        // ByteBuffer narrows clear()'s return type only from Java 9 onward.
+        // Keep the invokevirtual on Buffer so the Java 8 runtime lane remains
+        // linkable while we still zero the backing bytes best-effort.
+        (encoded as java.nio.Buffer).clear()
         while (encoded.hasRemaining()) encoded.put(0.toByte())
     }
 }

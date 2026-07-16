@@ -8,6 +8,10 @@ plugins {
 dependencies {
     api(project(":flowweft-workflow-runtime"))
 
+    // Flyway 9 declares an old Jackson TOML stack. Align its runtime transitives
+    // with FlowWeft's maintained Jackson line rather than publishing a known-
+    // vulnerable transitive closure from this JDBC adapter.
+    implementation(platform(libs.jackson.bom))
     implementation(libs.flyway.core)
     runtimeOnly(libs.flyway.mysql)
     runtimeOnly(libs.postgresql)

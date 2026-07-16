@@ -23,6 +23,7 @@ class JvmApiExtractorTest {
                 jar,
                 "example/Api.class" to publicApiBytes(),
                 "example/Hidden.class" to hiddenClassBytes(),
+                "example/Api\$not externally linkable.class" to nonLinkablePublicClassBytes(),
             )
 
             val first = JvmApiExtractor.extract(jar, ARTIFACT, "1.0.0")
@@ -54,6 +55,10 @@ class JvmApiExtractorTest {
             assertEquals("java.io.IOException", method.attributes["exceptions"])
             assertTrue(first.records.any { record ->
                 record.kind == JvmApiSnapshot.ANNOTATION && record.descriptor == "Lkotlin/Metadata;"
+            })
+            assertTrue(first.records.none { record ->
+                record.kind == JvmApiSnapshot.ANNOTATION &&
+                    record.descriptor == "Lkotlin/jvm/internal/SourceDebugExtension;"
             })
             assertTrue(first.records.any { record ->
                 record.kind == JvmApiSnapshot.KOTLIN_METADATA &&
@@ -148,6 +153,10 @@ class JvmApiExtractorTest {
             visit("xi", 48)
             visitEnd()
         }
+        writer.visitAnnotation("Lkotlin/jvm/internal/SourceDebugExtension;", false).apply {
+            visit("value", "SMAP\nApi.kt\nKotlin\n*E")
+            visitEnd()
+        }
         writer.visitField(
             Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL,
             "ANSWER",
@@ -181,6 +190,18 @@ class JvmApiExtractorTest {
 
     private fun hiddenClassBytes(): ByteArray = ClassWriter(0).apply {
         visit(Opcodes.V1_8, Opcodes.ACC_SUPER, "example/Hidden", null, "java/lang/Object", null)
+        visitEnd()
+    }.toByteArray()
+
+    private fun nonLinkablePublicClassBytes(): ByteArray = ClassWriter(0).apply {
+        visit(
+            Opcodes.V1_8,
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER,
+            "example/Api\$not externally linkable",
+            null,
+            "java/lang/Object",
+            null,
+        )
         visitEnd()
     }.toByteArray()
 

@@ -18,7 +18,10 @@ plugins {
 
 val flowWeftVersion = providers.gradleProperty("fileweftVersion").orNull
     ?: throw GradleException("-PfileweftVersion is required for the Gradle module metadata consumer.")
-val expectedPublishedFlowWeftModules = sortedSetOf(
+// This Java 8 consumer intentionally exercises a representative, dependency-rich cross-section.
+// The root publication-inventory gate owns the complete physical-module inventory; attempting
+// to consume every entry here would also make a Java 8 smoke project select Java 17 variants.
+val expectedConsumerCoverageFlowWeftModules = sortedSetOf(
     "flowweft-retrieval-api",
     "flowweft-retrieval-spi",
     "flowweft-retrieval-runtime",
@@ -78,15 +81,15 @@ val publicationEntriesByModule = publicationInventoryEntries.associateBy { entry
 require(publicationEntriesByModule.size == publicationInventoryEntries.size) {
     "Gradle metadata inventory contains duplicate artifact IDs."
 }
-val publishedFlowWeftModules = publicationInventoryEntries
+val releasedFlowWeftModules = publicationInventoryEntries
     .filter { entry -> entry.artifactKind == "jar" && entry.lineage == "new-physical" }
     .map { entry -> entry.artifactId }
     .toSortedSet()
-require(publishedFlowWeftModules == expectedPublishedFlowWeftModules) {
-    "Gradle metadata inventory differs from the expected new physical module set; " +
-        "missing=${expectedPublishedFlowWeftModules - publishedFlowWeftModules}, " +
-        "unexpected=${publishedFlowWeftModules - expectedPublishedFlowWeftModules}."
+require(releasedFlowWeftModules.containsAll(expectedConsumerCoverageFlowWeftModules)) {
+    "Gradle metadata release inventory is missing a required Java 8 consumer coverage module; " +
+        "missing=${expectedConsumerCoverageFlowWeftModules - releasedFlowWeftModules}."
 }
+val publishedFlowWeftModules = expectedConsumerCoverageFlowWeftModules
 val knownApiInternalDependencies = mapOf(
     "flowweft-retrieval-api" to setOf("fileweft-core", "fileweft-spi"),
     "flowweft-retrieval-spi" to setOf("flowweft-retrieval-api"),
@@ -107,7 +110,22 @@ val knownApiInternalDependencies = mapOf(
 val expectedApiInternalDependencies = knownApiInternalDependencies
     .filterKeys(publishedFlowWeftModules::contains)
 val expectedRuntimeInternalDependencies = expectedApiInternalDependencies + mapOf(
-    "flowweft-migration-cli" to setOf("fileweft-persistence", "flowweft-workflow-persistence-jdbc"),
+    "flowweft-migration-cli" to setOf(
+        "fileweft-persistence",
+        "flowweft-workflow-persistence-jdbc",
+        "flowweft-capacity-persistence-jdbc",
+        "flowweft-reliability-persistence-jdbc",
+        "flowweft-governance-persistence-jdbc",
+    ),
+    "flowweft-capacity-persistence-jdbc" to setOf("flowweft-capacity-runtime"),
+    "flowweft-capacity-runtime" to setOf("flowweft-capacity-api"),
+    "flowweft-capacity-api" to setOf("fileweft-core"),
+    "flowweft-reliability-persistence-jdbc" to setOf("flowweft-reliability-runtime"),
+    "flowweft-reliability-runtime" to setOf("flowweft-reliability-api"),
+    "flowweft-reliability-api" to emptySet(),
+    "flowweft-governance-persistence-jdbc" to setOf("flowweft-governance-runtime"),
+    "flowweft-governance-runtime" to setOf("flowweft-governance-api"),
+    "flowweft-governance-api" to emptySet(),
     "flowweft-adapter-dify" to setOf("fileweft-core", "fileweft-spi"),
     "flowweft-adapter-oss" to setOf("fileweft-core", "fileweft-spi"),
 )
@@ -115,6 +133,8 @@ val expectedApiResolvedInternalModules =
     (publishedFlowWeftModules + expectedApiInternalDependencies.values.flatten()).toSortedSet()
 val expectedRuntimeResolvedInternalModules = (
     expectedApiResolvedInternalModules +
+        expectedRuntimeInternalDependencies.keys +
+        expectedRuntimeInternalDependencies.values.flatten() +
         setOf("fileweft-application", "fileweft-domain", "fileweft-metadata-api", "fileweft-persistence")
 ).toSortedSet()
 val publishedProviderTestKitModules = sortedSetOf(

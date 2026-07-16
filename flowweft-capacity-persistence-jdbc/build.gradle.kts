@@ -59,6 +59,7 @@ registerCapacityDatabaseIntegrationTest(
 dependencies {
     api(project(":flowweft-capacity-runtime"))
 
+    implementation(platform(libs.jackson.bom))
     implementation(libs.flyway.core)
     runtimeOnly(libs.flyway.mysql)
     runtimeOnly(libs.postgresql)

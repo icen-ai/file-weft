@@ -12,8 +12,9 @@ apply(plugin = "org.jetbrains.kotlin.kapt")
 
 dependencies {
     api(project(":fileweft-runtime"))
-    // Auto-configuration bean methods are public JVM API. Keep every type used
-    // in their signatures available to Java and Kotlin consumers.
+    // Auto-configuration bean methods are public JVM API. Make Boot's types
+    // available at compile time without imposing an end-of-life Boot runtime
+    // on the host application's production dependency graph.
     api(project(":fileweft-agent"))
     api(project(":fileweft-adapter"))
     api(project(":fileweft-adapter-micrometer"))
@@ -21,7 +22,7 @@ dependencies {
     api(project(":fileweft-persistence"))
     compileOnly(project(":flowweft-adapter-oss"))
     api(libs.jackson.databind)
-    api(libs.spring.boot2.autoconfigure)
+    compileOnlyApi(libs.spring.boot2.autoconfigure)
     compileOnly(libs.flyway.core.boot2)
     add("kapt", libs.spring.boot2.configuration.processor)
     testImplementation(platform(libs.junit.bom))

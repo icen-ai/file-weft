@@ -154,11 +154,11 @@ class JdbcWorkflowHumanInputStoreH2Test {
                     assertTrue(result.next())
                     assertEquals("text", result.getString("token_kind"))
                     assertEquals("literal <b>text</b>", result.getString("text_content"))
-                    assertNull(result.getString("principal_id"))
+                    assertNull(result.getBytes("principal_id"))
                     assertTrue(result.next())
                     assertEquals("mention", result.getString("token_kind"))
                     assertNull(result.getString("text_content"))
-                    assertEquals("user-mentioned", result.getString("principal_id"))
+                    assertEquals("user-mentioned", requireNotNull(result.getBytes("principal_id")).toString(Charsets.UTF_8))
                 }
             }
         }

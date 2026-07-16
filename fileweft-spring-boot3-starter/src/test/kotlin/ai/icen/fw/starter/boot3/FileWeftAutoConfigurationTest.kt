@@ -184,6 +184,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FileWeftAutoConfigurationTest {
+
+    @Test
+    fun `retains the legacy Java plugin registry factory signature`() {
+        val legacyFactory = FileWeftAutoConfiguration::class.java.getMethod(
+            "fileWeftPluginRegistry",
+            List::class.java,
+        )
+
+        assertEquals(FileWeftPluginRegistry::class.java, legacyFactory.returnType)
+    }
     @TempDir
     lateinit var storageRoot: Path
 

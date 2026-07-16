@@ -143,8 +143,15 @@ allprojects {
     tasks.withType<CyclonedxDirectTask>().configureEach {
         includeConfigs.set(listOf("runtimeClasspath"))
         includeBuildEnvironment.set(false)
+        // aliyun-java-sdk-ram declares an empty POM license, which CycloneDX 1.6 correctly
+        // rejects as invalid XML. Keep its locked runtime component and graph, but do not
+        // resolve optional rich POM metadata into a fabricated license declaration.
+        if (project.name == "flowweft-adapter-oss") {
+            includeMetadataResolution.set(false)
+        }
         includeConfigs.disallowChanges()
         includeBuildEnvironment.disallowChanges()
+        includeMetadataResolution.disallowChanges()
     }
 }
 subprojects.filter { candidate -> candidate.name !in publishableModuleNames }.forEach { candidate ->

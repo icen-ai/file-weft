@@ -59,6 +59,7 @@ registerGovernanceDatabaseIntegrationTest(
 dependencies {
     api(project(":flowweft-governance-runtime"))
 
+    implementation(platform(libs.jackson.bom))
     implementation(libs.flyway.core)
     runtimeOnly(libs.flyway.mysql)
     runtimeOnly(libs.postgresql)

@@ -111,7 +111,7 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
     private fun selectReadyRows(
         connection: Connection,
         request: WorkflowReadyEffectJobClaimRequest,
-    ): List<JobRow> = connection.prepareStatement(SELECT_READY_SQL).use { statement ->
+    ): List<JobRow> = connection.prepareStatement(SELECT_READY_SQL + readyRowsLockClause(connection)).use { statement ->
         statement.setString(1, request.tenantId)
         statement.setString(2, request.effectCode.code)
         statement.setLong(3, request.now)
@@ -187,7 +187,7 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         connection: Connection,
         request: WorkflowReadyEffectJobClaimRequest,
     ) {
-        val expired = connection.prepareStatement(SELECT_EXPIRED_PROVIDER_SQL).use { statement ->
+        val expired = connection.prepareStatement(SELECT_EXPIRED_PROVIDER_SQL + readyRowsLockClause(connection)).use { statement ->
             statement.setString(1, request.tenantId)
             statement.setString(2, request.effectCode.code)
             statement.setString(3, WorkflowEffectDeliveryStatus.LEASED.code)
@@ -269,33 +269,33 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
     private fun mapClaimedRow(result: ResultSet): WorkflowClaimedEffectJob = mapJobRow(result).toClaim()
 
     private fun mapJobRow(result: ResultSet): JobRow = JobRow(
-        result.getString("job_id"),
-        result.getString("tenant_id"),
-        result.getString("instance_id"),
-        result.getString("effect_id"),
+        result.requiredIdentifier("job_id"),
+        result.requiredIdentifier("tenant_id"),
+        result.requiredIdentifier("instance_id"),
+        result.requiredIdentifier("effect_id"),
         result.getString("effect_code"),
         result.getString("effect_status"),
         result.getString("effect_phase"),
         result.getString("effect_checkpoint_digest"),
         result.getLong("effect_version"),
         nullableLong(result, "effect_fencing_token"),
-        result.getString("effect_lease_id"),
+        result.nullableIdentifier("effect_lease_id"),
         nullableLong(result, "effect_lease_expires_time"),
         result.getLong("job_version"),
         result.getLong("job_fencing_token"),
-        result.getString("job_lease_id"),
-        result.getString("job_worker_id"),
+        result.nullableIdentifier("job_lease_id"),
+        result.nullableIdentifier("job_worker_id"),
         nullableLong(result, "job_lease_acquired_time"),
         nullableLong(result, "job_lease_expires_time"),
         result.getString("execution_mode"),
-        result.getString("claim_request_digest"),
+        result.nullableIdentifier("claim_request_digest"),
         if (result.getString("result_digest") == null) null else mapStoredResult(result),
     )
 
     private fun mapStoredResult(result: ResultSet): WorkflowEffectJobStoredResult = WorkflowEffectJobStoredResult.of(
         observedOutcome(result.getString("outcome_code")),
         result.getString("result_type"),
-        result.getString("result_digest"),
+        result.requiredIdentifier("result_digest"),
         result.getBytes("result_payload"),
         nullableLong(result, "retry_time"),
         result.getLong("completed_time"),
@@ -321,6 +321,20 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         storedResult,
         jobLeaseAcquiredAt,
     )
+
+    private fun readyRowsLockClause(connection: Connection): String =
+        if (connection.metaData.databaseProductName.startsWith("H2", ignoreCase = true)) {
+            " FOR UPDATE"
+        } else {
+            " FOR UPDATE SKIP LOCKED"
+        }
+
+    private fun ResultSet.requiredIdentifier(column: String): String =
+        requireNotNull(getBytes(column)) { "Persisted workflow effect binary value is missing: $column." }
+            .toString(StandardCharsets.UTF_8)
+
+    private fun ResultSet.nullableIdentifier(column: String): String? =
+        getBytes(column)?.toString(StandardCharsets.UTF_8)
 
     private fun observedOutcome(code: String): WorkflowEffectObservedOutcome = when (code) {
         WorkflowEffectObservedOutcome.SUCCEEDED.code -> WorkflowEffectObservedOutcome.SUCCEEDED
@@ -415,14 +429,14 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
                     ))
                 )
             ORDER BY j.available_time, j.created_time, j.id
-            LIMIT ? FOR UPDATE SKIP LOCKED
+            LIMIT ?
         """
         const val SELECT_EXPIRED_PROVIDER_SQL = SELECT_COLUMNS + """
             WHERE j.tenant_id = ? AND j.job_type = ? AND e.delivery_status = ?
                 AND i.status IN ('running', 'waiting')
                 AND e.execution_phase = ? AND e.lease_expires_time <= ?
             ORDER BY e.lease_expires_time, j.created_time, j.id
-            LIMIT ? FOR UPDATE SKIP LOCKED
+            LIMIT ?
         """
         const val SELECT_JOB_BY_ID_SQL = SELECT_COLUMNS + " WHERE j.tenant_id = ? AND j.id = ?"
         const val SELECT_CLAIMS_BY_REQUEST_SQL = SELECT_COLUMNS + """

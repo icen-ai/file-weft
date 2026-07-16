@@ -37,6 +37,7 @@ import ai.icen.fw.workflow.runtime.WorkflowRuntimeCommitResult
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeDefinitionRecord
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeIdempotencyRecord
 import ai.icen.fw.workflow.runtime.WorkflowRuntimePersistencePort
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.PreparedStatement
@@ -842,18 +843,18 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
                     if (result.next()) {
                         CandidateEvidence(
                             result.getString(1),
-                            result.getString(2),
+                            result.requiredIdentifier(2),
                             result.getString(3),
-                            result.getString(4),
-                            result.getString(5),
-                            result.getString(6),
-                            result.getString(7),
-                            result.getString(8),
-                            result.getString(9),
-                            result.getString(10),
-                            result.getString(11),
-                            result.getString(12),
-                            result.getString(13),
+                            result.nullableIdentifier(4),
+                            result.nullableIdentifier(5),
+                            result.nullableIdentifier(6),
+                            result.nullableIdentifier(7),
+                            result.nullableIdentifier(8),
+                            result.nullableIdentifier(9),
+                            result.nullableIdentifier(10),
+                            result.nullableIdentifier(11),
+                            result.nullableIdentifier(12),
+                            result.nullableIdentifier(13),
                         )
                     } else null
                 }
@@ -955,7 +956,12 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
             statement.setString(2, record.recordId)
             statement.executeQuery().use { result ->
                 if (result.next()) {
-                    listOf(result.getString(1), result.getString(2), result.getString(3), result.getString(4))
+                    listOf(
+                        result.requiredIdentifier(1),
+                        result.requiredIdentifier(2),
+                        result.getString(3),
+                        result.getString(4),
+                    )
                 } else {
                     null
                 }
@@ -1011,24 +1017,24 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
             statement.executeQuery().use { result ->
                 if (!result.next()) return null
                 val intent = WorkflowEffectIntent.of(
-                    result.getString("id"),
+                    result.requiredIdentifier("id"),
                     WorkflowEffectCode.of(result.getString("effect_code")),
-                    result.getString("tenant_id"),
-                    result.getString("instance_id"),
-                    result.getString("definition_id"),
+                    result.requiredIdentifier("tenant_id"),
+                    result.requiredIdentifier("instance_id"),
+                    result.requiredIdentifier("definition_id"),
                     WorkflowDefinitionRef.of(
                         result.getString("definition_key"),
                         result.getString("definition_version"),
                         result.getString("definition_digest"),
                     ),
                     WorkflowSubjectSnapshot.of(
-                        WorkflowSubjectRef.of(result.getString("subject_type"), result.getString("subject_id")),
+                        WorkflowSubjectRef.of(result.getString("subject_type"), result.requiredIdentifier("subject_id")),
                         result.getString("subject_revision"),
                         result.getString("subject_digest"),
                     ),
-                    result.getString("token_id"),
-                    result.getString("node_execution_id"),
-                    result.getString("work_item_id"),
+                    result.nullableIdentifier("token_id"),
+                    result.nullableIdentifier("node_execution_id"),
+                    result.nullableIdentifier("work_item_id"),
                     result.getString("node_id"),
                     nullableInt(result, "rule_index"),
                     result.getString("payload_digest"),
@@ -1040,8 +1046,8 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
                 val status = deliveryStatus(result.getString("delivery_status"))
                 val lease = if (status == WorkflowEffectDeliveryStatus.LEASED) {
                     WorkflowEffectLease.of(
-                        requireNotNull(result.getString("lease_id")),
-                        requireNotNull(result.getString("worker_id")),
+                        requireNotNull(result.nullableIdentifier("lease_id")),
+                        requireNotNull(result.nullableIdentifier("worker_id")),
                         result.getLong("fencing_token"),
                         result.getLong("lease_acquired_time"),
                         result.getLong("lease_expires_time"),
@@ -1169,7 +1175,7 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
         statement.setString(1, tenantId)
         statement.setString(2, effectId)
         statement.executeQuery().use { result ->
-            result.next() && result.getString(1) == leaseId && result.getLong(2) == fencingToken &&
+            result.next() && result.requiredIdentifier(1) == leaseId && result.getLong(2) == fencingToken &&
                 result.getLong(3).let { expiry -> !result.wasNull() && expiry > at }
         }
     }
@@ -1209,10 +1215,10 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
                     null
                 } else {
                     IncidentRow(
-                        incidentId = result.getString("id"),
-                        tenantId = result.getString("tenant_id"),
-                        instanceId = result.getString("instance_id"),
-                        effectId = requireNotNull(result.getString("effect_id")) {
+                        incidentId = result.requiredIdentifier("id"),
+                        tenantId = result.requiredIdentifier("tenant_id"),
+                        instanceId = result.requiredIdentifier("instance_id"),
+                        effectId = requireNotNull(result.nullableIdentifier("effect_id")) {
                             "Workflow effect incident is missing its effect binding."
                         },
                         incidentCode = result.getString("incident_code"),
@@ -1244,7 +1250,7 @@ class JdbcWorkflowRuntimePersistence @JvmOverloads constructor(
                     WorkflowEffectJobStoredResult.of(
                         incidentOutcome(result.getString("outcome_code")),
                         result.getString("result_type"),
-                        result.getString("result_digest"),
+                        result.requiredIdentifier("result_digest"),
                         result.getBytes("result_payload"),
                         nullableLong(result, "retry_time"),
                         result.getLong("completed_time"),
@@ -1580,3 +1586,17 @@ private fun nullableLong(result: ResultSet, column: String): Long? =
 
 private fun nullableInt(result: ResultSet, column: String): Int? =
     result.getInt(column).let { value -> if (result.wasNull()) null else value }
+
+private fun ResultSet.requiredIdentifier(column: String): String =
+    requireNotNull(getBytes(column)) { "Persisted workflow binary value is missing: $column." }
+        .toString(StandardCharsets.UTF_8)
+
+private fun ResultSet.requiredIdentifier(index: Int): String =
+    requireNotNull(getBytes(index)) { "Persisted workflow binary value is missing: $index." }
+        .toString(StandardCharsets.UTF_8)
+
+private fun ResultSet.nullableIdentifier(column: String): String? =
+    getBytes(column)?.toString(StandardCharsets.UTF_8)
+
+private fun ResultSet.nullableIdentifier(index: Int): String? =
+    getBytes(index)?.toString(StandardCharsets.UTF_8)

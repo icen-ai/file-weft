@@ -1397,7 +1397,7 @@ private fun isAmbiguousObjectNotFound(failure: S3Exception): Boolean {
 private fun s3ErrorCode(failure: S3Exception): String =
     failure.awsErrorDetails()?.errorCode().orEmpty().uppercase(Locale.ROOT)
 
-private fun isDefinitiveMultipartCompletionRejection(failure: S3Exception): Boolean =
+internal fun isDefinitiveMultipartCompletionRejection(failure: S3Exception): Boolean =
     isDefinitiveMultipartCompletionRejection(s3ErrorCode(failure))
 
 // S3 explicitly permits CompleteMultipartUpload to return HTTP 200 and place

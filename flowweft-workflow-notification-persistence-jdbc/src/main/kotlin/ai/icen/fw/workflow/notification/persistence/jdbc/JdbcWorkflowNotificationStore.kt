@@ -529,33 +529,33 @@ class JdbcWorkflowNotificationStore @JvmOverloads constructor(
     }
 
     private fun mapBatch(result: ResultSet): BatchRow = BatchRow(
-        result.getString("id"),
-        result.getString("tenant_id"),
-        result.getString("origin_idempotency_key"),
+        result.requiredIdentifier("id"),
+        result.requiredIdentifier("tenant_id"),
+        result.requiredIdentifier("origin_idempotency_key"),
         result.getString("origin_intent_digest"),
         result.getString("batch_digest"),
         result.getString("authorization_evidence_digest"),
         result.getInt("envelope_count"),
-        result.getString("first_envelope_id"),
+        result.requiredIdentifier("first_envelope_id"),
         result.getLong("enqueued_time"),
         result.getLong("created_time"),
         result.getLong("updated_time"),
     )
 
     private fun mapEnvelope(result: ResultSet): EnvelopeRow = EnvelopeRow(
-        result.getString("id"),
-        result.getString("tenant_id"),
-        result.getString("batch_id"),
+        result.requiredIdentifier("id"),
+        result.requiredIdentifier("tenant_id"),
+        result.requiredIdentifier("batch_id"),
         result.getInt("batch_ordinal"),
-        result.getString("deduplication_key"),
+        result.requiredIdentifier("deduplication_key"),
         result.getString("origin_intent_digest"),
         result.getString("envelope_digest"),
         result.getBytes("envelope_payload"),
         result.getString("queue_status"),
         result.getLong("record_version"),
         result.getInt("attempt_count"),
-        result.getString("lease_id"),
-        result.getString("worker_id"),
+        result.nullableIdentifier("lease_id"),
+        result.nullableIdentifier("worker_id"),
         result.getLong("fencing_token"),
         nullableLong(result, "lease_acquired_time"),
         nullableLong(result, "lease_expires_time"),
@@ -572,12 +572,12 @@ class JdbcWorkflowNotificationStore @JvmOverloads constructor(
     )
 
     private fun mapReport(result: ResultSet): ReportRow = ReportRow(
-        result.getString("id"),
-        result.getString("tenant_id"),
-        result.getString("envelope_id"),
+        result.requiredIdentifier("id"),
+        result.requiredIdentifier("tenant_id"),
+        result.requiredIdentifier("envelope_id"),
         result.getString("provider_id"),
         result.getString("provider_revision"),
-        result.getString("provider_message_ref"),
+        result.requiredIdentifier("provider_message_ref"),
         result.getString("delivery_status"),
         result.getString("evidence_digest"),
         result.getString("report_digest"),
@@ -849,6 +849,13 @@ class JdbcWorkflowNotificationStore @JvmOverloads constructor(
         fun lock(forUpdate: Boolean): String = if (forUpdate) " FOR UPDATE" else ""
     }
 }
+
+private fun ResultSet.requiredIdentifier(column: String): String =
+    requireNotNull(getBytes(column)) { "Persisted workflow notification identifier is missing: $column." }
+        .toString(StandardCharsets.UTF_8)
+
+private fun ResultSet.nullableIdentifier(column: String): String? =
+    getBytes(column)?.toString(StandardCharsets.UTF_8)
 
 private fun claimMutationDigest(request: WorkflowNotificationClaim): String = stableDigest(
     "workflow-notification-claim-v1",

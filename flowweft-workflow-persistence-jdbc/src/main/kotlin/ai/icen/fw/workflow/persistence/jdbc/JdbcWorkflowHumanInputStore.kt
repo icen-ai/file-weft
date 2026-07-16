@@ -606,10 +606,10 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
             statement.executeQuery().use { result ->
                 if (result.next()) {
                     WorkflowMentionNotificationCheckpointRecord.restore(
-                        result.getString("tenant_id"),
-                        result.getString("idempotency_key"),
+                        result.requiredIdentifier("tenant_id"),
+                        result.requiredIdentifier("idempotency_key"),
                         result.getString("operation_request_digest"),
-                        result.getString("lease_id"),
+                        result.requiredIdentifier("lease_id"),
                         result.getLong("fencing_token"),
                         result.getString("provider_request_digest"),
                         WorkflowMentionNotificationCheckpointStatus.of(result.getString("checkpoint_status")),
@@ -811,13 +811,13 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
     }
 
     private fun mapIdempotency(result: ResultSet): IdempotencyRow = IdempotencyRow(
-        result.getString("id"),
-        result.getString("tenant_id"),
-        result.getString("idempotency_key"),
+        result.requiredIdentifier("id"),
+        result.requiredIdentifier("tenant_id"),
+        result.requiredIdentifier("idempotency_key"),
         result.getString("operation_code"),
         result.getString("request_digest"),
         result.getString("reservation_status"),
-        result.getString("lease_id"),
+        result.requiredIdentifier("lease_id"),
         result.getLong("fencing_token"),
         result.getLong("lease_expires_time"),
         result.getString("result_kind"),
@@ -849,10 +849,10 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
             "Persisted workflow form binding digest is inconsistent."
         }
         val value = WorkflowFormSubmissionRef.of(
-            result.getString("id"),
+            result.requiredIdentifier("id"),
             result.getLong("submission_version"),
             form,
-            WorkflowPrincipalRef.of(result.getString("submitted_by_type"), result.getString("submitted_by_id")),
+            WorkflowPrincipalRef.of(result.getString("submitted_by_type"), result.requiredIdentifier("submitted_by_id")),
             result.getString("canonical_payload_digest"),
             result.getInt("payload_size_bytes"),
             result.getString("validation_receipt_digest"),
@@ -866,14 +866,14 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
     }
 
     private fun mapCommentHeader(result: ResultSet): CommentHeader = CommentHeader(
-        result.getString("id"),
+        result.requiredIdentifier("id"),
         result.getLong("comment_version"),
-        result.getString("instance_id"),
+        result.requiredIdentifier("instance_id"),
         result.getLong("instance_version"),
-        result.getString("work_item_id"),
+        result.nullableIdentifier("work_item_id"),
         nullableLong(result, "work_item_version"),
         result.getString("author_type"),
-        result.getString("author_id"),
+        result.requiredIdentifier("author_id"),
         result.getInt("token_schema_version"),
         result.getString("document_digest"),
         result.getString("snapshot_digest"),
@@ -886,7 +886,7 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
         val token = when (result.getString("token_kind")) {
             WorkflowCommentTokenKind.TEXT.code -> WorkflowCommentToken.text(result.getString("text_content"))
             WorkflowCommentTokenKind.MENTION.code -> WorkflowCommentToken.mention(
-                WorkflowPrincipalRef.of(result.getString("principal_type"), result.getString("principal_id")),
+                WorkflowPrincipalRef.of(result.getString("principal_type"), result.requiredIdentifier("principal_id")),
                 result.getString("display_name_snapshot"),
             )
             else -> throw IllegalArgumentException("Persisted workflow comment token kind is unsupported.")
@@ -901,7 +901,7 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
         val status = WorkflowNotificationDeliveryStatus.of(result.getString("delivery_status"))
         val delivery = when (status) {
             WorkflowNotificationDeliveryStatus.ACCEPTED -> WorkflowNotificationDelivery.accepted(
-                result.getString("provider_message_ref"),
+                result.requiredIdentifier("provider_message_ref"),
                 result.getString("evidence_digest"),
             )
             WorkflowNotificationDeliveryStatus.SUPPRESSED ->
@@ -1142,6 +1142,13 @@ class JdbcWorkflowHumanInputStore @JvmOverloads constructor(
         private fun setNullableLong(statement: PreparedStatement, index: Int, value: Long?) {
             if (value == null) statement.setNull(index, Types.BIGINT) else statement.setLong(index, value)
         }
+
+        private fun ResultSet.requiredIdentifier(column: String): String =
+            requireNotNull(getBytes(column)) { "Persisted workflow identifier is missing: $column." }
+                .toString(StandardCharsets.UTF_8)
+
+        private fun ResultSet.nullableIdentifier(column: String): String? =
+            getBytes(column)?.toString(StandardCharsets.UTF_8)
 
         private fun nullableLong(result: ResultSet, column: String): Long? {
             val value = result.getLong(column)
