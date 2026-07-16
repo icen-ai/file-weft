@@ -47,7 +47,7 @@ class JavaWorkflowDomainCompatibilityTest {
             "java-domain",
             "v1",
             1,
-            WorkflowDefinitionStatus.DRAFT,
+            WorkflowDefinitionStatus.PUBLISHED,
             "Java 通用工作流",
             null,
             Arrays.asList(start, end),

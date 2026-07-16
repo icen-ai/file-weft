@@ -40,6 +40,7 @@ import kotlin.test.assertContentEquals
 import org.h2.jdbcx.JdbcDataSource
 import org.h2.tools.RunScript
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -47,6 +48,74 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 
 class JdbcWorkflowRuntimePersistenceH2Test {
+    @Test
+    fun `definition lifecycle promotion is explicit monotonic and compare-and-set`() {
+        val dataSource = JdbcDataSource().apply {
+            setURL(
+                "jdbc:h2:mem:workflow-definition-${System.nanoTime()};" +
+                    "MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
+            )
+            user = "sa"
+            password = ""
+        }
+        dataSource.connection.use { connection ->
+            val resource = requireNotNull(javaClass.getResourceAsStream(
+                "/ai/icen/fw/workflow/db/migration/mysql/V030__create_flowweft_workflow_runtime.sql",
+            ))
+            InputStreamReader(resource, Charsets.UTF_8).use { reader -> RunScript.execute(connection, reader) }
+        }
+        val store = JdbcWorkflowDefinitionStore(dataSource, WorkflowJdbcDialect.MYSQL)
+        val draft = definition(WorkflowDefinitionStatus.DRAFT)
+        val draftReceipt = WorkflowDefinitionExecutionReceipt.of(
+            "draft-admission",
+            TENANT,
+            DEFINITION_ID,
+            draft.ref,
+            draft.schemaVersion,
+            DIGEST_A,
+            1L,
+            100L,
+        )
+        store.install(
+            WorkflowRuntimeDefinitionRecord.of(WorkflowDefinitionIndex.compile(draft), draftReceipt),
+            1L,
+        )
+        assertSame(WorkflowDefinitionStatus.DRAFT, store.load(TENANT, DEFINITION_ID, draft.ref)!!
+            .index.definition.status)
+
+        val published = definition(WorkflowDefinitionStatus.PUBLISHED)
+        val publishReceipt = WorkflowDefinitionExecutionReceipt.of(
+            "publish-admission",
+            TENANT,
+            DEFINITION_ID,
+            published.ref,
+            published.schemaVersion,
+            DIGEST_B,
+            2L,
+            100L,
+        )
+        val publishedRecord = WorkflowRuntimeDefinitionRecord.of(
+            WorkflowDefinitionIndex.compile(published),
+            publishReceipt,
+        )
+        store.transitionLifecycle(publishedRecord, WorkflowDefinitionStatus.DRAFT, 2L)
+        val loadedPublished = store.load(TENANT, DEFINITION_ID, published.ref)!!
+        assertSame(WorkflowDefinitionStatus.PUBLISHED, loadedPublished.index.definition.status)
+        assertEquals(publishReceipt.receiptDigest, loadedPublished.executionReceipt.receiptDigest)
+
+        val retired = definition(WorkflowDefinitionStatus.RETIRED)
+        store.transitionLifecycle(
+            WorkflowRuntimeDefinitionRecord.of(WorkflowDefinitionIndex.compile(retired), publishReceipt),
+            WorkflowDefinitionStatus.PUBLISHED,
+            3L,
+        )
+        assertSame(WorkflowDefinitionStatus.RETIRED, store.load(TENANT, DEFINITION_ID, retired.ref)!!
+            .index.definition.status)
+        assertFailsWith<IllegalArgumentException> {
+            store.transitionLifecycle(publishedRecord, WorkflowDefinitionStatus.RETIRED, 4L)
+        }
+    }
+
     @Test
     fun `atomic start persists state event effect idempotency and tenant isolation`() {
         val dataSource = JdbcDataSource().apply {
@@ -483,13 +552,15 @@ class JdbcWorkflowRuntimePersistenceH2Test {
         WorkflowIdempotencyReceipt.fresh(TENANT, INSTANCE_ID, IDEMPOTENCY_KEY, 10L),
     )
 
-    private fun definition(): WorkflowDefinition = WorkflowDefinition.of(
+    private fun definition(
+        status: WorkflowDefinitionStatus = WorkflowDefinitionStatus.PUBLISHED,
+    ): WorkflowDefinition = WorkflowDefinition.of(
         TENANT,
         DEFINITION_ID,
         "service-flow",
         "v1",
         1,
-        WorkflowDefinitionStatus.PUBLISHED,
+        status,
         "服务任务流程",
         null,
         listOf(

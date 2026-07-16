@@ -593,6 +593,9 @@ class WorkflowDomainEngine private constructor() {
             val definition = index.definition
             val receipt = command.executionReceipt
             if (definition.schemaVersion != 1) return FAILURE_UNSUPPORTED_SCHEMA
+            if (definition.status != ai.icen.fw.workflow.api.WorkflowDefinitionStatus.PUBLISHED) {
+                return FAILURE_DEFINITION_NOT_PUBLISHED
+            }
             if (definition.nodes.any { node ->
                     node.humanTaskPolicy?.participantRules?.any { rule ->
                         !rule.membershipStrategy.isBuiltin
@@ -2110,6 +2113,7 @@ private const val FAILURE_ADD_SIGN_DECISION_CONFLICT = "add-sign-decision-confli
 private const val FAILURE_ADD_SIGN_DECISION_REQUIRED = "add-sign-decision-required"
 private const val FAILURE_RETURN_WITHOUT_ADD_SIGN = "return-without-add-sign"
 private const val FAILURE_DEFINITION_BINDING = "definition-binding-mismatch"
+private const val FAILURE_DEFINITION_NOT_PUBLISHED = "definition-not-published"
 private const val FAILURE_DEPLOYMENT_RECEIPT = "deployment-receipt-mismatch"
 private const val FAILURE_DUPLICATE_DECISION = "duplicate-decision"
 private const val FAILURE_EFFECT_FAILED = "effect-failed"

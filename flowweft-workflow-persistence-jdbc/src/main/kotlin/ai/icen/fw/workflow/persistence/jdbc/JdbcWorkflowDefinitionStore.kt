@@ -1,6 +1,7 @@
 package ai.icen.fw.workflow.persistence.jdbc
 
 import ai.icen.fw.workflow.api.WorkflowDefinitionRef
+import ai.icen.fw.workflow.api.WorkflowDefinitionStatus
 import ai.icen.fw.workflow.domain.WorkflowDefinitionExecutionReceipt
 import ai.icen.fw.workflow.domain.WorkflowDefinitionIndex
 import ai.icen.fw.workflow.runtime.WorkflowRuntimeDefinitionRecord
@@ -31,9 +32,10 @@ class JdbcWorkflowDefinitionStore @JvmOverloads constructor(
             val existing = loadVersionForUpdate(connection, definition.tenantId, definition.definitionId, definition.ref)
                 ?: throw IllegalStateException("Workflow definition version insert was not observable in its transaction.")
             check(existing.index.definition.contentDigest == definition.contentDigest &&
+                existing.index.definition.status == definition.status &&
                 existing.executionReceipt.receiptDigest == receipt.receiptDigest
             ) {
-                "Workflow definition versions are immutable and the persisted identity already differs."
+                "Workflow definition versions are immutable; lifecycle changes require an explicit transition."
             }
             if (inserted || definition.status.code == "published") {
                 connection.prepareStatement(
@@ -51,6 +53,97 @@ class JdbcWorkflowDefinitionStore @JvmOverloads constructor(
                     statement.setString(6, definition.definitionId)
                     statement.setString(7, definition.key)
                     check(statement.executeUpdate() == 1) { "Workflow definition root identity is inconsistent." }
+                }
+            }
+        }
+    }
+
+    /**
+     * Compare-and-set lifecycle transition for one immutable content version. Content identity is
+     * unchanged; publication may replace the draft admission receipt with the exact deployment
+     * receipt. Downgrades and retired-version resurrection fail closed.
+     */
+    fun transitionLifecycle(
+        record: WorkflowRuntimeDefinitionRecord,
+        expectedStatus: WorkflowDefinitionStatus,
+        transitionedAt: Long,
+    ) {
+        val target = record.index.definition.status
+        require(validTransition(expectedStatus, target)) { "Workflow definition lifecycle transition is invalid." }
+        require(transitionedAt >= record.executionReceipt.acceptedAt &&
+            transitionedAt <= record.executionReceipt.validUntil
+        ) { "Workflow definition lifecycle receipt is not valid at transition time." }
+        val definition = record.index.definition
+        val receipt = record.executionReceipt
+        transactions.transaction { connection, _ ->
+            val existing = loadVersionForUpdate(
+                connection,
+                definition.tenantId,
+                definition.definitionId,
+                definition.ref,
+            ) ?: throw IllegalStateException("Workflow definition version does not exist.")
+            check(existing.index.definition.contentDigest == definition.contentDigest &&
+                existing.index.definition.status == expectedStatus
+            ) { "Workflow definition lifecycle compare-and-set failed." }
+            connection.prepareStatement(
+                """
+                UPDATE fw_wf_definition_version
+                SET definition_status = ?, definition_payload = ?, execution_receipt_id = ?,
+                    capability_digest = ?, receipt_accepted_time = ?, receipt_valid_until = ?,
+                    receipt_digest = ?, updated_time = ?
+                WHERE tenant_id = ? AND definition_id = ? AND definition_key = ?
+                  AND definition_version = ? AND definition_digest = ? AND definition_status = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, target.code)
+                statement.setBytes(2, WorkflowJdbcBinaryCodec.encodeDefinition(definition))
+                statement.setString(3, receipt.receiptId)
+                statement.setString(4, receipt.capabilityDigest)
+                statement.setLong(5, receipt.acceptedAt)
+                statement.setLong(6, receipt.validUntil)
+                statement.setString(7, receipt.receiptDigest)
+                statement.setLong(8, transitionedAt)
+                statement.setString(9, definition.tenantId)
+                statement.setString(10, definition.definitionId)
+                statement.setString(11, definition.ref.key)
+                statement.setString(12, definition.ref.version)
+                statement.setString(13, definition.ref.digest)
+                statement.setString(14, expectedStatus.code)
+                check(statement.executeUpdate() == 1) { "Workflow definition lifecycle compare-and-set failed." }
+            }
+            val rowId = versionRowId(definition.definitionId, definition.ref)
+            if (target == WorkflowDefinitionStatus.PUBLISHED) {
+                connection.prepareStatement(
+                    """
+                    UPDATE fw_wf_definition
+                    SET title = ?, lifecycle_status = ?, latest_version_id = ?, updated_time = ?
+                    WHERE tenant_id = ? AND id = ? AND definition_key = ?
+                    """.trimIndent(),
+                ).use { statement ->
+                    statement.setString(1, definition.title)
+                    statement.setString(2, target.code)
+                    statement.setString(3, rowId)
+                    statement.setLong(4, transitionedAt)
+                    statement.setString(5, definition.tenantId)
+                    statement.setString(6, definition.definitionId)
+                    statement.setString(7, definition.key)
+                    check(statement.executeUpdate() == 1) { "Workflow definition root identity is inconsistent." }
+                }
+            } else {
+                connection.prepareStatement(
+                    """
+                    UPDATE fw_wf_definition
+                    SET lifecycle_status = ?, updated_time = ?
+                    WHERE tenant_id = ? AND id = ? AND definition_key = ? AND latest_version_id = ?
+                    """.trimIndent(),
+                ).use { statement ->
+                    statement.setString(1, target.code)
+                    statement.setLong(2, transitionedAt)
+                    statement.setString(3, definition.tenantId)
+                    statement.setString(4, definition.definitionId)
+                    statement.setString(5, definition.key)
+                    statement.setString(6, rowId)
+                    statement.executeUpdate()
                 }
             }
         }
@@ -191,4 +284,11 @@ class JdbcWorkflowDefinitionStore @JvmOverloads constructor(
             }
             digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
         }
+
+    private fun validTransition(
+        from: WorkflowDefinitionStatus,
+        to: WorkflowDefinitionStatus,
+    ): Boolean = (from == WorkflowDefinitionStatus.DRAFT &&
+        (to == WorkflowDefinitionStatus.PUBLISHED || to == WorkflowDefinitionStatus.RETIRED)) ||
+        (from == WorkflowDefinitionStatus.PUBLISHED && to == WorkflowDefinitionStatus.RETIRED)
 }

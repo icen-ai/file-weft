@@ -28,6 +28,23 @@ import org.junit.jupiter.api.Test
 
 class WorkflowDomainEngineTest {
     @Test
+    fun `draft and retired definitions never start even with a valid execution receipt`() {
+        listOf(WorkflowDefinitionStatus.DRAFT, WorkflowDefinitionStatus.RETIRED).forEach { status ->
+            val candidate = definition(
+                listOf(
+                    structural("start", WorkflowNodeKind.START, "开始"),
+                    structural("end", WorkflowNodeKind.END, "结束"),
+                ),
+                listOf(edge("start-end", "start", "end")),
+                status,
+            )
+            val rejected = start(WorkflowDefinitionIndex.compile(candidate), "status-${status.code}", 10L)
+            assertSame(WorkflowResultCode.REJECTED, rejected.code)
+            assertEquals("definition-not-published", rejected.failureCode)
+        }
+    }
+
+    @Test
     fun `instance lifecycle controls suspend resume and terminate with exact authorization`() {
         val definition = humanDefinition(listOf(rule("operators", WorkflowApprovalPolicy.one())))
         val index = WorkflowDefinitionIndex.compile(definition)
@@ -852,13 +869,14 @@ class WorkflowDomainEngineTest {
     private fun definition(
         nodes: List<WorkflowNodeDefinition>,
         transitions: List<WorkflowTransitionDefinition>,
+        status: WorkflowDefinitionStatus = WorkflowDefinitionStatus.PUBLISHED,
     ): WorkflowDefinition = WorkflowDefinition.of(
         TENANT,
         DEFINITION,
         "domain-engine",
         "v1",
         1,
-        WorkflowDefinitionStatus.DRAFT,
+        status,
         "通用审批流程",
         null,
         nodes,

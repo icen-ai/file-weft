@@ -1960,7 +1960,7 @@ class WorkflowDurableRuntimeTest {
             "runtime-contract",
             "v1",
             1,
-            WorkflowDefinitionStatus.DRAFT,
+            WorkflowDefinitionStatus.PUBLISHED,
             "运行时契约流程",
             null,
             nodes,
