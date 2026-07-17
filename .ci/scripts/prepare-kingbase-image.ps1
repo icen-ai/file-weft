@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-# Windows companion to prepare-kingbase-image.sh. FileWeft does not
+# Windows companion to prepare-kingbase-image.sh. FlowWeft does not
 # redistribute KingbaseES; the archive stays on the vendor host and is loaded
 # only into the current Docker daemon after all identities match.
 $image = "kingbase_v008r006c009b0014_single_x86:v1"
@@ -18,7 +18,7 @@ if ($LASTEXITCODE -eq 0) {
     exit 0
 }
 
-$archive = Join-Path ([System.IO.Path]::GetTempPath()) ("fileweft-kingbase-{0}.tar" -f [guid]::NewGuid())
+$archive = Join-Path ([System.IO.Path]::GetTempPath()) ("flowweft-kingbase-{0}.tar" -f [guid]::NewGuid())
 try {
     & curl.exe `
         --fail `
@@ -26,7 +26,7 @@ try {
         --retry 3 `
         --retry-all-errors `
         --connect-timeout 20 `
-        --user-agent "Mozilla/5.0 (compatible; FileWeft KingbaseES integration verification)" `
+        --user-agent "Mozilla/5.0 (compatible; FlowWeft KingbaseES integration verification)" `
         --referer "https://www.kingbase.com.cn/download.html" `
         --output $archive `
         $archiveUrl

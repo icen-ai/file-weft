@@ -1,0 +1,13 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-notification-persistence-jdbc
+# state=ready
+ai.icen.fw.workflow.notification.persistence.jdbc.JdbcWorkflowNotificationStore
+ai.icen.fw.workflow.notification.persistence.jdbc.JdbcWorkflowNotificationStore$Companion$WhenMappings
+ai.icen.fw.workflow.notification.persistence.jdbc.JdbcWorkflowNotificationStoreKt
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcCodec
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcDialect
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcDialect$Companion
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcMigrations
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcMigrations$WhenMappings
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcProviderEvidence
+ai.icen.fw.workflow.notification.persistence.jdbc.WorkflowNotificationJdbcTransactions

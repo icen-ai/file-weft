@@ -1,5 +1,10 @@
 package ai.icen.fw.application.delivery
 
+import ai.icen.fw.application.document.visibleDeletionGuard
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+
 import ai.icen.fw.application.outbox.OutboxEventRepository
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
@@ -48,6 +53,44 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DocumentDeliveryServiceTest {
+    @Test
+    fun `formal delivery does not pass a URL after a tombstone becomes visible`() {
+        var lookups = 0
+        var urlCreated = false
+        val guard = DeletionVisibilityGuard.create(
+            object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ): DeletionVisibilityFence? {
+                    lookups++
+                    return if (lookups == 1) null else DeletionVisibilityFence(
+                        Identifier("tombstone-1"), Identifier("plan-1"), tenantId,
+                        resourceType, resourceId, 7, 100,
+                    )
+                }
+            },
+        )
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            storageAdapter = object : TestStorage() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI {
+                    urlCreated = true
+                    return super.accessUrl(location, expiresIn)
+                }
+            },
+            deletionVisibility = guard,
+        )
+
+        val result = fixture.sync.synchronize(fixture.events.events.single())
+
+        assertTrue(urlCreated)
+        assertTrue(fixture.connectors.getValue("archive").requests.isEmpty())
+        assertEquals(OutboxHandlingStatus.PERMANENT_FAILURE, result.status)
+    }
+
     @Test
     fun `required destinations publish while optional failure remains visible without rollback`() {
         val fixture = fixture(
@@ -696,6 +739,13 @@ class DocumentDeliveryServiceTest {
             },
         )
         assertTrue(
+            DocumentDeliverySyncService::class.java.methods.any { method ->
+                method.name == "withDeletionVisibility" &&
+                    method.parameterTypes.size == 7 &&
+                    method.parameterTypes.last() == DeletionVisibilityGuard::class.java
+            },
+        )
+        assertTrue(
             DocumentDeliveryRemovalService::class.java.constructors.any { constructor ->
                 constructor.parameterTypes.size == 5 &&
                     constructor.parameterTypes.last() == ai.icen.fw.application.audit.AuditTrail::class.java
@@ -719,6 +769,7 @@ class DocumentDeliveryServiceTest {
         storageAdapter: StorageAdapter = TestStorage(),
         connectorTimeout: Duration = Duration.ofSeconds(30),
         sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
+        deletionVisibility: DeletionVisibilityGuard = visibleDeletionGuard(),
     ): Fixture {
         val document = publishingDocument()
         val documents = MemoryDocuments(document)
@@ -758,7 +809,7 @@ class DocumentDeliveryServiceTest {
             clock = CLOCK,
         )
         if (plan) planner.plan(document, planner.prepare(TENANT, "regulated"))
-        val sync = DocumentDeliverySyncService(
+        val sync = DocumentDeliverySyncService.withDeletionVisibility(
             documentRepository = documents,
             fileObjectRepository = object : FileObjectRepository {
                 private val file = FileObject(Identifier("file-1"), TENANT, "proof.txt", 5, "s3", "tenant/proof.txt")
@@ -769,6 +820,7 @@ class DocumentDeliveryServiceTest {
             connectors = connectorResolver,
             deliveries = deliveries,
             transaction = transaction,
+            deletionVisibilityGuard = deletionVisibility,
             connectorTimeout = connectorTimeout,
             removalPlanner = DocumentDeliveryRemovalPlanner(
                 deliveries,

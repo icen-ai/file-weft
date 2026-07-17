@@ -6,11 +6,15 @@ plugins {
 
 dependencies {
     api(project(":fileweft-web-runtime"))
-    api(libs.spring.boot2.starter.web)
+    // A web starter is installed into an existing Boot 2 host. Publishing its
+    // platform as a runtime dependency would pin the host to Boot 2.7.18 and
+    // leak its end-of-life transitive stack into FlowWeft's release closure.
+    compileOnlyApi(libs.spring.boot2.starter.web)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.spring.boot2.starter.web)
     testImplementation(libs.spring.boot2.starter.test)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

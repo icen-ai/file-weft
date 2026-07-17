@@ -152,6 +152,80 @@ async function assertDownload(response, expectedContent, expectedFileName) {
   })).toEqual([]);
 }
 
+test("formal catalog is tenant-scoped, paged, and moves only a document binding", async ({ request }) => {
+  const traceId = `catalog-${randomUUID()}`;
+  const [editor, betaEditor] = await Promise.all([
+    login(request, "editor@alpha", "dev-editor"),
+    login(request, "editor@beta", "dev-editor"),
+  ]);
+
+  const alphaCatalogResponse = await request.get("/fileweft/v1/catalog/folders", {
+    headers: authorization(editor.token, traceId),
+    params: { limit: 200 },
+  });
+  const alphaCatalog = await success(alphaCatalogResponse, 200);
+  expect(sortedKeys(alphaCatalog)).toEqual(["items", "nextCursor", "total"]);
+  expect(alphaCatalog.items.some((folder) => folder.id === "contracts")).toBe(true);
+  expect(alphaCatalog.items.some((folder) => folder.id === "projects")).toBe(false);
+  for (const folder of alphaCatalog.items) {
+    expect(sortedKeys(folder)).toEqual(["displayName", "id", "parentFolderId"]);
+  }
+
+  const betaCatalog = await success(
+    await request.get("/fileweft/v1/catalog/folders", {
+      headers: authorization(betaEditor.token, traceId),
+      params: { limit: 200 },
+    }),
+    200,
+  );
+  expect(betaCatalog.items.some((folder) => folder.id === "projects")).toBe(true);
+  expect(betaCatalog.items.some((folder) => folder.id === "contracts")).toBe(false);
+
+  const headResponse = await request.fetch("/fileweft/v1/catalog/folders", {
+    method: "HEAD",
+    headers: authorization(editor.token, traceId),
+  });
+  expect(headResponse.status()).toBe(405);
+  expect(header(headResponse, "Allow")).toBe("GET");
+  expect((await headResponse.body()).length).toBe(0);
+
+  const nonce = randomUUID();
+  const created = await success(
+    await createDraft(request, editor.token, traceId, {
+      documentNumber: `CATALOG-${nonce}`,
+      title: "Catalog move acceptance",
+      fileName: `catalog-${nonce}.txt`,
+      content: Buffer.from(`catalog-${nonce}`, "utf8"),
+    }),
+    201,
+  );
+  const moved = await success(
+    await request.put(`/fileweft/v1/documents/${created.documentId}/catalog-folder`, {
+      headers: authorization(editor.token, traceId),
+      data: { folderId: "finance" },
+    }),
+    200,
+  );
+  expect(moved).toEqual({ documentId: created.documentId, versionId: created.versionId });
+  const detail = await success(
+    await request.get(`/fileweft/v1/documents/${created.documentId}`, {
+      headers: authorization(editor.token, traceId),
+    }),
+    200,
+  );
+  expect(detail.document.folderId).toBe("finance");
+
+  await failure(
+    await request.put(`/fileweft/v1/documents/${created.documentId}/catalog-folder`, {
+      headers: authorization(betaEditor.token, traceId),
+      data: { folderId: "projects" },
+    }),
+    404,
+    "NOT_FOUND",
+    "Resource was not found.",
+  );
+});
+
 test("formal runtime projections keep health public and plugin inventory administrator-only", async ({ request }) => {
   for (const path of ["/fileweft/v1/health", "/fileweft/health"]) {
     const response = await request.get(path);
@@ -202,8 +276,8 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
   const renamedTitle = `正式 v1 已重命名 ${nonce}`;
   const historicalFileName = `正式历史-${nonce}.txt`;
   const currentFileName = `正式当前-${nonce}.txt`;
-  const historicalContent = Buffer.from(`FileWeft 正式 v1 历史字节 ${nonce}\n`, "utf8");
-  const currentContent = Buffer.from(`FileWeft 正式 v1 当前字节 ${nonce}\n`, "utf8");
+  const historicalContent = Buffer.from(`FlowWeft 正式 v1 历史字节 ${nonce}\n`, "utf8");
+  const currentContent = Buffer.from(`FlowWeft 正式 v1 当前字节 ${nonce}\n`, "utf8");
 
   const [editor, reviewer, viewer, betaEditor, betaReviewer] = await Promise.all([
     login(request, "editor@alpha", "dev-editor"),

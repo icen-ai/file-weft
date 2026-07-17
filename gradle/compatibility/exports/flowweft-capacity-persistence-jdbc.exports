@@ -1,0 +1,43 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-capacity-persistence-jdbc
+# state=ready
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcCanonicalCodec
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcCanonicalCodec$Reader$WhenMappings
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcCanonicalCodec$WhenMappings
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcCommitOutcomeUnknownException
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcDialect
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcDialect$Companion
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcDialect$WhenMappings
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcDigests
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcIntentDecision
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcLeaseChain
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcMigrationDialect
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcMigrations
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcMigrations$Companion
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcPurposes
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcRenewalStep
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcSupportKt
+ai.icen.fw.capacity.persistence.jdbc.CapacityJdbcTransactions
+ai.icen.fw.capacity.persistence.jdbc.CapacityMySqlDatabaseSupport
+ai.icen.fw.capacity.persistence.jdbc.CapacityPolicyPutReceipt
+ai.icen.fw.capacity.persistence.jdbc.CapacityPolicyPutRequest
+ai.icen.fw.capacity.persistence.jdbc.CapacityPolicyPutStatus
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityPolicyStore
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityPolicyStore$Companion
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityPolicyStore$PolicyRow$Companion
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityPolicyStore$PolicyRow$Companion$WhenMappings
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityPolicyStore$snapshot$lambda$6$$inlined$sortedBy$1
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityPolicyStoreKt
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider$Companion
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider$IntentPreparation$Conflict
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider$IntentPreparation$Prepared
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider$IntentPreparation$Replay
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider$IntentPreparation$Unknown
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProvider$WhenMappings
+ai.icen.fw.capacity.persistence.jdbc.JdbcCapacityProviderKt
+ai.icen.fw.capacity.persistence.migration.CapacityFlywayMigrationRunner
+ai.icen.fw.capacity.persistence.migration.CapacityFlywayMigrationRunner$Companion
+ai.icen.fw.capacity.persistence.migration.CapacityFlywayMigrationRunner$Companion$WhenMappings
+ai.icen.fw.capacity.persistence.migration.CapacityFlywayMigrationRunner$DatabaseProduct
+ai.icen.fw.capacity.persistence.migration.CapacityKingbaseFlywayDataSource

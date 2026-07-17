@@ -32,7 +32,7 @@ internal fun safeTrustedDisplayName(value: String?): String? = value
 
 /*
  * Keep this table explicit. Character.getType() follows the Unicode data in
- * each JDK, while FileWeft supports JDK 8 through 25 and installs a fixed
+ * each JDK, while FlowWeft supports JDK 8 through 25 and installs a fixed
  * PostgreSQL constraint with the same code-point set.
  */
 private fun String.hasForbiddenIdentityCodePoint(): Boolean {

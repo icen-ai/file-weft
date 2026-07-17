@@ -7,7 +7,7 @@ import java.util.LinkedHashSet
 /**
  * Optional host-catalog boundary used to constrain all document reads.
  *
- * Implementations derive tenant and user identity from trusted FileWeft
+ * Implementations derive tenant and user identity from trusted FlowWeft
  * providers. The public query request carries only an opaque folder id;
  * [readableFolderIds] is always derived from the trusted host catalog rather
  * than from caller input.

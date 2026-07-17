@@ -52,7 +52,7 @@ class AgentSuggestion @JvmOverloads constructor(
         require(explanation == null || explanation.isNotBlank()) {
             "Agent suggestion explanation must not be blank when provided."
         }
-        require(confirmationRequired) { "FileWeft agent suggestions must require explicit confirmation." }
+        require(confirmationRequired) { "FlowWeft agent suggestions must require explicit confirmation." }
     }
 }
 

@@ -112,7 +112,7 @@ class DocumentReviewWorkflowService(
                 requestedReviewerId = reviewerId,
             )
         }
-        // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
+        // A policy provider may be remote; it must not run while FlowWeft owns a database transaction.
         val resolvedRoute = reviewRoutes.resolve(reviewRouteId, routeRequest)
         validateRouteAssignees(resolvedRoute)
         return DocumentReviewSubmitPreparation(

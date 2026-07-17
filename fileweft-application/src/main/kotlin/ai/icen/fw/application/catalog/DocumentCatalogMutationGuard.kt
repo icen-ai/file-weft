@@ -46,6 +46,26 @@ internal class DocumentCatalogMutationGuard(
         return permit
     }
 
+    fun prepareAs(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        documentId: Identifier,
+    ): DocumentMutationPermit {
+        val permit = snapshot(
+            tenantId,
+            documentId,
+            DocumentCatalogMutationPurpose.DRAFT_EDIT,
+            operator = operator,
+        )
+        catalogAccess.requireCurrentFolderForDocumentUpdate(
+            tenantId,
+            operator,
+            permit.documentId,
+            permit.effectiveFolderId,
+        )
+        return permit
+    }
+
     override fun prepareLifecycle(
         tenantId: Identifier,
         operator: UserIdentity,
@@ -60,7 +80,7 @@ internal class DocumentCatalogMutationGuard(
             operator,
         )
         // Base authorization and the host-owned folder ACL are intentionally
-        // outside FileWeft's short snapshot transaction.
+        // outside FlowWeft's short snapshot transaction.
         catalogAccess.requireCurrentFolderForDocumentLifecycle(
             permit.tenantId,
             operator,
@@ -81,6 +101,28 @@ internal class DocumentCatalogMutationGuard(
             throw DocumentCatalogBindingChangedException(documentId)
         }
         catalogAccess.requireCurrentFolderForDocumentUpdate(
+            catalogPermit.documentId,
+            catalogPermit.effectiveFolderId,
+        )
+    }
+
+    fun revalidateAs(
+        tenantId: Identifier,
+        operator: UserIdentity,
+        documentId: Identifier,
+        permit: DocumentMutationPermit,
+    ) {
+        val catalogPermit = catalogPermit(permit)
+        if (
+            catalogPermit.tenantId != tenantId ||
+            catalogPermit.operator != operator ||
+            catalogPermit.documentId != documentId
+        ) {
+            throw DocumentCatalogBindingChangedException(documentId)
+        }
+        catalogAccess.requireCurrentFolderForDocumentUpdate(
+            tenantId,
+            operator,
             catalogPermit.documentId,
             catalogPermit.effectiveFolderId,
         )

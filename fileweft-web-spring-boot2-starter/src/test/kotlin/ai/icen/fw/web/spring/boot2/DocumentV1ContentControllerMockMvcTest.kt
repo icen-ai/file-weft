@@ -1,6 +1,9 @@
 package ai.icen.fw.web.spring.boot2
 
 import ai.icen.fw.application.document.DocumentDownloadService
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
@@ -382,12 +385,20 @@ internal class DocumentV1ContentControllerTestFixture(
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision =
                 AuthorizationDecision(authorized, "private host policy")
         },
-        documentRepository = object : DocumentRepository {
+        documentRepository = object : DocumentRepository, DeletionVisibilityQuerySource {
             override fun findById(tenantId: Identifier, documentId: Identifier): Document? = document().takeIf { candidate ->
                 documentAvailable && candidate.tenantId == tenantId && candidate.id == documentId
             }
 
             override fun save(document: Document) = Unit
+
+            override fun deletionVisibilityQuery(): DeletionVisibilityQuery = object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ): DeletionVisibilityFence? = null
+            }
         },
         fileObjectRepository = object : FileObjectRepository {
             override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? =

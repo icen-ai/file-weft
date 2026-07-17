@@ -2,14 +2,14 @@ export const DEFAULT_LOCALE = "en";
 
 export const messages = {
   en: {
-    "document.title": "FileWeft / Development Proof Lab",
+    "document.title": "FlowWeft / Development Proof Lab",
     "tenant.alpha": "Alpha tenant", "tenant.beta": "Beta tenant", "drawer.folder": "Folder",
     "catalog.tree": "Tenant file tree", "catalog.spiNote": "Folder topology is supplied by the host catalog provider.", "catalog.location": "Current location", "catalog.empty": "No catalog folders", "catalog.emptyFolder": "This location is empty. Create a draft here or upload a built-in fixture.", "catalog.documentCount": "{count} documents",
     "catalog.alpha.root": "Alpha workspace", "catalog.alpha.inbox": "Incoming", "catalog.alpha.contracts": "Contracts", "catalog.alpha.finance": "Finance", "catalog.alpha.operations": "Operations",
     "catalog.beta.root": "Beta workspace", "catalog.beta.inbox": "Incoming", "catalog.beta.projects": "Projects", "catalog.beta.governance": "Governance", "catalog.beta.delivery": "Delivery",
     "error.v1.CONFLICT": "The request conflicts with the current resource state, such as a duplicate document number.", "error.v1.FORBIDDEN": "This account does not have permission to perform the operation.", "error.v1.INVALID_REQUEST": "The request is invalid. Check the fields and file, then try again.", "error.v1.FEATURE_UNAVAILABLE": "This feature is not available in the current host configuration.", "error.v1.CONTENT_UNAVAILABLE": "The document content is temporarily unavailable.", "error.v1.UNAUTHENTICATED": "The session is no longer authenticated. Sign in again.", "error.v1.NOT_FOUND": "The document was not found or is not visible to this account.", "error.v1.INTERNAL_ERROR": "The service could not complete the request.", "error.v1.RANGE_NOT_SUPPORTED": "Partial downloads are not supported.", "error.v1.METHOD_NOT_ALLOWED": "This request method is not supported.", "error.v1.invalidResponse": "The formal API returned an invalid response.",
     "login.eyebrow": "01 / DEVELOPMENT PROOF LAB", "login.heroLead": "File order,", "login.heroEmphasis": "proved in motion.",
-    "login.description": "A real-user, real-S3 acceptance lab for exercising every FileWeft document path.", "login.heading": "Identity gateway",
+    "login.description": "A real-user, real-S3 acceptance lab for exercising every FlowWeft document path.", "login.heading": "Identity gateway",
     "login.username": "Username", "login.password": "Development password", "login.submit": "Enter proof lab", "login.presets": "Preset identities / permission proof",
     "login.note": "For local Docker development only. Sessions disappear when the development service restarts.",
     "role.ADMIN": "Administrator", "role.EDITOR": "Editor", "role.REVIEWER": "Reviewer", "role.VIEWER": "Viewer",
@@ -57,9 +57,9 @@ export const messages = {
     "catalog.beta.root": "Beta 工作区", "catalog.beta.inbox": "收件箱", "catalog.beta.projects": "项目", "catalog.beta.governance": "治理", "catalog.beta.delivery": "交付",
     "error.documentNumberConflict": "当前租户中已存在此文档编号，请换一个编号。",
     "error.v1.CONFLICT": "请求与资源当前状态冲突，例如文档编号重复。", "error.v1.FORBIDDEN": "当前账号无权执行此操作。", "error.v1.INVALID_REQUEST": "请求内容无效，请检查字段和文件后重试。", "error.v1.FEATURE_UNAVAILABLE": "当前宿主配置未启用此功能。", "error.v1.CONTENT_UNAVAILABLE": "文档内容暂时不可用。", "error.v1.UNAUTHENTICATED": "当前会话已失去认证，请重新登录。", "error.v1.NOT_FOUND": "文档不存在，或当前账号不可见。", "error.v1.INTERNAL_ERROR": "服务暂时无法完成此请求。", "error.v1.RANGE_NOT_SUPPORTED": "暂不支持分段下载。", "error.v1.METHOD_NOT_ALLOWED": "不支持此请求方法。", "error.v1.invalidResponse": "正式 API 返回了无效响应。",
-    "document.title": "FileWeft / 开发验收实验室",
+    "document.title": "FlowWeft / 开发验收实验室",
     "login.eyebrow": "01 / 开发验收实验室", "login.heroLead": "文件的秩序，", "login.heroEmphasis": "在流转中被验证。",
-    "login.description": "用真实用户、真实 S3 与真实下游连接，验证 FileWeft 的每一条文档链路。", "login.heading": "身份接入",
+    "login.description": "用真实用户、真实 S3 与真实下游连接，验证 FlowWeft 的每一条文档链路。", "login.heading": "身份接入",
     "login.username": "用户名", "login.password": "开发密码", "login.submit": "进入验收实验室", "login.presets": "预置身份 / 权限验证",
     "login.note": "仅用于本地 Docker 开发环境。开发服务重启后会话失效。",
     "role.ADMIN": "管理员", "role.EDITOR": "编辑者", "role.REVIEWER": "审批者", "role.VIEWER": "只读者",

@@ -1,0 +1,2 @@
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+ai.icen.fw.workflow.web.spring.boot2.FlowWeftWorkflowWebBoot2AutoConfiguration

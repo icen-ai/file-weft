@@ -15,7 +15,7 @@ import ai.icen.fw.spi.doctor.DoctorChecker
 /**
  * Verifies the local review-workflow projection for one document tenant.
  *
- * This checker reads only FileWeft repositories. The starter wraps it in a
+ * This checker reads only FlowWeft repositories. The starter wraps it in a
  * short transaction; it deliberately does not resolve a host workflow or any
  * other external SPI. A pending document without a local workflow is a warning
  * rather than corruption because an integrator can use the external approval

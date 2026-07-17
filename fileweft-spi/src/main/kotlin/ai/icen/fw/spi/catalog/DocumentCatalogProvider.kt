@@ -3,11 +3,27 @@ package ai.icen.fw.spi.catalog
 import ai.icen.fw.core.id.Identifier
 
 /**
- * Resolves the business-system folder tree that contains FileWeft documents.
+ * Resolves the business-system folder tree that contains FlowWeft documents.
  *
- * FileWeft deliberately does not own folders or use folder names in storage
+ * FlowWeft deliberately does not own folders or use folder names in storage
  * keys. The caller retains its namespace and persists the chosen opaque folder
- * reference with the FileWeft asset using [DocumentCatalogBinding.METADATA_KEY].
+ * reference with the FlowWeft asset using [DocumentCatalogBinding.METADATA_KEY].
+ *
+ * Each [listFolders] invocation must return one complete, non-paged forest
+ * visible within that invocation's tenant/user/operation scope; the forest may
+ * be empty and may contain at most 10,000 nodes. Folder IDs and non-null parent
+ * IDs must be non-blank, already trimmed, and at most 256 UTF-16 code units;
+ * display names must be non-blank, already trimmed, and at most 512 UTF-16 code
+ * units. None may contain ISO control or Unicode FORMAT characters. FlowWeft
+ * validates this output and never trims, case-folds, or Unicode-normalizes it.
+ *
+ * Folder IDs must be unique, every non-null parent ID must identify a node in
+ * the same result, and the parent graph must be acyclic. If ACL filtering hides
+ * a parent, the provider must re-root the visible child or attach it to another
+ * visible parent; it must not expose the hidden parent's opaque ID. A custom
+ * [findFolder] implementation may accept a host alias, but the returned folder
+ * must be visible for the same request and use a stable canonical ID satisfying
+ * the same text bounds.
  */
 interface DocumentCatalogProvider {
     fun listFolders(tenantId: Identifier): List<DocumentCatalogFolder>
@@ -27,7 +43,7 @@ interface DocumentCatalogProvider {
         listFolders(request).firstOrNull { it.id == folderId }
 }
 
-/** Trusted context assembled from FileWeft's tenant and identity providers. */
+/** Trusted context assembled from FlowWeft's tenant and identity providers. */
 class DocumentCatalogAccessRequest(
     val tenantId: Identifier,
     val userId: Identifier,

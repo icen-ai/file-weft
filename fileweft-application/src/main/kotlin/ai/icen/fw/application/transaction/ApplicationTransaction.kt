@@ -39,7 +39,7 @@ object ApplicationTransactionBoundary {
 class ApplicationTransactionNestingException : IllegalStateException(DEFAULT_MESSAGE) {
     companion object {
         const val DEFAULT_MESSAGE: String =
-            "A storage-backed FileWeft command cannot run inside an active application transaction."
+            "A storage-backed FlowWeft command cannot run inside an active application transaction."
     }
 }
 

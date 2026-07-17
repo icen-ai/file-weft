@@ -17,6 +17,7 @@ dependencyLocking {
 
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.21")
+    implementation("org.ow2.asm:asm:9.9.1")
     testImplementation(gradleTestKit())
     testImplementation(kotlin("test-junit5"))
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")

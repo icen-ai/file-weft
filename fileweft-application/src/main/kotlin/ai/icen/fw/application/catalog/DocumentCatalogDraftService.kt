@@ -16,7 +16,7 @@ import java.util.Locale
  * Folder resolution and its host ACL happen before [DocumentDraftService]
  * opens object storage or its persistence transaction. The returned canonical
  * folder id is the only catalog binding that may enter asset metadata; callers
- * cannot write FileWeft or catalog-reserved metadata namespaces themselves.
+ * cannot write FlowWeft or catalog-reserved metadata namespaces themselves.
  */
 class DocumentCatalogDraftService(
     private val drafts: DocumentDraftService,
@@ -61,7 +61,7 @@ class DocumentCatalogDraftService(
         return drafts.createWithMetadata(command, content) { tenantId ->
             val metadata = LinkedHashMap(metadataProvider(tenantId))
             require(metadata.keys.none(::isReservedMetadataKey)) {
-                "Schema metadata must not use a FileWeft-reserved namespace."
+                "Schema metadata must not use a FlowWeft-reserved namespace."
             }
             metadata[DocumentCatalogBinding.METADATA_KEY] = folder.id
             metadata
@@ -83,7 +83,7 @@ class DocumentCatalogDraftService(
             require(value != null) { "Document metadata values must not be null." }
             validateMetadataEntry(key, value)
             require(!isReservedMetadataKey(key)) {
-                "Caller metadata must not use a FileWeft-reserved namespace."
+                "Caller metadata must not use a FlowWeft-reserved namespace."
             }
             sanitized[key] = value
         }
@@ -140,7 +140,7 @@ class DocumentCatalogDraftService(
     private fun utf8Length(value: String): Int = value.toByteArray(StandardCharsets.UTF_8).size
 
     companion object {
-        /** Maximum asset metadata entries after FileWeft adds the folder binding. */
+        /** Maximum asset metadata entries after FlowWeft adds the folder binding. */
         const val MAX_STORED_METADATA_ENTRIES: Int = 32
         /** Maximum caller-owned entries; one stored entry is reserved for the verified folder binding. */
         const val MAX_CALLER_METADATA_ENTRIES: Int = MAX_STORED_METADATA_ENTRIES - 1

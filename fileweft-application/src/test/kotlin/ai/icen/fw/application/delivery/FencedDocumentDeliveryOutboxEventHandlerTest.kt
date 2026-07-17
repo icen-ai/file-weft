@@ -1,5 +1,7 @@
 package ai.icen.fw.application.delivery
 
+import ai.icen.fw.application.document.visibleDeletionGuard
+
 import ai.icen.fw.application.outbox.OutboxEventLease
 import ai.icen.fw.application.outbox.OutboxEventMutationRepository
 import ai.icen.fw.application.outbox.OutboxEventState
@@ -147,12 +149,13 @@ class FencedDocumentDeliveryOutboxEventHandlerTest {
             override fun findConnector(connectorId: String): FileConnector? =
                 connector.takeIf { connectorId == CONNECTOR_ID }
         }
-        val sync = DocumentDeliverySyncService(
+        val sync = DocumentDeliverySyncService.withDeletionVisibility(
             documentRepository = documents,
             fileObjectRepository = MemoryFileObjects(fileObject()),
             storageAdapter = TestStorage,
             connectors = connectors,
             deliveries = deliveries,
+            deletionVisibilityGuard = visibleDeletionGuard(),
             transaction = DirectTransaction,
         )
         val removal = DocumentDeliveryRemovalService(connectors, deliveries, DirectTransaction)

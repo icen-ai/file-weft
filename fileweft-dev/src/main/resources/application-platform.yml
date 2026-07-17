@@ -17,7 +17,7 @@ server:
 fileweft:
   persistence:
     # The platform profile owns its schema through DevPlatformMigrationRunner;
-    # fully neutralize the main application's FileWeft migration settings.
+    # fully neutralize the main application's FlowWeft migration settings.
     migration-mode: disabled
     schema: ""
     create-schema: false

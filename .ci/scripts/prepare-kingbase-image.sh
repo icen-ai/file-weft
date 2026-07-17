@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# FileWeft does not redistribute KingbaseES. This helper obtains the public
+# FlowWeft does not redistribute KingbaseES. This helper obtains the public
 # x86_64 Docker archive from the vendor download host, verifies the exact
 # bytes observed on 2026-07-14, and loads it only into the current Docker
 # daemon for the dedicated integration lane.
@@ -21,7 +21,7 @@ if actual_image_id="$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/
   exit 0
 fi
 
-archive="$(mktemp "${TMPDIR:-/tmp}/fileweft-kingbase.XXXXXXXX.tar")"
+archive="$(mktemp "${TMPDIR:-/tmp}/flowweft-kingbase.XXXXXXXX.tar")"
 trap 'rm -f "${archive}"' EXIT
 
 curl \
@@ -30,7 +30,7 @@ curl \
   --retry 3 \
   --retry-all-errors \
   --connect-timeout 20 \
-  --user-agent 'Mozilla/5.0 (compatible; FileWeft KingbaseES integration verification)' \
+  --user-agent 'Mozilla/5.0 (compatible; FlowWeft KingbaseES integration verification)' \
   --referer 'https://www.kingbase.com.cn/download.html' \
   --output "${archive}" \
   "${archive_url}"

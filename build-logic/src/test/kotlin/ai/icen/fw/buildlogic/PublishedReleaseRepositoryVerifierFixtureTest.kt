@@ -113,6 +113,59 @@ class PublishedReleaseRepositoryVerifierFixtureTest {
     }
 
     @Test
+    fun `rejects a binary JAR containing no classes`() {
+        withFixtureRepository(
+            version = "0.0.1",
+            binaryJar = validBinaryJar("fileweft-core", "0.0.1", classEntries = emptyList()),
+        ) { repo, modules ->
+            val failure = assertFailsWith<IllegalArgumentException> {
+                verifier(repo, "0.0.1", modules).verify()
+            }
+            assertTrue(failure.message.orEmpty().contains("no class files"), failure.message)
+        }
+    }
+
+    @Test
+    fun `rejects duplicate class ownership across published modules`() {
+        val modules = sortedSetOf("fileweft-core", "fileweft-spi")
+        withStableRepository(
+            version = "0.0.1",
+            modules = modules,
+            binaryJarForModule = { module ->
+                validBinaryJar(
+                    module,
+                    "0.0.1",
+                    classEntries = listOf("ai/icen/fw/shared/Duplicate.class"),
+                )
+            },
+        ) { repo ->
+            val failure = assertFailsWith<IllegalArgumentException> {
+                verifier(repo, "0.0.1", modules).verify()
+            }
+            assertTrue(failure.message.orEmpty().contains("more than one module"), failure.message)
+            assertTrue(failure.message.orEmpty().contains("ai/icen/fw/shared/Duplicate.class"), failure.message)
+        }
+    }
+
+    @Test
+    fun `rejects a POM with the legacy product display name`() {
+        withFixtureRepository(version = "0.0.1") { repo, modules ->
+            val module = modules.single()
+            val pom = repo.resolve("ai/icen/$module/0.0.1/$module-0.0.1.pom")
+            pom.writeText(
+                pomText(module, "0.0.1").replace("FlowWeft module $module", "FileWeft module $module"),
+                StandardCharsets.UTF_8,
+            )
+            rewriteChecksums(pom)
+
+            val failure = assertFailsWith<IllegalArgumentException> {
+                verifier(repo, "0.0.1", modules).verify()
+            }
+            assertTrue(failure.message.orEmpty().contains("display name"), failure.message)
+        }
+    }
+
+    @Test
     fun `rejects a mixed SNAPSHOT identity across modules`() {
         withSnapshotRepository(
             modules = listOf(
@@ -199,6 +252,21 @@ class PublishedReleaseRepositoryVerifierFixtureTest {
         }
     }
 
+    private fun withStableRepository(
+        version: String,
+        modules: Set<String>,
+        binaryJarForModule: (String) -> ByteArray,
+        action: (File) -> Unit,
+    ) {
+        val repo = Files.createTempDirectory("fileweft-stable-release-repo-").toFile()
+        try {
+            modules.forEach { module -> writeModule(repo, module, version, binaryJarForModule(module)) }
+            action(repo)
+        } finally {
+            repo.deleteRecursively()
+        }
+    }
+
     private data class SnapshotIdentity(val timestamp: String, val buildNumber: String)
 
     private fun withSnapshotRepository(
@@ -256,7 +324,11 @@ class PublishedReleaseRepositoryVerifierFixtureTest {
         writeChecksums(file)
     }
 
-    private fun validBinaryJar(module: String, version: String): ByteArray {
+    private fun validBinaryJar(
+        module: String,
+        version: String,
+        classEntries: List<String> = listOf("ai/icen/$module/FileWeft.class"),
+    ): ByteArray {
         val manifest = Manifest().apply {
             mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
             mainAttributes.putValue("Implementation-Title", module)
@@ -273,9 +345,11 @@ class PublishedReleaseRepositoryVerifierFixtureTest {
                 zip.putNextEntry(ZipEntry("META-INF/NOTICE"))
                 zip.write(noticeBytes)
                 zip.closeEntry()
-                zip.putNextEntry(ZipEntry("ai/icen/$module/FileWeft.class"))
-                zip.write(byteArrayOf(0xCA.toByte(), 0xFE.toByte(), 0xBA.toByte(), 0xBE.toByte()))
-                zip.closeEntry()
+                classEntries.forEach { classEntry ->
+                    zip.putNextEntry(ZipEntry(classEntry))
+                    zip.write(byteArrayOf(0xCA.toByte(), 0xFE.toByte(), 0xBA.toByte(), 0xBE.toByte()))
+                    zip.closeEntry()
+                }
             }
             stream.toByteArray()
         }
@@ -323,6 +397,8 @@ class PublishedReleaseRepositoryVerifierFixtureTest {
           <groupId>ai.icen</groupId>
           <artifactId>$module</artifactId>
           <version>$version</version>
+          <name>FlowWeft module $module</name>
+          <description>FlowWeft enterprise file and workflow infrastructure module $module.</description>
           <url>$homepage</url>
           <licenses>
             <license>

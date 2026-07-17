@@ -31,17 +31,42 @@ class FileWeftProperties {
         var localEnabled: Boolean = false
 
         var localRoot: String = ""
+
+        var oss: OssProperties = OssProperties()
+    }
+
+    class OssProperties {
+        /** Enables the optional Alibaba Cloud OSS reference adapter when its artifact is present. */
+        var enabled: Boolean = false
+        var endpoint: String = ""
+        var region: String = ""
+        var bucket: String = ""
+        var usePathStyle: Boolean = false
+        var useCName: Boolean = false
+        var connectionTimeoutMillis: Long = 5_000
+        var socketTimeoutMillis: Long = 120_000
+        var requestTimeoutMillis: Long = 900_000
+        var maxAttempts: Int = 3
+        var credentialExpirySafetyWindowMillis: Long = 30_000
     }
 
     class UploadProperties {
         /** TTL for an unfinished resumable multipart session before worker cleanup. */
         var resumableSessionTtlMillis: Long = 86_400_000
         var resumableCleanupBatchSize: Int = 100
+        /** Explicitly enables the durable direct-to-storage PUT capability. */
+        var presignedEnabled: Boolean = false
+        /** Additional time after the signed PUT deadline in which finalization may start. */
+        var presignedFinalizeGraceMillis: Long = 900_000
+        /** Fenced lease for one provider finalization attempt. */
+        var presignedClaimLeaseMillis: Long = 120_000
+        /** Bounded recovery and staging-cleanup batch size on an explicit worker role. */
+        var presignedMaintenanceBatchSize: Int = 100
     }
 
     class PersistenceProperties {
         /**
-         * Explicit startup behavior for FileWeft-owned Flyway migrations.
+         * Explicit startup behavior for FlowWeft-owned Flyway migrations.
          * DISABLED is the safe default and performs no migration database access.
          * Enabled modes require exactly one DataSource unless the host supplies
          * an explicit FlywayMigrationRunner bean.
@@ -138,5 +163,6 @@ class FileWeftProperties {
         var processOutbox: Boolean = true
         var processTasks: Boolean = true
         var processUploadCleanup: Boolean = true
+        var processPresignedUploadMaintenance: Boolean = true
     }
 }

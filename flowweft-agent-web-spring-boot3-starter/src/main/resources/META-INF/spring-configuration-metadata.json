@@ -1,0 +1,10 @@
+{
+  "properties": [
+    {
+      "name": "flowweft.agent.web.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether the FlowWeft Agent Web servlet adapter is enabled when a trusted context provider is present."
+    }
+  ]
+}

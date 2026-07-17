@@ -1,6 +1,6 @@
 # 可复现构建与依赖验证
 
-FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle dependency locking。每个 `gradle.lockfile` 与根目录的 `settings-gradle.lockfile` 都必须提交；普通构建会使用这些状态，避免不同机器在相同源码下解析到漂移的传递依赖。
+FlowWeft 对所有常规模块和 included `build-logic` 启用了 Gradle dependency locking。每个 `gradle.lockfile` 与根目录的 `settings-gradle.lockfile` 都必须提交；普通构建会使用这些状态，避免不同机器在相同源码下解析到漂移的传递依赖。
 
 `gradle/verification-metadata.xml` 保存每个已解析制品的 SHA-256。Gradle 在该文件存在时会验证依赖制品；校验不一致的下载会失败，而不是继续构建。
 
@@ -44,9 +44,11 @@ FileWeft 对所有常规模块和 included `build-logic` 启用了 Gradle depend
 .\gradlew.bat verifySbom
 ```
 
-CycloneDX Direct BOM 只解析 19 个正式发布模块各自独立的 `runtimeClasspath`，其中包含 `fileweft-metadata-api` 与 `fileweft-metadata-runtime`；它关闭 Gradle build environment，并禁用未发布的 `fileweft-dev`。不能把 19 个模块合并到一个 configuration 后再解析，否则 Gradle 的版本冲突消解会错误丢弃 Boot 2/3 等替代型模块各自合法的运行时版本。
+`0.0.3` 的历史正式发布库存是 19 个模块，其中包含 `fileweft-metadata-api` 与 `fileweft-metadata-runtime`。`1.0.0-SNAPSHOT` 当前接线库存是 32 个模块，新增 `flowweft-retrieval-api/spi/runtime`、`flowweft-agent-api/runtime`、`flowweft-workflow-api/spi/domain/runtime/persistence-jdbc`、`flowweft-migration-cli`、`flowweft-adapter-dify` 与 `flowweft-adapter-oss` 十三个模块；这不是对 1.0 最终模块数的冻结承诺。当前库存的单一事实来源是 `gradle/publication-inventory.tsv`，settings、根发布/SBOM 与 `release-smoke` 均从它读取。
 
-原始聚合结果位于 `build/reports/cyclonedx/`；发布任务会删除非发布内部模块以及只由 Dev/Test/Build 节点可达的第三方孤儿，补齐根到 19 个模块的发布关系，移除时间戳和随机序列号，并将确定性 JSON/XML 输出到 `build/reports/cyclonedx-release/`。`verifySbom` 校验正式模块集合、版本、Apache-2.0 许可证、坐标和依赖图双格式一致性。Mockito、AssertJ、Kotlin compiler 与 Boot starter-test 不属于发布闭包；`fileweft-testkit` 公共契约需要的 JUnit 5.11.4 则是合法运行时依赖，不得按名称误删。
+CycloneDX Direct BOM 分别解析当前每个正式发布模块的独立 `runtimeClasspath`；它关闭 Gradle build environment，并禁用未发布的 `fileweft-dev`。不能把所有模块合并到一个 configuration 后再解析，否则 Gradle 的版本冲突消解会错误丢弃 Boot 2/3 等替代型模块各自合法的运行时版本。
+
+原始聚合结果位于 `build/reports/cyclonedx/`；发布任务会删除非发布内部模块以及只由 Dev/Test/Build 节点可达的第三方孤儿，补齐根到当前正式模块集合的发布关系，移除时间戳和随机序列号，并将确定性 JSON/XML 输出到 `build/reports/cyclonedx-release/`。`verifySbom` 校验正式模块集合、版本、Apache-2.0 许可证、坐标和依赖图双格式一致性。Mockito、AssertJ、Kotlin compiler 与 Boot starter-test 不属于发布闭包；`fileweft-testkit` 公共契约需要的 JUnit 5.11.4 则是合法运行时依赖，不得按名称误删。
 
 发布系统只归档 `cyclonedx-release/bom.json` 与 `bom.xml`，并与工件、签名和版本号一起保存；原始聚合文件仅用于诊断，不能当作对外 SBOM。
 
@@ -62,4 +64,4 @@ docker compose -f .docker/docker-compose.dev.yaml config -q
 
 涉及应用镜像或运行行为的改动还应重建开发镜像并执行 Dev 验收测试。镜像 digest 的固定保证后续重建使用同一镜像内容，但不会自动替换已经运行的 `fw-dev` 容器。
 
-完整 Dev 编排还要求在执行 `docker compose` 前设置至少 32 字符的 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET`；它是 API/Worker 调用独立下游模拟器的系统凭据，不应提交到 `.env`、源码或测试报告。平台服务仅绑定 `127.0.0.1`，正常控制台访问通过认证后的 FileWeft API 镜像端点完成。
+完整 Dev 编排还要求在执行 `docker compose` 前设置至少 32 字符的 `FILEWEFT_DEV_PLATFORM_SHARED_SECRET`；它是 API/Worker 调用独立下游模拟器的系统凭据，不应提交到 `.env`、源码或测试报告。平台服务仅绑定 `127.0.0.1`，正常控制台访问通过认证后的 FlowWeft API 镜像端点完成。

@@ -1,8 +1,13 @@
 package ai.icen.fw.web.spring.boot2
 
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimService
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimService
+import ai.icen.fw.application.upload.PresignedUploadService
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.upload.ResumableUploadApiFacade
+import ai.icen.fw.web.runtime.v1.upload.PresignedUploadApiFacade
+import ai.icen.fw.web.runtime.v1.document.CompletedUploadDocumentApiFacade
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.boot.autoconfigure.AutoConfigurations
@@ -52,6 +57,60 @@ class FileWeftWebBoot2ResumableUploadAutoConfigurationTest {
     }
 
     @Test
+    fun `assembles completed upload document transport only when the claim service exists`() {
+        contextRunner
+            .withBean(
+                CompletedResumableUploadAssetClaimService::class.java,
+                Supplier { Mockito.mock(CompletedResumableUploadAssetClaimService::class.java) },
+            )
+            .run { context ->
+                assertEquals(1, context.getBeansOfType(CompletedUploadDocumentApiFacade::class.java).size)
+                assertEquals(1, context.getBeansOfType(CompletedUploadDocumentV1Controller::class.java).size)
+                assertEquals(1, context.getBeansOfType(V1ApiResponseFactory::class.java).size)
+            }
+    }
+
+    @Test
+    fun `presigned transport requires both provider completion and atomic asset claim capabilities`() {
+        contextRunner
+            .withBean(
+                PresignedUploadService::class.java,
+                Supplier { Mockito.mock(PresignedUploadService::class.java) },
+            )
+            .run { context ->
+                assertTrue(context.getBeansOfType(PresignedUploadApiFacade::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(V1PresignedUploadController::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(V1PresignedUploadRequestFailureHandler::class.java).isEmpty())
+            }
+
+        contextRunner
+            .withBean(
+                CompletedPresignedUploadAssetClaimService::class.java,
+                Supplier { Mockito.mock(CompletedPresignedUploadAssetClaimService::class.java) },
+            )
+            .run { context ->
+                assertTrue(context.getBeansOfType(PresignedUploadApiFacade::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(V1PresignedUploadController::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(V1PresignedUploadRequestFailureHandler::class.java).isEmpty())
+            }
+
+        contextRunner
+            .withBean(
+                PresignedUploadService::class.java,
+                Supplier { Mockito.mock(PresignedUploadService::class.java) },
+            )
+            .withBean(
+                CompletedPresignedUploadAssetClaimService::class.java,
+                Supplier { Mockito.mock(CompletedPresignedUploadAssetClaimService::class.java) },
+            )
+            .run { context ->
+                assertEquals(1, context.getBeansOfType(PresignedUploadApiFacade::class.java).size)
+                assertEquals(1, context.getBeansOfType(V1PresignedUploadController::class.java).size)
+                assertEquals(1, context.getBeansOfType(V1PresignedUploadRequestFailureHandler::class.java).size)
+            }
+    }
+
+    @Test
     fun `backs off from host facade response factory and controller`() {
         val hostFacade = Mockito.mock(ResumableUploadApiFacade::class.java)
         val hostResponses = V1ApiResponseFactory()
@@ -97,5 +156,10 @@ class FileWeftWebBoot2ResumableUploadAutoConfigurationTest {
         assertTrue(context.getBeansOfType(ResumableUploadApiFacade::class.java).isEmpty())
         assertTrue(context.getBeansOfType(V1ResumableUploadController::class.java).isEmpty())
         assertTrue(context.getBeansOfType(V1ResumableUploadRequestFailureHandler::class.java).isEmpty())
+        assertTrue(context.getBeansOfType(CompletedUploadDocumentApiFacade::class.java).isEmpty())
+        assertTrue(context.getBeansOfType(CompletedUploadDocumentV1Controller::class.java).isEmpty())
+        assertTrue(context.getBeansOfType(PresignedUploadApiFacade::class.java).isEmpty())
+        assertTrue(context.getBeansOfType(V1PresignedUploadController::class.java).isEmpty())
+        assertTrue(context.getBeansOfType(V1PresignedUploadRequestFailureHandler::class.java).isEmpty())
     }
 }

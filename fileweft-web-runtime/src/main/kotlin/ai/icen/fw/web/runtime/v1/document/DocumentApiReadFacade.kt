@@ -16,7 +16,7 @@ import ai.icen.fw.web.api.v1.document.DocumentVersionDto
  * Pure JVM facade for the first formal v1 document read surface.
  *
  * Trusted tenant and user identity are never accepted here. The injected
- * [DocumentQueryService] derives them from FileWeft SPI context, performs the
+ * [DocumentQueryService] derives them from FlowWeft SPI context, performs the
  * authorization check, and returns public-safe immutable views.
  */
 class DocumentApiReadFacade(

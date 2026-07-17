@@ -13,7 +13,7 @@ import ai.icen.fw.core.result.DoctorReport
 import ai.icen.fw.core.result.DoctorStatus
 
 /**
- * Stable persistence codec owned by FileWeft rather than the host's Jackson
+ * Stable persistence codec owned by FlowWeft rather than the host's Jackson
  * naming or Identifier serializers. Explicit tree fields also keep reports
  * readable when a host changes its ObjectMapper configuration after upgrade.
  */
@@ -180,7 +180,7 @@ internal class DoctorReportJsonCodec(
 
     private companion object {
         /**
-         * Persistence JSON is a FileWeft wire format. Never reuse the host
+         * Persistence JSON is a FlowWeft wire format. Never reuse the host
          * mapper here: host naming, polymorphic typing, pretty printing, and
          * number-as-string features must not alter stored records.
          */

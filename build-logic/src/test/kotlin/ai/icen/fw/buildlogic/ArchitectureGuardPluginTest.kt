@@ -101,6 +101,226 @@ class ArchitectureGuardPluginTest {
     }
 
     @Test
+    fun `retrieval API rejects infrastructure and Kotlin-only public syntax`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "flowweft-retrieval-api/src/main/kotlin/ai/icen/fw/retrieval/api/ForbiddenRetrievalContract.kt",
+            """
+            package ai.icen.fw.retrieval.api
+
+            import java.sql.Connection
+            import org.springframework.context.ApplicationContext
+
+            public suspend fun forbiddenRetrievalContract(
+                connection: Connection,
+                context: ApplicationContext,
+            ): Pair<Connection, ApplicationContext> = connection to context
+
+            public value class ForbiddenRetrievalId(public val value: String)
+            public sealed interface ForbiddenRetrievalResult
+            public data object ForbiddenRetrievalSingleton
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("flowweft-retrieval-api/ai/icen/fw/retrieval/api/ForbiddenRetrievalContract.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: sealed interface"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
+    }
+
+    @Test
+    fun `agent API rejects infrastructure and Kotlin-only public syntax`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "flowweft-agent-api/src/main/kotlin/ai/icen/fw/agent/api/ForbiddenAgentContract.kt",
+            """
+            package ai.icen.fw.agent.api
+
+            import java.sql.Connection
+            import org.springframework.context.ApplicationContext
+
+            public suspend fun forbiddenAgentContract(
+                connection: Connection,
+                context: ApplicationContext,
+            ): Pair<Connection, ApplicationContext> = connection to context
+
+            public value class ForbiddenAgentId(public val value: String)
+            public sealed interface ForbiddenAgentResult
+            public data object ForbiddenAgentSingleton
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("flowweft-agent-api/ai/icen/fw/agent/api/ForbiddenAgentContract.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: sealed interface"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
+    }
+
+    @Test
+    fun `workflow API rejects infrastructure and Kotlin-only public syntax`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "flowweft-workflow-api/src/main/kotlin/ai/icen/fw/workflow/api/ForbiddenWorkflowContract.kt",
+            """
+            package ai.icen.fw.workflow.api
+
+            import java.sql.Connection
+            import org.springframework.context.ApplicationContext
+
+            public suspend fun forbiddenWorkflowContract(
+                connection: Connection,
+                context: ApplicationContext,
+            ): Pair<Connection, ApplicationContext> = connection to context
+
+            public value class ForbiddenWorkflowId(public val value: String)
+            public sealed interface ForbiddenWorkflowResult
+            public data object ForbiddenWorkflowSingleton
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("flowweft-workflow-api/ai/icen/fw/workflow/api/ForbiddenWorkflowContract.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: sealed interface"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
+    }
+
+    @Test
+    fun `workflow SPI rejects infrastructure and Kotlin-only public syntax`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "flowweft-workflow-spi/src/main/kotlin/ai/icen/fw/workflow/spi/ForbiddenWorkflowSpiContract.kt",
+            """
+            package ai.icen.fw.workflow.spi
+
+            import java.sql.Connection
+            import org.springframework.context.ApplicationContext
+
+            public suspend fun forbiddenWorkflowSpiContract(
+                connection: Connection,
+                context: ApplicationContext,
+            ): Pair<Connection, ApplicationContext> = connection to context
+
+            public value class ForbiddenWorkflowSpiId(public val value: String)
+            public sealed interface ForbiddenWorkflowSpiResult
+            public data object ForbiddenWorkflowSpiSingleton
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("flowweft-workflow-spi/ai/icen/fw/workflow/spi/ForbiddenWorkflowSpiContract.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: sealed interface"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
+    }
+
+    @Test
+    fun `workflow domain rejects infrastructure and Kotlin-only public syntax`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "flowweft-workflow-domain/src/main/kotlin/ai/icen/fw/workflow/domain/ForbiddenWorkflowDomain.kt",
+            """
+            package ai.icen.fw.workflow.domain
+
+            import java.sql.Connection
+            import org.springframework.context.ApplicationContext
+
+            public suspend fun forbiddenWorkflowDomain(
+                connection: Connection,
+                context: ApplicationContext,
+            ): Pair<Connection, ApplicationContext> = connection to context
+
+            public value class ForbiddenWorkflowDomainId(public val value: String)
+            public sealed interface ForbiddenWorkflowDomainResult
+            public data object ForbiddenWorkflowDomainSingleton
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("flowweft-workflow-domain/ai/icen/fw/workflow/domain/ForbiddenWorkflowDomain.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: sealed interface"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
+    }
+
+    @Test
+    fun `new retrieval and durable runtimes remain pure JVM and Java friendly`() = withTestProject { projectDir ->
+        writeProject(projectDir)
+        writeFile(
+            projectDir,
+            "flowweft-retrieval-spi/src/main/kotlin/ai/icen/fw/retrieval/spi/ForbiddenRetrievalSpi.kt",
+            """
+            package ai.icen.fw.retrieval.spi
+
+            import java.sql.Connection
+
+            public suspend fun forbiddenRetrievalSpi(connection: Connection): Connection = connection
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-agent-runtime/src/main/kotlin/ai/icen/fw/agent/runtime/ForbiddenAgentRuntime.kt",
+            """
+            package ai.icen.fw.agent.runtime
+
+            import org.springframework.context.ApplicationContext
+
+            public value class ForbiddenAgentRuntime(public val context: ApplicationContext)
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-workflow-runtime/src/main/kotlin/ai/icen/fw/workflow/runtime/ForbiddenWorkflowRuntime.kt",
+            """
+            package ai.icen.fw.workflow.runtime
+
+            import javax.persistence.EntityManager
+
+            public data object ForbiddenWorkflowRuntime
+            """.trimIndent(),
+        )
+
+        val result = runner(projectDir, "verifyFileWeftArchitecture").buildAndFail()
+
+        assertTrue(result.output.contains("flowweft-retrieval-spi/ai/icen/fw/retrieval/spi/ForbiddenRetrievalSpi.kt:3"))
+        assertTrue(result.output.contains("flowweft-agent-runtime/ai/icen/fw/agent/runtime/ForbiddenAgentRuntime.kt:3"))
+        assertTrue(result.output.contains("flowweft-workflow-runtime/ai/icen/fw/workflow/runtime/ForbiddenWorkflowRuntime.kt:3"))
+        assertTrue(result.output.contains("forbidden prefix: java.sql."))
+        assertTrue(result.output.contains("forbidden prefix: org.springframework."))
+        assertTrue(result.output.contains("forbidden prefix: javax.persistence."))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: suspend fun"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: value class"))
+        assertTrue(result.output.contains("forbidden Kotlin API syntax: data object"))
+    }
+
+    @Test
     fun `metadata contracts and runtime stay pure JVM and Java friendly`() = withTestProject { projectDir ->
         writeProject(projectDir)
         writeFile(
@@ -400,6 +620,14 @@ class ArchitectureGuardPluginTest {
             """
             rootProject.name = "architecture-guard-fixture"
             include(":fileweft-core")
+            include(":flowweft-retrieval-api")
+            include(":flowweft-retrieval-spi")
+            include(":flowweft-agent-api")
+            include(":flowweft-agent-runtime")
+            include(":flowweft-workflow-api")
+            include(":flowweft-workflow-spi")
+            include(":flowweft-workflow-domain")
+            include(":flowweft-workflow-runtime")
             include(":fileweft-adapter")
             include(":fileweft-web-api")
             include(":fileweft-web-runtime")
@@ -419,6 +647,78 @@ class ArchitectureGuardPluginTest {
         writeFile(
             projectDir,
             "fileweft-core/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-retrieval-api/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-retrieval-spi/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-agent-api/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-agent-runtime/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-workflow-api/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-workflow-spi/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-workflow-domain/build.gradle.kts",
+            """
+            plugins {
+                base
+            }
+            """.trimIndent(),
+        )
+        writeFile(
+            projectDir,
+            "flowweft-workflow-runtime/build.gradle.kts",
             """
             plugins {
                 base

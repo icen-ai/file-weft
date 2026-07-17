@@ -7,7 +7,7 @@
   - SECURITY.md
   - .ci/README.md
   - docs/**/*.md
-  - fileweft-docs/pages/zh/**/*.md
+  - flowweft-docs/pages/zh/**/*.md
 
 main:
   push:
@@ -15,13 +15,13 @@ main:
       runner:
         tags: cnb:arch:amd64
         cpus: 1
-      name: Main FileWeft knowledge base
+      name: Main FlowWeft knowledge base
       ifModify: !reference [.fileweft-knowledge-paths]
       lock:
         key: fileweft-knowledge-base
         wait: true
       stages:
-        - name: update-fileweft-knowledge-base
+        - name: update-flowweft-knowledge-base
           type: knowledge:update
           options:
             include:
@@ -30,14 +30,14 @@ main:
               - SECURITY.md
               - .ci/README.md
               - docs/**/*.md
-              - fileweft-docs/pages/zh/**/*.md
+              - flowweft-docs/pages/zh/**/*.md
             exclude:
               - .ai/**
-              - fileweft-docs/pages/en/**
+              - flowweft-docs/pages/en/**
               - fileweft-dev/web/fixtures/**
               - "**/build/**"
               - SKILL.md
-              - fileweft-docs/SKILL.md
+              - flowweft-docs/SKILL.md
             chunkSize: 1500
             chunkOverlap: 100
             issueSyncEnabled: false

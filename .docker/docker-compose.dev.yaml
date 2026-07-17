@@ -41,7 +41,7 @@ services:
   kingbase:
     # Loaded and identity-checked by .ci/scripts/prepare-kingbase-image.sh.
     # The commercial database image remains vendor-hosted and is never
-    # redistributed as part of FileWeft.
+    # redistributed as part of FlowWeft.
     image: kingbase_v008r006c009b0014_single_x86:v1
     pull_policy: never
     profiles: ["kingbase"]
@@ -67,6 +67,21 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
+
+  redis:
+    image: redis:8.6.4-alpine@sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
+    profiles: ["console"]
+    container_name: fw-dev-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - fw-dev-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
 
   rustfs:
     image: rustfs/rustfs@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
@@ -199,7 +214,7 @@ services:
       - "8088:80"
     volumes:
       - ../fileweft-dev/web:/srv/fileweft-dev-web:ro
-      - ../fileweft-docs:/srv/fileweft-docs:ro
+      - ../flowweft-docs:/srv/flowweft-docs:ro
       - ./nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
@@ -211,4 +226,5 @@ volumes:
   fw-dev-postgres:
   fw-dev-mysql:
   fw-dev-kingbase:
+  fw-dev-redis:
   fw-dev-rustfs:

@@ -20,7 +20,7 @@ class DocumentDeliveryPlan(
 
 /**
  * An immutable, tenant-scoped delivery profile snapshot resolved before a
- * FileWeft business transaction begins. A provider or connector resolver may
+ * FlowWeft business transaction begins. A provider or connector resolver may
  * consult a remote policy system, so callers must obtain this preparation
  * outside their database transaction and later pass it to [DocumentDeliveryPlanner.plan].
  */
@@ -77,7 +77,7 @@ class DocumentDeliveryPlanner(
     /**
      * Resolves an integration-owned profile and validates its connector ids.
      * This may call a remote policy or registry implementation and must run
-     * outside a FileWeft database transaction.
+     * outside a FlowWeft database transaction.
      */
     fun prepare(tenantId: Identifier, profileId: String?): DocumentDeliveryPreparation {
         val profile = resolveProfile(tenantId, profileId)

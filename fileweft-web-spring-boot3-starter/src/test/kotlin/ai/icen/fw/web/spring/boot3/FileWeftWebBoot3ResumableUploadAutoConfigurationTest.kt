@@ -1,10 +1,18 @@
 package ai.icen.fw.web.spring.boot3
 
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimService
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimService
+import ai.icen.fw.application.upload.PresignedUploadService
 import ai.icen.fw.web.runtime.v1.V1ApiResponseFactory
 import ai.icen.fw.web.runtime.v1.upload.ResumableUploadApiFacade
+import ai.icen.fw.web.runtime.v1.upload.PresignedUploadApiFacade
+import ai.icen.fw.web.runtime.v1.document.CompletedUploadDocumentApiFacade
+import ai.icen.fw.web.spring.boot3.v1.document.V1CompletedUploadDocumentController
 import ai.icen.fw.web.spring.boot3.v1.upload.V1ResumableUploadController
 import ai.icen.fw.web.spring.boot3.v1.upload.V1ResumableUploadRequestFailureHandler
+import ai.icen.fw.web.spring.boot3.v1.upload.V1PresignedUploadController
+import ai.icen.fw.web.spring.boot3.v1.upload.V1PresignedUploadRequestFailureHandler
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -84,6 +92,66 @@ class FileWeftWebBoot3ResumableUploadAutoConfigurationTest {
     }
 
     @Test
+    fun `registers completed upload document transport only with the claim capability`() {
+        contextRunner
+            .withBean(
+                CompletedResumableUploadAssetClaimService::class.java,
+                Supplier { Mockito.mock(CompletedResumableUploadAssetClaimService::class.java) },
+            )
+            .run { context ->
+                assertNotNull(context.getBeanProvider(CompletedUploadDocumentApiFacade::class.java).getIfAvailable())
+                assertNotNull(context.getBeanProvider(V1CompletedUploadDocumentController::class.java).getIfAvailable())
+                assertNotNull(context.getBeanProvider(V1ApiResponseFactory::class.java).getIfAvailable())
+            }
+    }
+
+    @Test
+    fun `presigned transport requires both provider completion and atomic asset claim capabilities`() {
+        contextRunner
+            .withBean(
+                PresignedUploadService::class.java,
+                Supplier { Mockito.mock(PresignedUploadService::class.java) },
+            )
+            .run { context ->
+                assertNull(context.getBeanProvider(PresignedUploadApiFacade::class.java).getIfAvailable())
+                assertNull(context.getBeanProvider(V1PresignedUploadController::class.java).getIfAvailable())
+                assertNull(
+                    context.getBeanProvider(V1PresignedUploadRequestFailureHandler::class.java).getIfAvailable(),
+                )
+            }
+
+        contextRunner
+            .withBean(
+                CompletedPresignedUploadAssetClaimService::class.java,
+                Supplier { Mockito.mock(CompletedPresignedUploadAssetClaimService::class.java) },
+            )
+            .run { context ->
+                assertNull(context.getBeanProvider(PresignedUploadApiFacade::class.java).getIfAvailable())
+                assertNull(context.getBeanProvider(V1PresignedUploadController::class.java).getIfAvailable())
+                assertNull(
+                    context.getBeanProvider(V1PresignedUploadRequestFailureHandler::class.java).getIfAvailable(),
+                )
+            }
+
+        contextRunner
+            .withBean(
+                PresignedUploadService::class.java,
+                Supplier { Mockito.mock(PresignedUploadService::class.java) },
+            )
+            .withBean(
+                CompletedPresignedUploadAssetClaimService::class.java,
+                Supplier { Mockito.mock(CompletedPresignedUploadAssetClaimService::class.java) },
+            )
+            .run { context ->
+                assertNotNull(context.getBeanProvider(PresignedUploadApiFacade::class.java).getIfAvailable())
+                assertNotNull(context.getBeanProvider(V1PresignedUploadController::class.java).getIfAvailable())
+                assertNotNull(
+                    context.getBeanProvider(V1PresignedUploadRequestFailureHandler::class.java).getIfAvailable(),
+                )
+            }
+    }
+
+    @Test
     fun `keeps host facade response factory and controller overrides authoritative`() {
         val hostFacade = ResumableUploadApiFacade(uploadService())
         val hostResponses = V1ApiResponseFactory()
@@ -113,9 +181,14 @@ class FileWeftWebBoot3ResumableUploadAutoConfigurationTest {
 
     private fun assertUploadComponentsAbsent(context: org.springframework.context.ApplicationContext) {
         assertNull(context.getBeanProvider(ResumableUploadApiFacade::class.java).getIfAvailable())
-        assertNull(context.getBeanProvider(V1ApiResponseFactory::class.java).getIfAvailable())
+        assertNotNull(context.getBeanProvider(V1ApiResponseFactory::class.java).getIfAvailable())
         assertNull(context.getBeanProvider(V1ResumableUploadController::class.java).getIfAvailable())
         assertNull(context.getBeanProvider(V1ResumableUploadRequestFailureHandler::class.java).getIfAvailable())
+        assertNull(context.getBeanProvider(CompletedUploadDocumentApiFacade::class.java).getIfAvailable())
+        assertNull(context.getBeanProvider(V1CompletedUploadDocumentController::class.java).getIfAvailable())
+        assertNull(context.getBeanProvider(PresignedUploadApiFacade::class.java).getIfAvailable())
+        assertNull(context.getBeanProvider(V1PresignedUploadController::class.java).getIfAvailable())
+        assertNull(context.getBeanProvider(V1PresignedUploadRequestFailureHandler::class.java).getIfAvailable())
     }
 
     private fun uploadService(): ResumableUploadService = Mockito.mock(ResumableUploadService::class.java)

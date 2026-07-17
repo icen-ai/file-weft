@@ -12,7 +12,7 @@ import ai.icen.fw.spi.workflow.DocumentReviewRouteProvider
 /**
  * Optional extension bundle discovered either as a Spring bean or with Java's
  * ServiceLoader. The plugin itself owns any vendor SDKs and configuration;
- * FileWeft only receives its SPI contributions.
+ * FlowWeft only receives its SPI contributions.
  */
 interface FileWeftPlugin {
     /** Stable, globally unique plugin identity used for startup diagnostics. */

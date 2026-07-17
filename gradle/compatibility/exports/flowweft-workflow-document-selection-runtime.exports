@@ -1,0 +1,30 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-document-selection-runtime
+# state=ready
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthority
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthority$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationDecision
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationDecision$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationPhase
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationPhase$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationPort
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationRequest
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationRequest$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationStatus
+ai.icen.fw.workflow.document.selection.DocumentSelectionAuthorizationStatus$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionFacts
+ai.icen.fw.workflow.document.selection.DocumentSelectionFacts$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionFactsPort
+ai.icen.fw.workflow.document.selection.DocumentSelectionFactsRequest
+ai.icen.fw.workflow.document.selection.DocumentSelectionFactsRequest$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyDescriptor
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyDescriptor$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyProvider
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyRequest
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyRequest$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyResult
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyResult$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyStatus
+ai.icen.fw.workflow.document.selection.DocumentSelectionPolicyStatus$Companion
+ai.icen.fw.workflow.document.selection.DocumentSelectionSupport
+ai.icen.fw.workflow.document.selection.ExactDocumentWorkflowSelectionRuntime

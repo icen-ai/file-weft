@@ -3,6 +3,10 @@ package ai.icen.fw.application.sync
 import ai.icen.fw.application.audit.AuditTrail
 import ai.icen.fw.application.delivery.DeliveryDiagnosticMessage
 import ai.icen.fw.application.transaction.ApplicationTransaction
+import ai.icen.fw.application.document.visibleDeletionGuard
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
@@ -42,6 +46,48 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class DocumentSyncServiceTest {
+    @Test
+    fun `tombstone committed after URL creation prevents connector from receiving it`() {
+        var visibilityLookups = 0
+        var connectorInvoked = false
+        var urlCreated = false
+        val guard = DeletionVisibilityGuard.create(
+            object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ): DeletionVisibilityFence? {
+                    visibilityLookups++
+                    return if (visibilityLookups == 1) null else DeletionVisibilityFence(
+                        Identifier("tombstone-1"), Identifier("plan-1"), tenantId,
+                        resourceType, resourceId, 7, 100,
+                    )
+                }
+            },
+        )
+        val service = service(
+            InMemoryDocuments(publishingDocument()), InMemorySyncRecords(), TrackingTransaction(),
+            storage = object : StorageStub() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI {
+                    urlCreated = true
+                    return URI.create("https://storage.example/document-1")
+                }
+            },
+            connector = connector {
+                connectorInvoked = true
+                ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
+            },
+            deletionVisibility = guard,
+        )
+
+        val result = service.synchronize(event())
+
+        assertTrue(urlCreated)
+        assertFalse(connectorInvoked)
+        assertEquals(OutboxHandlingStatus.PERMANENT_FAILURE, result.status)
+    }
+
     @Test
     fun `syncs published event outside transactions and records connector success`() {
         val transaction = TrackingTransaction()
@@ -130,6 +176,13 @@ class DocumentSyncServiceTest {
             DocumentSyncService::class.java.constructors.any { constructor ->
                 constructor.parameterTypes.size == 11 &&
                     constructor.parameterTypes.last() == FileWeftMetrics::class.java
+            },
+        )
+        assertTrue(
+            DocumentSyncService::class.java.methods.any { method ->
+                method.name == "withDeletionVisibility" &&
+                    method.parameterTypes.size == 9 &&
+                    method.parameterTypes.last() == DeletionVisibilityGuard::class.java
             },
         )
     }
@@ -278,7 +331,8 @@ class DocumentSyncServiceTest {
         metrics: FileWeftMetrics? = null,
         connectorTimeout: Duration = Duration.ofSeconds(30),
         sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
-    ) = DocumentSyncService(
+        deletionVisibility: DeletionVisibilityGuard = visibleDeletionGuard(),
+    ) = DocumentSyncService.withDeletionVisibility(
         documents,
         InMemoryFiles(fileObject()),
         storage,
@@ -287,6 +341,7 @@ class DocumentSyncServiceTest {
         records,
         object : IdentifierGenerator { override fun nextId(): Identifier = Identifier("sync-1") },
         transaction,
+        deletionVisibilityGuard = deletionVisibility,
         connectorTimeout = connectorTimeout,
         auditTrail = auditTrail,
         metrics = metrics,

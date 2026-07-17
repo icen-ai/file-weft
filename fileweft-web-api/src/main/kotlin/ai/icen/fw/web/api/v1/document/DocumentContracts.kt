@@ -222,6 +222,21 @@ class AddDocumentVersionCommand @JvmOverloads constructor(
     }
 }
 
+/**
+ * JSON request for atomically consuming a completed resumable upload as a
+ * new document. Tenant, owner and storage bindings are always derived behind
+ * the application boundary; callers may only supply document metadata.
+ */
+class CreateDocumentFromCompletedUploadRequest {
+    var documentNumber: String? = null
+    var title: String? = null
+}
+
+/** JSON request for consuming a completed resumable upload as a new version. */
+class AddDocumentVersionFromCompletedUploadRequest {
+    var versionNumber: String? = null
+}
+
 /** Bounded, tenant-context-derived document list filter with an opaque cursor. */
 class DocumentPageQuery @JvmOverloads constructor(
     cursor: String? = null,

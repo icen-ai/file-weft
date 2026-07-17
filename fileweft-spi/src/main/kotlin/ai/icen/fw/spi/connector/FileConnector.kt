@@ -41,7 +41,7 @@ enum class ConnectorSyncStatus {
 
 /**
  * A connector diagnostic must be brief, credential-free, and safe for a
- * platform operator to inspect. FileWeft bounds persisted delivery messages.
+ * platform operator to inspect. FlowWeft bounds persisted delivery messages.
  * A successful formal multi-target delivery must return a non-blank
  * [externalId] without ISO control characters and with no more than 512 UTF-16
  * code units. Legacy single-connector synchronization can retain a null

@@ -3,6 +3,11 @@ package ai.icen.fw.persistence.jdbc
 import ai.icen.fw.application.document.DocumentFolderReadScope
 import ai.icen.fw.application.document.DocumentPageRequest
 import ai.icen.fw.application.document.DocumentQueryRepository
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaim
+import ai.icen.fw.application.upload.PresignedUploadSession
+import ai.icen.fw.application.upload.PresignedUploadSessionStatus
+import ai.icen.fw.application.upload.ResumableUploadSession
+import ai.icen.fw.application.upload.ResumableUploadSessionStatus
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
@@ -13,6 +18,8 @@ import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.persistence.migration.FlywayMigrationRunner
+import ai.icen.fw.spi.storage.StorageObjectLocation
+import ai.icen.fw.spi.storage.StorageContentChecksum
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -27,6 +34,7 @@ import java.util.logging.Logger
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -74,6 +82,42 @@ class JdbcKingbaseRepositoriesIntegrationTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `persists presigned upload owner scope and claim token CAS`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val repository = JdbcPresignedUploadSessionRepository(ObjectMapper())
+        val ready = presignedUploadSession()
+
+        assertTrue(transaction.execute { repository.create(ready) })
+        assertFalse(transaction.execute { repository.create(ready) })
+        assertNull(transaction.execute { repository.findById(ready.tenantId, "owner-2", ready.id) })
+
+        val claimed = presignedUploadSession(
+            status = PresignedUploadSessionStatus.FINALIZING,
+            version = 1,
+            claimTime = 200,
+            claimToken = PRESIGNED_CLAIM_TOKEN,
+            claimExpiresAt = 300,
+            updatedTime = 200,
+        )
+        assertTrue(transaction.execute {
+            repository.compareAndSet(ready.tenantId, ready.id, 0, null, claimed)
+        })
+        assertFalse(transaction.execute {
+            repository.compareAndSet(
+                ready.tenantId,
+                ready.id,
+                1,
+                PRESIGNED_OTHER_CLAIM_TOKEN,
+                presignedUploadSession(version = 2),
+            )
+        })
+        assertEquals(
+            listOf(ready.id),
+            transaction.execute { repository.findRecoveryCandidates(300, 10).map { it.id } },
+        )
     }
 
     @Test
@@ -244,6 +288,32 @@ class JdbcKingbaseRepositoriesIntegrationTest {
         assertTrue(outOfScope.items.isEmpty())
     }
 
+    @Test
+    fun `claims one completed upload asset with Kingbase null safe snapshot matching`() {
+        val transaction = JdbcApplicationTransaction(dataSource)
+        val uploads = JdbcResumableUploadSessionRepository(ObjectMapper())
+        val session = completedUploadSession()
+        val claim = completedUploadClaim(session, "a")
+        transaction.execute { uploads.save(session) }
+
+        val marked = transaction.execute {
+            val locked = checkNotNull(
+                uploads.lockCompletedAssetClaim(session.tenantId, "owner-1", session.id),
+            )
+            uploads.markCompletedAssetClaimed(locked.session, claim)
+        }
+
+        assertEquals(claim.resourceId, marked?.claim?.resourceId)
+        assertEquals(claim.subresourceId, marked?.claim?.subresourceId)
+        assertEquals(claim.claimedTime, marked?.session?.updatedTime)
+        assertNull(transaction.execute {
+            uploads.markCompletedAssetClaimed(session, completedUploadClaim(session, "b"))
+        })
+        assertNull(transaction.execute {
+            uploads.findCompletedAssetClaim(session.tenantId, "owner-2", session.id)
+        })
+    }
+
     private fun document(): Document {
         val document = Document(
             id = Identifier("document-1"),
@@ -268,6 +338,77 @@ class JdbcKingbaseRepositoriesIntegrationTest {
         }
     }
 
+    private fun completedUploadSession() = ResumableUploadSession(
+        id = Identifier("completed-upload"),
+        tenantId = Identifier("tenant-1"),
+        idempotencyKey = "start-completed-upload",
+        storageUploadId = Identifier("storage-completed-upload"),
+        storageLocation = StorageObjectLocation("s3", "objects/completed-upload"),
+        fileObjectId = Identifier("file-completed-upload"),
+        fileAssetId = Identifier("asset-completed-upload"),
+        fileName = "completed.pdf",
+        contentLength = 21,
+        assetType = "DOCUMENT",
+        contentType = null,
+        expectedContentHash = null,
+        metadata = mapOf("source" to "kingbase-integration"),
+        status = ResumableUploadSessionStatus.COMPLETED,
+        expiresAt = 1_000,
+        completedAt = 100,
+        createdTime = 10,
+        updatedTime = 100,
+        ownerId = "owner-1",
+    )
+
+    private fun presignedUploadSession(
+        status: PresignedUploadSessionStatus = PresignedUploadSessionStatus.READY,
+        version: Long = 0,
+        claimTime: Long? = null,
+        claimToken: String? = null,
+        claimExpiresAt: Long? = null,
+        updatedTime: Long = 100,
+    ) = PresignedUploadSession(
+        id = Identifier("presigned-upload"),
+        tenantId = Identifier("tenant-1"),
+        ownerId = "owner-1",
+        fileName = "contract.txt",
+        contentLength = 7,
+        contentType = "text/plain",
+        contentHash = PRESIGNED_CONTENT_HASH,
+        checksum = StorageContentChecksum("md5", "CY9rzUYh03PK3k6DJie09g=="),
+        metadata = mapOf("source" to "kingbase-integration"),
+        storageLocation = StorageObjectLocation("test", "objects/tenant/presigned-upload"),
+        grantExpiresAt = 1_000,
+        sessionExpiresAt = 2_000,
+        status = status,
+        version = version,
+        claimTime = claimTime,
+        createdTime = 100,
+        updatedTime = updatedTime,
+        idempotencyKeyDigest = PRESIGNED_KEY_DIGEST,
+        declarationDigest = PRESIGNED_DECLARATION_DIGEST,
+        grantDurationMillis = 900,
+        requiredHeaders = mapOf("Content-Type" to "text/plain"),
+        claimToken = claimToken,
+        claimExpiresAt = claimExpiresAt,
+    )
+
+    private fun completedUploadClaim(
+        session: ResumableUploadSession,
+        digestCharacter: String,
+    ) = CompletedResumableUploadAssetClaim(
+        tenantId = session.tenantId,
+        uploadId = session.id,
+        fileObjectId = session.fileObjectId,
+        fileAssetId = session.fileAssetId,
+        idempotencyKeyDigest = "sha256:" + digestCharacter.repeat(64),
+        resourceType = "DOCUMENT",
+        resourceId = Identifier("document-$digestCharacter"),
+        subresourceId = Identifier("version-$digestCharacter"),
+        claimedBy = "owner-1",
+        claimedTime = 200,
+    )
+
     private data class ConnectionSettings(
         val url: String,
         val user: String,
@@ -275,6 +416,15 @@ class JdbcKingbaseRepositoriesIntegrationTest {
         val schema: String,
     ) {
         fun rawConnection(): Connection = DriverManager.getConnection(url, user, password)
+    }
+
+    private companion object {
+        const val PRESIGNED_CONTENT_HASH =
+            "sha256:239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"
+        val PRESIGNED_KEY_DIGEST = "sha256:${"a".repeat(64)}"
+        val PRESIGNED_DECLARATION_DIGEST = "sha256:${"b".repeat(64)}"
+        val PRESIGNED_CLAIM_TOKEN = "sha256:${"c".repeat(64)}"
+        val PRESIGNED_OTHER_CLAIM_TOKEN = "sha256:${"d".repeat(64)}"
     }
 
     private class DriverManagerDataSource(

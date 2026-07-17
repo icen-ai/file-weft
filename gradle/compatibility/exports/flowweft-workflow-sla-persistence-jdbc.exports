@@ -1,0 +1,11 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-workflow-sla-persistence-jdbc
+# state=ready
+ai.icen.fw.workflow.sla.persistence.jdbc.JdbcWorkflowSlaDurableStore
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcDialect
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcDialect$Companion
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcDigests
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcMigrationDialect
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcMigrations
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcMigrations$Companion
+ai.icen.fw.workflow.sla.persistence.jdbc.WorkflowSlaJdbcTransactions

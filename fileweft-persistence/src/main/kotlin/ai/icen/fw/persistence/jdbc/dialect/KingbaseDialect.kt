@@ -5,7 +5,7 @@ import java.sql.PreparedStatement
 /**
  * Kingbase ES V8R6 dialect.
  *
- * Kingbase is PostgreSQL-compatible for most FileWeft DML. Differences are
+ * Kingbase is PostgreSQL-compatible for most FlowWeft DML. Differences are
  * handled by overriding the specific features it does not support (e.g. INCLUDE
  * indexes are DDL-only and do not affect DML).
  */

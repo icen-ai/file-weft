@@ -1,11 +1,11 @@
 ---
 name: integrate-fileweft
-description: Integrate and operate FileWeft 0.0.3 in a Kotlin, Java, Spring Boot 2, or Spring Boot 3 host application. Use when an AI must add FileWeft dependencies, implement tenant, identity, authorization, storage, metadata, catalog, workflow, or connector SPIs, expose the formal v1 HTTP API, configure supported database migrations and Outbox workers safely, or add FileWeft contract and integration tests.
+description: Integrate and operate FlowWeft in a Kotlin, Java, Spring Boot 2, or Spring Boot 3 host application, including the stable 0.0.3 line published under historical fileweft-* coordinates. Use when an AI must add dependencies, implement tenant, identity, authorization, storage, metadata, catalog, workflow, or connector SPIs, expose the formal v1 HTTP API, configure supported database migrations and Outbox workers safely, or add FlowWeft contract and integration tests.
 ---
 
-# Integrate FileWeft
+# Integrate FlowWeft
 
-Use FileWeft as infrastructure owned by the host application. Keep host authentication, users, business folders, and vendor SDKs outside FileWeft core contracts.
+Use FlowWeft as infrastructure owned by the host application. Keep host authentication, users, business folders, and vendor SDKs outside FlowWeft core contracts. The skill name and stable `fileweft-*` identifiers are compatibility contracts from the former product name.
 
 ## Inspect the source of truth
 
@@ -59,7 +59,7 @@ Provide Spring beans for production integrations instead of enabling process-loc
 3. Implement `AuthorizationProvider.authorize(AuthorizationRequest)`. Verify the subject, resource tenant, action, and environment; deny unknown actions and cross-tenant access.
 4. Provide one `StorageAdapter`. Keep tenant separation in every object operation and never expose a vendor SDK type through an SPI.
 
-FileWeft does not authenticate requests. Install host authentication before `/fileweft/**`, populate the trusted context before FileWeft controllers run, and clear request-local state after each request.
+FlowWeft does not authenticate requests. Install host authentication before `/fileweft/**`, populate the trusted context before FlowWeft controllers run, and clear request-local state after each request.
 
 Use explicit opt-in defaults only for local experiments:
 
@@ -77,18 +77,18 @@ Never use these fixed-tenant or local-storage defaults in a multi-tenant product
 ## Add optional host capabilities through SPI
 
 - Implement one `DocumentCatalogProvider` for a host-owned file tree. Accept only an opaque `folderId`; resolve tenant and user from `DocumentCatalogAccessRequest`. Use stable canonical IDs, namespace multiple sources, enforce folder ACLs, and do not put folder names or IDs into storage keys.
-- Implement `DocumentReviewRouteProvider` for approval routing. Resolve remote policy outside FileWeft transactions and apply a timeout, bounded retry, and diagnostics.
+- Implement `DocumentReviewRouteProvider` for approval routing. Resolve remote policy outside FlowWeft transactions and apply a timeout, bounded retry, and diagnostics.
 - Implement `FileConnector` for each downstream. Make `sync` and `remove` idempotent with `ConnectorInvocation.idempotencyKey`; bound timeouts; classify retryable and permanent failures; return credential-free health details.
-- Implement `DocumentDeliveryProfileProvider` to define tenant-scoped REQUIRED and OPTIONAL targets. Keep target and connector IDs stable. FileWeft snapshots a selected profile for the release generation.
+- Implement `DocumentDeliveryProfileProvider` to define tenant-scoped REQUIRED and OPTIONAL targets. Keep target and connector IDs stable. FlowWeft snapshots a selected profile for the release generation.
 - Prefer one explicit aggregate provider or resolver when multiple systems exist. Do not depend on `@Primary` to choose a security boundary.
 
 Do not call a downstream from a controller or inside a database transaction. Publishing, approval completion, offline, and archive operations persist Outbox work; a worker performs connector calls and records each target independently.
 
 ## Configure PostgreSQL migrations safely
 
-The 0.0.3 release contract validates PostgreSQL, native MySQL 8.x from 8.0.17, and KingbaseES V8 in independent real-database lanes; evidence for one dialect never substitutes for another. Its current inventory is V001–V029 for each dialect; V029 adds nullable workflow submitter evidence without rewriting the immutable 0.0.2 V001–V028 resources. FileWeft migrations use only `classpath:ai/icen/fw/db/migration` and the dedicated `fileweft_schema_history` table. Do not add that path to the host Flyway configuration.
+The historical 0.0.3 release contract validates PostgreSQL, native MySQL 8.x from 8.0.17, and KingbaseES V8 in independent real-database lanes; evidence for one dialect never substitutes for another. Its inventory is V001–V029 for each dialect; V029 adds nullable workflow submitter evidence without rewriting the immutable 0.0.2 V001–V028 resources. FlowWeft keeps those migrations under `classpath:ai/icen/fw/db/migration` and the dedicated `fileweft_schema_history` table. Do not add that path to the host Flyway configuration.
 
-Pre-create the production schema and make the JDBC current schema match the FileWeft assertion:
+Pre-create the production schema and make the JDBC current schema match the FlowWeft assertion:
 
 ```yaml
 spring:
@@ -106,7 +106,7 @@ Use these modes deliberately:
 
 - `migrate`: run from a controlled migration job with DDL privileges.
 - `validate`: use on API and worker processes after migration.
-- `disabled`: use only when the host DBA or deployment system fully owns FileWeft DDL.
+- `disabled`: use only when the host DBA or deployment system fully owns FlowWeft DDL.
 
 With multiple `DataSource` beans, provide a `FlywayMigrationRunner` bound to the intended source. Never baseline, repair, copy, or delete history rows to bypass a migration failure. Stop all processes, back up, and follow `docs/production-operations.md` when a database contains records from the withdrawn coordinates or old shared Flyway history.
 
@@ -140,7 +140,7 @@ Use `/fileweft/v1`; do not create new routes that call repositories or low-level
 
 Supply `Idempotency-Key` exactly once on lifecycle, review, Doctor scheduling, and delivery-recovery commands that require it. Use 1-128 ASCII characters matching `[A-Za-z0-9][A-Za-z0-9._~:-]*`. Reuse a key only to replay the exact same operator, action, resource, and request.
 
-Treat FileWeft authorization as server-side enforcement, not UI filtering. A UI may hide unavailable actions, but the `AuthorizationProvider` and catalog ACL remain authoritative.
+Treat FlowWeft authorization as server-side enforcement, not UI filtering. A UI may hide unavailable actions, but the `AuthorizationProvider` and catalog ACL remain authoritative.
 
 ## Test the integration
 
@@ -161,7 +161,7 @@ Extend the applicable JUnit 5 contracts:
 
 Test the host with at least two tenants and both allowed and denied users. Cover cross-tenant ID guessing, storage isolation, folder ACL revocation, idempotent concurrent connector replay, retryable failure, permanent failure, worker restart, and audit attribution. Use dedicated non-production storage and downstream fixtures.
 
-Run the host test suite, then run these commands when changing the FileWeft repository itself:
+Run the host test suite, then run these commands when changing the FlowWeft repository itself:
 
 ```powershell
 .\gradlew.bat fastCheck
@@ -169,7 +169,7 @@ Run the host test suite, then run these commands when changing the FileWeft repo
 .\gradlew.bat compatibilityJava17Check
 ```
 
-Use the narrowest dedicated task while iterating: `postgresIntegrationCheck`, `rustFsIntegrationCheck`, or `devAcceptanceCheck`. Ordinary `test` tasks deliberately exclude external `*IntegrationTest` classes. Before a FileWeft release, start the complete `fw-dev` Compose topology, enable the PostgreSQL, RustFS, Dev API, and Playwright suites as documented in `README.md`, and run `releaseCheck --no-configuration-cache`. Do not weaken or skip a failed release gate. The local/CNB task split, cache policy, tag identity checks, and remote consumer verification are documented in `.ci/README.md`.
+Use the narrowest dedicated task while iterating: `postgresIntegrationCheck`, `rustFsIntegrationCheck`, or `devAcceptanceCheck`. Ordinary `test` tasks deliberately exclude external `*IntegrationTest` classes. Before a FlowWeft release, start the complete `fw-dev` Compose topology, enable the PostgreSQL, RustFS, Dev API, and Playwright suites as documented in `README.md`, and run `releaseCheck --no-configuration-cache`. Do not weaken or skip a failed release gate. The local/CNB task split, cache policy, tag identity checks, and remote consumer verification are documented in `.ci/README.md`.
 
 ## Preserve architecture
 

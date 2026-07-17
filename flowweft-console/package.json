@@ -1,0 +1,42 @@
+{
+  "name": "@flowweft/console",
+  "version": "1.0.0-alpha.0",
+  "private": true,
+  "description": "FlowWeft 1.0 production console and same-origin BFF boundary",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:redis": "vitest run tests/redis-console-auth-store.integration.test.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "sbom": "node scripts/generate-sbom.mjs",
+    "check": "npm run typecheck && npm run test && npm run sbom && npm run build"
+  },
+  "dependencies": {
+    "jose": "6.2.3",
+    "next": "16.2.10",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "redis": "6.1.0",
+    "server-only": "0.0.1",
+    "zod": "4.4.3"
+  },
+  "overrides": {
+    "postcss": "8.5.19"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "jsdom": "29.1.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

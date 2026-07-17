@@ -3,10 +3,10 @@ package ai.icen.fw.persistence.jdbc.dialect
 import java.sql.PreparedStatement
 
 /**
- * Database-specific SQL fragments used by FileWeft JDBC repositories.
+ * Database-specific SQL fragments used by FlowWeft JDBC repositories.
  *
  * The interface is intentionally small and focused on the PostgreSQL/MySQL/Kingbase
- * differences actually present in FileWeft DML. It lives inside the persistence
+ * differences actually present in FlowWeft DML. It lives inside the persistence
  * module; higher layers never see it.
  */
 interface SqlDialect {

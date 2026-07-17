@@ -19,6 +19,7 @@ dependencies {
     api(project(":fileweft-adapter-micrometer"))
     api(libs.micrometer.core)
     api(project(":fileweft-persistence"))
+    compileOnly(project(":flowweft-adapter-oss"))
     api(libs.jackson.databind)
     api(libs.spring.boot3.autoconfigure)
     compileOnly(libs.flyway.core.boot3)
@@ -35,8 +36,10 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.spring.boot3.test)
+    testImplementation(libs.spring.boot3.starter.test)
     testImplementation(libs.spring.boot3.starter.jdbc)
     testImplementation(libs.assertj.core)
+    testImplementation(project(":flowweft-adapter-oss"))
     testCompileOnly(libs.flyway.core.boot3)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
@@ -57,6 +60,9 @@ tasks.matching { task -> task.name == "kaptKotlin" }.configureEach {
 }
 
 val runKingbaseIntegration = providers.environmentVariable("FILEWEFT_RUN_KINGBASE_TESTS")
+    .map { value -> value == "true" }
+    .orElse(false)
+val runOssStarterIntegration = providers.environmentVariable("FLOWWEFT_RUN_OSS_TESTS")
     .map { value -> value == "true" }
     .orElse(false)
 val testSourceSet = sourceSets.named("test")
@@ -106,4 +112,27 @@ tasks.register<Test>("kingbaseFlywayAutoConfigurationIntegrationTest") {
                 flywayArtifacts.map { artifact -> "${artifact.name}:${artifact.moduleVersion.id.version}" }
         }
     }
+}
+
+tasks.register<Test>("ossStarterIntegrationTest") {
+    group = "verification"
+    description = "Runs the Spring Boot 3 OSS Starter context smoke against real Alibaba Cloud OSS on Java 21."
+    testClassesDirs = testSourceSet.get().output.classesDirs
+    classpath = testSourceSet.get().runtimeClasspath
+    useJUnitPlatform()
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    })
+    include("**/FlowWeftOssStarterIntegrationTest.class")
+    maxParallelForks = 1
+    inputs.property("flowWeftRunOssTests", runOssStarterIntegration)
+    doNotTrackState("The Spring Boot 3 OSS Starter smoke executes against the current remote bucket state.")
+    doFirst(
+        org.gradle.api.Action<org.gradle.api.Task> {
+            require(inputs.properties.getValue("flowWeftRunOssTests") == true) {
+                "Set FLOWWEFT_RUN_OSS_TESTS=true and provide the dedicated OSS test credentials."
+            }
+        },
+    )
+    shouldRunAfter(tasks.named("test"))
 }

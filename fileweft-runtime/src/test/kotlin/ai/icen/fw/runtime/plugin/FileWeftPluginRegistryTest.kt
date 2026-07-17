@@ -54,6 +54,63 @@ class FileWeftPluginRegistryTest {
     }
 
     @Test
+    fun `rejects connector ids contributed by more than one plugin`() {
+        val failure = assertFailsWith<IllegalArgumentException> {
+            FileWeftPluginRegistry(
+                listOf(
+                    plugin("plugin-a", mapOf("shared-connector" to NoOpConnector)),
+                    plugin("plugin-b", mapOf("shared-connector" to NoOpConnector)),
+                ),
+                javaClass.classLoader,
+            )
+        }
+
+        assertTrue(failure.message.orEmpty().contains("shared-connector"))
+        assertTrue(failure.message.orEmpty().contains("plugin-b"))
+    }
+
+    @Test
+    fun `rejects blank plugin ids before reading contributions`() {
+        var connectorContributionCalls = 0
+        val failure = assertFailsWith<IllegalArgumentException> {
+            FileWeftPluginRegistry(listOf(object : FileWeftPlugin {
+                override fun id(): String = "  "
+
+                override fun connectors(): Map<String, FileConnector> {
+                    connectorContributionCalls += 1
+                    return emptyMap()
+                }
+            }), javaClass.classLoader)
+        }
+
+        assertEquals("Spring FileWeftPlugin id must not be blank.", failure.message)
+        assertEquals(0, connectorContributionCalls)
+    }
+
+    @Test
+    fun `rejects blank connector ids contributed by a plugin`() {
+        val failure = assertFailsWith<IllegalArgumentException> {
+            FileWeftPluginRegistry(
+                listOf(plugin("plugin-a", mapOf("  " to NoOpConnector))),
+                javaClass.classLoader,
+            )
+        }
+
+        assertEquals("Plugin plugin-a contributes a blank connector id.", failure.message)
+    }
+
+    @Test
+    fun `rejects blank Spring connector bean names before merging plugins`() {
+        val registry = FileWeftPluginRegistry(emptyList(), javaClass.classLoader)
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            registry.mergeConnectors(mapOf("  " to NoOpConnector))
+        }
+
+        assertEquals("Spring FileConnector bean name must not be blank.", failure.message)
+    }
+
+    @Test
     fun `exposes review route providers contributed by a plugin`() {
         val provider = object : DocumentReviewRouteProvider {
             override fun id(): String = "dual"

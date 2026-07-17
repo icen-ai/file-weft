@@ -1,10 +1,11 @@
 
 # Final AI Execution Prompt
 
-> **Superseding instruction:** do not implement the historical Agent priority
-> for `0.0.2` or any currently committed version. Agent redesign is deferred
-> indefinitely and may only be reassessed after `1.0.0` is released; no later
-> release is promised.
+> **CURRENT NOTICE — HISTORICAL EXECUTION PROMPT BELOW.** `0.0.2` and `0.0.3`
+> did not expose Agent capability. The old indefinite deferral is superseded by
+> root `AGENTS.md` and ADR 0001: FlowWeft 1.0 includes a redesigned, additive
+> Agent and generic workflow platform. Follow the current delivery ledger; do
+> not execute the historical phases verbatim.
 
 
 When implementing FileWeft:

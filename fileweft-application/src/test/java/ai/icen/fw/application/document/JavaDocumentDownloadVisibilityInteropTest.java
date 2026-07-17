@@ -1,6 +1,7 @@
 package ai.icen.fw.application.document;
 
 import ai.icen.fw.application.audit.AuditTrail;
+import ai.icen.fw.application.retention.DeletionVisibilityGuard;
 import ai.icen.fw.application.transaction.ApplicationTransaction;
 import ai.icen.fw.core.id.Identifier;
 import ai.icen.fw.domain.document.DocumentRepository;
@@ -45,6 +46,44 @@ class JavaDocumentDownloadVisibilityInteropTest {
             ApplicationTransaction.class,
             AuditTrail.class,
             DocumentDownloadVisibility.class
+        ));
+        assertNotNull(DocumentDownloadService.class.getConstructor(
+            TenantProvider.class,
+            UserRealmProvider.class,
+            AuthorizationProvider.class,
+            DocumentRepository.class,
+            FileObjectRepository.class,
+            StorageAdapter.class,
+            ApplicationTransaction.class,
+            AuditTrail.class,
+            DocumentDownloadVisibility.class,
+            DeletionVisibilityGuard.class
+        ));
+        assertEquals(
+            DocumentDownloadService.class,
+            DocumentDownloadService.class.getMethod(
+                "withDeletionVisibility",
+                TenantProvider.class,
+                UserRealmProvider.class,
+                AuthorizationProvider.class,
+                DocumentRepository.class,
+                FileObjectRepository.class,
+                StorageAdapter.class,
+                ApplicationTransaction.class,
+                AuditTrail.class,
+                DeletionVisibilityGuard.class
+            ).getReturnType()
+        );
+        assertThrows(NoSuchMethodException.class, () -> DocumentDownloadService.class.getConstructor(
+            TenantProvider.class,
+            UserRealmProvider.class,
+            AuthorizationProvider.class,
+            DocumentRepository.class,
+            FileObjectRepository.class,
+            StorageAdapter.class,
+            ApplicationTransaction.class,
+            AuditTrail.class,
+            DeletionVisibilityGuard.class
         ));
         assertThrows(NoSuchMethodException.class, () -> DocumentDownloadService.class.getConstructor(
             TenantProvider.class,

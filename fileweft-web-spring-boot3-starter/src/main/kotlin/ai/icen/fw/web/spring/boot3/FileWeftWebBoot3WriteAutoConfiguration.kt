@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController
  * Optional Spring Boot 3 MVC transport for formal v1 document mutations.
  *
  * It is independent from the read adapter so write routes exist only when the
- * host has supplied the normal FileWeft draft capability. Catalog-aware mode
+ * host has supplied the normal FlowWeft draft capability. Catalog-aware mode
  * is selected explicitly and never falls back to an unscoped flat mutation.
  */
 @AutoConfiguration(afterName = ["ai.icen.fw.starter.boot3.FileWeftAutoConfiguration"])

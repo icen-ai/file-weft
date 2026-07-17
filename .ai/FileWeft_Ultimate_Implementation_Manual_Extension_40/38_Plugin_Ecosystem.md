@@ -1,10 +1,11 @@
 
 # Plugin Ecosystem
 
-> **Superseded Agent extension:** the `new agent` item below is historical. Do
-> not add or advertise Agent plugins for `0.0.2`. The retained Agent SPI exists
-> only for compatibility until a redesign is reassessed after `1.0.0`, with no
-> promised delivery version.
+> **CURRENT NOTICE — HISTORICAL BODY BELOW.** `0.0.2` and `0.0.3` did not expose
+> Agent plugins. The old indefinite deferral is now superseded by root
+> `AGENTS.md` and ADR 0001: FlowWeft 1.0 includes a redesigned, additive Agent
+> product. Do not repurpose the retained `fileweft-agent` ABI; apply the current
+> plugin and Agent contracts instead of implementing this historical sketch.
 
 
 Plugin can add:

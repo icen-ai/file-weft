@@ -10,6 +10,9 @@ import ai.icen.fw.application.document.DocumentQueryRepository
 import ai.icen.fw.application.document.DocumentQueryService
 import ai.icen.fw.application.document.DocumentSummaryView
 import ai.icen.fw.application.document.DocumentVersionView
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.context.TraceContext
@@ -217,7 +220,7 @@ internal class DocumentV1ControllerTestFixture {
         authorizationProvider = object : AuthorizationProvider {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = authorizationDecision
         },
-        queries = object : DocumentQueryRepository {
+        queries = object : DocumentQueryRepository, DeletionVisibilityQuerySource {
             override fun findDetail(
                 tenantId: Identifier,
                 documentId: Identifier,
@@ -239,6 +242,14 @@ internal class DocumentV1ControllerTestFixture {
                 lastPageRequest = request
                 pageFailure?.let { failure -> throw failure }
                 return page
+            }
+
+            override fun deletionVisibilityQuery(): DeletionVisibilityQuery = object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ): DeletionVisibilityFence? = null
             }
         },
         transaction = DirectTransaction,

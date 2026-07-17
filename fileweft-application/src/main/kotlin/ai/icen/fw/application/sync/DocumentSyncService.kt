@@ -2,6 +2,9 @@ package ai.icen.fw.application.sync
 
 import ai.icen.fw.application.audit.AuditTrail
 import ai.icen.fw.application.delivery.DeliveryDiagnosticMessage
+import ai.icen.fw.application.retention.DeletedResourceNotVisibleException
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityUnavailableException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
@@ -51,6 +54,8 @@ class DocumentSyncService @JvmOverloads constructor(
      */
     private val sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
 ) {
+    private var deletionVisibility = DeletionVisibilityGuard.requireFrom(documentRepository)
+
     init {
         require(connectorName.isNotBlank()) { "Connector name must not be blank." }
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
@@ -78,11 +83,18 @@ class DocumentSyncService @JvmOverloads constructor(
     }
 
     private fun prepare(tenantId: Identifier, documentId: Identifier): Preparation {
+        visibilityFailure(tenantId, documentId)?.let { return it }
         var document = documentRepository.findById(tenantId, documentId)
             ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was not found in the event tenant.")
+        if (document.tenantId != tenantId || document.id != documentId) {
+            return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was not found in the event tenant.")
+        }
         if (document.lifecycleState == LifecycleState.SYNC_ERROR) {
             document = documentRepository.findForMutation(tenantId, documentId)
                 ?: return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was removed before synchronization preparation completed.")
+            if (document.tenantId != tenantId || document.id != documentId) {
+                return Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document was removed before synchronization preparation completed.")
+            }
         }
         when (document.lifecycleState) {
             LifecycleState.PUBLISHED -> return Preparation.AlreadyPublished
@@ -105,11 +117,15 @@ class DocumentSyncService @JvmOverloads constructor(
     }
 
     private fun invokeConnector(sourceEvent: OutboxEvent, documentId: Identifier, fileObject: FileObject): ConnectorSyncResult = try {
+        val downloadUri = storageAdapter.accessUrl(
+            StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
+            sourceAccessUrlTtl,
+        )
+        transaction.execute {
+            deletionVisibility.requireResourceVisible(sourceEvent.tenantId, DOCUMENT_RESOURCE_TYPE, documentId)
+        }
         val source = ConnectorFileSource(
-            downloadUri = storageAdapter.accessUrl(
-                StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
-                sourceAccessUrlTtl,
-            ),
+            downloadUri = downloadUri,
             fileName = fileObject.fileName,
             contentType = fileObject.contentType,
             contentHash = fileObject.contentHash,
@@ -122,8 +138,21 @@ class DocumentSyncService @JvmOverloads constructor(
                 invocation = ConnectorInvocation(sourceEvent.id.value, connectorTimeout),
             ),
         )
+    } catch (_: DeletedResourceNotVisibleException) {
+        ConnectorSyncResult(ConnectorSyncStatus.PERMANENT_FAILURE, message = "Document is no longer available for synchronization.")
+    } catch (_: DeletionVisibilityUnavailableException) {
+        ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Deletion visibility enforcement is unavailable.")
     } catch (_: Exception) {
         ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Connector invocation could not complete.")
+    }
+
+    private fun visibilityFailure(tenantId: Identifier, documentId: Identifier): Preparation.Failure? = try {
+        deletionVisibility.requireResourceVisible(tenantId, DOCUMENT_RESOURCE_TYPE, documentId)
+        null
+    } catch (_: DeletedResourceNotVisibleException) {
+        Preparation.Failure(ConnectorSyncStatus.PERMANENT_FAILURE, "Document is no longer available for synchronization.")
+    } catch (_: DeletionVisibilityUnavailableException) {
+        Preparation.Failure(ConnectorSyncStatus.RETRYABLE_FAILURE, "Deletion visibility enforcement is unavailable.")
     }
 
     private fun complete(
@@ -206,7 +235,40 @@ class DocumentSyncService @JvmOverloads constructor(
         data class Failure(val status: ConnectorSyncStatus, val message: String) : Preparation()
     }
 
-    private companion object {
-        const val DOCUMENT_ID_PAYLOAD_KEY = "documentId"
+    companion object {
+        private const val DOCUMENT_ID_PAYLOAD_KEY = "documentId"
+        private const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+
+        /** Preserves the historical constructor while allowing an explicit fail-closed query. */
+        @JvmStatic
+        @JvmOverloads
+        fun withDeletionVisibility(
+            documentRepository: DocumentRepository,
+            fileObjectRepository: FileObjectRepository,
+            storageAdapter: StorageAdapter,
+            connector: FileConnector,
+            connectorName: String,
+            syncRecordRepository: SyncRecordRepository,
+            identifierGenerator: IdentifierGenerator,
+            transaction: ApplicationTransaction,
+            deletionVisibilityGuard: DeletionVisibilityGuard,
+            connectorTimeout: Duration = Duration.ofSeconds(30),
+            auditTrail: AuditTrail? = null,
+            metrics: FileWeftMetrics? = null,
+            sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
+        ): DocumentSyncService = DocumentSyncService(
+            documentRepository,
+            fileObjectRepository,
+            storageAdapter,
+            connector,
+            connectorName,
+            syncRecordRepository,
+            identifierGenerator,
+            transaction,
+            connectorTimeout,
+            auditTrail,
+            metrics,
+            sourceAccessUrlTtl,
+        ).also { service -> service.deletionVisibility = deletionVisibilityGuard }
     }
 }

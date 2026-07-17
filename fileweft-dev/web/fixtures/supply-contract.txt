@@ -1,4 +1,4 @@
-FileWeft Development Fixture: Supply Contract Acceptance
+FlowWeft Development Fixture: Supply Contract Acceptance
 
 Document number: SC-DEV-2026-001
 Supplier: Northwind Industrial Services

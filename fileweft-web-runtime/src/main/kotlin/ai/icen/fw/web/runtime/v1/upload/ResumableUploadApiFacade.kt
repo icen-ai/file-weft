@@ -21,7 +21,7 @@ import java.io.InputStream
 /**
  * Pure-JVM boundary for the five formal v1 resumable-upload operations.
  *
- * Trusted tenant and user identity remain inside FileWeft. The only
+ * Trusted tenant and user identity remain inside FlowWeft. The only
  * caller-supplied identity token is the start request's `Idempotency-Key`; it
  * is validated here; the application service immediately replaces it with a
  * tenant-scoped SHA-256 digest before any storage or persistence operation.

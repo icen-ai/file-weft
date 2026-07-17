@@ -9,5 +9,5 @@ class LegacyFileWeftMigrationHistoryException(
 ) : IllegalStateException(
     "Legacy FileWeft migrations were detected in $schema.flyway_schema_history. " +
         "Refusing to replay, repair, or baseline them into fileweft_schema_history; " +
-        "migrate the history explicitly before starting FileWeft.",
+        "migrate the history explicitly before starting FlowWeft.",
 )

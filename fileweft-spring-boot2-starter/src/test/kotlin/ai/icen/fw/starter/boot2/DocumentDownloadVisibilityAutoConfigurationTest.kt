@@ -10,6 +10,9 @@ import ai.icen.fw.application.document.DocumentNotFoundException
 import ai.icen.fw.application.document.DocumentPageRequest
 import ai.icen.fw.application.document.DocumentPageResult
 import ai.icen.fw.application.document.DocumentQueryRepository
+import ai.icen.fw.application.retention.DeletionVisibilityFence
+import ai.icen.fw.application.retention.DeletionVisibilityQuery
+import ai.icen.fw.application.retention.DeletionVisibilityQuerySource
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
@@ -305,7 +308,7 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
         val authorization = object : AuthorizationProvider {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
         }
-        val documents = object : DocumentRepository {
+        val documents: DocumentRepository = object : DocumentRepository, DeletionVisibilityQuerySource {
             private val document = Document(
                 id = hiddenDocumentId,
                 tenantId = tenantId,
@@ -321,6 +324,14 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
             }
 
             override fun save(document: Document) = Unit
+
+            override fun deletionVisibilityQuery(): DeletionVisibilityQuery = object : DeletionVisibilityQuery {
+                override fun findFence(
+                    tenantId: Identifier,
+                    resourceType: String,
+                    resourceId: Identifier,
+                ): DeletionVisibilityFence? = null
+            }
         }
         val files = object : FileObjectRepository {
             override fun findById(tenantId: Identifier, fileObjectId: Identifier): FileObject? = FileObject(
@@ -337,7 +348,7 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
         }
     }
 
-    class RecordingQueries : DocumentQueryRepository {
+    class RecordingQueries : DocumentQueryRepository, DeletionVisibilityQuerySource {
         var lastFolderScope: DocumentFolderReadScope? = null
             private set
 
@@ -357,6 +368,14 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
             request: DocumentPageRequest,
             folderReadScope: DocumentFolderReadScope?,
         ): DocumentPageResult = DocumentPageResult(emptyList())
+
+        override fun deletionVisibilityQuery(): DeletionVisibilityQuery = object : DeletionVisibilityQuery {
+            override fun findFence(
+                tenantId: Identifier,
+                resourceType: String,
+                resourceId: Identifier,
+            ): DeletionVisibilityFence? = null
+        }
     }
 
     class RecordingStorage : StorageAdapter {

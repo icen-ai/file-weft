@@ -27,6 +27,19 @@ main:
         - name: release-artifacts
           script: bash ./gradlew releaseArtifactCheck --no-daemon --no-configuration-cache --stacktrace
 
+    console-redis:
+      runner: !reference [.flowweft-runner-2]
+      docker: !reference [.flowweft-console-redis-docker]
+      env: !reference [.flowweft-console-env]
+      name: Nightly Console Redis contract
+      stages:
+        - name: install-console-redis-contract
+          timeout: 5m
+          script: npm ci --prefix flowweft-console
+        - name: verify-console-redis-contract
+          timeout: 2m
+          script: sh .ci/scripts/run-console-redis-contract.sh
+
     java8:
       <<: *fileweft-nightly-jvm
       name: Nightly Java 8 compatibility

@@ -1,6 +1,6 @@
 # 可观测性
 
-FileWeft 的业务层只依赖 `FileWeftMetrics`、`FileWeftGaugeRecorder` 和 `TraceContextProvider` SPI。Core、Domain 和 Application 不依赖日志、Micrometer 或链路追踪厂商 SDK。
+FlowWeft 的业务层只依赖 `FileWeftMetrics`、`FileWeftGaugeRecorder` 和 `TraceContextProvider` SPI。Core、Domain 和 Application 不依赖日志、Micrometer 或链路追踪厂商 SDK。
 
 当 Spring 应用提供 Micrometer `MeterRegistry` 时，Starter 会自动装配 `MicrometerFileWeftMetrics`。指标名称以 `fileweft.` 为前缀，例如：
 

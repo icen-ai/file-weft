@@ -1,0 +1,40 @@
+# flowweft-jvm-exports-v1
+# artifactId=flowweft-agent-adapter-http-okhttp
+# state=ready
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpAddressMode
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpBoundedBody
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCapturedHeaders
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpClock
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpClock$Companion
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCredentialMaterial
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCredentialMaterial$Companion
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCredentialMaterial$WhenMappings
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCredentialProvider
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCredentialRequest
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpCredentialsKt
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpEvidenceRecorder
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpExchangeEvidence
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpNetworkKt
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpReceiptIdSource
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpReceiptIdSource$Companion
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpResponseLimitException
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTlsIdentityKind
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTlsKt
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTlsKt$WhenMappings
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTlsMaterial
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTlsMaterial$Companion
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTransportEvidenceKt
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTransportException
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolHttpTransportOutcome
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolOkHttpTransportConfiguration
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolPinnedDns
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolPinnedDns$WhenMappings
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolPinnedTrustManager
+ai.icen.fw.agent.adapter.http.okhttp.AgentProtocolTlsContext
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransport
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransport$WhenMappings
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransport$beginExchange$1
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransportKt
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransportKt$WhenMappings
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransportKt$captureBoundedHeaders$$inlined$compareBy$1
+ai.icen.fw.agent.adapter.http.okhttp.OkHttpAgentProtocolHttpTransportKt$captureBoundedHeaders$$inlined$thenBy$1

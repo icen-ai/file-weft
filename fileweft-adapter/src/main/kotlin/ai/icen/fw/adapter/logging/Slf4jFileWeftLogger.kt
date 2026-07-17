@@ -7,7 +7,7 @@ import org.slf4j.MDC
 
 /**
  * Structured logger that writes through SLF4J and populates MDC with the
- * FileWeft context fields required for observability: tenant id, document id
+ * FlowWeft context fields required for observability: tenant id, document id
  * and trace id. Hosts can then render the MDC map as JSON or key-value pairs
  * using their chosen logback/log4j2 encoder.
  */

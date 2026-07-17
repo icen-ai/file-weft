@@ -2,6 +2,10 @@
   tags: cnb:arch:amd64
   cpus: 4
 
+.flowweft-runner-2:
+  tags: cnb:arch:amd64
+  cpus: 2
+
 .fileweft-runner-8:
   tags: cnb:arch:amd64
   cpus: 8
@@ -15,6 +19,7 @@
       - .ci/Dockerfile.jvm
   volumes:
     - main:/root/.gradle:copy-on-write-read-only
+    - main:/root/.m2:copy-on-write-read-only
 
 .fileweft-jvm-docker:
   build:
@@ -25,6 +30,7 @@
       - .ci/Dockerfile.jvm
   volumes:
     - main:/root/.gradle:copy-on-write
+    - main:/root/.m2:copy-on-write
 
 .fileweft-e2e-pr-docker:
   build:
@@ -46,6 +52,48 @@
       - fileweft-dev/web/package-lock.json
   volumes:
     - main:/root/.gradle:copy-on-write
+    - main:/root/.npm:copy-on-write
+
+.flowweft-console-pr-docker:
+  build:
+    dockerfile: .ci/Dockerfile.console
+    by:
+      - .ci/Dockerfile.console
+    versionBy:
+      - flowweft-console/package-lock.json
+  volumes:
+    - main:/root/.npm:copy-on-write-read-only
+    - main:/workspace/flowweft-console/.next/cache:copy-on-write-read-only
+
+.flowweft-console-docker:
+  build:
+    dockerfile: .ci/Dockerfile.console
+    by:
+      - .ci/Dockerfile.console
+    versionBy:
+      - flowweft-console/package-lock.json
+  volumes:
+    - main:/root/.npm:copy-on-write
+    - main:/workspace/flowweft-console/.next/cache:copy-on-write
+
+.flowweft-console-redis-pr-docker:
+  build:
+    dockerfile: .ci/Dockerfile.console-redis
+    by:
+      - .ci/Dockerfile.console-redis
+    versionBy:
+      - .ci/Dockerfile.console-redis
+  volumes:
+    - main:/root/.npm:copy-on-write-read-only
+
+.flowweft-console-redis-docker:
+  build:
+    dockerfile: .ci/Dockerfile.console-redis
+    by:
+      - .ci/Dockerfile.console-redis
+    versionBy:
+      - .ci/Dockerfile.console-redis
+  volumes:
     - main:/root/.npm:copy-on-write
 
 .fileweft-ci-env:
@@ -87,6 +135,11 @@
   FILEWEFT_RUN_RUSTFS_TESTS: "true"
   FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
 
+.flowweft-oss-env:
+  CI: "true"
+  FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
+  FLOWWEFT_RUN_OSS_TESTS: "true"
+
 .fileweft-e2e-env:
   CI: "true"
   FILEWEFT_TEST_MAX_PARALLEL_TASKS: "2"
@@ -94,15 +147,54 @@
   FILEWEFT_RUN_DEV_UI_E2E: "true"
   FILEWEFT_DEV_PLATFORM_SHARED_SECRET: fileweft-ci-only-shared-secret-2026
 
+.flowweft-console-env:
+  CI: "true"
+  NEXT_TELEMETRY_DISABLED: "1"
+
 .fileweft-docs-paths:
   - .gitattributes
   - "**/*.md"
   - "*.md"
-  - fileweft-docs/**/*.html
-  - fileweft-docs/**/*.css
-  - fileweft-docs/**/*.js
-  - fileweft-docs/**/*.mjs
-  - fileweft-docs/**/*.json
+  - flowweft-docs/**/*.html
+  - flowweft-docs/**/*.css
+  - flowweft-docs/**/*.js
+  - flowweft-docs/**/*.mjs
+  - flowweft-docs/**/*.json
+
+.flowweft-console-paths:
+  - .gitattributes
+  - .gitignore
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/Dockerfile.console
+  - .ci/test/path-policy.test.mjs
+  - flowweft-console/**
+
+.flowweft-console-redis-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .ci/.shared.yml
+  - .ci/pr.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.console-redis
+  - .ci/scripts/run-console-redis-contract.sh
+  - .ci/test/path-policy.test.mjs
+  - .docker/docker-compose.dev.yaml
+  - flowweft-console/package.json
+  - flowweft-console/package-lock.json
+  - flowweft-console/tsconfig.json
+  - flowweft-console/vitest.config.ts
+  - flowweft-console/src/server/auth/**
+  - flowweft-console/src/server/config/**
+  - flowweft-console/src/app/api/auth/**
+  - flowweft-console/tests/**/*auth*.test.*
+  - flowweft-console/tests/**/*oidc*.test.*
+  - flowweft-console/tests/**/*redis*.test.*
+  - flowweft-console/tests/config-schema.test.ts
 
 .fileweft-fast-paths:
   - .gitattributes
@@ -114,6 +206,7 @@
   - .ci/main.yml
   - .ci/knowledge.yml
   - .ci/codewiki.yml
+  - .ci/oss.yml
   - .ci/codewiki-sparse-checkout
   - .ci/code-knowledge-acceptance.json
   - .ci/nightly.yml
@@ -136,6 +229,21 @@
   - fileweft-application/**
   - fileweft-metadata-api/**
   - fileweft-metadata-runtime/**
+  - flowweft-retrieval-api/**
+  - flowweft-retrieval-spi/**
+  - flowweft-retrieval-runtime/**
+  - flowweft-retrieval-testkit/**
+  - flowweft-agent-api/**
+  - flowweft-agent-runtime/**
+  - flowweft-agent-testkit/**
+  - flowweft-workflow-api/**
+  - flowweft-workflow-spi/**
+  - flowweft-workflow-domain/**
+  - flowweft-workflow-runtime/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
+  - flowweft-adapter-dify/**
+  - flowweft-adapter-oss/**
   - fileweft-persistence/**
   - fileweft-runtime/**
   - fileweft-spring-boot2-starter/**
@@ -179,6 +287,21 @@
   - fileweft-application/**
   - fileweft-metadata-api/**
   - fileweft-metadata-runtime/**
+  - flowweft-retrieval-api/**
+  - flowweft-retrieval-spi/**
+  - flowweft-retrieval-runtime/**
+  - flowweft-retrieval-testkit/**
+  - flowweft-agent-api/**
+  - flowweft-agent-runtime/**
+  - flowweft-agent-testkit/**
+  - flowweft-workflow-api/**
+  - flowweft-workflow-spi/**
+  - flowweft-workflow-domain/**
+  - flowweft-workflow-runtime/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
+  - flowweft-adapter-dify/**
+  - flowweft-adapter-oss/**
   - fileweft-persistence/**
   - fileweft-runtime/**
   - fileweft-spring-boot2-starter/**
@@ -219,6 +342,19 @@
   - fileweft-application/**
   - fileweft-metadata-api/**
   - fileweft-metadata-runtime/**
+  - flowweft-retrieval-api/**
+  - flowweft-retrieval-spi/**
+  - flowweft-retrieval-runtime/**
+  - flowweft-agent-api/**
+  - flowweft-agent-runtime/**
+  - flowweft-workflow-api/**
+  - flowweft-workflow-spi/**
+  - flowweft-workflow-domain/**
+  - flowweft-workflow-runtime/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
+  - flowweft-adapter-dify/**
+  - flowweft-adapter-oss/**
   - fileweft-persistence/**
   - fileweft-runtime/**
   - fileweft-agent/**
@@ -257,6 +393,21 @@
   - fileweft-application/**
   - fileweft-metadata-api/**
   - fileweft-metadata-runtime/**
+  - flowweft-retrieval-api/**
+  - flowweft-retrieval-spi/**
+  - flowweft-retrieval-runtime/**
+  - flowweft-retrieval-testkit/**
+  - flowweft-agent-api/**
+  - flowweft-agent-runtime/**
+  - flowweft-agent-testkit/**
+  - flowweft-workflow-api/**
+  - flowweft-workflow-spi/**
+  - flowweft-workflow-domain/**
+  - flowweft-workflow-runtime/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
+  - flowweft-adapter-dify/**
+  - flowweft-adapter-oss/**
   - fileweft-persistence/**
   - fileweft-runtime/**
   - fileweft-spring-boot2-starter/**
@@ -302,6 +453,8 @@
   - fileweft-application/**
   - fileweft-agent/**
   - fileweft-persistence/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
 
 .fileweft-mysql-paths:
   - .gitattributes
@@ -330,6 +483,8 @@
   - fileweft-application/**
   - fileweft-agent/**
   - fileweft-persistence/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
 
 .fileweft-kingbase-paths:
   - .gitattributes
@@ -359,6 +514,8 @@
   - fileweft-application/**
   - fileweft-agent/**
   - fileweft-persistence/**
+  - flowweft-workflow-persistence-jdbc/**
+  - flowweft-migration-cli/**
   - fileweft-spring-boot2-starter/build.gradle.kts
   - fileweft-spring-boot2-starter/gradle.lockfile
   - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftKingbaseFlywayAutoConfiguration.kt
@@ -399,6 +556,47 @@
   - fileweft-spi/**
   - fileweft-testkit/**
   - fileweft-adapter-s3/**
+
+.flowweft-oss-paths:
+  - .gitattributes
+  - .cnb.yml
+  - .cnb/web_trigger.yml
+  - .ci/.shared.yml
+  - .ci/oss.yml
+  - .ci/main.yml
+  - .ci/nightly.yml
+  - .ci/release.yml
+  - .ci/Dockerfile.jvm
+  - build.gradle.kts
+  - settings.gradle.kts
+  - settings-gradle.lockfile
+  - gradle.properties
+  - gradlew
+  - gradlew.bat
+  - gradle/**
+  - build-logic/build.gradle.kts
+  - build-logic/settings.gradle.kts
+  - build-logic/gradle.lockfile
+  - build-logic/src/main/**
+  - fileweft-core/**
+  - fileweft-spi/**
+  - fileweft-application/**
+  - fileweft-testkit/**
+  - flowweft-adapter-oss/**
+  - fileweft-spring-boot2-starter/build.gradle.kts
+  - fileweft-spring-boot2-starter/gradle.lockfile
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftAutoConfiguration.kt
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FileWeftProperties.kt
+  - fileweft-spring-boot2-starter/src/main/kotlin/**/FlowWeftOssConfiguration.kt
+  - fileweft-spring-boot2-starter/src/test/kotlin/**/FlowWeftOssConfigurationTest.kt
+  - fileweft-spring-boot2-starter/src/test/kotlin/**/FlowWeftOssStarterIntegrationTest.kt
+  - fileweft-spring-boot3-starter/build.gradle.kts
+  - fileweft-spring-boot3-starter/gradle.lockfile
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FileWeftAutoConfiguration.kt
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FileWeftProperties.kt
+  - fileweft-spring-boot3-starter/src/main/kotlin/**/FlowWeftOssConfiguration.kt
+  - fileweft-spring-boot3-starter/src/test/kotlin/**/FlowWeftOssConfigurationTest.kt
+  - fileweft-spring-boot3-starter/src/test/kotlin/**/FlowWeftOssStarterIntegrationTest.kt
 
 .fileweft-e2e-paths:
   - .gitattributes
@@ -445,6 +643,8 @@
 .fileweft-release-artifact-paths:
   - .gitattributes
   - .ci/Dockerfile.jvm
+  - .ci/scripts/verify-osv-release.mjs
+  - .ci/test/osv-release.test.mjs
   - .ci/fixtures/**
   - build.gradle.kts
   - settings.gradle.kts
@@ -459,6 +659,13 @@
   - build-logic/src/main/**
   - fileweft-*/build.gradle.kts
   - fileweft-*/gradle.lockfile
+  - flowweft-*/build.gradle.kts
+  - flowweft-*/gradle.lockfile
+  - flowweft-agent-testkit/**
+  - flowweft-retrieval-testkit/**
+  - flowweft-console/package.json
+  - flowweft-console/package-lock.json
+  - flowweft-console/scripts/generate-sbom.mjs
   - release-smoke/**
   - LICENSE
   - NOTICE

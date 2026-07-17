@@ -62,6 +62,7 @@ import ai.icen.fw.application.metadata.DocumentMetadataService
 import ai.icen.fw.application.metadata.DocumentMetadataWriteService
 import ai.icen.fw.application.metadata.MetadataSchemaQueryService
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimService
 import ai.icen.fw.application.upload.ResumableUploadSessionRepository
 import ai.icen.fw.application.outbox.OutboxWorker
 import ai.icen.fw.application.outbox.OutboxBacklogMetricsPublisher
@@ -184,6 +185,16 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FileWeftAutoConfigurationTest {
+
+    @Test
+    fun `retains the legacy Java plugin registry factory signature`() {
+        val legacyFactory = FileWeftAutoConfiguration::class.java.getMethod(
+            "fileWeftPluginRegistry",
+            List::class.java,
+        )
+
+        assertEquals(FileWeftPluginRegistry::class.java, legacyFactory.returnType)
+    }
     @TempDir
     lateinit var storageRoot: Path
 
@@ -754,6 +765,7 @@ class FileWeftAutoConfigurationTest {
                 "fileWeftDocumentMetadataService",
                 "fileWeftDocumentMetadataWriteService",
                 "fileWeftResumableUploadService",
+                "fileWeftCompletedUploadAssetClaimService",
                 "fileWeftReviewWorkflowService",
                 "fileWeftDoctorService",
                 "fileWeftMetadataDoctorChecker",
@@ -761,6 +773,7 @@ class FileWeftAutoConfigurationTest {
             ).forEach { beanName -> assertTrue(context.containsBean(beanName), beanName) }
 
             assertEquals(1, context.getBeansOfType(ResumableUploadService::class.java).size)
+            assertEquals(1, context.getBeansOfType(CompletedResumableUploadAssetClaimService::class.java).size)
             assertEquals(1, context.getBeansOfType(MetadataSchemaRegistry::class.java).size)
             assertEquals(1, context.getBeansOfType(MetadataProcessor::class.java).size)
             assertEquals(1, context.getBeansOfType(MetadataSchemaQueryService::class.java).size)

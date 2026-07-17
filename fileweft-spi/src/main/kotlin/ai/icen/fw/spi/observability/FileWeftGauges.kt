@@ -1,7 +1,7 @@
 package ai.icen.fw.spi.observability
 
 /**
- * Low-cardinality gauges exposed by FileWeft. Gauge values describe the
+ * Low-cardinality gauges exposed by FlowWeft. Gauge values describe the
  * current state, rather than an accumulated event count.
  */
 enum class FileWeftGauge(
@@ -17,7 +17,7 @@ enum class FileWeftGauge(
  *
  * Implementations must treat a call as a replacement of the previous gauge
  * value for the same gauge and tag set. Implementations must not let normal
- * metrics backend failures alter FileWeft business processing.
+ * metrics backend failures alter FlowWeft business processing.
  */
 interface FileWeftGaugeRecorder {
     fun set(gauge: FileWeftGauge, value: Double, tags: Map<String, String>)

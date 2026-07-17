@@ -7,7 +7,7 @@ import io.opentelemetry.api.logs.Logger
 import io.opentelemetry.api.logs.Severity
 
 /**
- * OpenTelemetry bridge for FileWeft structured logs.
+ * OpenTelemetry bridge for FlowWeft structured logs.
  *
  * Tenant, document and trace identifiers from [LogContext] are attached as
  * attributes so a downstream collector can correlate logs with traces and
@@ -50,7 +50,7 @@ class OpenTelemetryFileWeftLogger(
 
             builder.emit()
         } catch (_: Exception) {
-            // Logging must never alter FileWeft business acknowledgement semantics.
+            // Logging must never alter FlowWeft business acknowledgement semantics.
         }
     }
 

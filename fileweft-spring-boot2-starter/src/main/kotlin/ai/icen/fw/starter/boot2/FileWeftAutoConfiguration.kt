@@ -9,6 +9,7 @@ import ai.icen.fw.adapter.observability.NoOpTraceContextProvider
 import ai.icen.fw.adapter.identity.DefaultUserRealmProvider
 import ai.icen.fw.adapter.storage.LocalStorageAdapter
 import ai.icen.fw.adapter.tenant.FixedTenantProvider
+import ai.icen.fw.application.plugin.PluginCapabilityType
 import ai.icen.fw.application.plugin.PluginInventoryProvider
 import ai.icen.fw.application.plugin.PluginInventoryQueryService
 import ai.icen.fw.core.id.IdentifierGenerator
@@ -28,11 +29,13 @@ import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.AllNestedConditions
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.beans.factory.NoSuchBeanDefinitionException
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.SmartInitializingSingleton
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Import
@@ -49,11 +52,41 @@ private const val LEGACY_AGENT_AUTOCONFIGURATION_PROPERTY =
 @AutoConfiguration(after = [DataSourceAutoConfiguration::class, FlywayAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
 @Import(
+    FlowWeftOssConfiguration::class,
     FileWeftMigrationConfiguration::class,
     FileWeftRuntimeConfiguration::class,
     FileWeftWorkerSchedulingConfiguration::class,
 )
 class FileWeftAutoConfiguration {
+    @Bean
+    @ConditionalOnProperty(prefix = "fileweft.storage.oss", name = ["enabled"], havingValue = "true")
+    fun flowWeftOssSelectionValidator(
+        plugins: FileWeftPluginRegistry,
+        storageCandidates: ObjectProvider<StorageAdapter>,
+    ): SmartInitializingSingleton {
+        val matchingPlugins = plugins.inventory().filter { plugin -> plugin.id == FLOWWEFT_OSS_PLUGIN_ID }
+        require(matchingPlugins.size == 1) {
+            "fileweft.storage.oss.enabled requires the flowweft-adapter-oss artifact and exactly one OSS plugin."
+        }
+        val storageCapability = matchingPlugins.single().capabilities.singleOrNull { capability ->
+            capability.type == PluginCapabilityType.STORAGE_ADAPTER
+        }
+        require(storageCapability?.count == 1) {
+            "The FlowWeft OSS plugin must contribute exactly one StorageAdapter."
+        }
+        val contributed = plugins.storageAdapters()
+        require(contributed.size == 1) {
+            "fileweft.storage.oss.enabled requires the OSS plugin to be the only plugin StorageAdapter."
+        }
+        val expected = contributed.single()
+        return SmartInitializingSingleton {
+            val selected = storageCandidates.orderedStream().iterator().asSequence().toList()
+            require(selected.size == 1 && selected.single() === expected) {
+                "fileweft.storage.oss.enabled requires the OSS adapter to be the one selected StorageAdapter."
+            }
+        }
+    }
+
     @Bean
     @ConditionalOnMissingBean(TenantProvider::class)
     fun fileWeftTenantProvider(properties: FileWeftProperties): TenantProvider {
@@ -103,6 +136,15 @@ class FileWeftAutoConfiguration {
     } else {
         FileWeftPluginRegistry(plugins)
     }
+
+    /**
+     * Retains the 0.0.x Java-callable factory signature without registering a
+     * second Spring bean. The environment-aware overload above remains the
+     * sole auto-configuration entry point.
+     */
+    @Deprecated("Use fileWeftPluginRegistry(plugins, environment) through Spring auto-configuration.")
+    fun fileWeftPluginRegistry(plugins: List<FileWeftPlugin>): FileWeftPluginRegistry =
+        FileWeftPluginRegistry(plugins)
 
     @Bean
     @ConditionalOnMissingBean(PluginInventoryQueryService::class)
@@ -182,5 +224,9 @@ class FileWeftAutoConfiguration {
 
         @ConditionalOnSingleCandidate(AuthorizationProvider::class)
         class Authorization
+    }
+
+    private companion object {
+        const val FLOWWEFT_OSS_PLUGIN_ID: String = "flowweft-storage-oss"
     }
 }

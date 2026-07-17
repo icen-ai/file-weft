@@ -1,0 +1,221 @@
+package ai.icen.fw.testkit.retrieval;
+
+import ai.icen.fw.core.id.Identifier;
+import ai.icen.fw.retrieval.api.CandidateRetriever;
+import ai.icen.fw.retrieval.api.CandidateRetrieverDescriptor;
+import ai.icen.fw.retrieval.api.ExecutableRetrievalRequest;
+import ai.icen.fw.retrieval.api.PrefilteredCandidateBatch;
+import ai.icen.fw.retrieval.api.ResolvedCandidateBatch;
+import ai.icen.fw.retrieval.api.RetrievalAuthorizationPlanner;
+import ai.icen.fw.retrieval.api.RetrievalAuthorizationRequest;
+import ai.icen.fw.retrieval.api.RetrievalCandidateAuthorizer;
+import ai.icen.fw.retrieval.api.RetrievalHydrationRequest;
+import ai.icen.fw.retrieval.api.RetrievalLineageResolver;
+import ai.icen.fw.retrieval.spi.ContentChunker;
+import ai.icen.fw.retrieval.spi.ContentChunkerDescriptor;
+import ai.icen.fw.retrieval.spi.ContentChunkingRequest;
+import ai.icen.fw.retrieval.spi.ContentExtractionRequest;
+import ai.icen.fw.retrieval.spi.ContentExtractor;
+import ai.icen.fw.retrieval.spi.ContentExtractorDescriptor;
+import ai.icen.fw.retrieval.spi.EmbeddingProvider;
+import ai.icen.fw.retrieval.spi.EmbeddingProviderDescriptor;
+import ai.icen.fw.retrieval.spi.EmbeddingRequest;
+import ai.icen.fw.retrieval.spi.RerankRequest;
+import ai.icen.fw.retrieval.spi.Reranker;
+import ai.icen.fw.retrieval.spi.RerankerDescriptor;
+import ai.icen.fw.retrieval.spi.RetrievalContentProvider;
+import ai.icen.fw.retrieval.spi.RetrievalContentProviderDescriptor;
+import ai.icen.fw.retrieval.spi.RetrievalIndexActivationRequest;
+import ai.icen.fw.retrieval.spi.RetrievalIndexMutationRequest;
+import ai.icen.fw.retrieval.spi.RetrievalIndexProvider;
+import ai.icen.fw.retrieval.spi.RetrievalIndexProviderDescriptor;
+import ai.icen.fw.retrieval.spi.RetrievalIndexSealRequest;
+import ai.icen.fw.retrieval.spi.RetrievalIndexStageBatch;
+import ai.icen.fw.retrieval.spi.RetrievalIndexStateRequest;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Modifier;
+import java.util.Collection;
+import java.util.List;
+import java.util.function.LongSupplier;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/** Proves every retrieval provider contract remains subclassable from Java 8. */
+class RetrievalProviderTestKitJavaCompatibilityTest {
+    @Test
+    void allRetrievalContractsAreSubclassableFromJavaEight() {
+        assertNotNull(new CandidateContract());
+        assertNotNull(new AuthorizationContract());
+        assertNotNull(new LineageContract());
+        assertNotNull(new CandidateAuthorizationContract());
+        assertNotNull(new ContentContract());
+        assertNotNull(new RerankContract());
+        assertNotNull(new ExtractionContract());
+        assertNotNull(new ChunkingContract());
+        assertNotNull(new EmbeddingContract());
+        assertNotNull(new IndexContract());
+    }
+
+    @Test
+    void indexScenariosExposePlainStaticJavaEightFactories() throws Exception {
+        assertEquals(
+            List.class,
+            RetrievalIndexActivationRaceScenario.class.getMethod("getActivationRequests").getReturnType()
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationRaceScenario.class,
+            List.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationReplayScenario.class,
+            RetrievalIndexActivationRequest.class,
+            int.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationReplayMismatchScenario.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexProviderBindingMismatchScenario.class,
+            RetrievalIndexStageBatch.class,
+            RetrievalIndexSealRequest.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+        assertStaticFactory(
+            RetrievalIndexActivationFailureScenario.class,
+            RetrievalIndexActivationRequest.class,
+            RetrievalIndexStateRequest.class,
+            RetrievalIndexStateRequest.class
+        );
+    }
+
+    private static void assertStaticFactory(Class<?> type, Class<?>... parameterTypes) throws Exception {
+        assertTrue(Modifier.isStatic(type.getMethod("of", parameterTypes).getModifiers()));
+    }
+
+    private static UnsupportedOperationException fixtureOnly() {
+        return new UnsupportedOperationException("Compilation fixture only");
+    }
+
+    private static final class CandidateContract extends CandidateRetrieverContractTest {
+        @Override protected CandidateRetriever getCandidateRetriever() { throw fixtureOnly(); }
+        @Override protected ExecutableRetrievalRequest executableRequest(CandidateRetrieverDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+    }
+
+    private static final class AuthorizationContract extends RetrievalAuthorizationPlannerContractTest {
+        @Override protected RetrievalAuthorizationPlanner getAuthorizationPlanner() { throw fixtureOnly(); }
+        @Override protected RetrievalAuthorizationRequest allowedAuthorizationRequest() { throw fixtureOnly(); }
+        @Override protected RetrievalAuthorizationRequest deniedAuthorizationRequest() { throw fixtureOnly(); }
+    }
+
+    private static final class LineageContract extends RetrievalLineageResolverContractTest {
+        @Override protected RetrievalLineageResolver getLineageResolver() { throw fixtureOnly(); }
+        @Override protected ExecutableRetrievalRequest executableRequest() { throw fixtureOnly(); }
+        @Override protected PrefilteredCandidateBatch prefilteredBatch() { throw fixtureOnly(); }
+        @Override protected Identifier resolutionRequestId() { throw fixtureOnly(); }
+        @Override protected LongSupplier resolutionClock() { throw fixtureOnly(); }
+    }
+
+    private static final class CandidateAuthorizationContract extends RetrievalCandidateAuthorizerContractTest {
+        @Override protected RetrievalCandidateAuthorizer getCandidateAuthorizer() { throw fixtureOnly(); }
+        @Override protected RetrievalAuthorizationRequest queryAuthorizationRequest() { throw fixtureOnly(); }
+        @Override protected ResolvedCandidateBatch resolvedCandidateBatch() { throw fixtureOnly(); }
+        @Override protected Identifier authorizationBatchId() { throw fixtureOnly(); }
+        @Override protected Collection<Identifier> candidateAuthorizationRequestIds() { throw fixtureOnly(); }
+        @Override protected LongSupplier authorizationClock() { throw fixtureOnly(); }
+    }
+
+    private static final class ContentContract extends RetrievalContentProviderContractTest {
+        @Override protected RetrievalContentProvider getContentProvider() { throw fixtureOnly(); }
+        @Override protected RetrievalHydrationRequest hydrationRequest(RetrievalContentProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected LongSupplier hydrationClock() { throw fixtureOnly(); }
+    }
+
+    private static final class RerankContract extends RerankerContractTest {
+        @Override protected Reranker getReranker() { throw fixtureOnly(); }
+        @Override protected RerankRequest rerankRequest(RerankerDescriptor descriptor) { throw fixtureOnly(); }
+    }
+
+    private static final class ExtractionContract extends ContentExtractorContractTest {
+        @Override protected ContentExtractor getContentExtractor() { throw fixtureOnly(); }
+        @Override protected ContentExtractionRequest extractionRequest(ContentExtractorDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+    }
+
+    private static final class ChunkingContract extends ContentChunkerContractTest {
+        @Override protected ContentChunker getContentChunker() { throw fixtureOnly(); }
+        @Override protected ContentChunkingRequest chunkingRequest(ContentChunkerDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+    }
+
+    private static final class EmbeddingContract extends EmbeddingProviderContractTest {
+        @Override protected EmbeddingProvider getEmbeddingProvider() { throw fixtureOnly(); }
+        @Override protected EmbeddingRequest embeddingRequest(EmbeddingProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+    }
+
+    private static final class IndexContract extends RetrievalIndexProviderContractTest {
+        @Override protected RetrievalIndexProvider getIndexProvider() { throw fixtureOnly(); }
+        @Override protected RetrievalIndexStageBatch stageRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexSealRequest sealRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationRequest activationRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexMutationRequest mutationRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexStateRequest stateRequest(RetrievalIndexProviderDescriptor descriptor) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationRaceScenario activationRaceScenario(
+            RetrievalIndexProviderDescriptor descriptor,
+            int contenderCount
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationReplayScenario activationReplayScenario(
+            RetrievalIndexProviderDescriptor descriptor,
+            int replayCount
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationReplayMismatchScenario activationReplayMismatchScenario(
+            RetrievalIndexProviderDescriptor descriptor
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexProviderBindingMismatchScenario providerBindingMismatchScenario(
+            RetrievalIndexProviderDescriptor descriptor
+        ) {
+            throw fixtureOnly();
+        }
+        @Override protected RetrievalIndexActivationFailureScenario activationFailureScenario(
+            RetrievalIndexProviderDescriptor descriptor
+        ) {
+            throw fixtureOnly();
+        }
+    }
+}

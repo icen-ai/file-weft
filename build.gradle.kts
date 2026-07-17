@@ -8,6 +8,11 @@ import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.api.tasks.bundling.Zip
+import ai.icen.fw.buildlogic.PublicationInventoryVerifier
+import ai.icen.fw.buildlogic.VerifyPublicationInventoryTask
+import ai.icen.fw.buildlogic.GenerateJvmApiBaselineProposalTask
+import ai.icen.fw.buildlogic.ImportTrustedJvmApiBaselinesTask
+import ai.icen.fw.buildlogic.VerifyJvmApiBaselineTask
 import ai.icen.fw.buildlogic.ReleaseSbomExtension
 import ai.icen.fw.buildlogic.TestTaskConcurrencyService
 import java.util.Locale
@@ -21,34 +26,29 @@ plugins {
 }
 
 group = "ai.icen"
-version = providers.gradleProperty("fileweftVersion").orElse("0.0.3-SNAPSHOT").get()
+version = providers.gradleProperty("fileweftVersion").orElse("1.0.0-SNAPSHOT").get()
 
-val publishableModuleNames = setOf(
-    "fileweft-core",
-    "fileweft-spi",
-    "fileweft-domain",
-    "fileweft-application",
-    "fileweft-metadata-api",
-    "fileweft-metadata-runtime",
-    "fileweft-web-api",
-    "fileweft-web-runtime",
-    "fileweft-web-spring-boot2-starter",
-    "fileweft-web-spring-boot3-starter",
-    "fileweft-persistence",
-    "fileweft-runtime",
-    "fileweft-spring-boot2-starter",
-    "fileweft-spring-boot3-starter",
-    "fileweft-adapter",
-    "fileweft-adapter-micrometer",
-    "fileweft-adapter-s3",
-    "fileweft-agent",
-    "fileweft-testkit",
-)
+val publicationInventoryFile = layout.projectDirectory.file("gradle/publication-inventory.tsv").asFile
+val jvmApiBaselineInventoryFile = layout.projectDirectory.file("gradle/compatibility/jvm-api-baselines.tsv")
+val jvmApiBaselineDirectory = layout.projectDirectory.dir("gradle/compatibility/jvm")
+val jvmApiExportDirectory = layout.projectDirectory.dir("gradle/compatibility/exports")
+val publicationInventory = PublicationInventoryVerifier.parse(publicationInventoryFile)
+val publishableModuleNames = publicationInventory
+    .filter { entry -> entry.artifactKind == PublicationInventoryVerifier.JAR_KIND }
+    .map { entry -> entry.artifactId }
+    .toSet()
 val releaseSbomModuleNames = publishableModuleNames.sorted()
-extensions.configure<ReleaseSbomExtension>("fileWeftReleaseSbom") {
+extensions.configure<ReleaseSbomExtension>("flowWeftReleaseSbom") {
     publishableModuleNames.set(releaseSbomModuleNames)
 }
 val releaseRepositoryDirectory = layout.buildDirectory.dir("repository")
+val consoleDirectory = layout.projectDirectory.dir("flowweft-console")
+val consoleSbomDirectory = consoleDirectory.dir("build/reports/cyclonedx")
+val npmCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+    "npm.cmd"
+} else {
+    "npm"
+}
 val releaseVersion = version.toString()
 val stableReleaseVersionPattern = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")
 val releaseScmTag = if (releaseVersion == "0.0.1") "v0.0.1-ai.icen" else "v$releaseVersion"
@@ -60,6 +60,17 @@ val withdrawnMavenGroup = listOf("com", "fileweft").joinToString(".")
 val withdrawnJvmPath = listOf("com", "fileweft").joinToString("/")
 val projectLicenseFile = layout.projectDirectory.file("LICENSE")
 val projectNoticeFile = layout.projectDirectory.file("NOTICE")
+val verifyPublicationInventory = tasks.register<VerifyPublicationInventoryTask>("verifyPublicationInventory") {
+    group = "verification"
+    description = "Verifies the single checked-in physical FlowWeft publication inventory."
+    inventoryFile.set(layout.projectDirectory.file("gradle/publication-inventory.tsv"))
+    moduleBuildFiles.from(
+        publicationInventory.map { entry ->
+            layout.projectDirectory.file("${entry.artifactId}/build.gradle.kts")
+        },
+    )
+    repositoryDirectory.set(layout.projectDirectory)
+}
 val releaseNotesFile = layout.projectDirectory.file(
     "docs/releases/${releaseVersion.removeSuffix("-SNAPSHOT")}.md",
 )
@@ -132,8 +143,15 @@ allprojects {
     tasks.withType<CyclonedxDirectTask>().configureEach {
         includeConfigs.set(listOf("runtimeClasspath"))
         includeBuildEnvironment.set(false)
+        // aliyun-java-sdk-ram declares an empty POM license, which CycloneDX 1.6 correctly
+        // rejects as invalid XML. Keep its locked runtime component and graph, but do not
+        // resolve optional rich POM metadata into a fabricated license declaration.
+        if (project.name == "flowweft-adapter-oss") {
+            includeMetadataResolution.set(false)
+        }
         includeConfigs.disallowChanges()
         includeBuildEnvironment.disallowChanges()
+        includeMetadataResolution.disallowChanges()
     }
 }
 subprojects.filter { candidate -> candidate.name !in publishableModuleNames }.forEach { candidate ->
@@ -150,7 +168,7 @@ val verifyFileWeftBuildLogic = tasks.register("verifyFileWeftBuildLogic") {
 
 fun registerCompatibilityLane(javaVersion: Int) = tasks.register("compatibilityJava${javaVersion}Check") {
     group = "verification"
-    description = "Runs FileWeft module tests assigned to the Java $javaVersion compatibility lane."
+    description = "Runs FlowWeft module tests assigned to the Java $javaVersion compatibility lane."
 }
 
 val compatibilityJava8Check = registerCompatibilityLane(8)
@@ -160,7 +178,7 @@ val compatibilityJava21Check = registerCompatibilityLane(21)
 val compatibilityJava25Check = registerCompatibilityLane(25)
 val compatibilityCheck = tasks.register("compatibilityCheck") {
     group = "verification"
-    description = "Runs the supported Java runtime matrices for all FileWeft modules."
+    description = "Runs the supported Java runtime matrices for all FlowWeft modules."
     dependsOn(
         compatibilityJava8Check,
         compatibilityJava11Check,
@@ -172,7 +190,7 @@ val compatibilityCheck = tasks.register("compatibilityCheck") {
 
 val publishReleaseRepository = tasks.register("publishReleaseRepository") {
     group = "publishing"
-    description = "Publishes every public FileWeft $releaseVersion module to build/repository."
+    description = "Publishes every public FlowWeft $releaseVersion module to build/repository."
 }
 
 val verifyPublishedStarterConfigurationMetadata = tasks.register("verifyPublishedStarterConfigurationMetadata") {
@@ -345,7 +363,7 @@ val cleanReleaseRepository = tasks.register<Delete>("cleanReleaseRepository") {
 
 val installReleaseToMavenLocal = tasks.register("installReleaseToMavenLocal") {
     group = "publishing"
-    description = "Installs every public FileWeft $releaseVersion module into Maven local."
+    description = "Installs every public FlowWeft $releaseVersion module into Maven local."
 }
 
 val nestedGradleWrapperCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
@@ -374,10 +392,10 @@ val releaseConsumerSmoke = tasks.register<Exec>("releaseConsumerSmoke") {
 val verifyDocsSite = tasks.register<Exec>("verifyDocsSite") {
     group = "verification"
     description = "Runs the zero-dependency documentation site contract tests."
-    workingDir(layout.projectDirectory.dir("fileweft-docs"))
+    workingDir(layout.projectDirectory.dir("flowweft-docs"))
     commandLine("node", "--test", "test/site.test.mjs")
     inputs.files(
-        fileTree("fileweft-docs") {
+        fileTree("flowweft-docs") {
             include("**/*.html", "**/*.css", "**/*.js", "**/*.mjs", "**/*.json", "**/*.md")
         },
     ).withPropertyName("docsSiteSources")
@@ -442,6 +460,10 @@ val expectedFileWeftMigrationResources = listOf(
     "V027__stabilize_worker_claim_order.sql",
     "V028__enforce_binary_identifier_collation.sql",
     "V029__persist_workflow_submitter.sql",
+    "V033__claim_completed_upload_asset.sql",
+    "V034__create_presigned_upload_session.sql",
+    "V035__claim_presigned_upload_asset.sql",
+    "V036__create_secure_deletion.sql",
 ).flatMap { migration ->
     fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
 }
@@ -509,7 +531,7 @@ val verifyStablePostgresMigrationHashes = tasks.register("verifyStablePostgresMi
 
 val verifyFileWeftMigrationResources = tasks.register("verifyFileWeftMigrationResources") {
     group = "verification"
-    description = "Verifies that the persistence JAR contains the exact, byte-identical namespaced FileWeft migrations for PostgreSQL, MySQL, and Kingbase."
+    description = "Verifies that the persistence JAR contains the exact, byte-identical namespaced FlowWeft compatibility migrations for PostgreSQL, MySQL, and Kingbase."
     inputs.property("expectedFileWeftMigrationResources", expectedFileWeftMigrationResources)
     inputs.dir(fileWeftMigrationSourceDirectory)
         .withPropertyName("fileWeftMigrationSourceDirectory")
@@ -522,7 +544,7 @@ val verifyFileWeftMigrationResources = tasks.register("verifyFileWeftMigrationRe
 
 val publishCnbArtifacts = tasks.register("publishCnbArtifacts") {
     group = "publishing"
-    description = "Publishes every public FileWeft $releaseVersion module to the configured CNB Maven registry."
+    description = "Publishes every public FlowWeft $releaseVersion module to the configured CNB Maven registry."
     doFirst {
         require(cnbArtifactsPassword.isPresent) {
             "Set CNB_TOKEN or cnbArtifactsGradlePassword before publishing CNB artifacts."
@@ -532,7 +554,7 @@ val publishCnbArtifacts = tasks.register("publishCnbArtifacts") {
 
 val publishVerifiedCnbArtifacts = tasks.register("publishVerifiedCnbArtifacts") {
     group = "publishing"
-    description = "Publishes FileWeft from a CNB Tag pipeline after all same-commit verification lanes succeed."
+    description = "Publishes FlowWeft from a CNB Tag pipeline after all same-commit verification lanes succeed."
     doFirst {
         require(cnbArtifactsPassword.isPresent) {
             "CNB_TOKEN must be available to the verified CNB Tag publication pipeline."
@@ -665,24 +687,53 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
             val unexpected = mutableListOf<String>()
             inputs.files.files.sortedBy { sourceFile -> sourceFile.absolutePath }.forEach { sourceFile ->
                 val relativePath = sourceFile.relativeTo(repositoryRoot).invariantSeparatorsPath
-                val requiredFlag = when {
+                val requiredFlags = when {
+                    relativePath ==
+                        "flowweft-migration-cli/src/test/kotlin/ai/icen/fw/migration/cli/FlowWeftMigrationRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-workflow-persistence-jdbc/src/test/kotlin/ai/icen/fw/workflow/persistence/jdbc/WorkflowRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-agent-persistence-jdbc/src/test/kotlin/ai/icen/fw/agent/persistence/jdbc/AgentRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-governance-persistence-jdbc/src/test/kotlin/ai/icen/fw/governance/persistence/jdbc/GovernanceRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-capacity-persistence-jdbc/src/test/kotlin/ai/icen/fw/capacity/persistence/jdbc/CapacityRealDatabaseIntegrationTest.kt" ||
+                        relativePath ==
+                        "flowweft-reliability-persistence-jdbc/src/test/kotlin/ai/icen/fw/reliability/persistence/jdbc/ReliabilityRealDatabaseIntegrationTest.kt" ->
+                        setOf(
+                            "FILEWEFT_RUN_POSTGRES_TESTS",
+                            "FILEWEFT_RUN_MYSQL_TESTS",
+                            "FILEWEFT_RUN_KINGBASE_TESTS",
+                        )
                     relativePath.startsWith("fileweft-persistence/src/test/") && "MySQL" in sourceFile.name ->
-                        "FILEWEFT_RUN_MYSQL_TESTS"
+                        setOf("FILEWEFT_RUN_MYSQL_TESTS")
                     relativePath.startsWith("fileweft-persistence/src/test/") && "Kingbase" in sourceFile.name ->
-                        "FILEWEFT_RUN_KINGBASE_TESTS"
+                        setOf("FILEWEFT_RUN_KINGBASE_TESTS")
                     relativePath.startsWith("fileweft-spring-boot") && "Kingbase" in sourceFile.name ->
-                        "FILEWEFT_RUN_KINGBASE_TESTS"
+                        setOf("FILEWEFT_RUN_KINGBASE_TESTS")
                     relativePath.startsWith("fileweft-persistence/src/test/") ->
-                        "FILEWEFT_RUN_POSTGRES_TESTS"
+                        setOf("FILEWEFT_RUN_POSTGRES_TESTS")
                     relativePath ==
                         "fileweft-adapter-s3/src/test/kotlin/ai/icen/fw/adapter/s3/S3StorageAdapterRustFsIntegrationTest.kt" ->
-                        "FILEWEFT_RUN_RUSTFS_TESTS"
+                        setOf("FILEWEFT_RUN_RUSTFS_TESTS")
+                    relativePath ==
+                        "flowweft-adapter-oss/src/test/kotlin/ai/icen/fw/adapter/oss/OssStorageAdapterIntegrationTest.kt" ->
+                        setOf("FLOWWEFT_RUN_OSS_TESTS")
+                    relativePath ==
+                        "flowweft-adapter-oss/src/test/kotlin/ai/icen/fw/adapter/oss/OssOverwriteGuardIntegrationTest.kt" ->
+                        setOf("FLOWWEFT_RUN_OSS_OVERWRITE_TESTS")
+                    relativePath ==
+                        "fileweft-spring-boot2-starter/src/test/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssStarterIntegrationTest.kt" ||
+                        relativePath ==
+                        "fileweft-spring-boot3-starter/src/test/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssStarterIntegrationTest.kt" ->
+                        setOf("FLOWWEFT_RUN_OSS_TESTS")
                     relativePath ==
                         "fileweft-dev/src/test/kotlin/ai/icen/fw/dev/e2e/DevAcceptanceIntegrationTest.kt" ->
-                        "FILEWEFT_RUN_DEV_E2E"
-                    else -> null
+                        setOf("FILEWEFT_RUN_DEV_E2E")
+                    else -> emptySet()
                 }
-                if (requiredFlag == null || !sourceFile.readText(Charsets.UTF_8).contains(requiredFlag)) {
+                val source = sourceFile.readText(Charsets.UTF_8)
+                if (requiredFlags.isEmpty() || requiredFlags.any { requiredFlag -> requiredFlag !in source }) {
                     unexpected += relativePath
                 }
             }
@@ -695,7 +746,7 @@ val verifyExternalTestPartition = tasks.register("verifyExternalTestPartition") 
 
 val verifyPublishedReleaseRepository = tasks.register("verifyPublishedReleaseRepository") {
     group = "verification"
-    description = "Verifies the exact FileWeft Maven publication contract for all public modules."
+    description = "Verifies the exact FlowWeft Maven publication contract for all public modules."
     notCompatibleWithConfigurationCache("Release repository verification inspects generated Maven archives at execution time.")
     dependsOn(publishReleaseRepository)
     inputs.dir(releaseRepositoryDirectory)
@@ -783,8 +834,8 @@ subprojects {
                         }
                     }
                     pom {
-                        name.set(project.name)
-                        description.set("FileWeft enterprise file infrastructure module ${project.name}.")
+                        name.set("FlowWeft module ${project.name}")
+                        description.set("FlowWeft enterprise file and workflow infrastructure module ${project.name}.")
                         url.set(projectHomepage)
                         licenses {
                             license {
@@ -810,7 +861,7 @@ subprojects {
                     }
                 }
                 repositories.maven {
-                    name = "FileWeftRelease"
+                    name = "FlowWeftRelease"
                     url = rootProject.layout.buildDirectory.dir("repository").get().asFile.toURI()
                 }
                 if (cnbPublishingRequested && cnbArtifactsPassword.isPresent) {
@@ -904,7 +955,7 @@ val cleanRemoteCnbConsumerGradleHome = tasks.register<Delete>("cleanRemoteCnbCon
 val remoteCnbConsumerSmoke = tasks.register<Exec>("remoteCnbConsumerSmoke") {
     group = "verification"
     description = "Cold-resolves all public modules from CNB Maven and compiles independent consumers."
-    dependsOn(cleanRemoteCnbConsumerGradleHome)
+    dependsOn(cleanRemoteCnbConsumerGradleHome, verifyPublicationInventory)
     workingDir(rootProject.projectDir)
     environment(
         "GRADLE_USER_HOME",
@@ -930,33 +981,51 @@ val remoteCnbConsumerSmoke = tasks.register<Exec>("remoteCnbConsumerSmoke") {
 
 val postgresIntegrationCheck = tasks.register("postgresIntegrationCheck") {
     group = "verification"
-    description = "Runs PostgreSQL persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    description = "Runs PostgreSQL persistence with FlowWeft, Boot 2, and Boot 3 Flyway runtimes."
     dependsOn(
         ":fileweft-persistence:postgresIntegrationTest",
         ":fileweft-persistence:postgresFlyway8CompatibilityTest",
         ":fileweft-persistence:postgresFlyway11CompatibilityTest",
+        ":flowweft-workflow-persistence-jdbc:workflowPostgresIntegrationTest",
+        ":flowweft-migration-cli:flowweftMigrationPostgresIntegrationTest",
+        ":flowweft-governance-persistence-jdbc:governancePostgresIntegrationTest",
+        ":flowweft-capacity-persistence-jdbc:capacityPostgresIntegrationTest",
+        ":flowweft-reliability-persistence-jdbc:reliabilityPostgresIntegrationTest",
+        ":flowweft-agent-persistence-jdbc:agentPostgresIntegrationTest",
     )
 }
 
 val mysqlIntegrationCheck = tasks.register("mysqlIntegrationCheck") {
     group = "verification"
-    description = "Runs MySQL 8 persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    description = "Runs MySQL 8 persistence with FlowWeft, Boot 2, and Boot 3 Flyway runtimes."
     dependsOn(
         ":fileweft-persistence:mysqlIntegrationTest",
         ":fileweft-persistence:mysqlFlyway8CompatibilityTest",
         ":fileweft-persistence:mysqlFlyway11CompatibilityTest",
+        ":flowweft-workflow-persistence-jdbc:workflowMySqlIntegrationTest",
+        ":flowweft-migration-cli:flowweftMigrationMySqlIntegrationTest",
+        ":flowweft-governance-persistence-jdbc:governanceMySqlIntegrationTest",
+        ":flowweft-capacity-persistence-jdbc:capacityMySqlIntegrationTest",
+        ":flowweft-reliability-persistence-jdbc:reliabilityMySqlIntegrationTest",
+        ":flowweft-agent-persistence-jdbc:agentMySqlIntegrationTest",
     )
 }
 
 val kingbaseIntegrationCheck = tasks.register("kingbaseIntegrationCheck") {
     group = "verification"
-    description = "Runs KingbaseES V8 persistence with FileWeft, Boot 2, and Boot 3 Flyway runtimes."
+    description = "Runs KingbaseES V8 persistence with FlowWeft, Boot 2, and Boot 3 Flyway runtimes."
     dependsOn(
         ":fileweft-persistence:kingbaseIntegrationTest",
         ":fileweft-persistence:kingbaseFlyway8CompatibilityTest",
         ":fileweft-persistence:kingbaseFlyway11CompatibilityTest",
         ":fileweft-spring-boot2-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
         ":fileweft-spring-boot3-starter:kingbaseFlywayAutoConfigurationIntegrationTest",
+        ":flowweft-workflow-persistence-jdbc:workflowKingbaseIntegrationTest",
+        ":flowweft-migration-cli:flowweftMigrationKingbaseIntegrationTest",
+        ":flowweft-governance-persistence-jdbc:governanceKingbaseIntegrationTest",
+        ":flowweft-capacity-persistence-jdbc:capacityKingbaseIntegrationTest",
+        ":flowweft-reliability-persistence-jdbc:reliabilityKingbaseIntegrationTest",
+        ":flowweft-agent-persistence-jdbc:agentKingbaseIntegrationTest",
     )
 }
 
@@ -964,6 +1033,142 @@ val rustFsIntegrationCheck = tasks.register("rustFsIntegrationCheck") {
     group = "verification"
     description = "Runs the dedicated RustFS storage-adapter integration lane."
     dependsOn(":fileweft-adapter-s3:rustFsIntegrationTest")
+}
+
+val publishedReleaseGroupDirectory = releaseRepositoryDirectory.map { repository ->
+    repository.dir(rootProject.group.toString().replace('.', '/'))
+}
+val verifyLegacyJvmAbi = tasks.register<VerifyJvmApiBaselineTask>("verifyLegacyJvmAbi") {
+    group = "verification"
+    description = "Verifies the candidate fileweft-* JVM ABI against the trusted 0.0.1/0.0.2/0.0.3 union."
+    dependsOn(publishReleaseRepository)
+    publicationInventoryFile.set(layout.projectDirectory.file("gradle/publication-inventory.tsv"))
+    baselineInventoryFile.set(jvmApiBaselineInventoryFile)
+    baselineDirectory.set(jvmApiBaselineDirectory)
+    exportDirectory.set(jvmApiExportDirectory)
+    candidateRepositoryGroupDirectory.set(publishedReleaseGroupDirectory)
+    candidateVersion.set(releaseVersion)
+    lineage.set(PublicationInventoryVerifier.LEGACY_PHYSICAL)
+}
+val verifyFlowWeft10ApiFreeze = tasks.register<VerifyJvmApiBaselineTask>("verifyFlowWeft10ApiFreeze") {
+    group = "verification"
+    description = "Verifies exact reviewed 1.0 JVM APIs and rejects accidental public flowweft-* classes."
+    dependsOn(publishReleaseRepository)
+    publicationInventoryFile.set(layout.projectDirectory.file("gradle/publication-inventory.tsv"))
+    baselineInventoryFile.set(jvmApiBaselineInventoryFile)
+    baselineDirectory.set(jvmApiBaselineDirectory)
+    exportDirectory.set(jvmApiExportDirectory)
+    candidateRepositoryGroupDirectory.set(publishedReleaseGroupDirectory)
+    candidateVersion.set(releaseVersion)
+    lineage.set(PublicationInventoryVerifier.NEW_PHYSICAL)
+}
+val apiAbiCheck = tasks.register("apiAbiCheck") {
+    group = "verification"
+    description = "Runs the fail-closed legacy compatibility and exact FlowWeft 1.0 JVM API freeze gates."
+    dependsOn(verifyLegacyJvmAbi, verifyFlowWeft10ApiFreeze)
+}
+tasks.register<GenerateJvmApiBaselineProposalTask>("generateFlowWeft10ApiBaselineProposal") {
+    group = "help"
+    description = "Generates a review-only 1.0 .api/export proposal without modifying checked-in baselines."
+    dependsOn(publishReleaseRepository)
+    publicationInventoryFile.set(layout.projectDirectory.file("gradle/publication-inventory.tsv"))
+    candidateRepositoryGroupDirectory.set(publishedReleaseGroupDirectory)
+    candidateVersion.set(releaseVersion)
+    outputDirectory.set(layout.buildDirectory.dir("reports/jvm-api-baseline-proposal"))
+}
+tasks.register<ImportTrustedJvmApiBaselinesTask>("prepareTrustedJvmApiBaselineImport") {
+    group = "help"
+    description = "Imports digest-pinned released JARs into a review directory; never overwrites checked-in baselines."
+    publicationInventoryFile.set(layout.projectDirectory.file("gradle/publication-inventory.tsv"))
+    baselineInventoryFile.set(jvmApiBaselineInventoryFile)
+    trustedRepositoryDirectory.set(
+        layout.dir(providers.gradleProperty("flowweftTrustedBaselineRepository").map { path -> file(path) }),
+    )
+    outputDirectory.set(layout.buildDirectory.dir("reports/jvm-api-trusted-import"))
+}
+
+val verifyOsvGateContracts = tasks.register<Exec>("verifyOsvGateContracts") {
+    group = "verification"
+    description = "Runs the offline, fail-closed OSV/VEX release-gate contract suite."
+    workingDir(rootProject.projectDir)
+    commandLine("node", "--test", ".ci/test/osv-release.test.mjs")
+    environment.remove("NODE_TLS_REJECT_UNAUTHORIZED")
+    inputs.files(
+        rootProject.file(".ci/scripts/verify-osv-release.mjs"),
+        rootProject.file(".ci/test/osv-release.test.mjs"),
+        rootProject.file("gradle/osv-vex.json"),
+        rootProject.file("gradle/osv-vex-console.json"),
+    ).withPropertyName("osvGateContracts")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+val verifyOsvRuntimeClosure = tasks.register<Exec>("verifyOsvRuntimeClosure") {
+    group = "verification"
+    description = "Queries OSV for the verified release runtime SBOM and blocks unwaived High/Critical/Unknown findings."
+    dependsOn("verifySbom")
+    workingDir(rootProject.projectDir)
+    commandLine("node", ".ci/scripts/verify-osv-release.mjs")
+    environment.remove("NODE_TLS_REJECT_UNAUTHORIZED")
+    inputs.files(
+        layout.buildDirectory.file("reports/cyclonedx-release/bom.json"),
+        rootProject.file("gradle/osv-vex.json"),
+        rootProject.file(".ci/scripts/verify-osv-release.mjs"),
+    ).withPropertyName("osvRuntimeClosureInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    // OSV is time-varying release evidence. It must be queried for every
+    // release invocation even when the dependency graph itself is unchanged.
+    outputs.upToDateWhen { false }
+}
+
+val generateConsoleSbom = tasks.register<Exec>("generateConsoleSbom") {
+    group = "build"
+    description = "Generates the deterministic production-only FlowWeft Console CycloneDX SBOM."
+    workingDir(consoleDirectory)
+    commandLine(npmCommand, "run", "sbom")
+    environment.remove("NODE_TLS_REJECT_UNAUTHORIZED")
+    inputs.files(
+        consoleDirectory.file("package.json"),
+        consoleDirectory.file("package-lock.json"),
+        consoleDirectory.file("scripts/generate-sbom.mjs"),
+    ).withPropertyName("consoleSbomInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.files(
+        consoleSbomDirectory.file("bom.json"),
+        consoleSbomDirectory.file("bom.json.sha256"),
+    ).withPropertyName("consoleSbomOutputs")
+}
+
+val verifyOsvConsoleRuntimeClosure = tasks.register<Exec>("verifyOsvConsoleRuntimeClosure") {
+    group = "verification"
+    description = "Queries OSV for the Console npm runtime SBOM and blocks High/Critical/Unknown findings."
+    dependsOn(generateConsoleSbom)
+    workingDir(rootProject.projectDir)
+    commandLine(
+        "node",
+        ".ci/scripts/verify-osv-release.mjs",
+        "--bom",
+        consoleSbomDirectory.file("bom.json").asFile.absolutePath,
+        "--vex",
+        rootProject.file("gradle/osv-vex-console.json").absolutePath,
+    )
+    environment.remove("NODE_TLS_REJECT_UNAUTHORIZED")
+    inputs.files(
+        consoleSbomDirectory.file("bom.json"),
+        rootProject.file("gradle/osv-vex-console.json"),
+        rootProject.file(".ci/scripts/verify-osv-release.mjs"),
+    ).withPropertyName("osvConsoleRuntimeClosureInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.upToDateWhen { false }
+}
+
+val ossIntegrationCheck = tasks.register("ossIntegrationCheck") {
+    group = "verification"
+    description = "Runs Alibaba Cloud OSS adapter and Boot 2/3 Starter integration against one dedicated bucket."
+    dependsOn(
+        ":flowweft-adapter-oss:ossIntegrationTest",
+        ":fileweft-spring-boot2-starter:ossStarterIntegrationTest",
+        ":fileweft-spring-boot3-starter:ossStarterIntegrationTest",
+    )
 }
 
 val devAcceptanceCheck = tasks.register("devAcceptanceCheck") {
@@ -977,13 +1182,14 @@ val devAcceptanceCheck = tasks.register("devAcceptanceCheck") {
 
 val externalAcceptanceCheck = tasks.register("externalAcceptanceCheck") {
     group = "verification"
-    description = "Runs every external-system suite required for a FileWeft release exactly once."
+    description = "Runs every external-system suite required for a FlowWeft release exactly once."
     dependsOn(
         releaseTestEnvironment,
         postgresIntegrationCheck,
         mysqlIntegrationCheck,
         kingbaseIntegrationCheck,
         rustFsIntegrationCheck,
+        ossIntegrationCheck,
         devAcceptanceCheck,
     )
 }
@@ -993,10 +1199,12 @@ val releaseQualityCheck = tasks.register("releaseQualityCheck") {
     description = "Runs fast architecture, build-logic, documentation, migration, partition, and credential checks."
     dependsOn(
         verifyFileWeftBuildLogic,
+        verifyPublicationInventory,
         "verifyFileWeftArchitecture",
         "verifyFileWeftWebApiDependencies",
         verifyDocsSite,
         verifyCnbPathPolicy,
+        verifyOsvGateContracts,
         verifyFileWeftMigrationResources,
         verifyExternalTestPartition,
         verifyReleaseCredentialHygiene,
@@ -1006,7 +1214,7 @@ val releaseQualityCheck = tasks.register("releaseQualityCheck") {
 val fastCheck = tasks.register("fastCheck") {
     group = "verification"
     description = "Runs the local fast feedback gate without cross-JDK or external-system suites."
-    dependsOn(releaseQualityCheck)
+    dependsOn(releaseQualityCheck, verifyPublicationInventory)
 }
 
 val releaseVerification = tasks.register("releaseVerification") {
@@ -1024,10 +1232,14 @@ val releaseArtifactVerification = tasks.register("releaseArtifactVerification") 
     group = "verification"
     description = "Verifies local Maven artifacts, metadata, SBOM, documentation, migrations, and cold consumers."
     dependsOn(
+        verifyPublicationInventory,
         publishReleaseRepository,
+        apiAbiCheck,
         verifyPublishedReleaseRepository,
         verifyPublishedStarterConfigurationMetadata,
         "verifySbom",
+        verifyOsvRuntimeClosure,
+        verifyOsvConsoleRuntimeClosure,
         verifyDocsSite,
         verifyFileWeftMigrationResources,
         verifyReleaseCredentialHygiene,
@@ -1037,18 +1249,18 @@ val releaseArtifactVerification = tasks.register("releaseArtifactVerification") 
 
 val cleanReleaseDirectory = tasks.register<Delete>("cleanReleaseDirectory") {
     group = "build"
-    description = "Removes stale FileWeft release archives before assembling the current version."
+    description = "Removes stale FlowWeft release archives before assembling the current version."
     delete(layout.buildDirectory.dir("release"))
 }
 
 val assembleReleaseBundle = tasks.register<Zip>("assembleReleaseBundle") {
     group = "distribution"
-    description = "Builds the artifact-verified FileWeft $releaseVersion Maven repository and SBOM bundle."
+    description = "Builds the artifact-verified FlowWeft $releaseVersion Maven repository and SBOM bundle."
     dependsOn(
         releaseArtifactVerification,
         cleanReleaseDirectory,
     )
-    archiveBaseName.set("fileweft")
+    archiveBaseName.set("flowweft")
     archiveVersion.set(version.toString())
     archiveClassifier.set("release")
     destinationDirectory.set(layout.buildDirectory.dir("release"))
@@ -1062,13 +1274,17 @@ val assembleReleaseBundle = tasks.register<Zip>("assembleReleaseBundle") {
         include("bom.json", "bom.xml")
         into("sbom")
     }
+    from(consoleSbomDirectory) {
+        include("bom.json", "bom.json.sha256")
+        into("sbom/console")
+    }
     from(releaseNotesFile) {
         rename { "RELEASE_NOTES.md" }
     }
     from("README.md")
     from("SKILL.md")
-    from("fileweft-docs") {
-        into("fileweft-docs")
+    from("flowweft-docs") {
+        into("flowweft-docs")
     }
     from("docs") {
         into("docs")
@@ -1121,19 +1337,31 @@ val verifyReleaseBundleContents = tasks.register("verifyReleaseBundleContents") 
                 "SECURITY.md",
                 "README.md",
                 "SKILL.md",
-                "fileweft-docs/index.html",
-                "fileweft-docs/styles.css",
-                "fileweft-docs/app.js",
-                "fileweft-docs/content.js",
+                "flowweft-docs/index.html",
+                "flowweft-docs/styles.css",
+                "flowweft-docs/app.js",
+                "flowweft-docs/content.js",
                 "docs/production-operations.md",
                 "docs/plugin-development.md",
                 "docs/releases/0.0.1.md",
                 "RELEASE_NOTES.md",
                 "sbom/bom.json",
                 "sbom/bom.xml",
+                "sbom/console/bom.json",
+                "sbom/console/bom.json.sha256",
             )
             require(entries.keys.containsAll(requiredFiles)) {
                 "Release bundle is missing required files: ${requiredFiles - entries.keys}"
+            }
+            val consoleBomBytes = zip.getInputStream(entries.getValue("sbom/console/bom.json"))
+                .use { stream -> stream.readBytes() }
+            val consoleBomDigest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(consoleBomBytes)
+                .joinToString("") { byte -> "%02x".format(Locale.ROOT, byte.toInt() and 0xff) }
+            val consoleChecksum = zip.getInputStream(entries.getValue("sbom/console/bom.json.sha256"))
+                .use { stream -> stream.readBytes().toString(Charsets.UTF_8) }
+            require(consoleChecksum == "$consoleBomDigest  bom.json\n") {
+                "Release bundle Console SBOM checksum does not match its packaged bytes."
             }
             mapOf(
                 "LICENSE" to projectLicenseFile.asFile,
@@ -1168,7 +1396,7 @@ val releaseArtifactCheck = tasks.register("releaseArtifactCheck") {
 
 val releaseCheck = tasks.register("releaseCheck") {
     group = "verification"
-    description = "Runs every FileWeft $releaseVersion quality, compatibility, acceptance, and artifact release gate."
+    description = "Runs every FlowWeft $releaseVersion quality, compatibility, acceptance, and artifact release gate."
     dependsOn(
         releaseVerification,
         releaseArtifactCheck,
@@ -1233,10 +1461,11 @@ gradle.projectsEvaluated {
                 val missingSources = expected - sourceFiles.keys
                 val unexpectedSources = sourceFiles.keys - expected
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
-                        "FileWeft migration source inputs differ from the reviewed V001-V029 set; " +
+                    "FlowWeft compatibility migration source inputs differ from the reviewed legacy " +
+                        "V001-V029 plus V033-V036 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
                 }
-                require(archive.isFile) { "FileWeft persistence JAR was not created: ${archive.absolutePath}" }
+                require(archive.isFile) { "FlowWeft persistence JAR was not created: ${archive.absolutePath}" }
                 ZipFile(archive).use { jar ->
                     val jarEntries = jar.entries().asSequence()
                         .filterNot { entry -> entry.isDirectory }
@@ -1247,7 +1476,7 @@ gradle.projectsEvaluated {
                         .filterValues { count -> count > 1 }
                         .keys
                     require(duplicateEntries.isEmpty()) {
-                        "FileWeft persistence JAR contains duplicate ZIP entries: $duplicateEntries"
+                        "FlowWeft persistence JAR contains duplicate ZIP entries: $duplicateEntries"
                     }
                     val fileEntries = jarEntries.associateBy { entry -> entry.name }
                     val actual = fileEntries.keys
@@ -1256,41 +1485,43 @@ gradle.projectsEvaluated {
                     val missing = expected - actual
                     val unexpected = actual - expected
                     require(missing.isEmpty() && unexpected.isEmpty()) {
-                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V029 set; " +
+                        "FlowWeft persistence JAR migration resources differ from the reviewed legacy " +
+                            "V001-V029 plus V033-V036 set; " +
                             "missing=$missing, unexpected=$unexpected."
                     }
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }
-                    require(empty.isEmpty()) { "FileWeft persistence JAR contains empty migration resources: $empty" }
+                    require(empty.isEmpty()) { "FlowWeft persistence JAR contains empty migration resources: $empty" }
                     val contentMismatches = expected.filter { resource ->
                         val source = sourceFiles.getValue(resource).readBytes()
                         val packaged = jar.getInputStream(fileEntries.getValue(resource)).use { stream -> stream.readBytes() }
                         !source.contentEquals(packaged)
                     }
                     require(contentMismatches.isEmpty()) {
-                        "FileWeft persistence JAR migration resources differ byte-for-byte from their sources: " +
+                        "FlowWeft persistence JAR migration resources differ byte-for-byte from their sources: " +
                             contentMismatches
                     }
                     val legacy = fileEntries.keys.filter { name -> name.startsWith("db/migration/") }
                     require(legacy.isEmpty()) {
-                        "FileWeft persistence JAR must not expose Flyway's shared db/migration namespace: $legacy"
+                        "FlowWeft persistence JAR must not expose Flyway's shared db/migration namespace: $legacy"
                     }
                 }
             },
         )
     }
     val localReleasePublishTasks = publishedProjects.map { project ->
-        project.tasks.named("publishMavenJavaPublicationToFileWeftReleaseRepository")
+        project.tasks.named("publishMavenJavaPublicationToFlowWeftReleaseRepository")
     }
     localReleasePublishTasks.forEach { taskProvider ->
         taskProvider.configure {
-            dependsOn(cleanReleaseRepository)
+            dependsOn(cleanReleaseRepository, verifyPublicationInventory)
         }
     }
     publishReleaseRepository.configure {
-        dependsOn(localReleasePublishTasks)
+        dependsOn(verifyPublicationInventory, localReleasePublishTasks)
     }
     installReleaseToMavenLocal.configure {
         dependsOn(
+            verifyPublicationInventory,
             publishedProjects.map { project ->
                 project.tasks.named("publishMavenJavaPublicationToMavenLocal")
             },

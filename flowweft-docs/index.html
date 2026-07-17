@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="FlowWeft — extensible Kotlin/JVM file intelligence and workflow infrastructure." />
+    <meta name="theme-color" content="#101613" />
+    <title>FlowWeft Documentation</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#doc-content" data-ui="skip">Skip to documentation</a>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="mobile-bar">
+      <button id="nav-toggle" class="square-button" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Open documentation navigation" data-aria-ui="openNav">☰</button>
+      <a class="mobile-brand" href="#/getting-started/introduction" aria-label="FlowWeft documentation home"><b>F/W</b><span>FLOWWEFT</span></a>
+      <button id="mobile-search" class="square-button" type="button" aria-label="Search documentation" data-aria-ui="search">⌕</button>
+    </header>
+
+    <div class="docs-shell">
+      <aside id="sidebar" class="sidebar" aria-label="Documentation navigation" data-aria-ui="navigationLabel">
+        <a class="brand" href="#/getting-started/introduction" aria-label="FlowWeft documentation home">
+          <span class="brand-glyph">F/W</span>
+          <span>FLOWWEFT<small>DOCUMENTATION / 0.0.3</small></span>
+        </a>
+
+        <button id="search-trigger" class="search-trigger" type="button" aria-haspopup="dialog">
+          <span>⌕</span><span data-ui="search">Search documentation</span><kbd>Ctrl K</kbd>
+        </button>
+
+        <nav id="primary-nav" class="primary-nav"></nav>
+
+        <footer class="sidebar-footer">
+          <div class="locale-switch" aria-label="Documentation language" data-aria-ui="languageLabel">
+            <button type="button" data-locale="en" aria-pressed="true">EN</button>
+            <button type="button" data-locale="zh" aria-pressed="false">中文</button>
+          </div>
+          <p><span class="status-dot"></span><span data-ui="stable">Release contract</span> <strong>0.0.3</strong></p>
+          <a href="mailto:support@icen.ai">support@icen.ai</a>
+        </footer>
+      </aside>
+
+      <button id="nav-scrim" class="nav-scrim" type="button" aria-label="Close documentation navigation" data-aria-ui="closeNav"></button>
+
+      <main class="main-canvas">
+        <div class="utility-bar">
+          <p id="breadcrumbs" aria-label="Breadcrumb"></p>
+          <div class="utility-links">
+            <span><i></i><span data-ui="version">Version</span> 0.0.3</span>
+            <button id="skill-download" class="skill-button" type="button" data-aria-ui="skillDownloadAria">
+              <span data-ui="skill">SKILL</span>
+            </button>
+            <a href="mailto:support@icen.ai" data-ui="support">Support</a>
+          </div>
+        </div>
+
+        <div class="article-grid">
+          <article id="doc-content" class="doc-article" tabindex="-1" aria-live="polite"></article>
+          <aside class="page-rail" aria-label="On this page" data-aria-ui="onThisPage">
+            <span class="page-rail-label" data-ui="onThisPage">On this page</span>
+            <nav id="page-toc"></nav>
+            <div class="rail-callout">
+              <b>APACHE-2.0</b>
+              <p data-ui="licensed">Open infrastructure by icen.ai.</p>
+            </div>
+          </aside>
+        </div>
+      </main>
+    </div>
+
+    <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title">
+      <div class="search-head">
+        <div>
+          <span>⌕</span>
+          <input id="search-input" type="search" autocomplete="off" aria-labelledby="search-title" placeholder="Search FlowWeft" />
+        </div>
+        <button id="search-close" type="button" aria-label="Close search" data-aria-ui="closeSearch">ESC</button>
+      </div>
+      <h2 id="search-title" class="sr-only" data-ui="searchTitle">Search documentation</h2>
+      <div id="search-results" class="search-results" role="listbox" aria-label="Search results" data-aria-ui="searchResults"></div>
+      <p class="search-hint"><span>↑↓</span> <span data-ui="navigate">navigate</span> <span>↵</span> <span data-ui="open">open</span> <span>esc</span> <span data-ui="close">close</span></p>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <noscript>
+      <div class="noscript">FlowWeft documentation requires JavaScript for local search and navigation. The source documentation remains available in the repository README and docs directory.</div>
+    </noscript>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

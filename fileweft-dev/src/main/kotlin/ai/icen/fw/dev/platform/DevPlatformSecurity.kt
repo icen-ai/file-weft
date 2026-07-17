@@ -8,10 +8,10 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
 /**
- * Authenticates FileWeft's development connector before the downstream
+ * Authenticates FlowWeft's development connector before the downstream
  * simulator accepts a request.  This is deliberately separate from the proof
  * lab's user session: a downstream platform authenticates the calling system,
- * not an interactive FileWeft user.
+ * not an interactive FlowWeft user.
  */
 class DevPlatformAuthenticator(
     sharedSecret: String,

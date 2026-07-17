@@ -7,11 +7,19 @@ import ai.icen.fw.application.idempotency.IdempotencyConflictException
 import ai.icen.fw.application.metadata.DocumentMetadataWriteUnavailableException
 import ai.icen.fw.application.offline.DocumentRestoreConflictException
 import ai.icen.fw.application.publish.ActiveDocumentReviewWorkflowException
+import ai.icen.fw.application.retention.DeletionVisibilityUnavailableException
 import ai.icen.fw.application.security.ApplicationForbiddenException
 import ai.icen.fw.application.security.ApplicationUnauthenticatedException
 import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownException
 import ai.icen.fw.application.upload.ResumableUploadStateException
 import ai.icen.fw.application.upload.ResumableUploadUnavailableException
+import ai.icen.fw.application.upload.PresignedUploadStateException
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimConflictException
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimStateException
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimUnavailableException
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimConflictException
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimStateException
+import ai.icen.fw.application.upload.CompletedPresignedUploadAssetClaimUnavailableException
 import ai.icen.fw.domain.document.DocumentConflictException
 import ai.icen.fw.domain.workflow.WorkflowConflictException
 import ai.icen.fw.web.api.ApiError
@@ -73,13 +81,17 @@ class V1ApiResponseFactory {
                 ApiErrorCodes.OUTCOME_UNKNOWN,
                 "Request outcome is unknown; inspect the resource state before retrying.",
             )
-            is ResumableUploadUnavailableException -> MappedFailure(
+            is ResumableUploadUnavailableException,
+            is CompletedResumableUploadAssetClaimUnavailableException,
+            is CompletedPresignedUploadAssetClaimUnavailableException,
+            -> MappedFailure(
                 ApiHttpStatus.SERVICE_UNAVAILABLE,
                 ApiErrorCodes.FEATURE_UNAVAILABLE,
                 "The requested feature is unavailable.",
             )
             is DocumentMetadataWriteUnavailableException,
             is DocumentFolderReadAccessUnavailableException,
+            is DeletionVisibilityUnavailableException,
             is V1FeatureUnavailableException,
             -> MappedFailure(
                 ApiHttpStatus.SERVICE_UNAVAILABLE,
@@ -92,6 +104,11 @@ class V1ApiResponseFactory {
             is IdempotencyConflictException,
             is DocumentRestoreConflictException,
             is ResumableUploadStateException,
+            is PresignedUploadStateException,
+            is CompletedResumableUploadAssetClaimConflictException,
+            is CompletedResumableUploadAssetClaimStateException,
+            is CompletedPresignedUploadAssetClaimConflictException,
+            is CompletedPresignedUploadAssetClaimStateException,
             -> MappedFailure(
                 ApiHttpStatus.CONFLICT,
                 ApiErrorCodes.CONFLICT,

@@ -4,18 +4,24 @@ junit = "5.11.4"
 flyway = "9.22.3"
 flyway-boot2 = "8.5.13"
 flyway-boot3 = "11.7.2"
-postgresql = "42.7.4"
-mysql = "8.0.33"
+postgresql = "42.7.11"
+mysql = "9.7.0"
 kingbase = "8.6.1"
-jackson = "2.17.3"
-jackson-kotlin = "2.21.4"
+jackson = "2.21.5"
+jackson-kotlin = "2.21.5"
 spring-boot2 = "2.7.18"
 spring-boot3 = "3.5.16"
-assertj = "3.26.3"
+assertj = "3.27.7"
+tomcat-embed = "10.1.57"
+logback = "1.5.38"
 aws-sdk = "2.47.4"
 micrometer = "1.10.13"
-opentelemetry = "1.40.0"
+opentelemetry = "1.62.0"
 re2j = "1.8"
+h2 = "2.3.232"
+okhttp = "4.12.0"
+aliyun-oss = "3.18.5"
+bouncycastle = "1.84"
 
 [libraries]
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
@@ -32,6 +38,7 @@ postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" 
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysql" }
 kingbase-jdbc = { module = "cn.com.kingbase:kingbase8", version.ref = "kingbase" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-bom = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson-kotlin" }
 spring-boot2-autoconfigure = { module = "org.springframework.boot:spring-boot-autoconfigure", version.ref = "spring-boot2" }
 spring-boot2-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot2" }
@@ -46,6 +53,11 @@ spring-boot3-starter-web = { module = "org.springframework.boot:spring-boot-star
 spring-boot3-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version.ref = "spring-boot3" }
 spring-boot3-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot3" }
 assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+tomcat-embed-core = { module = "org.apache.tomcat.embed:tomcat-embed-core", version.ref = "tomcat-embed" }
+tomcat-embed-el = { module = "org.apache.tomcat.embed:tomcat-embed-el", version.ref = "tomcat-embed" }
+tomcat-embed-websocket = { module = "org.apache.tomcat.embed:tomcat-embed-websocket", version.ref = "tomcat-embed" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
 aws-sdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3" }
 aws-sdk-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }
@@ -57,6 +69,10 @@ opentelemetry-sdk-metrics = { module = "io.opentelemetry:opentelemetry-sdk-metri
 opentelemetry-sdk-logs = { module = "io.opentelemetry:opentelemetry-sdk-logs", version.ref = "opentelemetry" }
 opentelemetry-sdk-testing = { module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
 re2j = { module = "com.google.re2j:re2j", version.ref = "re2j" }
+h2 = { module = "com.h2database:h2", version.ref = "h2" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+aliyun-oss = { module = "com.aliyun.oss:aliyun-sdk-oss", version.ref = "aliyun-oss" }
+bouncycastle-provider = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version = "1.7.36" }
 
 [plugins]

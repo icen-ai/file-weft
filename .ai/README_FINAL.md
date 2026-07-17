@@ -1,19 +1,24 @@
 # FileWeft Ultimate Implementation Manual FINAL Package
 
-## Superseding decision: Agent product capability is deferred
+## Superseding decision: 1.0 includes the redesigned Agent
 
-This decision overrides every older Agent phase, architecture sketch, plugin
-example, and acceptance statement in this package when they conflict with it.
+The former indefinite deferral remains a historical fact for `0.0.2` and
+`0.0.3`, but it no longer controls development after `0.0.3`. The approved 1.0
+decision is `docs/decisions/0001-flowweft-1.0-product-scope.md`, and the
+acceptance source of truth is `docs/flowweft-1.0-delivery-ledger.md`.
 
-- `0.0.2` does not provide Agent product capability.
-- Agent redesign is deferred indefinitely. It may be reassessed only after
-  `1.0.0` has been released, and that reassessment is not a promise for `1.x`
-  or any other version.
-- `fileweft-agent`, Agent SPI/public ABI, and Agent-related V012/V026 schema are
-  retained only for compatibility. Default runtime, Doctor/plugin inventory,
-  public HTTP, and Dev surfaces must not expose them.
-- Historical Agent sections remain in the manuals for traceability, but they
-  are superseded and must not be treated as implementation work.
+- `fileweft-agent`, the `ai.icen.fw.spi.ai` ABI, and Agent-related V012/V026
+  schema remain compatibility-only and must not be repurposed.
+- The redesigned Agent, retrieval contracts, runtime, persistence, HTTP surface,
+  Doctor coverage, evaluation, and console are additive 1.0 work.
+- Only safe filename matching is built in. Model, extraction, full-text,
+  vector, hybrid, reranking, tool, MCP, and A2A capabilities are explicit SPIs.
+- RustFS, Dify knowledge base, and Alibaba Cloud OSS are the only maintained
+  reference integrations in the 1.0 scope. Historical ESE/AppBuilder examples
+  do not create a delivery obligation.
+- Historical Agent sections in this package remain for traceability. Treat them
+  as design input only where they agree with the current ADR and repository
+  architecture rules.
 
 This is the final consolidated package.
 

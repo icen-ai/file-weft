@@ -761,7 +761,7 @@ internal class FileWeftRuntimeFactories {
             throw NoUniqueBeanDefinitionException(
                 DocumentFolderReadAccess::class.java,
                 candidates.size,
-                "FileWeft download visibility requires exactly one DocumentFolderReadAccess.",
+                "FlowWeft download visibility requires exactly one DocumentFolderReadAccess.",
             )
         }
         return candidates.single()
@@ -775,7 +775,7 @@ internal class FileWeftRuntimeFactories {
             throw NoUniqueBeanDefinitionException(
                 DocumentDownloadVisibility::class.java,
                 candidates.size,
-                "FileWeft download service requires at most one DocumentDownloadVisibility.",
+                "FlowWeft download service requires at most one DocumentDownloadVisibility.",
             )
         }
         return candidates.singleOrNull()

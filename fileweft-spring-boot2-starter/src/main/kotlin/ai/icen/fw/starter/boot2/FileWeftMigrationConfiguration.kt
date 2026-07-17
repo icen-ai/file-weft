@@ -23,7 +23,7 @@ import org.springframework.context.annotation.Lazy
 import org.springframework.core.type.AnnotatedTypeMetadata
 import javax.sql.DataSource
 
-/** Host-overridable startup hook for FileWeft-owned migration validation or execution. */
+/** Host-overridable startup hook for FlowWeft-owned migration validation or execution. */
 interface FileWeftMigrationInitializer {
     fun initialize()
 }
@@ -50,13 +50,13 @@ class FileWeftMigrationConfiguration {
             if (runnerNames.isEmpty()) {
                 val dataSourceCount = fileWeftApplicationDataSourceBeanNames(beanFactory).size
                 error(
-                    "FileWeft migration mode ${persistence.migrationMode} found $dataSourceCount DataSource beans " +
+                    "FlowWeft migration mode ${persistence.migrationMode} found $dataSourceCount DataSource beans " +
                         "but no unambiguous FlywayMigrationRunner. Register an explicit FlywayMigrationRunner bean " +
                         "or set fileweft.persistence.migration-mode=DISABLED.",
                 )
             }
             check(runnerNames.size == 1) {
-                "FileWeft migration mode ${persistence.migrationMode} requires exactly one FlywayMigrationRunner " +
+                "FlowWeft migration mode ${persistence.migrationMode} requires exactly one FlywayMigrationRunner " +
                     "but found ${runnerNames.size}."
             }
         }
@@ -109,7 +109,7 @@ private class DefaultFileWeftMigrationInitializer(
 private object FileWeftMigrationSettings {
     fun requiredSchema(properties: FileWeftProperties.PersistenceProperties): String {
         check(properties.migrationMode != FileWeftMigrationMode.DISABLED) {
-            "FileWeft migration schema is not used when migration mode is DISABLED."
+            "FlowWeft migration schema is not used when migration mode is DISABLED."
         }
         val schema = properties.schema
         require(schema.isNotBlank()) {

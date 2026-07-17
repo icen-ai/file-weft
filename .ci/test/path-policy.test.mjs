@@ -42,6 +42,25 @@ const webTriggerConfiguration = readFileSync(
 const lines = `${sharedConfiguration}\n${knowledgeConfiguration}`.split(/\r?\n/u);
 const prConfiguration = readFileSync(new URL("../pr.yml", import.meta.url), "utf8");
 const mainConfiguration = readFileSync(new URL("../main.yml", import.meta.url), "utf8");
+const ossConfiguration = readFileSync(new URL("../oss.yml", import.meta.url), "utf8");
+const nightlyConfiguration = readFileSync(new URL("../nightly.yml", import.meta.url), "utf8");
+const consoleDockerfile = readFileSync(
+  new URL("../Dockerfile.console", import.meta.url),
+  "utf8",
+);
+const consoleRedisDockerfile = readFileSync(
+  new URL("../Dockerfile.console-redis", import.meta.url),
+  "utf8",
+);
+const consoleRedisContractRunner = readFileSync(
+  new URL("../scripts/run-console-redis-contract.sh", import.meta.url),
+  "utf8",
+);
+const consoleRuntimeDockerfile = readFileSync(
+  new URL("../../flowweft-console/Dockerfile", import.meta.url),
+  "utf8",
+);
+const rootGitIgnore = readFileSync(new URL("../../.gitignore", import.meta.url), "utf8");
 const releaseConfiguration = readFileSync(new URL("../release.yml", import.meta.url), "utf8");
 const buildConfiguration = readFileSync(new URL("../../build.gradle.kts", import.meta.url), "utf8");
 const composeConfiguration = readFileSync(
@@ -60,6 +79,8 @@ const kingbasePowerShell = readFileSync(
 const groupNames = [
   ".fileweft-docs-paths",
   ".fileweft-knowledge-paths",
+  ".flowweft-console-paths",
+  ".flowweft-console-redis-paths",
   ".fileweft-fast-paths",
   ".fileweft-jvm8-paths",
   ".fileweft-jvm17-paths",
@@ -68,6 +89,7 @@ const groupNames = [
   ".fileweft-mysql-paths",
   ".fileweft-kingbase-paths",
   ".fileweft-rustfs-paths",
+  ".flowweft-oss-paths",
   ".fileweft-e2e-paths",
   ".fileweft-release-artifact-paths",
 ];
@@ -137,6 +159,24 @@ function expectGroups(path, expected) {
   assert.deepEqual(matchingGroups(path), expected, `unexpected CNB lanes for ${path}`);
 }
 
+function readTopLevelBlock(configuration, name) {
+  const start = configuration.search(new RegExp(`^${name}:\\r?$`, "mu"));
+  assert.notEqual(start, -1, `missing top-level CNB block ${name}`);
+  const bodyStart = configuration.indexOf("\n", start) + 1;
+  const remaining = configuration.slice(bodyStart);
+  const next = remaining.search(/^\S.*:\r?$/mu);
+  return configuration.slice(start, next < 0 ? undefined : bodyStart + next);
+}
+
+function readPipeline(configuration, name) {
+  const start = configuration.search(new RegExp(`^    ${name}:\\r?$`, "mu"));
+  assert.notEqual(start, -1, `missing CNB pipeline ${name}`);
+  const bodyStart = configuration.indexOf("\n", start) + 1;
+  const remaining = configuration.slice(bodyStart);
+  const next = remaining.search(/^    [a-z][a-z0-9-]*:\r?$/mu);
+  return configuration.slice(start, next < 0 ? undefined : bodyStart + next);
+}
+
 function runGit(workingDirectory, arguments_, options = {}) {
   const result = spawnSync("git", arguments_, {
     cwd: workingDirectory,
@@ -152,7 +192,7 @@ function runGit(workingDirectory, arguments_, options = {}) {
 
 test("curated documentation selects only documentation and knowledge lanes", () => {
   const expected = [".fileweft-docs-paths", ".fileweft-knowledge-paths"];
-  expectGroups("fileweft-docs/pages/zh/project/roadmap.md", expected);
+  expectGroups("flowweft-docs/pages/zh/project/roadmap.md", expected);
   expectGroups("docs/implementation-status.md", expected);
   expectGroups(".ci/README.md", expected);
   expectGroups("README.md", expected);
@@ -164,7 +204,7 @@ test("knowledge indexing excludes historical blueprints and duplicate English pa
   expectGroups(".ai/FileWeft_Ultimate_Implementation_Manual_COMPLETE/13_AI_AGENT.md", [
     ".fileweft-docs-paths",
   ]);
-  expectGroups("fileweft-docs/pages/en/project/roadmap.md", [".fileweft-docs-paths"]);
+  expectGroups("flowweft-docs/pages/en/project/roadmap.md", [".fileweft-docs-paths"]);
   expectGroups(".cnb/settings.yml", [
     ".fileweft-knowledge-paths",
     ".fileweft-fast-paths",
@@ -178,10 +218,17 @@ test("knowledge indexing excludes historical blueprints and duplicate English pa
     ".ci/codewiki-sparse-checkout",
     ".ci/code-knowledge-acceptance.json",
     ".ci/scripts/verify-codewiki-knowledge.mjs",
-    ".cnb/web_trigger.yml",
   ]) {
     expectGroups(path, [".fileweft-fast-paths"]);
   }
+  expectGroups(".cnb/web_trigger.yml", [
+    ".fileweft-fast-paths",
+    ".flowweft-oss-paths",
+  ]);
+  expectGroups(".ci/oss.yml", [
+    ".fileweft-fast-paths",
+    ".flowweft-oss-paths",
+  ]);
   assert.ok(
     !matchingGroups("fileweft-core/src/main/kotlin/Identifier.kt").includes(
       ".fileweft-knowledge-paths",
@@ -192,6 +239,222 @@ test("knowledge indexing excludes historical blueprints and duplicate English pa
 
 test("repository attributes select every lane whose checked-out bytes they can change", () => {
   expectGroups(".gitattributes", groupNames);
+});
+
+test("console implementation selects the console lane and dependency closure also selects release artifacts", () => {
+  const expected = [".flowweft-console-paths"];
+  for (const path of [
+    "flowweft-console/src/app/page.tsx",
+    "flowweft-console/next.config.ts",
+    "flowweft-console/Dockerfile",
+    ".ci/Dockerfile.console",
+    ".gitignore",
+  ]) {
+    expectGroups(path, expected);
+  }
+  for (const path of [
+    "flowweft-console/package.json",
+    "flowweft-console/package-lock.json",
+  ]) {
+    expectGroups(path, [
+      ".flowweft-console-paths",
+      ".flowweft-console-redis-paths",
+      ".fileweft-release-artifact-paths",
+    ]);
+  }
+  expectGroups("flowweft-console/scripts/generate-sbom.mjs", [
+    ".flowweft-console-paths",
+    ".fileweft-release-artifact-paths",
+  ]);
+  expectGroups(".ci/test/path-policy.test.mjs", [
+    ".flowweft-console-paths",
+    ".flowweft-console-redis-paths",
+    ".fileweft-fast-paths",
+  ]);
+});
+
+test("shared Redis authentication changes select one isolated Console contract lane", () => {
+  for (const path of [
+    "flowweft-console/src/server/auth/RedisConsoleAuthStore.ts",
+    "flowweft-console/src/server/auth/ConsoleAuthRecordCodec.ts",
+    "flowweft-console/src/server/config/ConsoleConfig.ts",
+    "flowweft-console/src/app/api/auth/session/route.ts",
+    "flowweft-console/tests/redis-console-auth-store.integration.test.ts",
+    "flowweft-console/tests/console-auth-record-codec.test.ts",
+    "flowweft-console/vitest.config.ts",
+  ]) {
+    expectGroups(path, [".flowweft-console-paths", ".flowweft-console-redis-paths"]);
+  }
+  expectGroups(".ci/Dockerfile.console-redis", [".flowweft-console-redis-paths"]);
+  expectGroups(".ci/scripts/run-console-redis-contract.sh", [
+    ".flowweft-console-redis-paths",
+    ".fileweft-fast-paths",
+  ]);
+  expectGroups("flowweft-console/src/app/page.tsx", [".flowweft-console-paths"]);
+});
+
+test("console runners are pinned and preserve PR and main cache isolation", () => {
+  const pinnedNode =
+    "node:24.9.0-bookworm-slim@sha256:3e69116c924bfcba6c6979aff60d966c37aef56d488ce091c69d442ebec9f103";
+  assert.equal(
+    consoleDockerfile.match(/^FROM .+$/mu)?.[0],
+    `FROM ${pinnedNode}`,
+  );
+  assert.deepEqual(consoleRuntimeDockerfile.match(/^FROM .+$/gmu), [
+    `FROM ${pinnedNode} AS dependencies`,
+    `FROM ${pinnedNode} AS builder`,
+    `FROM ${pinnedNode} AS runtime`,
+  ]);
+
+  const prDocker = readTopLevelBlock(sharedConfiguration, ".flowweft-console-pr-docker");
+  const mainDocker = readTopLevelBlock(sharedConfiguration, ".flowweft-console-docker");
+  for (const docker of [prDocker, mainDocker]) {
+    assert.ok(docker.includes("dockerfile: .ci/Dockerfile.console"));
+    assert.ok(docker.includes("- flowweft-console/package-lock.json"));
+    assert.doesNotMatch(docker, /\.gradle/u);
+  }
+  assert.ok(prDocker.includes("main:/root/.npm:copy-on-write-read-only"));
+  assert.ok(
+    prDocker.includes(
+      "main:/workspace/flowweft-console/.next/cache:copy-on-write-read-only",
+    ),
+  );
+  assert.ok(mainDocker.includes("main:/root/.npm:copy-on-write"));
+  assert.ok(mainDocker.includes("main:/workspace/flowweft-console/.next/cache:copy-on-write"));
+  assert.ok(!mainDocker.includes("copy-on-write-read-only"));
+  assert.ok(rootGitIgnore.includes("**/.next/"));
+  assert.ok(rootGitIgnore.includes("**/*.tsbuildinfo"));
+});
+
+test("the Redis contract runner pins real Redis and keeps its cache isolated", () => {
+  const pinnedRedis =
+    "redis:8.6.4@sha256:aa6acc8e590894b180ebc89fdb701e9dd64fdd33cde018e4b6bf170d4fc3bbe9";
+  const pinnedNode =
+    "node:24.9.0-trixie-slim@sha256:7597ef941ddc27f91d22f7a31d9d16ea77db8bb1a6e6b3f2f6dd4a402420a7b0";
+  assert.deepEqual(consoleRedisDockerfile.match(/^FROM .+$/gmu), [
+    `FROM ${pinnedRedis} AS redis`,
+    `FROM ${pinnedNode}`,
+  ]);
+  assert.ok(consoleRedisDockerfile.includes("COPY --from=redis /usr/local/bin/redis-server"));
+  assert.ok(consoleRedisDockerfile.includes("COPY --from=redis /usr/local/bin/redis-cli"));
+  assert.doesNotMatch(consoleRedisDockerfile, /apt-get|apk add|curl|wget/u);
+
+  const runner = readTopLevelBlock(sharedConfiguration, ".flowweft-runner-2");
+  assert.ok(runner.includes("cpus: 2"));
+  const prDocker = readTopLevelBlock(
+    sharedConfiguration,
+    ".flowweft-console-redis-pr-docker",
+  );
+  const mainDocker = readTopLevelBlock(
+    sharedConfiguration,
+    ".flowweft-console-redis-docker",
+  );
+  for (const docker of [prDocker, mainDocker]) {
+    assert.ok(docker.includes("dockerfile: .ci/Dockerfile.console-redis"));
+    assert.ok(docker.includes("- .ci/Dockerfile.console-redis"));
+    assert.doesNotMatch(docker, /\.gradle|\.next/u);
+  }
+  assert.ok(prDocker.includes("main:/root/.npm:copy-on-write-read-only"));
+  assert.ok(mainDocker.includes("main:/root/.npm:copy-on-write"));
+  assert.ok(!mainDocker.includes("copy-on-write-read-only"));
+
+  for (const expected of [
+    "--bind 127.0.0.1",
+    "--protected-mode yes",
+    '--save ""',
+    "--appendonly no",
+    "attempt\" -le 30",
+    "FLOWWEFT_CONSOLE_TEST_REDIS_URL=",
+    "npm run test:redis --prefix flowweft-console",
+  ]) {
+    assert.ok(
+      consoleRedisContractRunner.includes(expected),
+      `missing Redis contract guard: ${expected}`,
+    );
+  }
+  assert.doesNotMatch(
+    consoleRedisContractRunner,
+    /npm run test:redis[^\n]*(?:\|\| true|allowFailure)/u,
+  );
+});
+
+test("PR and main expose a console-only npm contract lane", () => {
+  for (const [name, configuration, dockerReference] of [
+    ["PR", prConfiguration, ".flowweft-console-pr-docker"],
+    ["main", mainConfiguration, ".flowweft-console-docker"],
+  ]) {
+    const pipeline = readPipeline(configuration, "console");
+    assert.ok(pipeline.includes(`docker: !reference [${dockerReference}]`));
+    assert.ok(pipeline.includes("ifModify: !reference [.flowweft-console-paths]"));
+    assert.ok(pipeline.includes("script: npm ci --prefix flowweft-console"));
+    assert.ok(pipeline.includes("script: npm run check --prefix flowweft-console"));
+    assert.doesNotMatch(pipeline, /gradlew|docker compose|IntegrationCheck|AcceptanceCheck/u);
+    if (name === "PR") {
+      assert.ok(pipeline.includes("cancel-in-progress: true"));
+    }
+  }
+});
+
+test("PR, main, nightly, and release expose a fail-closed real Redis contract", () => {
+  for (const [name, configuration, dockerReference, pathScoped] of [
+    ["PR", prConfiguration, ".flowweft-console-redis-pr-docker", true],
+    ["main", mainConfiguration, ".flowweft-console-redis-docker", true],
+    ["nightly", nightlyConfiguration, ".flowweft-console-redis-docker", false],
+    ["release", releaseConfiguration, ".flowweft-console-redis-docker", false],
+  ]) {
+    const pipeline = readPipeline(configuration, "console-redis");
+    assert.ok(pipeline.includes("runner: !reference [.flowweft-runner-2]"));
+    assert.ok(pipeline.includes(`docker: !reference [${dockerReference}]`));
+    assert.ok(pipeline.includes("script: npm ci --prefix flowweft-console"));
+    assert.ok(pipeline.includes("script: sh .ci/scripts/run-console-redis-contract.sh"));
+    assert.ok(pipeline.includes("timeout: 5m"));
+    assert.ok(pipeline.includes("timeout: 2m"));
+    assert.doesNotMatch(pipeline, /gradlew|docker compose|services:\s*\n\s*- docker/u);
+    assert.doesNotMatch(pipeline, /allowFailure:\s*true/u);
+    if (pathScoped) {
+      assert.ok(pipeline.includes("ifModify: !reference [.flowweft-console-redis-paths]"));
+    } else {
+      assert.ok(!pipeline.includes("ifModify:"));
+    }
+    if (name === "PR") {
+      assert.ok(pipeline.includes("cancel-in-progress: true"));
+    }
+    if (name === "release") {
+      assert.match(pipeline, /stages:\r?\n\s+- \*fileweft-stable-release-tag/u);
+      assert.ok(pipeline.includes("key: release-console-redis"));
+      assert.ok(pipeline.includes("data: { commit: $CNB_COMMIT }"));
+    }
+  }
+
+  const publish = readPipeline(releaseConfiguration, "publish");
+  assert.ok(publish.includes("key: release-console-redis"));
+  assert.ok(publish.includes("FLOWWEFT_VERIFIED_CONSOLE_REDIS_COMMIT"));
+  assert.ok(publish.includes('"$FLOWWEFT_VERIFIED_CONSOLE_REDIS_COMMIT"'));
+  assert.equal(
+    releaseConfiguration.match(/type: cnb:resolve/gu)?.length,
+    13,
+    "each release verification lane must emit one exact-commit signal",
+  );
+  assert.equal(
+    releaseConfiguration.match(/type: cnb:await/gu)?.length,
+    13,
+    "publication must wait for every release verification signal",
+  );
+  assert.ok(
+    readFileSync(new URL("../README.md", import.meta.url), "utf8").includes(
+      "十三条 CNB await 已全部成功",
+    ),
+  );
+});
+
+test("JVM runners isolate Gradle and Maven caches between PR and main", () => {
+  const prDocker = readTopLevelBlock(sharedConfiguration, ".fileweft-jvm-pr-docker");
+  const mainDocker = readTopLevelBlock(sharedConfiguration, ".fileweft-jvm-docker");
+  for (const cachePath of ["/root/.gradle", "/root/.m2"]) {
+    assert.ok(prDocker.includes(`main:${cachePath}:copy-on-write-read-only`));
+    assert.ok(mainDocker.includes(`main:${cachePath}:copy-on-write`));
+  }
+  assert.ok(!mainDocker.includes("copy-on-write-read-only"));
 });
 
 test("Build Logic tests remain in fast feedback while production conventions expand verification", () => {
@@ -205,6 +468,7 @@ test("Build Logic tests remain in fast feedback while production conventions exp
     ".fileweft-mysql-paths",
     ".fileweft-kingbase-paths",
     ".fileweft-rustfs-paths",
+    ".flowweft-oss-paths",
     ".fileweft-e2e-paths",
     ".fileweft-release-artifact-paths",
   ]);
@@ -220,6 +484,7 @@ test("Gradle lock files select every environment whose build graph they can chan
     ".fileweft-mysql-paths",
     ".fileweft-kingbase-paths",
     ".fileweft-rustfs-paths",
+    ".flowweft-oss-paths",
     ".fileweft-e2e-paths",
     ".fileweft-release-artifact-paths",
   ];
@@ -228,6 +493,185 @@ test("Gradle lock files select every environment whose build graph they can chan
 });
 
 test("database, storage, and Boot generations select their real dependency closures", () => {
+  expectGroups("flowweft-retrieval-api/src/main/kotlin/RetrievalRequest.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-retrieval-spi/src/main/kotlin/EmbeddingProvider.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-retrieval-runtime/src/main/kotlin/SecureRetrievalService.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-agent-api/src/main/kotlin/AgentAuthorization.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-agent-runtime/src/main/kotlin/DurableAgentRunCoordinator.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  const agentTestKitGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  expectGroups(
+    "flowweft-agent-testkit/src/main/kotlin/ai/icen/fw/testkit/agent/AgentAuthorizationProviderContractTest.kt",
+    agentTestKitGroups,
+  );
+  expectGroups("flowweft-agent-testkit/build.gradle.kts", agentTestKitGroups);
+  expectGroups("flowweft-agent-testkit/gradle.lockfile", agentTestKitGroups);
+  const retrievalTestKitGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  expectGroups(
+    "flowweft-retrieval-testkit/src/main/kotlin/ai/icen/fw/testkit/retrieval/CandidateRetrieverContractTest.kt",
+    retrievalTestKitGroups,
+  );
+  expectGroups("flowweft-retrieval-testkit/build.gradle.kts", retrievalTestKitGroups);
+  expectGroups("flowweft-retrieval-testkit/gradle.lockfile", retrievalTestKitGroups);
+  expectGroups("flowweft-workflow-api/src/main/kotlin/WorkflowParticipantResolver.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-workflow-spi/src/main/kotlin/WorkflowDecisionProvider.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-workflow-domain/src/main/kotlin/WorkflowDomainEngine.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-workflow-runtime/src/main/kotlin/WorkflowDurableRuntime.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-workflow-persistence-jdbc/src/main/kotlin/JdbcWorkflowRuntimePersistence.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-postgres-paths",
+    ".fileweft-mysql-paths",
+    ".fileweft-kingbase-paths",
+  ]);
+  expectGroups("flowweft-migration-cli/src/main/kotlin/FlowWeftMigrationCli.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-postgres-paths",
+    ".fileweft-mysql-paths",
+    ".fileweft-kingbase-paths",
+  ]);
+  expectGroups("flowweft-adapter-dify/src/main/kotlin/DifyKnowledgeBaseConnector.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+  ]);
+  expectGroups("flowweft-adapter-oss/src/main/kotlin/OssStorageAdapter.kt", [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+  ]);
+  const boot2OssBuildGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-kingbase-paths",
+    ".flowweft-oss-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot2-starter/build.gradle.kts",
+    "fileweft-spring-boot2-starter/gradle.lockfile",
+  ]) {
+    expectGroups(path, boot2OssBuildGroups);
+  }
+  const boot2OssSourceGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm8-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FileWeftAutoConfiguration.kt",
+    "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FileWeftProperties.kt",
+    "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssConfiguration.kt",
+    "fileweft-spring-boot2-starter/src/test/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssConfigurationTest.kt",
+    "fileweft-spring-boot2-starter/src/test/kotlin/ai/icen/fw/starter/boot2/FlowWeftOssStarterIntegrationTest.kt",
+  ]) {
+    expectGroups(path, boot2OssSourceGroups);
+  }
+  const boot3OssBuildGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".fileweft-kingbase-paths",
+    ".flowweft-oss-paths",
+    ".fileweft-e2e-paths",
+    ".fileweft-release-artifact-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot3-starter/build.gradle.kts",
+    "fileweft-spring-boot3-starter/gradle.lockfile",
+  ]) {
+    expectGroups(path, boot3OssBuildGroups);
+  }
+  const boot3OssMainGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+    ".fileweft-e2e-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot3-starter/src/main/kotlin/ai/icen/fw/starter/boot3/FileWeftAutoConfiguration.kt",
+    "fileweft-spring-boot3-starter/src/main/kotlin/ai/icen/fw/starter/boot3/FileWeftProperties.kt",
+    "fileweft-spring-boot3-starter/src/main/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssConfiguration.kt",
+  ]) {
+    expectGroups(path, boot3OssMainGroups);
+  }
+  const boot3OssTestGroups = [
+    ".fileweft-fast-paths",
+    ".fileweft-jvm17-paths",
+    ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
+  ];
+  for (const path of [
+    "fileweft-spring-boot3-starter/src/test/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssConfigurationTest.kt",
+    "fileweft-spring-boot3-starter/src/test/kotlin/ai/icen/fw/starter/boot3/FlowWeftOssStarterIntegrationTest.kt",
+  ]) {
+    expectGroups(path, boot3OssTestGroups);
+  }
   expectGroups("fileweft-metadata-runtime/src/main/kotlin/MetadataValidator.kt", [
     ".fileweft-fast-paths",
     ".fileweft-jvm8-paths",
@@ -257,6 +701,7 @@ test("database, storage, and Boot generations select their real dependency closu
     ".fileweft-fast-paths",
     ".fileweft-jvm8-paths",
     ".fileweft-jvm-all-paths",
+    ".flowweft-oss-paths",
   ]);
   expectGroups(
     "fileweft-spring-boot2-starter/src/main/kotlin/ai/icen/fw/starter/boot2/FileWeftKingbaseFlywayAutoConfiguration.kt",
@@ -314,6 +759,7 @@ test("runner and wrapper changes select only the environments they can affect", 
     ".fileweft-mysql-paths",
     ".fileweft-kingbase-paths",
     ".fileweft-rustfs-paths",
+    ".flowweft-oss-paths",
     ".fileweft-e2e-paths",
     ".fileweft-release-artifact-paths",
   ]);
@@ -326,6 +772,7 @@ test("runner and wrapper changes select only the environments they can affect", 
     ".fileweft-mysql-paths",
     ".fileweft-kingbase-paths",
     ".fileweft-rustfs-paths",
+    ".flowweft-oss-paths",
     ".fileweft-release-artifact-paths",
   ]);
   expectGroups(".ci/Dockerfile.e2e", [".fileweft-e2e-paths"]);
@@ -344,6 +791,12 @@ test("runner and wrapper changes select only the environments they can affect", 
 test("release inputs run the artifact contract without expanding unrelated suites", () => {
   for (const path of ["release-smoke/build.gradle.kts", "LICENSE", "NOTICE"]) {
     expectGroups(path, [".fileweft-release-artifact-paths"]);
+  }
+  for (const path of [
+    ".ci/scripts/verify-osv-release.mjs",
+    ".ci/test/osv-release.test.mjs",
+  ]) {
+    expectGroups(path, [".fileweft-fast-paths", ".fileweft-release-artifact-paths"]);
   }
 });
 
@@ -373,6 +826,87 @@ test("PR and main expose the path-scoped release artifact lane", () => {
   }
 });
 
+test("real OSS evidence is manual, exact-commit bound, and secret isolated", () => {
+  assert.ok(
+    repositoryConfiguration.includes("- .ci/oss.yml"),
+    "the root CNB configuration must include the on-demand OSS pipeline",
+  );
+
+  for (const [name, configuration] of [
+    ["PR", prConfiguration],
+    ["main push", mainConfiguration],
+  ]) {
+    assert.doesNotMatch(
+      configuration,
+      /\.flowweft-oss-(?:paths|env)|web_trigger_oss|ossIntegrationCheck|oss-integration\.yml|FLOWWEFT_OSS_/u,
+      `${name} must not run real OSS or import its credentials`,
+    );
+  }
+
+  assert.deepEqual(
+    [...ossConfiguration.matchAll(/^([a-z$][a-z0-9$._-]*):\r?$/gmu)].map(
+      (match) => match[1],
+    ),
+    ["main"],
+    "the on-demand OSS pipeline must only be executable on main",
+  );
+  assert.deepEqual(
+    [...ossConfiguration.matchAll(/^  ([a-z][a-z0-9_]*):\r?$/gmu)].map(
+      (match) => match[1],
+    ),
+    ["web_trigger_oss"],
+    "the OSS configuration must not attach the real test to push or PR events",
+  );
+  assert.match(webTriggerConfiguration, /reg: "\^main\$"/u);
+  assert.equal(
+    webTriggerConfiguration.match(/event: web_trigger_oss/gu)?.length,
+    1,
+    "the repository UI must expose one main-only OSS trigger",
+  );
+
+  const pipeline = readPipeline(ossConfiguration, "oss");
+  assert.ok(pipeline.includes("env: !reference [.flowweft-oss-env]"));
+  const identityStageStart = pipeline.indexOf("name: verify-oss-source-identity");
+  const realStageStart = pipeline.indexOf("name: real-oss-integration");
+  assert.ok(identityStageStart >= 0, "the OSS pipeline must verify source identity");
+  assert.ok(
+    realStageStart > identityStageStart,
+    "source identity must be verified before credentials are imported",
+  );
+  const identityStage = pipeline.slice(identityStageStart, realStageStart);
+  const realStage = pipeline.slice(realStageStart);
+  assert.ok(identityStage.includes('test "$CNB_BRANCH" = "main"'));
+  assert.ok(identityStage.includes('test "$(git rev-parse HEAD)" = "$CNB_COMMIT"'));
+  assert.doesNotMatch(identityStage, /imports:|flowweft-oss-secret-file/u);
+  assert.match(
+    realStage,
+    /imports:\r?\n\s+- \*flowweft-oss-secret-file/u,
+    "only the real OSS stage may import the short-lived credential file",
+  );
+  assert.ok(
+    realStage.includes(
+      "bash ./gradlew ossIntegrationCheck --no-daemon --no-configuration-cache --stacktrace",
+    ),
+    "the authorized stage must run the complete Adapter and Boot 2/3 OSS contract",
+  );
+  assert.equal(
+    pipeline.match(/^\s+imports:\r?$/gmu)?.length,
+    1,
+    "the on-demand OSS pipeline must keep exactly one stage-scoped credential import",
+  );
+
+  const publicOssEnvironment = readTopLevelBlock(
+    sharedConfiguration,
+    ".flowweft-oss-env",
+  );
+  assert.ok(publicOssEnvironment.includes('FLOWWEFT_RUN_OSS_TESTS: "true"'));
+  assert.doesNotMatch(
+    publicOssEnvironment,
+    /(?:ACCESS_KEY|SECURITY_TOKEN|CREDENTIAL_EXPIRES|OSS_(?:ENDPOINT|REGION|BUCKET))/u,
+    "the shared environment must contain only public test controls, never OSS credentials",
+  );
+});
+
 test("the repository knowledge base is main-only, curated, and fail-closed", () => {
   assert.ok(
     repositoryConfiguration.includes("- .ci/knowledge.yml"),
@@ -398,15 +932,15 @@ test("the repository knowledge base is main-only, curated, and fail-closed", () 
     "SECURITY.md",
     ".ci/README.md",
     "docs/**/*.md",
-    "fileweft-docs/pages/zh/**/*.md",
+    "flowweft-docs/pages/zh/**/*.md",
   ]) {
     assert.ok(knowledgeConfiguration.includes(`- ${source}`), `missing knowledge source ${source}`);
   }
   for (const excluded of [
     ".ai/**",
-    "fileweft-docs/pages/en/**",
+    "flowweft-docs/pages/en/**",
     "SKILL.md",
-    "fileweft-docs/SKILL.md",
+    "flowweft-docs/SKILL.md",
   ]) {
     assert.ok(
       knowledgeConfiguration.includes(`- ${excluded}`),
@@ -436,6 +970,7 @@ test("CodeWiki is manual, source-curated, pinned, serialized, and verified", () 
     "test ! -e .ai",
     "test ! -e fileweft-agent",
     "test ! -e codewiki",
+    "find fileweft-* flowweft-* -path '*/src/main/*'",
     "knowledge_enabled: true",
     "knowledge_embedding_model: hunyuan",
     "knowledge_chunk_size: 1500",
@@ -458,7 +993,7 @@ test("CodeWiki is manual, source-curated, pinned, serialized, and verified", () 
     "!/.ai/",
     "!/fileweft-agent/",
     "!/*/src/test/",
-    "!/fileweft-docs/pages/en/",
+    "!/flowweft-docs/pages/en/",
     "!/fileweft-dev/web/fixtures/",
   ]) {
     assert.ok(codeWikiSparseCheckout.includes(excluded), `missing CodeWiki exclusion ${excluded}`);
@@ -638,8 +1173,16 @@ test("the CodeWiki sparse rules retain production evidence and remove superseded
     "fileweft-agent/src/main/kotlin/LegacyAgent.kt": "class LegacyAgent\n",
     "fileweft-core/src/main/kotlin/Identifier.kt": "class Identifier\n",
     "fileweft-core/src/test/kotlin/IdentifierTest.kt": "class IdentifierTest\n",
-    "fileweft-docs/pages/en/guide.md": "duplicate English guide\n",
-    "fileweft-docs/pages/zh/guide.md": "current Chinese guide\n",
+    "flowweft-retrieval-api/src/main/kotlin/RetrievalRequest.kt": "class RetrievalRequest\n",
+    "flowweft-retrieval-spi/src/main/kotlin/EmbeddingProvider.kt": "interface EmbeddingProvider\n",
+    "flowweft-agent-api/src/main/kotlin/AgentRun.kt": "class AgentRun\n",
+    "flowweft-agent-runtime/src/main/kotlin/DurableAgentRunCoordinator.kt": "class DurableAgentRunCoordinator\n",
+    "flowweft-workflow-api/src/main/kotlin/WorkflowDefinition.kt": "class WorkflowDefinition\n",
+    "flowweft-workflow-spi/src/main/kotlin/WorkflowDecisionProvider.kt": "interface WorkflowDecisionProvider\n",
+    "flowweft-workflow-domain/src/main/kotlin/WorkflowDomainEngine.kt": "class WorkflowDomainEngine\n",
+    "flowweft-workflow-runtime/src/main/kotlin/WorkflowDurableRuntime.kt": "class WorkflowDurableRuntime\n",
+    "flowweft-docs/pages/en/guide.md": "duplicate English guide\n",
+    "flowweft-docs/pages/zh/guide.md": "current Chinese guide\n",
     "fileweft-dev/web/fixtures/data.json": "{}\n",
   };
   try {
@@ -668,7 +1211,15 @@ test("the CodeWiki sparse rules retain production evidence and remove superseded
       ".ci/codewiki-sparse-checkout",
       ".ci/scripts/verify-codewiki-knowledge.mjs",
       "fileweft-core/src/main/kotlin/Identifier.kt",
-      "fileweft-docs/pages/zh/guide.md",
+      "flowweft-retrieval-api/src/main/kotlin/RetrievalRequest.kt",
+      "flowweft-retrieval-spi/src/main/kotlin/EmbeddingProvider.kt",
+      "flowweft-agent-api/src/main/kotlin/AgentRun.kt",
+      "flowweft-agent-runtime/src/main/kotlin/DurableAgentRunCoordinator.kt",
+      "flowweft-workflow-api/src/main/kotlin/WorkflowDefinition.kt",
+      "flowweft-workflow-spi/src/main/kotlin/WorkflowDecisionProvider.kt",
+      "flowweft-workflow-domain/src/main/kotlin/WorkflowDomainEngine.kt",
+      "flowweft-workflow-runtime/src/main/kotlin/WorkflowDurableRuntime.kt",
+      "flowweft-docs/pages/zh/guide.md",
     ]) {
       assert.ok(existsSync(join(repository, retained)), `sparse checkout removed ${retained}`);
     }
@@ -676,7 +1227,7 @@ test("the CodeWiki sparse rules retain production evidence and remove superseded
       ".ai/manual.md",
       "fileweft-agent/src/main/kotlin/LegacyAgent.kt",
       "fileweft-core/src/test/kotlin/IdentifierTest.kt",
-      "fileweft-docs/pages/en/guide.md",
+      "flowweft-docs/pages/en/guide.md",
       "fileweft-dev/web/fixtures/data.json",
     ]) {
       assert.ok(!existsSync(join(repository, excluded)), `sparse checkout retained ${excluded}`);
@@ -704,7 +1255,7 @@ test("the default repository NPC keeps personality subordinate to evidence", () 
     "defaultRepo: \"china.ai/file-weft\"",
     "defaultRole: 织澜",
     "name: 问织澜",
-    "你不是 FileWeft Agent 产品能力",
+    "你不是 FlowWeft Agent 产品能力",
     "AGENTS.md",
     "仓库中暂无依据",
     "专业性和事实永远优先于人设",
@@ -773,6 +1324,7 @@ test("verified release publication is restricted to the current remote main HEAD
 test("every tag pipeline rejects non-stable tags before expensive work", () => {
   const pipelineNames = [
     "quality",
+    "console-redis",
     "java8",
     "java11",
     "java17",
@@ -782,6 +1334,7 @@ test("every tag pipeline rejects non-stable tags before expensive work", () => {
     "mysql",
     "kingbase",
     "rustfs",
+    "oss",
     "acceptance",
     "publish",
   ];
@@ -790,7 +1343,7 @@ test("every tag pipeline rejects non-stable tags before expensive work", () => {
     const pipelineStart = releaseConfiguration.search(pipelineStartPattern);
     assert.notEqual(pipelineStart, -1, `missing release pipeline ${pipelineName}`);
     const remaining = releaseConfiguration.slice(pipelineStart + 1);
-    const nextPipelineOffset = remaining.search(/^    [a-z][a-z0-9]*:\r?$/mu);
+    const nextPipelineOffset = remaining.search(/^    [a-z][a-z0-9-]*:\r?$/mu);
     const pipeline = releaseConfiguration.slice(
       pipelineStart,
       nextPipelineOffset < 0 ? undefined : pipelineStart + 1 + nextPipelineOffset,
@@ -806,8 +1359,12 @@ test("every tag pipeline rejects non-stable tags before expensive work", () => {
 test("the Maven publication lock is acquired just in time and outlives the upload job timeout", () => {
   assert.equal(
     releaseConfiguration.match(/^\s+lock:\r?$/gmu)?.length,
-    1,
-    "release must keep exactly one lock, on the artifact publication job",
+    2,
+    "release must keep only the independent OSS fixture and artifact publication locks",
+  );
+  assert.match(
+    releaseConfiguration,
+    /- name: real-oss-integration\r?\n\s+timeout: 30m\r?\n\s+imports:\r?\n\s+- https:\/\/cnb\.cool\/china\.ai\/file-weft-ci-secrets\/-\/blob\/main\/oss-integration\.yml\r?\n\s+lock:\r?\n\s+key: flowweft-oss-integration\r?\n\s+wait: true\r?\n\s+timeout: 1800\r?\n\s+expires: 2700\r?\n\s+script:/u,
   );
   assert.match(
     releaseConfiguration,
@@ -836,6 +1393,6 @@ test("Kingbase preparation and Compose share one fail-closed image identity", ()
   assert.doesNotMatch(
     composeConfiguration,
     /docker\.cnb\.cool\/[^\n]*kingbase/iu,
-    "FileWeft must not silently redistribute the commercial Kingbase image",
+    "FlowWeft must not silently redistribute the commercial Kingbase image",
   );
 });

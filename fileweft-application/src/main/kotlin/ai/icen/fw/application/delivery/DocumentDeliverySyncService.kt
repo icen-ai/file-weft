@@ -5,6 +5,9 @@ import ai.icen.fw.application.outbox.OutboxEventLease
 import ai.icen.fw.application.outbox.OutboxEventMutationRepository
 import ai.icen.fw.application.outbox.OutboxEventStatus
 import ai.icen.fw.application.outbox.OutboxLeaseLostException
+import ai.icen.fw.application.retention.DeletedResourceNotVisibleException
+import ai.icen.fw.application.retention.DeletionVisibilityGuard
+import ai.icen.fw.application.retention.DeletionVisibilityUnavailableException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
@@ -53,6 +56,8 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
      */
     private val sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
 ) {
+    private var deletionVisibility = DeletionVisibilityGuard.requireFrom(documentRepository)
+
     init {
         require(!connectorTimeout.isNegative && !connectorTimeout.isZero) { "Connector timeout must be positive." }
         require(!sourceAccessUrlTtl.isNegative && !sourceAccessUrlTtl.isZero) {
@@ -157,7 +162,7 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     }
 
     /**
-     * Reads only FileWeft-owned state while the transaction is open. The
+     * Reads only FlowWeft-owned state while the transaction is open. The
      * resulting snapshots deliberately contain no connector implementation:
      * a resolver may consult a remote registry and must never run here.
      */
@@ -180,6 +185,23 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 delivery.connectorId,
             )
         }
+        try {
+            deletionVisibility.requireResourceVisible(tenantId, DOCUMENT_RESOURCE_TYPE, delivery.documentId)
+        } catch (_: DeletedResourceNotVisibleException) {
+            return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Document is no longer available for delivery.",
+                delivery.connectorId,
+                targetExpectation,
+            )
+        } catch (_: DeletionVisibilityUnavailableException) {
+            return Preparation.Failure(
+                ConnectorSyncStatus.RETRYABLE_FAILURE,
+                "Deletion visibility enforcement is unavailable.",
+                delivery.connectorId,
+                targetExpectation,
+            )
+        }
         val document = documentRepository.findById(tenantId, delivery.documentId)
             ?: return Preparation.Failure(
                 ConnectorSyncStatus.PERMANENT_FAILURE,
@@ -187,6 +209,14 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 delivery.connectorId,
                 targetExpectation,
             )
+        if (document.tenantId != tenantId || document.id != delivery.documentId) {
+            return Preparation.Failure(
+                ConnectorSyncStatus.PERMANENT_FAILURE,
+                "Document was not found in the event tenant.",
+                delivery.connectorId,
+                targetExpectation,
+            )
+        }
         if (delivery.deliveryGeneration != document.deliveryGeneration) return Preparation.Superseded(delivery.connectorId)
         if (document.lifecycleState !in setOf(LifecycleState.PUBLISHING, LifecycleState.SYNC_ERROR, LifecycleState.PUBLISHED)) {
             return Preparation.Failure(
@@ -247,15 +277,19 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
     private fun invokeConnector(preparation: Preparation.Ready): ConnectorSyncResult = try {
         val fileObject = preparation.fileObject
         val delivery = preparation.expectation.target
+        val downloadUri = storageAdapter.accessUrl(
+            StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
+            sourceAccessUrlTtl,
+        )
+        transaction.execute {
+            deletionVisibility.requireResourceVisible(delivery.tenantId, DOCUMENT_RESOURCE_TYPE, delivery.documentId)
+        }
         preparation.connector.sync(
             ConnectorSyncRequest(
                 tenantId = delivery.tenantId,
                 businessId = delivery.documentId,
                 source = ConnectorFileSource(
-                    downloadUri = storageAdapter.accessUrl(
-                        StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
-                        sourceAccessUrlTtl,
-                    ),
+                    downloadUri = downloadUri,
                     fileName = fileObject.fileName,
                     contentType = fileObject.contentType,
                     contentHash = fileObject.contentHash,
@@ -267,6 +301,10 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
                 ),
             ),
         )
+    } catch (_: DeletedResourceNotVisibleException) {
+        ConnectorSyncResult(ConnectorSyncStatus.PERMANENT_FAILURE, message = "Document is no longer available for delivery.")
+    } catch (_: DeletionVisibilityUnavailableException) {
+        ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Deletion visibility enforcement is unavailable.")
     } catch (_: Exception) {
         ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Connector invocation could not complete.")
     }
@@ -504,20 +542,50 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         ) : Preparation()
     }
 
-    private companion object {
-        const val INVALID_SUCCESS_EXTERNAL_ID_MESSAGE =
+    companion object {
+        private const val INVALID_SUCCESS_EXTERNAL_ID_MESSAGE =
             "Connector reported success with an invalid external identifier; expected a non-blank value without " +
                 "ISO control characters and at most 512 UTF-16 code units."
-        val ACTIVE_DELIVERY_STATUSES = setOf(DocumentDeliveryStatus.PENDING, DocumentDeliveryStatus.RETRYING)
-        val DELIVERY_COMPLETION_STATES = setOf(
+        private val ACTIVE_DELIVERY_STATUSES = setOf(DocumentDeliveryStatus.PENDING, DocumentDeliveryStatus.RETRYING)
+        private val DELIVERY_COMPLETION_STATES = setOf(
             LifecycleState.PUBLISHING,
             LifecycleState.SYNC_ERROR,
             LifecycleState.PUBLISHED,
             LifecycleState.OFFLINE,
             LifecycleState.HISTORY,
         )
-        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
-        const val DELIVERY_SUCCEEDED_AUDIT_ACTION = "document:delivery:succeeded"
-        const val DELIVERY_FAILED_AUDIT_ACTION = "document:delivery:failed"
+        private const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
+        private const val DELIVERY_SUCCEEDED_AUDIT_ACTION = "document:delivery:succeeded"
+        private const val DELIVERY_FAILED_AUDIT_ACTION = "document:delivery:failed"
+
+        /** Preserves the historical constructor while allowing an explicit fail-closed query. */
+        @JvmStatic
+        @JvmOverloads
+        fun withDeletionVisibility(
+            documentRepository: DocumentRepository,
+            fileObjectRepository: FileObjectRepository,
+            storageAdapter: StorageAdapter,
+            connectors: DeliveryConnectorResolver,
+            deliveries: DocumentDeliveryTargetRepository,
+            transaction: ApplicationTransaction,
+            deletionVisibilityGuard: DeletionVisibilityGuard,
+            connectorTimeout: Duration = Duration.ofSeconds(30),
+            auditTrail: AuditTrail? = null,
+            removalPlanner: DocumentDeliveryRemovalPlanner? = null,
+            metrics: FileWeftMetrics? = null,
+            sourceAccessUrlTtl: Duration = Duration.ofMinutes(15),
+        ): DocumentDeliverySyncService = DocumentDeliverySyncService(
+            documentRepository,
+            fileObjectRepository,
+            storageAdapter,
+            connectors,
+            deliveries,
+            transaction,
+            connectorTimeout,
+            auditTrail,
+            removalPlanner,
+            metrics,
+            sourceAccessUrlTtl,
+        ).also { service -> service.deletionVisibility = deletionVisibilityGuard }
     }
 }

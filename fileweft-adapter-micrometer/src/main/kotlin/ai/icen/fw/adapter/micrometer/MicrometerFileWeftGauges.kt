@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Micrometer projection for FileWeft's current-value observations.
+ * Micrometer projection for FlowWeft's current-value observations.
  *
  * Holders are retained strongly because Micrometer gauges otherwise retain
  * their observed objects weakly. The bounded [GaugeKey] prevents tenant,
@@ -27,7 +27,7 @@ class MicrometerFileWeftGauges(
             val holder = holders.computeIfAbsent(key) { register(it) }
             holder.set(value)
         } catch (_: Exception) {
-            // Observability failures must not alter FileWeft business processing.
+            // Observability failures must not alter FlowWeft business processing.
         }
     }
 

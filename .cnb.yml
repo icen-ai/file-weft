@@ -4,5 +4,6 @@ include:
   - .ci/main.yml
   - .ci/knowledge.yml
   - .ci/codewiki.yml
+  - .ci/oss.yml
   - .ci/nightly.yml
   - .ci/release.yml

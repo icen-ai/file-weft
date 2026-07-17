@@ -13,7 +13,7 @@ dependencyResolutionManagement {
         exclusiveContent {
             forRepository {
                 maven {
-                    name = "fileWeftReleasePomOnly"
+                    name = "flowWeftReleasePomOnly"
                     url = uri(fileWeftRepositoryUrl.get())
                     metadataSources {
                         // The smoke build deliberately ignores Gradle module metadata.
@@ -31,7 +31,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "fileweft-release-consumer-smoke"
+rootProject.name = "flowweft-release-consumer-smoke"
 
 include(
     ":boot2-consumer",

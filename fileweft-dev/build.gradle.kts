@@ -77,7 +77,7 @@ val devApiAcceptanceTest = tasks.register<Test>("devApiAcceptanceTest") {
     doFirst(
         org.gradle.api.Action<org.gradle.api.Task> {
             require(inputs.properties.getValue("fileWeftRunDevApiE2e") == true) {
-                "Set FILEWEFT_RUN_DEV_E2E=true after starting the complete FileWeft development Compose stack."
+                "Set FILEWEFT_RUN_DEV_E2E=true after starting the complete FlowWeft development Compose stack."
             }
         },
     )
@@ -86,7 +86,7 @@ val devApiAcceptanceTest = tasks.register<Test>("devApiAcceptanceTest") {
 
 val devUiE2e = tasks.register<Exec>("devUiE2e") {
     group = "verification"
-    description = "Runs the Playwright acceptance suite against the running FileWeft development Compose stack."
+    description = "Runs the Playwright acceptance suite against the running FlowWeft development Compose stack."
     workingDir(layout.projectDirectory.dir("web"))
     commandLine(if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "npm.cmd" else "npm", "run", "test:e2e")
     inputs.property("fileWeftRunDevUiE2e", runDevUiE2e)

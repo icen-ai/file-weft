@@ -3,6 +3,10 @@ package ai.icen.fw.persistence.jdbc
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import ai.icen.fw.application.upload.CompletionRejectionResettableResumableUploadSessionRepository
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaim
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimRepository
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimState
+import ai.icen.fw.application.upload.CompletedResumableUploadAssetClaimStateException
 import ai.icen.fw.application.upload.OwnerScopedResumableUploadSessionRepository
 import ai.icen.fw.application.upload.ResumableUploadPart
 import ai.icen.fw.application.upload.ResumableUploadSession
@@ -17,7 +21,8 @@ class JdbcResumableUploadSessionRepository(
     private val objectMapper: ObjectMapper,
 ) : OwnerScopedResumableUploadSessionRepository,
     StagedResumableUploadSessionRepository,
-    CompletionRejectionResettableResumableUploadSessionRepository {
+    CompletionRejectionResettableResumableUploadSessionRepository,
+    CompletedResumableUploadAssetClaimRepository {
     override fun save(session: ResumableUploadSession) {
         val ownerId = requireNotNull(session.ownerId) {
             "New resumable upload sessions must have a trusted owner id."
@@ -93,6 +98,110 @@ class JdbcResumableUploadSessionRepository(
         statement.setString(1, tenantId.value)
         statement.setString(2, ownerId)
         statement.setString(3, idempotencyKey)
+    }
+
+    override fun lockCompletedAssetClaim(
+        tenantId: Identifier,
+        ownerId: String,
+        uploadId: Identifier,
+    ): CompletedResumableUploadAssetClaimState? = queryClaimState(
+        "SELECT $CLAIM_STATE_COLUMNS FROM fw_upload_session " +
+            "WHERE tenant_id = ? AND owner_id = ? AND id = ? FOR UPDATE",
+    ) { statement ->
+        statement.setString(1, tenantId.value)
+        statement.setString(2, ownerId)
+        statement.setString(3, uploadId.value)
+    }
+
+    override fun findCompletedAssetClaim(
+        tenantId: Identifier,
+        ownerId: String,
+        uploadId: Identifier,
+    ): CompletedResumableUploadAssetClaimState? = queryClaimState(
+        "SELECT $CLAIM_STATE_COLUMNS FROM fw_upload_session WHERE tenant_id = ? AND owner_id = ? AND id = ?",
+    ) { statement ->
+        statement.setString(1, tenantId.value)
+        statement.setString(2, ownerId)
+        statement.setString(3, uploadId.value)
+    }
+
+    override fun markCompletedAssetClaimed(
+        expected: ResumableUploadSession,
+        claim: CompletedResumableUploadAssetClaim,
+    ): CompletedResumableUploadAssetClaimState? {
+        val expectedOwnerId = expected.ownerId ?: return null
+        val expectedCompletedAt = expected.completedAt ?: return null
+        if (
+            claim.tenantId != expected.tenantId ||
+            claim.uploadId != expected.id ||
+            claim.fileObjectId != expected.fileObjectId ||
+            claim.fileAssetId != expected.fileAssetId ||
+            claim.claimedBy != expectedOwnerId ||
+            expected.status != ResumableUploadSessionStatus.COMPLETED ||
+            expected.assetType != DOCUMENT_ASSET_TYPE ||
+            expected.lastError != null ||
+            expected.updatedTime != expectedCompletedAt ||
+            claim.resourceType != DOCUMENT_RESOURCE_TYPE ||
+            claim.claimedTime < expectedCompletedAt ||
+            claim.claimedTime < expected.updatedTime ||
+            claim.claimedTime >= expected.expiresAt
+        ) return null
+        val dialect = JdbcConnectionContext.requireDialect()
+        val metadataJson = objectMapper.writeValueAsString(expected.metadata)
+        val updated = JdbcConnectionContext.requireCurrent().prepareStatement(
+            """
+            UPDATE fw_upload_session
+            SET claimed_idempotency_key_digest = ?, claimed_resource_type = ?, claimed_resource_id = ?,
+                claimed_subresource_id = ?, claimed_by = ?, claimed_time = ?, updated_time = ?
+            WHERE tenant_id = ? AND owner_id = ? AND id = ?
+              AND idempotency_key = ? AND file_object_id = ? AND file_asset_id = ?
+              AND storage_upload_id = ? AND storage_type = ? AND storage_path = ?
+              AND file_name = ? AND content_length = ? AND asset_type = ?
+              AND ${dialect.isNotDistinctFrom("content_type")}
+              AND ${dialect.isNotDistinctFrom("content_hash")}
+              AND metadata_json = ${dialect.jsonParameterBinding()}
+              AND session_status = 'COMPLETED'
+              AND expires_at = ? AND expires_at > ?
+              AND ${dialect.isNotDistinctFrom("last_error")}
+              AND completed_time = ? AND completed_time IS NOT NULL
+              AND created_time = ? AND updated_time = ?
+              AND claimed_time IS NULL AND claimed_idempotency_key_digest IS NULL
+              AND claimed_resource_type IS NULL AND claimed_resource_id IS NULL
+              AND claimed_subresource_id IS NULL AND claimed_by IS NULL
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, claim.idempotencyKeyDigest)
+            statement.setString(2, claim.resourceType)
+            statement.setString(3, claim.resourceId.value)
+            statement.setString(4, claim.subresourceId.value)
+            statement.setString(5, claim.claimedBy)
+            statement.setLong(6, claim.claimedTime)
+            statement.setLong(7, claim.claimedTime)
+            statement.setString(8, expected.tenantId.value)
+            statement.setString(9, expectedOwnerId)
+            statement.setString(10, expected.id.value)
+            statement.setString(11, expected.idempotencyKey)
+            statement.setString(12, expected.fileObjectId.value)
+            statement.setString(13, expected.fileAssetId.value)
+            statement.setString(14, expected.storageUploadId.value)
+            statement.setString(15, expected.storageLocation.storageType)
+            statement.setString(16, expected.storageLocation.path)
+            statement.setString(17, expected.fileName)
+            statement.setLong(18, expected.contentLength)
+            statement.setString(19, expected.assetType)
+            statement.setString(20, expected.contentType)
+            statement.setString(21, expected.expectedContentHash)
+            statement.setString(22, metadataJson)
+            statement.setLong(23, expected.expiresAt)
+            statement.setLong(24, claim.claimedTime)
+            statement.setString(25, expected.lastError)
+            statement.setLong(26, expectedCompletedAt)
+            statement.setLong(27, expected.createdTime)
+            statement.setLong(28, expected.updatedTime)
+            statement.executeUpdate()
+        }
+        if (updated != 1) return null
+        return findCompletedAssetClaim(expected.tenantId, claim.claimedBy, expected.id)
     }
 
     override fun findParts(tenantId: Identifier, sessionId: Identifier): List<ResumableUploadPart> =
@@ -350,6 +459,14 @@ class JdbcResumableUploadSessionRepository(
             statement.executeQuery().use { result -> if (result.next()) mapSession(result) else null }
         }
 
+    private fun queryClaimState(
+        sql: String,
+        bind: (java.sql.PreparedStatement) -> Unit,
+    ): CompletedResumableUploadAssetClaimState? = JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
+        bind(statement)
+        statement.executeQuery().use { result -> if (result.next()) mapClaimState(result) else null }
+    }
+
     private fun transition(sql: String, vararg values: Any): Boolean = JdbcConnectionContext.requireCurrent().prepareStatement(sql).use { statement ->
         values.forEachIndexed { offset, value ->
             when (value) {
@@ -387,6 +504,45 @@ class JdbcResumableUploadSessionRepository(
         )
     }
 
+    private fun mapClaimState(result: ResultSet): CompletedResumableUploadAssetClaimState {
+        val session = mapSession(result)
+        val keyDigest = result.getString("claimed_idempotency_key_digest")
+        val resourceType = result.getString("claimed_resource_type")
+        val resourceId = result.getString("claimed_resource_id")
+        val subresourceId = result.getString("claimed_subresource_id")
+        val claimedBy = result.getString("claimed_by")
+        val claimedTime = result.getLong("claimed_time").let { value -> if (result.wasNull()) null else value }
+        val markerValues = listOf(keyDigest, resourceType, resourceId, subresourceId, claimedBy)
+        val hasAnyMarker = claimedTime != null || markerValues.any { it != null }
+        if (hasAnyMarker && (claimedTime == null || markerValues.any { it == null })) {
+            throw CompletedResumableUploadAssetClaimStateException(
+                "Persisted completed upload claim marker is incomplete.",
+            )
+        }
+        val claim = claimedTime?.let { time ->
+            try {
+                CompletedResumableUploadAssetClaim(
+                    tenantId = session.tenantId,
+                    uploadId = session.id,
+                    fileObjectId = session.fileObjectId,
+                    fileAssetId = session.fileAssetId,
+                    idempotencyKeyDigest = requireNotNull(keyDigest),
+                    resourceType = requireNotNull(resourceType),
+                    resourceId = Identifier(requireNotNull(resourceId)),
+                    subresourceId = Identifier(requireNotNull(subresourceId)),
+                    claimedBy = requireNotNull(claimedBy),
+                    claimedTime = time,
+                )
+            } catch (failure: IllegalArgumentException) {
+                throw CompletedResumableUploadAssetClaimStateException(
+                    "Persisted completed upload claim marker is invalid.",
+                    failure,
+                )
+            }
+        }
+        return CompletedResumableUploadAssetClaimState(session, claim)
+    }
+
     private fun mapPart(result: ResultSet): ResumableUploadPart = ResumableUploadPart(
         id = Identifier(result.getString("id")),
         tenantId = Identifier(result.getString("tenant_id")),
@@ -405,7 +561,14 @@ class JdbcResumableUploadSessionRepository(
             file_object_id, file_asset_id, file_name, content_length, asset_type, content_type, content_hash,
             metadata_json, session_status, expires_at, last_error, completed_time, created_time, updated_time
         """
+        const val CLAIM_STATE_COLUMNS = """
+            $SESSION_COLUMNS,
+            claimed_idempotency_key_digest, claimed_resource_type, claimed_resource_id,
+            claimed_subresource_id, claimed_by, claimed_time
+        """
         const val PART_COLUMNS = "id, tenant_id, session_id, part_number, part_etag, content_length, created_time, updated_time"
         const val CREATION_STAGING_MARKER = "fileweft:resumable-upload:creation-staging:v1"
+        const val DOCUMENT_ASSET_TYPE = "DOCUMENT"
+        const val DOCUMENT_RESOURCE_TYPE = "DOCUMENT"
     }
 }

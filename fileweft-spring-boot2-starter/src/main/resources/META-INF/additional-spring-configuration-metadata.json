@@ -23,20 +23,113 @@
       "description": "Filesystem root used only when fileweft.storage.local-enabled is true. It must be configured explicitly."
     },
     {
+      "name": "fileweft.storage.oss.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enables the optional Alibaba Cloud OSS reference adapter. Requires its artifact and exactly one host-owned OssCredentialsProvider bean.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.oss.endpoint",
+      "type": "java.lang.String",
+      "description": "Absolute HTTPS OSS endpoint without credentials, query, fragment, or non-root path."
+    },
+    {
+      "name": "fileweft.storage.oss.region",
+      "type": "java.lang.String",
+      "description": "OSS region used for request signing."
+    },
+    {
+      "name": "fileweft.storage.oss.bucket",
+      "type": "java.lang.String",
+      "description": "Dedicated OSS bucket selected for FlowWeft objects."
+    },
+    {
+      "name": "fileweft.storage.oss.use-path-style",
+      "type": "java.lang.Boolean",
+      "description": "Uses path-style addressing; it cannot be combined with CNAME mode.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.oss.use-cname",
+      "type": "java.lang.Boolean",
+      "description": "Uses an OSS CNAME endpoint; it cannot be combined with path-style mode.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.storage.oss.connection-timeout-millis",
+      "type": "java.lang.Long",
+      "description": "Positive bounded OSS connection timeout in milliseconds.",
+      "defaultValue": 5000
+    },
+    {
+      "name": "fileweft.storage.oss.socket-timeout-millis",
+      "type": "java.lang.Long",
+      "description": "Positive bounded OSS socket timeout in milliseconds.",
+      "defaultValue": 120000
+    },
+    {
+      "name": "fileweft.storage.oss.request-timeout-millis",
+      "type": "java.lang.Long",
+      "description": "Positive bounded OSS request timeout in milliseconds.",
+      "defaultValue": 900000
+    },
+    {
+      "name": "fileweft.storage.oss.max-attempts",
+      "type": "java.lang.Integer",
+      "description": "Bounded OSS attempt count from 1 through 10.",
+      "defaultValue": 3
+    },
+    {
+      "name": "fileweft.storage.oss.credential-expiry-safety-window-millis",
+      "type": "java.lang.Long",
+      "description": "Positive safety window applied to rotating OSS credential expiry.",
+      "defaultValue": 30000
+    },
+    {
+      "name": "fileweft.upload.presigned-enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enables durable constrained direct PUT grants and atomic asset claims. Requires one selected PresignedUploadStorageAdapter plus V034 and V035 migration history.",
+      "defaultValue": false
+    },
+    {
+      "name": "fileweft.upload.presigned-finalize-grace-millis",
+      "type": "java.lang.Long",
+      "description": "Positive time reserved for provider finalization.",
+      "defaultValue": 900000
+    },
+    {
+      "name": "fileweft.upload.presigned-claim-lease-millis",
+      "type": "java.lang.Long",
+      "description": "Positive fenced finalization lease no longer than the finalize grace.",
+      "defaultValue": 120000
+    },
+    {
+      "name": "fileweft.upload.presigned-maintenance-batch-size",
+      "type": "java.lang.Integer",
+      "description": "Worker-only recovery and cleanup batch size from 1 through 1000.",
+      "defaultValue": 100
+    },
+    {
+      "name": "fileweft.worker.process-presigned-upload-maintenance",
+      "type": "java.lang.Boolean",
+      "description": "Runs presigned recovery and cleanup only on an explicitly enabled worker role.",
+      "defaultValue": true
+    },
+    {
       "name": "fileweft.persistence.migration-mode",
       "type": "ai.icen.fw.persistence.migration.FileWeftMigrationMode",
-      "description": "Controls FileWeft-owned Flyway startup behavior. DISABLED performs no migration database access, VALIDATE verifies an existing FileWeft schema, and MIGRATE applies pending FileWeft migrations. Enabled modes require exactly one DataSource unless the host supplies an explicit FlywayMigrationRunner. The default is DISABLED.",
+      "description": "Controls FlowWeft-owned Flyway startup behavior. DISABLED performs no migration database access, VALIDATE verifies an existing FlowWeft schema, and MIGRATE applies pending FlowWeft migrations. Enabled modes require exactly one DataSource unless the host supplies an explicit FlywayMigrationRunner. The default is DISABLED.",
       "defaultValue": "DISABLED"
     },
     {
       "name": "fileweft.persistence.schema",
       "type": "java.lang.String",
-      "description": "Explicit FileWeft schema required when migration mode is VALIDATE or MIGRATE. Blank values, implicit schema selection, and leading or trailing whitespace are rejected for enabled Starter migration modes."
+      "description": "Explicit FlowWeft schema required when migration mode is VALIDATE or MIGRATE. Blank values, implicit schema selection, and leading or trailing whitespace are rejected for enabled Starter migration modes."
     },
     {
       "name": "fileweft.persistence.create-schema",
       "type": "java.lang.Boolean",
-      "description": "Allows MIGRATE to create the explicitly configured FileWeft schema. A true value is rejected in DISABLED and VALIDATE modes without database access; leave false when schema ownership belongs to the database operator.",
+      "description": "Allows MIGRATE to create the explicitly configured FlowWeft schema. A true value is rejected in DISABLED and VALIDATE modes without database access; leave false when schema ownership belongs to the database operator.",
       "defaultValue": false
     },
     {
