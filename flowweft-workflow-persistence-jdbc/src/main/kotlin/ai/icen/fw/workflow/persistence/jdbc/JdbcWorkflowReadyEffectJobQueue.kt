@@ -85,17 +85,18 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         request: WorkflowReadyEffectJobClaimRequest,
         readAt: Long,
     ): List<WorkflowClaimedEffectJob> = transactions.read { connection, _ ->
-        connection.prepareStatement(SELECT_CLAIMS_BY_REQUEST_SQL).use { statement ->
+        val rows = connection.prepareStatement(SELECT_CLAIMS_BY_REQUEST_SQL).use { statement ->
             statement.setString(1, request.tenantId)
             statement.setString(2, request.requestDigest)
             statement.setString(3, request.workerId)
             statement.setLong(4, readAt)
             statement.executeQuery().use { result ->
-                val claims = ArrayList<WorkflowClaimedEffectJob>()
-                while (result.next()) claims.add(mapClaimedRow(result))
-                claims
+                val rows = ArrayList<JobRow>()
+                while (result.next()) rows.add(mapJobRow(result))
+                rows
             }
         }
+        rows.map { row -> attachStoredResult(connection, row).toClaim() }
     }
 
     override fun loadClaim(tenantId: String, jobId: String, readAt: Long): WorkflowClaimedEffectJob? =
@@ -111,25 +112,28 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
     private fun selectReadyRows(
         connection: Connection,
         request: WorkflowReadyEffectJobClaimRequest,
-    ): List<JobRow> = connection.prepareStatement(SELECT_READY_SQL + readyRowsLockClause(connection)).use { statement ->
-        statement.setString(1, request.tenantId)
-        statement.setString(2, request.effectCode.code)
-        statement.setLong(3, request.now)
-        statement.setLong(4, request.now)
-        statement.setString(5, WorkflowEffectDeliveryStatus.PENDING.code)
-        statement.setString(6, WorkflowEffectDeliveryStatus.RETRY_WAIT.code)
-        statement.setLong(7, request.now)
-        statement.setString(8, WorkflowEffectDeliveryStatus.LEASED.code)
-        statement.setString(9, WorkflowEffectExecutionPhase.PREPARED.code)
-        statement.setLong(10, request.now)
-        statement.setString(11, WorkflowEffectDeliveryStatus.SUCCEEDED.code)
-        statement.setString(12, WorkflowEffectDeliveryStatus.RETRYABLE_FAILURE.code)
-        statement.setInt(13, request.maximumJobs)
-        statement.executeQuery().use { result ->
-            val rows = ArrayList<JobRow>()
-            while (result.next()) rows.add(mapJobRow(result))
-            rows
+    ): List<JobRow> {
+        val jobIds = connection.prepareStatement(SELECT_READY_JOB_IDS_SQL + jobLockClause(connection)).use { statement ->
+            statement.setString(1, request.tenantId)
+            statement.setString(2, request.effectCode.code)
+            statement.setLong(3, request.now)
+            statement.setLong(4, request.now)
+            statement.setString(5, WorkflowEffectDeliveryStatus.PENDING.code)
+            statement.setString(6, WorkflowEffectDeliveryStatus.RETRY_WAIT.code)
+            statement.setLong(7, request.now)
+            statement.setString(8, WorkflowEffectDeliveryStatus.LEASED.code)
+            statement.setString(9, WorkflowEffectExecutionPhase.PREPARED.code)
+            statement.setLong(10, request.now)
+            statement.setString(11, WorkflowEffectDeliveryStatus.SUCCEEDED.code)
+            statement.setString(12, WorkflowEffectDeliveryStatus.RETRYABLE_FAILURE.code)
+            statement.setInt(13, request.maximumJobs)
+            statement.executeQuery().use { result ->
+                val jobIds = ArrayList<String>()
+                while (result.next()) jobIds.add(result.requiredIdentifier("id"))
+                jobIds
+            }
         }
+        return jobIds.mapNotNull { jobId -> selectClaimRow(connection, request.tenantId, jobId, forUpdate = false) }
     }
 
     private fun claimRow(
@@ -187,7 +191,7 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         connection: Connection,
         request: WorkflowReadyEffectJobClaimRequest,
     ) {
-        val expired = connection.prepareStatement(SELECT_EXPIRED_PROVIDER_SQL + readyRowsLockClause(connection)).use { statement ->
+        val jobIds = connection.prepareStatement(SELECT_EXPIRED_PROVIDER_JOB_IDS_SQL + jobLockClause(connection)).use { statement ->
             statement.setString(1, request.tenantId)
             statement.setString(2, request.effectCode.code)
             statement.setString(3, WorkflowEffectDeliveryStatus.LEASED.code)
@@ -195,10 +199,13 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
             statement.setLong(5, request.now)
             statement.setInt(6, request.maximumJobs)
             statement.executeQuery().use { result ->
-                val rows = ArrayList<JobRow>()
-                while (result.next()) rows.add(mapJobRow(result))
-                rows
+                val jobIds = ArrayList<String>()
+                while (result.next()) jobIds.add(result.requiredIdentifier("id"))
+                jobIds
             }
+        }
+        val expired = jobIds.mapNotNull { jobId ->
+            selectClaimRow(connection, request.tenantId, jobId, forUpdate = false)
         }
         expired.forEach { row ->
             val stored = row.storedResult
@@ -238,13 +245,33 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         jobId: String,
         forUpdate: Boolean,
     ): JobRow? {
-        val lock = if (forUpdate) " FOR UPDATE" else ""
-        return connection.prepareStatement(SELECT_JOB_BY_ID_SQL + lock).use { statement ->
+        if (forUpdate && !lockJobRow(connection, tenantId, jobId)) return null
+        return selectJobRow(connection, tenantId, jobId)
+    }
+
+    private fun lockJobRow(connection: Connection, tenantId: String, jobId: String): Boolean =
+        connection.prepareStatement(SELECT_JOB_ID_BY_ID_FOR_UPDATE_SQL).use { statement ->
+            statement.setString(1, tenantId)
+            statement.setString(2, jobId)
+            statement.executeQuery().use { result -> result.next() }
+        }
+
+    private fun selectJobRow(connection: Connection, tenantId: String, jobId: String): JobRow? {
+        val row = connection.prepareStatement(SELECT_JOB_BY_ID_SQL).use { statement ->
             statement.setString(1, tenantId)
             statement.setString(2, jobId)
             statement.executeQuery().use { result -> if (result.next()) mapJobRow(result) else null }
         }
+        return row?.let { selected -> attachStoredResult(connection, selected) }
     }
+
+    /**
+     * Read a checkpoint only after the queue candidate has been selected and its queue row locked.
+     * This keeps the locking query free of result-table joins and scalar subqueries, both of which
+     * have incompatible `SKIP LOCKED` planning behavior across the supported PostgreSQL family.
+     */
+    private fun attachStoredResult(connection: Connection, row: JobRow): JobRow =
+        row.copy(storedResult = selectStoredResult(connection, row.tenantId, row.effectId, forUpdate = false))
 
     private fun selectStoredResult(
         connection: Connection,
@@ -265,8 +292,6 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
             row.jobLeaseId == claim.lease.leaseId && row.jobWorkerId == claim.lease.workerId &&
             row.jobFencingToken == claim.lease.fencingToken &&
             row.jobLeaseExpiresAt != null && row.jobLeaseExpiresAt > now
-
-    private fun mapClaimedRow(result: ResultSet): WorkflowClaimedEffectJob = mapJobRow(result).toClaim()
 
     private fun mapJobRow(result: ResultSet): JobRow = JobRow(
         result.requiredIdentifier("job_id"),
@@ -289,7 +314,7 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         nullableLong(result, "job_lease_expires_time"),
         result.getString("execution_mode"),
         result.nullableIdentifier("claim_request_digest"),
-        if (result.getString("result_digest") == null) null else mapStoredResult(result),
+        null,
     )
 
     private fun mapStoredResult(result: ResultSet): WorkflowEffectJobStoredResult = WorkflowEffectJobStoredResult.of(
@@ -322,7 +347,7 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
         jobLeaseAcquiredAt,
     )
 
-    private fun readyRowsLockClause(connection: Connection): String =
+    private fun jobLockClause(connection: Connection): String =
         if (connection.metaData.databaseProductName.startsWith("H2", ignoreCase = true)) {
             " FOR UPDATE"
         } else {
@@ -394,51 +419,58 @@ class JdbcWorkflowReadyEffectJobQueue @JvmOverloads constructor(
                 j.lease_id AS job_lease_id, j.worker_id AS job_worker_id,
                 j.lease_acquired_time AS job_lease_acquired_time,
                 j.lease_expires_time AS job_lease_expires_time,
-                j.execution_mode, j.claim_request_digest,
-                (SELECT r.result_type FROM fw_wf_effect_result r
-                    WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS result_type,
-                (SELECT r.outcome_code FROM fw_wf_effect_result r
-                    WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS outcome_code,
-                (SELECT r.result_digest FROM fw_wf_effect_result r
-                    WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS result_digest,
-                (SELECT r.result_payload FROM fw_wf_effect_result r
-                    WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS result_payload,
-                (SELECT r.retry_time FROM fw_wf_effect_result r
-                    WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS retry_time,
-                (SELECT r.completed_time FROM fw_wf_effect_result r
-                    WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id) AS completed_time
+                j.execution_mode, j.claim_request_digest
             FROM fw_wf_job j
             JOIN fw_wf_effect e ON e.tenant_id = j.tenant_id AND e.id = j.effect_id
             JOIN fw_wf_instance i ON i.tenant_id = j.tenant_id AND i.id = j.instance_id
         """
-        const val SELECT_READY_SQL = SELECT_COLUMNS + """
+        const val SELECT_READY_JOB_IDS_SQL = """
+            SELECT j.id
+            FROM fw_wf_job j
             WHERE j.tenant_id = ? AND j.job_type = ? AND j.available_time <= ?
-                AND i.status IN ('running', 'waiting')
                 AND (j.lease_expires_time IS NULL OR j.lease_expires_time <= ?)
-                AND (
-                    e.delivery_status = ? OR
-                    (e.delivery_status = ? AND e.next_attempt_time <= ?) OR
-                    (e.delivery_status = ? AND e.execution_phase = ? AND e.lease_expires_time <= ?) OR
-                    (e.delivery_status = ? AND EXISTS (
-                        SELECT 1 FROM fw_wf_effect_result r
-                        WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id
-                    )) OR
-                    (e.delivery_status = ? AND EXISTS (
-                        SELECT 1 FROM fw_wf_effect_result r
-                        WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id
-                    ))
+                AND EXISTS (
+                    SELECT 1
+                    FROM fw_wf_effect e
+                    JOIN fw_wf_instance i ON i.tenant_id = j.tenant_id AND i.id = j.instance_id
+                    WHERE e.tenant_id = j.tenant_id AND e.id = j.effect_id
+                    AND i.status IN ('running', 'waiting')
+                    AND (
+                        e.delivery_status = ? OR
+                        (e.delivery_status = ? AND e.next_attempt_time <= ?) OR
+                        (e.delivery_status = ? AND e.execution_phase = ? AND e.lease_expires_time <= ?) OR
+                        (e.delivery_status = ? AND EXISTS (
+                            SELECT 1 FROM fw_wf_effect_result r
+                            WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id
+                        )) OR
+                        (e.delivery_status = ? AND EXISTS (
+                            SELECT 1 FROM fw_wf_effect_result r
+                            WHERE r.tenant_id = j.tenant_id AND r.effect_id = j.effect_id
+                        ))
+                    )
                 )
             ORDER BY j.available_time, j.created_time, j.id
             LIMIT ?
         """
-        const val SELECT_EXPIRED_PROVIDER_SQL = SELECT_COLUMNS + """
-            WHERE j.tenant_id = ? AND j.job_type = ? AND e.delivery_status = ?
-                AND i.status IN ('running', 'waiting')
-                AND e.execution_phase = ? AND e.lease_expires_time <= ?
-            ORDER BY e.lease_expires_time, j.created_time, j.id
+        const val SELECT_EXPIRED_PROVIDER_JOB_IDS_SQL = """
+            SELECT j.id
+            FROM fw_wf_job j
+            WHERE j.tenant_id = ? AND j.job_type = ?
+                AND EXISTS (
+                    SELECT 1
+                    FROM fw_wf_effect e
+                    JOIN fw_wf_instance i ON i.tenant_id = j.tenant_id AND i.id = j.instance_id
+                    WHERE e.tenant_id = j.tenant_id AND e.id = j.effect_id
+                    AND e.delivery_status = ?
+                    AND i.status IN ('running', 'waiting')
+                    AND e.execution_phase = ? AND e.lease_expires_time <= ?
+                )
+            ORDER BY j.created_time, j.id
             LIMIT ?
         """
         const val SELECT_JOB_BY_ID_SQL = SELECT_COLUMNS + " WHERE j.tenant_id = ? AND j.id = ?"
+        const val SELECT_JOB_ID_BY_ID_FOR_UPDATE_SQL =
+            "SELECT id FROM fw_wf_job WHERE tenant_id = ? AND id = ? FOR UPDATE"
         const val SELECT_CLAIMS_BY_REQUEST_SQL = SELECT_COLUMNS + """
             WHERE j.tenant_id = ? AND j.claim_request_digest = ? AND j.worker_id = ?
                 AND j.lease_expires_time > ?

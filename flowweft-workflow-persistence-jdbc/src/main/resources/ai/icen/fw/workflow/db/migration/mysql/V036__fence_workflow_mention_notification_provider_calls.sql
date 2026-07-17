@@ -1,9 +1,9 @@
 -- Durable provider-call fence for safe mention notifications. It stores only digests and
 -- operational evidence; comment text, rendered HTML, headers and provider secrets are forbidden.
 CREATE TABLE fw_wf_mention_notification_checkpoint (
-    id varchar(64) NOT NULL, tenant_id varchar(512) NOT NULL,
-    idempotency_key varchar(512) NOT NULL, operation_request_digest varchar(64) NOT NULL,
-    lease_id varchar(512) NOT NULL, fencing_token bigint NOT NULL,
+    id varbinary(64) NOT NULL, tenant_id varbinary(512) NOT NULL,
+    idempotency_key varbinary(512) NOT NULL, operation_request_digest varchar(64) NOT NULL,
+    lease_id varbinary(512) NOT NULL, fencing_token bigint NOT NULL,
     provider_request_digest varchar(64) NOT NULL, checkpoint_status varchar(32) NOT NULL,
     evidence_digest varchar(64), checkpoint_digest varchar(64) NOT NULL,
     record_version bigint NOT NULL, checkpointed_time bigint NOT NULL,

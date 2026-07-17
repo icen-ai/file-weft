@@ -56,7 +56,7 @@ CREATE TABLE fw_wf_notification_envelope (
             outcome_evidence_digest IS NOT NULL)
     )
 );
-CREATE INDEX idx_fw_wf_notification_ready
+CREATE INDEX idx_fw_wf_notification_envelope_ready
     ON fw_wf_notification_envelope(tenant_id, queue_status, next_attempt_time, updated_time, id);
 CREATE INDEX idx_fw_wf_notification_lease
     ON fw_wf_notification_envelope(tenant_id, queue_status, lease_expires_time, id);

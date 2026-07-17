@@ -101,6 +101,30 @@ class WorkflowMigrationResourceContractTest {
         }
     }
 
+    @Test
+    fun `every workflow dialect gives each explicit index a unique namespace`() {
+        listOf("postgres", "mysql", "kingbase").forEach { dialect ->
+            val names = (30..38).flatMap { version ->
+                val file = when (version) {
+                    30 -> "V030__create_flowweft_workflow_runtime.sql"
+                    31 -> "V031__create_flowweft_workflow_collaboration.sql"
+                    32 -> "V032__create_flowweft_workflow_human_collaboration.sql"
+                    33 -> "V033__fence_flowweft_workflow_effect_jobs.sql"
+                    34 -> "V034__persist_workflow_human_input.sql"
+                    35 -> "V035__persist_workflow_notification_lifecycle.sql"
+                    36 -> "V036__fence_workflow_mention_notification_provider_calls.sql"
+                    37 -> "V037__persist_workflow_cycle_guard.sql"
+                    else -> "V038__persist_workflow_sla.sql"
+                }
+                val path = "/ai/icen/fw/workflow/db/migration/$dialect/$file"
+                INDEX.findAll(requireNotNull(javaClass.getResource(path)).readText(Charsets.UTF_8))
+                    .map { it.groupValues[1].lowercase() }
+                    .toList()
+            }
+            assertEquals(names.size, names.toSet().size, "$dialect workflow migration index names must be unique")
+        }
+    }
+
     private fun resource(dialect: String, version: Int, suffix: String): String {
         val path = "/ai/icen/fw/workflow/db/migration/$dialect/V0${version}__$suffix.sql"
         return requireNotNull(javaClass.getResource(path)).readText(Charsets.UTF_8).lowercase()
@@ -108,6 +132,7 @@ class WorkflowMigrationResourceContractTest {
 
     private companion object {
         val TABLE = Regex("CREATE TABLE\\s+(fw_wf_[a-z_]+)", RegexOption.IGNORE_CASE)
+        val INDEX = Regex("CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+([a-z0-9_]+)", RegexOption.IGNORE_CASE)
         val REQUIRED_TABLES = setOf(
             "fw_wf_definition_version", "fw_wf_instance", "fw_wf_token",
             "fw_wf_node_execution", "fw_wf_human_task", "fw_wf_human_candidate",

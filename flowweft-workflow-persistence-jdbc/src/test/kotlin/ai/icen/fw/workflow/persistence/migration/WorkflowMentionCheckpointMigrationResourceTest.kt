@@ -40,7 +40,15 @@ class WorkflowMentionCheckpointMigrationResourceTest {
                 "provider_secret",
             ).forEach { forbidden -> assertFalse(lower.contains(forbidden), "$dialect V036 stores $forbidden") }
         }
+        val mysql = migrations.getValue("mysql").lowercase()
+        listOf("id varbinary(64)", "tenant_id varbinary(512)", "idempotency_key varbinary(512)", "lease_id varbinary(512)")
+            .forEach { required ->
+                assertTrue(mysql.contains(required), "MySQL V036 must keep composite identifiers within its key limit: $required")
+            }
     }
 
-    private fun canonical(sql: String): String = sql.lowercase().replace(Regex("\\s+"), " ").trim()
+    private fun canonical(sql: String): String = sql.lowercase()
+        .replace(Regex("varbinary\\((\\d+)\\)")) { match -> "varchar(${match.groupValues[1]})" }
+        .replace(Regex("\\s+"), " ")
+        .trim()
 }
