@@ -13,6 +13,8 @@ import ai.icen.fw.application.idempotency.RequestIdempotencyService
 import ai.icen.fw.application.lifecycle.DocumentLifecycleMutationTransaction
 import ai.icen.fw.application.lifecycle.DocumentLifecycleReceipt
 import ai.icen.fw.core.id.Identifier
+import ai.icen.fw.domain.workflow.WorkflowInstance
+import ai.icen.fw.domain.workflow.WorkflowTaskState
 
 /** Flat review boundary for hosts that do not install a document catalog. */
 class IdempotentDocumentReviewWorkflowService(
@@ -200,11 +202,12 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
             IdempotencyReplayMapper { result -> replay(context.documentId, null, result) },
             IdempotentCommand {
                 DocumentLifecycleMutationTransaction.execute {
+                    val result = reviews.submitForReviewInCurrentTransaction(validated, preparation)
                     fresh(
-                        result = reviews.submitForReviewInCurrentTransaction(validated, preparation),
+                        result = result,
                         expectedDocumentId = context.documentId,
                         expectedWorkflowId = null,
-                        taskId = null,
+                        taskId = firstPendingTaskId(result.workflow),
                     )
                 }
             },
@@ -343,6 +346,15 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
             }
         }
     }
+
+    /**
+     * Task exposed on a fresh submit receipt. Routes with several parallel
+     * tasks still yield a single receipt identifier: the first pending task.
+     * An abnormal workflow without any pending task degrades to a null task
+     * id instead of failing the submission.
+     */
+    private fun firstPendingTaskId(workflow: WorkflowInstance): Identifier? =
+        workflow.tasks.firstOrNull { task -> task.state == WorkflowTaskState.PENDING }?.id
 
     private fun fresh(
         result: DocumentReviewMutationResult,

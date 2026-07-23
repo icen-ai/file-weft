@@ -7,12 +7,16 @@ import ai.icen.fw.domain.document.Document
 import ai.icen.fw.domain.workflow.WorkflowInstance
 import ai.icen.fw.spi.workflow.DocumentReviewRouteRequest
 
-/** Immutable route snapshot resolved before the final submit transaction. */
+/**
+ * Immutable route snapshot resolved before the final submit transaction. The
+ * resolved route is null when the document already has an active review; the
+ * submission then returns that existing workflow instead of creating one.
+ */
 internal class DocumentReviewSubmitPreparation(
     val lifecycle: DocumentLifecycleMutationContext,
     val reviewerId: Identifier?,
     val routeRequest: DocumentReviewRouteRequest,
-    val resolvedRoute: ResolvedDocumentReviewRoute,
+    val resolvedRoute: ResolvedDocumentReviewRoute?,
 )
 
 /** Authorization, catalog evidence and workflow snapshot for one review decision. */

@@ -384,12 +384,13 @@ class DocumentCatalogLifecycleServiceTest {
     }
 
     @Test
-    fun `active review and route races use the typed review conflict without persistence`() {
+    fun `active review submission returns the existing workflow and route races still conflict`() {
         val active = Fixture(initialWorkflow = dualWorkflow(DOCUMENT_ID))
 
-        assertFailsWith<DocumentReviewConflictException> {
-            active.service.submitForReview(DOCUMENT_ID)
-        }
+        // A repeated submission reuses the active review instead of conflicting.
+        val existing = active.service.submitForReview(DOCUMENT_ID)
+
+        assertEquals(WORKFLOW_ID, existing.id)
         assertEquals(0, active.documents.saves)
         assertEquals(0, active.workflows.saves)
         assertTrue(active.audits.records.isEmpty())

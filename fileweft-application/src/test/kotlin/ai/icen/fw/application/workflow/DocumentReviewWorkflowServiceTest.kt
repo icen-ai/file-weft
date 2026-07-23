@@ -298,6 +298,35 @@ class DocumentReviewWorkflowServiceTest {
     }
 
     @Test
+    fun `submit returns the existing active workflow instead of conflicting`() {
+        val persistedDocument = draftDocument()
+        val documents = InMemoryDocuments(persistedDocument)
+        val workflows = InMemoryWorkflows()
+        val audits = RecordingAudits()
+        val service = service(
+            documents = documents,
+            workflows = workflows,
+            outbox = RecordingOutbox(),
+            identifiers = listOf("workflow-1", "task-1"),
+            auditTrail = auditTrail(audits),
+            authorization = { AuthorizationDecision(true) },
+        )
+
+        val first = service.submit(Identifier("document-1"), Identifier("reviewer-1"))
+        // Submission is naturally idempotent per document: a repeated submit
+        // reuses the active review instead of raising a review conflict.
+        val repeated = service.submit(Identifier("document-1"), Identifier("reviewer-1"))
+
+        assertEquals(first.id, repeated.id)
+        assertEquals(WorkflowState.PENDING, repeated.state)
+        assertEquals(LifecycleState.PENDING_REVIEW, persistedDocument.lifecycleState)
+        assertEquals(1, documents.saveCalls)
+        assertEquals(1, workflows.saveCalls)
+        // Reusing the active review must not append a second submission audit.
+        assertEquals(1, audits.records.size)
+    }
+
+    @Test
     fun `submit rejects foreign tenant and wrong id returned by the final document lock without side effects`() {
         finalIdentityMismatches(::draftDocument).forEach { (case, lockedDocument) ->
             val persistedDocument = draftDocument()

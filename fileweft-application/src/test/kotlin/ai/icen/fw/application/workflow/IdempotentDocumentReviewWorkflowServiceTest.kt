@@ -81,8 +81,11 @@ class IdempotentDocumentReviewWorkflowServiceTest {
             "submit-key",
         )
 
+        // A fresh submit receipt exposes the first pending task of the route.
+        assertEquals(fixture.workflows.workflow?.tasks?.single()?.id, first.taskId)
         assertEquals(first.documentId, replay.documentId)
         assertEquals(first.workflowId, replay.workflowId)
+        // A durable submit replay stores document and workflow identifiers only.
         assertNull(replay.taskId)
         assertEquals(LifecycleState.PENDING_REVIEW, fixture.document.lifecycleState)
         assertEquals(1, fixture.documents.saveCalls)
@@ -93,6 +96,86 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(1, fixture.idempotency.completeCalls)
         assertEquals(2, fixture.users.currentUserCalls)
         assertEquals(2, fixture.authorizationRequests.size)
+    }
+
+    @Test
+    fun `submit receipt carries the first pending task of a parallel route`() {
+        val fixture = Fixture(draftDocument())
+        fixture.route.tasks = listOf(
+            DocumentReviewRouteTask(PRIMARY_USER.id),
+            DocumentReviewRouteTask(SECONDARY_USER.id),
+        )
+
+        val receipt = fixture.service.submitForReview(fixture.document.id, null, ROUTE_ID, "parallel-key")
+
+        val workflow = requireNotNull(fixture.workflows.workflow)
+        assertEquals(2, workflow.tasks.size)
+        assertEquals(workflow.id, receipt.workflowId)
+        assertEquals(workflow.tasks.first().id, receipt.taskId)
+        assertEquals(LifecycleState.PENDING_REVIEW, fixture.document.lifecycleState)
+    }
+
+    @Test
+    fun `submit with another key returns the existing workflow receipt without new side effects`() {
+        val fixture = Fixture(draftDocument())
+
+        val first = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "submit-key")
+        // Submission is naturally idempotent per document: a retry under a new
+        // key reuses the active review instead of raising a review conflict.
+        val repeated = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "retry-key")
+        val replayed = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "retry-key")
+
+        assertEquals(first.documentId, repeated.documentId)
+        assertEquals(first.workflowId, repeated.workflowId)
+        assertEquals(first.taskId, repeated.taskId)
+        assertEquals(repeated.documentId, replayed.documentId)
+        assertEquals(repeated.workflowId, replayed.workflowId)
+        assertNull(replayed.taskId)
+        assertEquals(LifecycleState.PENDING_REVIEW, fixture.document.lifecycleState)
+        assertEquals(1, fixture.documents.saveCalls)
+        assertEquals(1, fixture.workflows.saveCalls)
+        // Reusing the active review must not append a second submission audit.
+        assertEquals(1, fixture.audits.records.size)
+        assertEquals(1, fixture.route.calls)
+        assertEquals(2, fixture.idempotency.claimCalls)
+        assertEquals(2, fixture.idempotency.completeCalls)
+    }
+
+    @Test
+    fun `submit after withdrawal starts a new workflow`() {
+        val fixture = Fixture(draftDocument())
+        val first = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "submit-key")
+        fixture.service.withdrawReview(requireNotNull(first.workflowId), "withdraw-key")
+
+        val resubmitted = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "resubmit-key")
+
+        val workflow = requireNotNull(fixture.workflows.workflow)
+        assertEquals(fixture.document.id, resubmitted.documentId)
+        assertEquals(workflow.id, resubmitted.workflowId)
+        assertTrue(resubmitted.workflowId != first.workflowId)
+        assertEquals(workflow.tasks.single().id, resubmitted.taskId)
+        assertEquals(LifecycleState.PENDING_REVIEW, fixture.document.lifecycleState)
+    }
+
+    @Test
+    fun `submit rejects a damaged non pending active workflow without side effects`() {
+        val fixture = Fixture(draftDocument())
+        val damaged = pendingWorkflow(fixture.document.id, listOf(PRIMARY_USER.id)).also { workflow ->
+            workflow.approve(workflow.tasks.single().id, PRIMARY_USER.id, "done")
+        }
+        fixture.workflows.activeLookup = { _, _ -> damaged }
+
+        assertFailsWith<DocumentReviewConflictException> {
+            fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "damaged-key")
+        }
+
+        assertEquals(LifecycleState.DRAFT, fixture.document.lifecycleState)
+        assertEquals(0, fixture.documents.saveCalls)
+        assertEquals(0, fixture.workflows.saveCalls)
+        assertEquals(0, fixture.audits.records.size)
+        assertEquals(0, fixture.route.calls)
+        assertEquals(0, fixture.idempotency.completeCalls)
+        assertNull(fixture.idempotency.record)
     }
 
     @Test
@@ -512,6 +595,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         var saveCalls: Int = 0
             private set
         var beforeFirstDecision: ((WorkflowInstance) -> Unit)? = null
+        var activeLookup: ((Identifier, Identifier) -> WorkflowInstance?)? = null
         private var decisionHookUsed = false
 
         override fun findById(tenantId: Identifier, workflowId: Identifier): WorkflowInstance? {
@@ -534,6 +618,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         override fun findActiveByDocument(tenantId: Identifier, documentId: Identifier): WorkflowInstance? {
             check(transaction.active)
             events += "workflow:active"
+            activeLookup?.let { return it(tenantId, documentId) }
             return workflow?.takeIf {
                 it.tenantId == tenantId && it.documentId == documentId && it.state == WorkflowState.PENDING
             }
@@ -601,6 +686,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
     ) : DocumentReviewRouteProvider {
         var calls: Int = 0
             private set
+        var tasks: List<DocumentReviewRouteTask>? = null
 
         override fun id(): String = ROUTE_ID
 
@@ -610,7 +696,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
             events += "route:resolve"
             return DocumentReviewRoute(
                 DocumentReviewWorkflowService.REVIEW_WORKFLOW_TYPE,
-                listOf(DocumentReviewRouteTask(request.requestedReviewerId)),
+                tasks ?: listOf(DocumentReviewRouteTask(request.requestedReviewerId)),
             )
         }
     }
@@ -671,8 +757,10 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         private val transaction: RecordingTransaction,
         private val events: MutableList<String>,
     ) : RequestIdempotencyRepository {
-        var record: RequestIdempotencyRecord? = null
-            private set
+        // Records are scoped by key digest like the unique (tenant, key) index.
+        private val records = mutableMapOf<String, RequestIdempotencyRecord>()
+        val record: RequestIdempotencyRecord?
+            get() = records.values.singleOrNull()
         var claimCalls: Int = 0
             private set
         var completeCalls: Int = 0
@@ -681,7 +769,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         override fun findByKeyDigest(tenantId: Identifier, keyDigest: String): RequestIdempotencyRecord? {
             check(transaction.active)
             events += "idem:find"
-            return record?.takeIf { it.tenantId == tenantId && it.keyDigest == keyDigest }
+            return records[keyDigest]?.takeIf { it.tenantId == tenantId }
         }
 
         override fun claim(
@@ -692,7 +780,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
             check(transaction.active)
             claimCalls++
             events += "idem:claim"
-            record?.let { return RequestIdempotencyClaim(it, acquired = false) }
+            records[request.keyDigest]?.let { return RequestIdempotencyClaim(it, acquired = false) }
             val claimed = RequestIdempotencyRecord(
                 newRecordId,
                 request.tenantId,
@@ -709,9 +797,8 @@ class IdempotentDocumentReviewWorkflowServiceTest {
                 now,
                 now,
             )
-            val previous = record
-            transaction.onRollback { record = previous }
-            record = claimed
+            transaction.onRollback { records.remove(request.keyDigest) }
+            records[request.keyDigest] = claimed
             return RequestIdempotencyClaim(claimed, acquired = true)
         }
 
@@ -725,18 +812,17 @@ class IdempotentDocumentReviewWorkflowServiceTest {
             check(transaction.active)
             completeCalls++
             events += "idem:complete"
-            val current = checkNotNull(record)
+            val current = checkNotNull(records[keyDigest])
             check(current.id == recordId && current.tenantId == tenantId && current.keyDigest == keyDigest)
             val completed = copyCompleted(current, result, completedAt)
-            val previous = record
-            transaction.onRollback { record = previous }
-            record = completed
+            transaction.onRollback { records[keyDigest] = current }
+            records[keyDigest] = completed
             return completed
         }
 
         fun replaceResult(result: IdempotencyResult) {
             val current = checkNotNull(record)
-            record = copyCompleted(current, result, checkNotNull(current.completedTime))
+            records[current.keyDigest] = copyCompleted(current, result, checkNotNull(current.completedTime))
         }
 
         private fun copyCompleted(

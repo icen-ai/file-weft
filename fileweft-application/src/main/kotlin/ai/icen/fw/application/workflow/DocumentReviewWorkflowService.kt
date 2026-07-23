@@ -96,20 +96,31 @@ class DocumentReviewWorkflowService(
         require(context.action == SUBMIT_ACTION) {
             "Lifecycle mutation context belongs to a different action."
         }
-        val routeRequest = transaction.execute {
+        val snapshot = transaction.execute {
             val document = documentRepository.findById(context.tenantId, context.documentId)
                 ?: throw DocumentNotFoundException(context.documentId)
             if (document.tenantId != context.tenantId || document.id != context.documentId) {
                 throw DocumentNotFoundException(context.documentId)
             }
-            requireNoActiveReview(context.tenantId, context.documentId)
-            DocumentReviewRouteRequest(
+            val routeRequest = DocumentReviewRouteRequest(
                 tenantId = context.tenantId,
                 documentId = document.id,
                 documentNumber = document.documentNumber,
                 documentTitle = document.title,
                 submittedBy = context.operator.id,
                 requestedReviewerId = reviewerId,
+            )
+            // An already active review makes the submission return the existing
+            // workflow, so resolving a new route for it would be wasted work.
+            routeRequest to workflowRepository.findActiveByDocument(context.tenantId, context.documentId)
+        }
+        val routeRequest = snapshot.first
+        if (snapshot.second != null) {
+            return DocumentReviewSubmitPreparation(
+                lifecycle = context,
+                reviewerId = reviewerId,
+                routeRequest = routeRequest,
+                resolvedRoute = null,
             )
         }
         // A policy provider may be remote; it must not run while FileWeft owns a database transaction.
@@ -162,7 +173,26 @@ class DocumentReviewWorkflowService(
         }
         // Preserve the shared document -> asset -> workflow lock order.
         validated.verifyLocked(document, SUBMIT_ACTION)
-        requireNoActiveReview(context.tenantId, context.documentId)
+        val activeWorkflow = workflowRepository.findActiveByDocument(context.tenantId, context.documentId)
+        if (activeWorkflow != null) {
+            // Submission is naturally idempotent per document: the unique
+            // active-workflow index already guarantees a single active review,
+            // so a repeated submission returns it instead of conflicting. This
+            // branch mutates nothing and must not append a second submission
+            // audit record.
+            if (
+                activeWorkflow.tenantId != context.tenantId ||
+                activeWorkflow.documentId != document.id ||
+                activeWorkflow.state != WorkflowState.PENDING
+            ) {
+                throw DocumentReviewConflictException("Document already has an active review workflow.")
+            }
+            return DocumentReviewMutationResult(document, activeWorkflow)
+        }
+        val resolvedRoute = preparation.resolvedRoute
+            ?: throw DocumentReviewConflictException(
+                "Document review workflow changed while its review route was resolved; retry submission.",
+            )
         if (
             document.documentNumber != preparation.routeRequest.documentNumber ||
             document.title != preparation.routeRequest.documentTitle
@@ -177,9 +207,9 @@ class DocumentReviewWorkflowService(
             id = workflowId,
             tenantId = context.tenantId,
             documentId = document.id,
-            workflowType = preparation.resolvedRoute.route.workflowType,
+            workflowType = resolvedRoute.route.workflowType,
             state = WorkflowState.PENDING,
-            tasks = preparation.resolvedRoute.route.tasks.map { routeTask ->
+            tasks = resolvedRoute.route.tasks.map { routeTask ->
                 WorkflowTask(
                     id = identifierGenerator.nextId(),
                     tenantId = context.tenantId,
@@ -201,7 +231,7 @@ class DocumentReviewWorkflowService(
             details = mapOf(
                 "workflowId" to workflow.id.value,
                 "reviewerId" to (preparation.reviewerId?.value ?: "UNASSIGNED"),
-                "reviewRouteId" to preparation.resolvedRoute.routeId,
+                "reviewRouteId" to resolvedRoute.routeId,
                 "reviewerIds" to workflow.tasks.joinToString(",") { task -> task.assigneeId?.value ?: "UNASSIGNED" },
             ),
         )
@@ -597,12 +627,6 @@ class DocumentReviewWorkflowService(
         throw WorkflowNotFoundException(workflowId)
     } catch (_: DocumentNotFoundException) {
         throw WorkflowNotFoundException(workflowId)
-    }
-
-    private fun requireNoActiveReview(tenantId: Identifier, documentId: Identifier) {
-        if (workflowRepository.findActiveByDocument(tenantId, documentId) != null) {
-            throw DocumentReviewConflictException("Document already has an active review workflow.")
-        }
     }
 
     companion object {

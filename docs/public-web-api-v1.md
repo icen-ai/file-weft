@@ -103,7 +103,7 @@ Metadata schema 是不可变、带版本的公共契约。字段类型固定为 
 - `POST /fileweft/v1/workflows/{workflowId}/withdraw`：撤回仍在等待审批的工作流。
 - `POST /fileweft/v1/workflows/{workflowId}/tasks/{taskId}/approve|reject`：明确支持多人会签，绝不以仅含 document ID 的“audit”路由猜测任务。
 
-`publish` 可选 `deliveryProfileId`，`submit` 可选 `reviewRouteId`，审批/驳回可选有界评论；这些值进入服务端 typed-command 指纹。同一 key 改变动作、资源、任务、评论、路由或交付档案都会返回 `409`。
+`publish` 可选 `deliveryProfileId`，`submit` 可选 `reviewRouteId`，审批/驳回可选有界评论；这些值进入服务端 typed-command 指纹。同一 key 改变动作、资源、任务、评论、路由或交付档案都会返回 `409`。`submit` 成功回执的 `taskId` 是路由产生的第一个待办 task（会签多 task 时仍只回第一个），其持久化重放只存文档与工作流标识，`taskId` 为 `null`。同一文档同时最多一个活跃审批流；重复 `submit`（即使换用新幂等键）不再冲突，而是返回指向现有工作流的同一回执，且不重复写提交审计；publish 等其它入口遇到活跃审批流仍按原语义冲突。
 
 审批撤回要求恰好一个 `Idempotency-Key`，只允许 `PENDING_REVIEW` 文档及其 `PENDING` 工作流转为文档 `DRAFT`、工作流 `WITHDRAWN`。可信 `submittedBy` 与当前用户相同时可按提交者身份撤回；否则必须通过 `document:review:withdraw` 策略授权。V029 之前的历史工作流允许 `submittedBy=NULL`，这种记录不能猜测提交者，只能由策略授权的操作者撤回。每次重放仍重新认证、检查租户和目录可见性；跨租户、隐藏或竞态变化不会泄露工作流存在性，已完成审批固定冲突。最终事务遵守 idempotency → document → asset（目录模式）→ workflow 锁序，并原子保存状态、审计与稳定回执，使撤回与最后一次审批决定只能有一个成功结果。
 
