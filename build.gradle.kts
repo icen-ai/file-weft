@@ -565,7 +565,7 @@ val verifyReleaseCredentialHygiene = tasks.register("verifyReleaseCredentialHygi
 
 val verifyCnbReleaseIdentity = tasks.register("verifyCnbReleaseIdentity") {
     group = "verification"
-    description = "Verifies that the CNB Tag, remote main HEAD, commit, and Gradle version identify one release."
+    description = "Verifies that the CNB Tag, protected release branch HEAD, commit, and Gradle version identify one release."
     notCompatibleWithConfigurationCache("CNB release identity verification reads the checked-out Git commit at execution time.")
     inputs.property("cnbEvent", providers.environmentVariable("CNB_EVENT").orElse(""))
     inputs.property("cnbTag", providers.environmentVariable("CNB_BRANCH").orElse(""))
@@ -616,32 +616,37 @@ val verifyCnbReleaseIdentity = tasks.register("verifyCnbReleaseIdentity") {
             "Checked-out commit '$checkedOutCommit' does not match CNB_COMMIT '$cnbCommit'."
         }
 
-        val remoteMainProcess = ProcessBuilder(
+        // A release is identified by a stable tag pointing at the HEAD of a
+        // protected release branch: either main, or the maintenance branch of
+        // the tag's own X.Y line (ver/X.Y) so patch releases do not require
+        // rewinding or merging through main.
+        val maintenanceBranch = "ver/" + expectedTag.removePrefix("v").substringBeforeLast('.')
+        val releaseSourceRefs = listOf("refs/heads/main", "refs/heads/$maintenanceBranch")
+        val remoteBranchProcess = ProcessBuilder(
             "git",
             "ls-remote",
             "--exit-code",
             "origin",
-            "refs/heads/main",
+            *releaseSourceRefs.toTypedArray(),
         )
             .directory(rootProject.projectDir)
             .redirectErrorStream(true)
             .apply { environment()["GIT_TERMINAL_PROMPT"] = "0" }
             .start()
-        val remoteMainOutput = remoteMainProcess.inputStream.bufferedReader(Charsets.UTF_8)
+        val remoteBranchOutput = remoteBranchProcess.inputStream.bufferedReader(Charsets.UTF_8)
             .use { reader -> reader.readText().trim() }
-        require(remoteMainProcess.waitFor() == 0) {
-            "Could not resolve the remote main HEAD without prompting: $remoteMainOutput"
+        require(remoteBranchProcess.waitFor() == 0) {
+            "Could not resolve any protected release branch ${releaseSourceRefs} without prompting: $remoteBranchOutput"
         }
-        val remoteMainFields = remoteMainOutput.split(Regex("\\s+")).filter(String::isNotEmpty)
-        require(remoteMainFields.size == 2 && remoteMainFields[1] == "refs/heads/main") {
-            "Remote main lookup returned an unexpected response: $remoteMainOutput"
-        }
-        val remoteMainCommit = remoteMainFields[0]
-        require(remoteMainCommit.matches(Regex("[0-9a-fA-F]{40}"))) {
-            "Remote main HEAD must be a full 40-character Git commit SHA."
-        }
-        require(remoteMainCommit == cnbCommit) {
-            "Release commit '$cnbCommit' is not the current remote main HEAD '$remoteMainCommit'."
+        val remoteBranches = remoteBranchOutput.lines()
+            .map { line -> line.split(Regex("\\s+")).filter(String::isNotEmpty) }
+            .filter { fields -> fields.size == 2 && fields[0].matches(Regex("[0-9a-fA-F]{40}")) }
+            .filter { fields -> fields[1] in releaseSourceRefs }
+            .associate { fields -> fields[1] to fields[0] }
+        val releaseSourceRef = remoteBranches.entries.firstOrNull { entry -> entry.value == cnbCommit }?.key
+        require(releaseSourceRef != null) {
+            "Release commit '$cnbCommit' is not the current HEAD of any protected release branch " +
+                "${releaseSourceRefs.joinToString(" or ")} (resolved: $remoteBranches)."
         }
     }
 }

@@ -647,12 +647,13 @@ test("release publication destroys its token on both success and failure paths",
   );
 });
 
-test("verified release publication is restricted to the current remote main HEAD", () => {
+test("verified release publication is restricted to a protected release branch HEAD", () => {
   assert.ok(buildConfiguration.includes('"ls-remote",'));
-  assert.ok(buildConfiguration.includes('"refs/heads/main",'));
+  assert.ok(buildConfiguration.includes('"refs/heads/main"'));
+  assert.ok(buildConfiguration.includes('"refs/heads/$maintenanceBranch"'));
+  assert.ok(buildConfiguration.includes('"ver/" + expectedTag.removePrefix("v").substringBeforeLast'));
   assert.ok(buildConfiguration.includes('environment()["GIT_TERMINAL_PROMPT"] = "0"'));
-  assert.ok(buildConfiguration.includes("remoteMainCommit == cnbCommit"));
-  assert.ok(buildConfiguration.includes("is not the current remote main HEAD"));
+  assert.ok(buildConfiguration.includes("is not the current HEAD of any protected release branch"));
 });
 
 test("every tag pipeline rejects non-stable tags before expensive work", () => {
