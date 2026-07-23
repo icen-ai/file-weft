@@ -85,8 +85,9 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(fixture.workflows.workflow?.tasks?.single()?.id, first.taskId)
         assertEquals(first.documentId, replay.documentId)
         assertEquals(first.workflowId, replay.workflowId)
-        // A durable submit replay stores document and workflow identifiers only.
-        assertNull(replay.taskId)
+        // A durable submit replay restores the persisted first pending task.
+        assertEquals(first.taskId, replay.taskId)
+        assertEquals(first.taskId, fixture.idempotency.record?.result?.subresourceId)
         assertEquals(LifecycleState.PENDING_REVIEW, fixture.document.lifecycleState)
         assertEquals(1, fixture.documents.saveCalls)
         assertEquals(1, fixture.workflows.saveCalls)
@@ -130,7 +131,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(first.taskId, repeated.taskId)
         assertEquals(repeated.documentId, replayed.documentId)
         assertEquals(repeated.workflowId, replayed.workflowId)
-        assertNull(replayed.taskId)
+        assertEquals(repeated.taskId, replayed.taskId)
         assertEquals(LifecycleState.PENDING_REVIEW, fixture.document.lifecycleState)
         assertEquals(1, fixture.documents.saveCalls)
         assertEquals(1, fixture.workflows.saveCalls)
@@ -139,6 +140,31 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(1, fixture.route.calls)
         assertEquals(2, fixture.idempotency.claimCalls)
         assertEquals(2, fixture.idempotency.completeCalls)
+    }
+
+    @Test
+    fun `submit replay of a legacy result without a persisted task keeps a null task id`() {
+        val fixture = Fixture(draftDocument())
+
+        val first = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "submit-key")
+        // Records completed by 0.3.1 have no persisted result subresource.
+        fixture.idempotency.replaceResult(
+            IdempotencyResult(
+                "DOCUMENT",
+                fixture.document.id,
+                "WORKFLOW",
+                requireNotNull(first.workflowId),
+            ),
+        )
+
+        val replay = fixture.service.submitForReview(fixture.document.id, PRIMARY_USER.id, ROUTE_ID, "submit-key")
+
+        assertEquals(first.documentId, replay.documentId)
+        assertEquals(first.workflowId, replay.workflowId)
+        assertNull(replay.taskId)
+        assertEquals(1, fixture.documents.saveCalls)
+        assertEquals(1, fixture.workflows.saveCalls)
+        assertEquals(1, fixture.audits.records.size)
     }
 
     @Test
@@ -189,6 +215,9 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(first.documentId, replay.documentId)
         assertEquals(workflow.id, replay.workflowId)
         assertEquals(workflow.tasks.single().id, replay.taskId)
+        // A decision receipt replays from the request binding; its persisted
+        // result never carries a subresource slot.
+        assertNull(fixture.idempotency.record?.result?.subresourceId)
         assertEquals(LifecycleState.PUBLISHING, fixture.document.lifecycleState)
         assertEquals(WorkflowState.APPROVED, fixture.workflows.workflow?.state)
         assertEquals(1, fixture.documents.saveCalls)
@@ -213,6 +242,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(first.documentId, replay.documentId)
         assertEquals(workflow.id, replay.workflowId)
         assertEquals(workflow.tasks.single().id, replay.taskId)
+        assertNull(fixture.idempotency.record?.result?.subresourceId)
         assertEquals(LifecycleState.REJECTED, fixture.document.lifecycleState)
         assertEquals(WorkflowState.REJECTED, fixture.workflows.workflow?.state)
         assertEquals(1, fixture.documents.saveCalls)
@@ -241,6 +271,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
         assertEquals(first.documentId, replay.documentId)
         assertEquals(workflow.id, replay.workflowId)
         assertNull(replay.taskId)
+        assertNull(fixture.idempotency.record?.result?.subresourceId)
         assertEquals(LifecycleState.DRAFT, fixture.document.lifecycleState)
         assertEquals(WorkflowState.WITHDRAWN, fixture.workflows.workflow?.state)
         assertEquals(1, fixture.documents.saveCalls)
@@ -348,6 +379,7 @@ class IdempotentDocumentReviewWorkflowServiceTest {
             IdempotencyResult("DOCUMENT", Identifier("document-other"), "WORKFLOW", workflow.id),
             IdempotencyResult("DOCUMENT", document.id, "DOCUMENT", workflow.id),
             IdempotencyResult("DOCUMENT", document.id, "WORKFLOW", Identifier("workflow-other")),
+            IdempotencyResult("DOCUMENT", document.id, "WORKFLOW", workflow.id, Identifier("task-other")),
         )
 
         corruptions.forEach { corruption ->

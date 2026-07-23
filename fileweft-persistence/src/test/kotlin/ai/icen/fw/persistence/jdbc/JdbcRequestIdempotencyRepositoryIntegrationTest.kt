@@ -66,6 +66,7 @@ class JdbcRequestIdempotencyRepositoryIntegrationTest {
                     Identifier("document-1"),
                     "WORKFLOW",
                     Identifier("workflow-1"),
+                    Identifier("task-1"),
                 ),
                 110,
             )
@@ -77,6 +78,7 @@ class JdbcRequestIdempotencyRepositoryIntegrationTest {
         assertEquals(Identifier("document-1"), completed.result?.resourceId)
         assertEquals("WORKFLOW", completed.result?.relatedResourceType)
         assertEquals(Identifier("workflow-1"), completed.result?.relatedResourceId)
+        assertEquals(Identifier("task-1"), completed.result?.subresourceId)
 
         val replay = transaction.execute {
             repository.claim(request, Identifier("idempotency-replay"), 120)
@@ -84,6 +86,7 @@ class JdbcRequestIdempotencyRepositoryIntegrationTest {
         assertFalse(replay.acquired)
         assertEquals(completed.id, replay.record.id)
         assertEquals(completed.result?.resourceId, replay.record.result?.resourceId)
+        assertEquals(Identifier("task-1"), replay.record.result?.subresourceId)
         assertNull(transaction.execute { repository.findByKeyDigest(Identifier("tenant-foreign"), request.keyDigest) })
     }
 
@@ -103,6 +106,9 @@ class JdbcRequestIdempotencyRepositoryIntegrationTest {
         val secondRecord = transaction.execute { repository.findByKeyDigest(second.tenantId, second.keyDigest) }
         assertEquals(Identifier("document-1"), firstRecord?.result?.resourceId)
         assertEquals(Identifier("document-2"), secondRecord?.result?.resourceId)
+        // Results without a subresource slot round trip as null.
+        assertNull(firstRecord?.result?.subresourceId)
+        assertNull(secondRecord?.result?.subresourceId)
         assertEquals(2, countRows("fw_idempotency_record"))
     }
 

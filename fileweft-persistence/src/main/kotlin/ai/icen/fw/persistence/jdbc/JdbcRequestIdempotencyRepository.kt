@@ -62,11 +62,12 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
             statement.setString(2, result.resourceId.value)
             statement.setString(3, result.relatedResourceType)
             statement.setString(4, result.relatedResourceId?.value)
-            statement.setLong(5, completedAt)
+            statement.setString(5, result.subresourceId?.value)
             statement.setLong(6, completedAt)
-            statement.setString(7, tenantId.value)
-            statement.setString(8, recordId.value)
-            statement.setString(9, keyDigest)
+            statement.setLong(7, completedAt)
+            statement.setString(8, tenantId.value)
+            statement.setString(9, recordId.value)
+            statement.setString(10, keyDigest)
             statement.executeUpdate()
         }
         if (updated == 0) {
@@ -103,6 +104,7 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
                 resourceId = Identifier(requireNotNull(result.getString("result_resource_id"))),
                 relatedResourceType = result.getString("result_related_resource_type"),
                 relatedResourceId = result.getString("result_related_resource_id")?.let(::Identifier),
+                subresourceId = result.getString("result_subresource_id")?.let(::Identifier),
             )
         } else {
             null
@@ -132,7 +134,8 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
         const val SELECT_COLUMNS = """
             id, tenant_id, key_digest, operator_id, action, resource_type, resource_id, subresource_id,
             request_fingerprint, record_status, result_resource_type, result_resource_id,
-            result_related_resource_type, result_related_resource_id, completed_time, created_time, updated_time
+            result_related_resource_type, result_related_resource_id, result_subresource_id,
+            completed_time, created_time, updated_time
         """
 
         const val FIND_BY_KEY_DIGEST_SQL =
@@ -147,6 +150,7 @@ class JdbcRequestIdempotencyRepository : RequestIdempotencyRepository {
                 result_resource_id = ?,
                 result_related_resource_type = ?,
                 result_related_resource_id = ?,
+                result_subresource_id = ?,
                 completed_time = ?,
                 updated_time = ?
             WHERE tenant_id = ? AND id = ? AND key_digest = ? AND record_status = 'IN_PROGRESS'

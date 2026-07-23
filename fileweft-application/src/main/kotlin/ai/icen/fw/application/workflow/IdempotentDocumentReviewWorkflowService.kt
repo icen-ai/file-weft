@@ -203,11 +203,17 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
             IdempotentCommand {
                 DocumentLifecycleMutationTransaction.execute {
                     val result = reviews.submitForReviewInCurrentTransaction(validated, preparation)
+                    // The receipt task is stable result evidence: persisting it
+                    // lets a same-key replay return the identical receipt. The
+                    // existing-workflow branch takes the same path, so its
+                    // first pending task is persisted as well.
+                    val taskId = firstPendingTaskId(result.workflow)
                     fresh(
                         result = result,
                         expectedDocumentId = context.documentId,
                         expectedWorkflowId = null,
-                        taskId = firstPendingTaskId(result.workflow),
+                        taskId = taskId,
+                        resultSubresourceId = taskId,
                     )
                 }
             },
@@ -348,10 +354,11 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
     }
 
     /**
-     * Task exposed on a fresh submit receipt. Routes with several parallel
-     * tasks still yield a single receipt identifier: the first pending task.
-     * An abnormal workflow without any pending task degrades to a null task
-     * id instead of failing the submission.
+     * Task exposed on a submit receipt and persisted as its replay evidence.
+     * Routes with several parallel tasks still yield a single receipt
+     * identifier: the first pending task. An abnormal workflow without any
+     * pending task degrades to a null task id instead of failing the
+     * submission.
      */
     private fun firstPendingTaskId(workflow: WorkflowInstance): Identifier? =
         workflow.tasks.firstOrNull { task -> task.state == WorkflowTaskState.PENDING }?.id
@@ -361,6 +368,7 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
         expectedDocumentId: Identifier,
         expectedWorkflowId: Identifier?,
         taskId: Identifier?,
+        resultSubresourceId: Identifier? = null,
     ): IdempotentCommandResult<DocumentLifecycleReceipt> {
         val document = result.document
         val workflow = result.workflow
@@ -380,6 +388,7 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
                 document.id,
                 WORKFLOW_RESOURCE_TYPE,
                 workflow.id,
+                resultSubresourceId,
             ),
         )
     }
@@ -395,11 +404,17 @@ internal class IdempotentDocumentReviewWorkflowDelegate(
             result.resourceId != documentId ||
             result.relatedResourceType != WORKFLOW_RESOURCE_TYPE ||
             result.relatedResourceId == null ||
-            (workflowId != null && result.relatedResourceId != workflowId)
+            (workflowId != null && result.relatedResourceId != workflowId) ||
+            (workflowId != null && result.subresourceId != null)
         ) {
             throw IdempotencyStoreException("Stored review receipt does not match the requested operation.")
         }
-        return DocumentLifecycleReceipt(documentId, result.relatedResourceId, taskId)
+        // Only a submit replay lacks an expected workflow binding, so only it
+        // restores the persisted first pending task; fresh() already verified
+        // that the persisted id belongs to this workflow. Results completed
+        // before the subresource slot existed replay with a null task id, as
+        // they did in 0.3.1.
+        return DocumentLifecycleReceipt(documentId, result.relatedResourceId, taskId ?: result.subresourceId)
     }
 
     private fun requireBoundaryIdentifier(identifier: Identifier) {

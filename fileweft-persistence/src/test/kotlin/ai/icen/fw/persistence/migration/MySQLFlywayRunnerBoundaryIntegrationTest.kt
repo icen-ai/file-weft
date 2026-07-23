@@ -30,7 +30,7 @@ class MySQLFlywayRunnerBoundaryIntegrationTest {
             acceptedNames.forEach { database ->
                 recreateDatabase(database)
                 val dataSource = dataSource(database)
-                assertEquals(29, FlywayMigrationRunner(dataSource, database).migrate())
+                assertEquals(30,  FlywayMigrationRunner(dataSource, database).migrate())
                 FlywayMigrationRunner(dataSource, database).validate()
             }
 
@@ -62,8 +62,8 @@ class MySQLFlywayRunnerBoundaryIntegrationTest {
             start.countDown()
             val counts = executions.map { future -> future.get(30, TimeUnit.SECONDS) }
 
-            assertTrue(counts.all { count -> count in 0..29 })
-            assertEquals(29, counts.sum())
+            assertTrue(counts.all { count -> count in 0..30 })
+            assertEquals(30,  counts.sum())
             FlywayMigrationRunner(dataSource(CONCURRENT_DATABASE)).validate()
         } finally {
             executor.shutdownNow()
@@ -115,7 +115,7 @@ class MySQLFlywayRunnerBoundaryIntegrationTest {
                 }
             }
 
-            assertEquals(29, migration.get(30, TimeUnit.SECONDS))
+            assertEquals(30,  migration.get(30, TimeUnit.SECONDS))
             FlywayMigrationRunner(dataSource(IN_FLIGHT_HISTORY_DATABASE)).validate()
         } finally {
             continueAfterHistoryCreation.countDown()
@@ -132,7 +132,7 @@ class MySQLFlywayRunnerBoundaryIntegrationTest {
         recreateDatabase(NUMERIC_BOOLEAN_DATABASE)
         try {
             val dataSource = dataSource(NUMERIC_BOOLEAN_DATABASE, "tinyInt1isBit=false")
-            assertEquals(29, FlywayMigrationRunner(dataSource).migrate())
+            assertEquals(30,  FlywayMigrationRunner(dataSource).migrate())
             FlywayMigrationRunner(dataSource).validate()
         } finally {
             dropDatabase(NUMERIC_BOOLEAN_DATABASE)

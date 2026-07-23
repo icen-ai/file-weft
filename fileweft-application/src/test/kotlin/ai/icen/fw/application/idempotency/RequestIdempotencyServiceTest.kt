@@ -90,6 +90,15 @@ class RequestIdempotencyServiceTest {
             IdempotencyResult("DOCUMENT", Identifier("document-1"), "WORKFLOW", null)
         }
         assertThrows<IllegalArgumentException> {
+            IdempotencyResult(
+                "DOCUMENT",
+                Identifier("document-1"),
+                "WORKFLOW",
+                Identifier("workflow-1"),
+                Identifier(" task-1"),
+            )
+        }
+        assertThrows<IllegalArgumentException> {
             inProgressRecord(request("shape"), result = result(), completedTime = null)
         }
         assertThrows<IllegalArgumentException> {
@@ -271,6 +280,19 @@ class RequestIdempotencyServiceTest {
         }
         assertTrue(badCompleteEvents.contains("tx:rollback"))
 
+        val badSubresourceEvents = mutableListOf<String>()
+        val badSubresourceRepository = RecordingRepository(badSubresourceEvents).apply {
+            completionResultOverride = result(subresourceId = "task-other")
+        }
+        assertThrows<IdempotencyStoreException> {
+            service(badSubresourceRepository, badSubresourceEvents, SequenceClock(100, 110)).execute(
+                request("malicious-subresource"),
+                IdempotencyReplayMapper { "replay" },
+                IdempotentCommand { IdempotentCommandResult("fresh", result(subresourceId = "task-1")) },
+            )
+        }
+        assertTrue(badSubresourceEvents.contains("tx:rollback"))
+
         val badClaimTimeEvents = mutableListOf<String>()
         val badClaimTimeRepository = RecordingRepository(badClaimTimeEvents).apply {
             claimCreatedTimeOverride = 99
@@ -353,11 +375,12 @@ class RequestIdempotencyServiceTest {
         subresourceId = subresourceId?.let(::Identifier),
     )
 
-    private fun result(documentId: String = "document-1") = IdempotencyResult(
+    private fun result(documentId: String = "document-1", subresourceId: String? = null) = IdempotencyResult(
         resourceType = "DOCUMENT",
         resourceId = Identifier(documentId),
         relatedResourceType = "WORKFLOW",
         relatedResourceId = Identifier("workflow-1"),
+        subresourceId = subresourceId?.let(::Identifier),
     )
 
     private fun inProgressRecord(

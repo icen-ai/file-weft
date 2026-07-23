@@ -21,11 +21,13 @@ import ai.icen.fw.domain.document.Document
 /**
  * Stable receipt for a formal lifecycle command or its durable replay.
  *
- * A fresh review submission carries the first pending task of its workflow in
+ * A review submission carries the first pending task of its workflow in
  * [taskId]; routes with several parallel tasks still return that single first
- * pending task. A durable submit replay stores only the document and workflow
- * identifiers, so its [taskId] is null. Decision receipts always carry the
- * decided task, fresh and replayed alike.
+ * pending task. A durable submit replay restores the same [taskId] from the
+ * persisted idempotency result; only submit records completed before the task
+ * became part of the persisted result (0.3.1) still replay with a null
+ * [taskId]. Decision receipts always carry the decided task, fresh and
+ * replayed alike.
  */
 class DocumentLifecycleReceipt @JvmOverloads constructor(
     val documentId: Identifier,

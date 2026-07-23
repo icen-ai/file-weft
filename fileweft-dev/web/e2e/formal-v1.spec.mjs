@@ -472,9 +472,9 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     await request.post(`/fileweft/v1/documents/${documentId}/submit`, submitOptions),
     200,
   );
-  // A persisted replay stores only the document and workflow identifiers, so
-  // the replayed receipt is the fresh receipt with taskId degraded to null.
-  expect(replayedSubmit).toEqual({ ...submitted, taskId: null });
+  // A persisted replay restores the fresh receipt, including the first
+  // pending task id stored in the idempotency result.
+  expect(replayedSubmit).toEqual(submitted);
 
   const submitConflict = await request.post(`/fileweft/v1/documents/${documentId}/submit`, {
     headers: submitOptions.headers,

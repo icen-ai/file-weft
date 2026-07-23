@@ -442,6 +442,7 @@ val expectedFileWeftMigrationResources = listOf(
     "V027__stabilize_worker_claim_order.sql",
     "V028__enforce_binary_identifier_collation.sql",
     "V029__persist_workflow_submitter.sql",
+    "V030__persist_idempotency_result_subresource.sql",
 ).flatMap { migration ->
     fileWeftMigrationDialects.map { dialect -> "ai/icen/fw/db/migration/$dialect/$migration" }
 }
@@ -1238,7 +1239,7 @@ gradle.projectsEvaluated {
                 val missingSources = expected - sourceFiles.keys
                 val unexpectedSources = sourceFiles.keys - expected
                 require(missingSources.isEmpty() && unexpectedSources.isEmpty()) {
-                        "FileWeft migration source inputs differ from the reviewed V001-V029 set; " +
+                        "FileWeft migration source inputs differ from the reviewed V001-V030 set; " +
                         "missing=$missingSources, unexpected=$unexpectedSources."
                 }
                 require(archive.isFile) { "FileWeft persistence JAR was not created: ${archive.absolutePath}" }
@@ -1261,7 +1262,7 @@ gradle.projectsEvaluated {
                     val missing = expected - actual
                     val unexpected = actual - expected
                     require(missing.isEmpty() && unexpected.isEmpty()) {
-                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V029 set; " +
+                        "FileWeft persistence JAR migration resources differ from the reviewed V001-V030 set; " +
                             "missing=$missing, unexpected=$unexpected."
                     }
                     val empty = expected.filter { resource -> fileEntries.getValue(resource).size <= 0L }

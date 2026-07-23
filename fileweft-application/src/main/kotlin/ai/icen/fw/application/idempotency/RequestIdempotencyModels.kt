@@ -63,17 +63,27 @@ enum class RequestIdempotencyStatus {
     COMPLETED,
 }
 
-/** Only stable resource identifiers may be replayed; mutable domain state is never persisted here. */
-class IdempotencyResult(
+/**
+ * Only stable resource identifiers may be replayed; mutable domain state is never persisted here.
+ *
+ * The optional subresource slot carries one framework-generated stable result
+ * identifier, such as the first pending task created by a review submission;
+ * it never carries user input.
+ */
+class IdempotencyResult @JvmOverloads constructor(
     resourceType: String,
     resourceId: Identifier,
     relatedResourceType: String?,
     relatedResourceId: Identifier?,
+    subresourceId: Identifier? = null,
 ) {
     val resourceType: String = boundaryToken(resourceType, "Idempotency result resource type")
     val resourceId: Identifier = boundedIdentifier(resourceId, "Idempotency result resource id", BOUNDARY_ID_MAX_LENGTH)
     val relatedResourceType: String?
     val relatedResourceId: Identifier?
+    val subresourceId: Identifier? = subresourceId?.let {
+        boundedIdentifier(it, "Idempotency result subresource id", BOUNDARY_ID_MAX_LENGTH)
+    }
 
     init {
         if ((relatedResourceType == null) != (relatedResourceId == null)) {
@@ -173,7 +183,8 @@ internal fun sameResult(first: IdempotencyResult, second: IdempotencyResult): Bo
     first.resourceType == second.resourceType &&
         first.resourceId == second.resourceId &&
         first.relatedResourceType == second.relatedResourceType &&
-        first.relatedResourceId == second.relatedResourceId
+        first.relatedResourceId == second.relatedResourceId &&
+        first.subresourceId == second.subresourceId
 
 private fun boundaryToken(value: String, label: String): String {
     if (!BOUNDARY_TOKEN_PATTERN.matches(value)) {

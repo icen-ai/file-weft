@@ -60,7 +60,7 @@ class KingbaseFlywayMigrationRunnerIntegrationTest {
     @Test
     fun `applies all kingbase migrations and validates`() {
         val migrations = FlywayMigrationRunner(dataSource).migrate()
-        assertEquals(29, migrations)
+        assertEquals(30,  migrations)
 
         dataSource.connection.use { connection ->
             assertTrue(tableExists(connection, "fw_file_object"))
