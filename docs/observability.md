@@ -34,7 +34,9 @@ FileWeft 的业务层只依赖 `FileWeftMetrics`、`FileWeftGaugeRecorder` 和 `
 
 这是一份跨全部租户的数据库运行快照，`state` 是默认 Micrometer 实现唯一保留的标签；它刻意不以租户维度输出，避免敏感信息和高基数时间序列。需要定位某个租户、文档或下游时，应从审计、操作日志、交付状态和 Trace 进入，而不是给指标补标签。
 
-默认启用（`fileweft.outbox.backlog-metrics-enabled=true`）后，每个符合条件的 Worker 进程至多每 30 秒尝试一次，间隔由 `fileweft.outbox.backlog-metrics-interval-millis` 控制（必须为正数）。读取使用 `fileweft.outbox.backlog-metrics-query-timeout-seconds` 限制单条 JDBC 聚合语句，默认 5 秒。采样在 Outbox 轮询结束后提交到独立的单线程、零队列观察通道：Worker 不等待数据库聚合，通道已有慢查询时不会堆积第二个采样任务，而是跳过本轮。实际执行的读取在独立短数据库事务中完成，指标写入发生在事务结束之后；查询或指标后端失败都不会影响 Outbox 确认、重试或租约恢复。读取只聚合 `PENDING`、`RETRY`、`RUNNING` 和 `FAILED` 的活跃/需运维状态，不扫描 `SUCCESS` 历史记录。Web 节点默认 `fileweft.worker.enabled=false`，不会采样；只有同时启用 `fileweft.worker.enabled=true` 和 `fileweft.worker.process-outbox=true` 的 Outbox Worker 会采样。仅处理后台任务或续传清理的 Worker 不会采样这组指标。
+默认启用（`fileweft.outbox.backlog-metrics-enabled=true`）后，每个符合条件的 Worker 进程至多每 30 秒尝试一次，间隔由 `fileweft.outbox.backlog-metrics-interval-millis` 控制（必须为正数）。读取使用 `fileweft.outbox.backlog-metrics-query-timeout-seconds` 限制单条 JDBC 聚合语句，默认 5 秒。采样在 Outbox 轮询结束后提交到独立的单线程、零队列观察通道：Worker 不等待数据库聚合，通道已有慢查询时不会堆积第二个采样任务，而是跳过本轮。实际执行的读取在独立短数据库事务中完成，指标写入发生在事务结束之后；查询或指标后端失败都不会影响 Outbox 确认、重试或租约恢复。读取只聚合 `PENDING`、`RETRY`、`RUNNING` 和 `FAILED` 的活跃/需运维状态，不扫描 `SUCCESS` 历史记录。Web 节点默认 `fileweft.worker.enabled=false`，不会发布这组 gauge；只有同时启用 `fileweft.worker.enabled=true` 和 `fileweft.worker.process-outbox=true` 的 Outbox Worker 会发布。仅处理后台任务或续传清理的 Worker 不会采样这组指标。
+
+未启用 Worker 的 Web 节点会以同一间隔采样积压用于提醒：当 `ready` 与 `delayed` 事件数之和大于 0 时输出一条 WARN 日志（"N outbox event(s) pending but no outbox worker is enabled in this process; deploy the worker to process deliveries."），防止只部署 API 而忘记部署 Worker 时事件永远滞留。该提醒按值节流——积压从 0 变为正数、或正数期间计数变化时各输出一次，归零后重新武装；它不发布任何 gauge，采样失败（含数据库不可用）保持静默并等待下一间隔，设置 `fileweft.outbox.backlog-metrics-enabled=false` 可同时关闭该提醒。
 
 `fileweft.outbox_backlog_observation_failure=1` 表示最近一个已执行的读事务失败；下一次成功快照会写回 `0`。因零队列通道拒绝、进程正在退出或时钟不可用而未实际运行的采样不会在 Outbox Worker 线程调用任意客户 Gauge 适配器，因此应同时观察该值、Worker 可用性与 `ready` 年龄，而不能把“没有新样本”误判为成功。
 

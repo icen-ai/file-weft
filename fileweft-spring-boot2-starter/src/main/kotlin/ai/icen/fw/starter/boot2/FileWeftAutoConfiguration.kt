@@ -52,6 +52,7 @@ private const val LEGACY_AGENT_AUTOCONFIGURATION_PROPERTY =
     FileWeftMigrationConfiguration::class,
     FileWeftRuntimeConfiguration::class,
     FileWeftWorkerSchedulingConfiguration::class,
+    FileWeftOutboxBacklogWarningConfiguration::class,
 )
 class FileWeftAutoConfiguration {
     @Bean
