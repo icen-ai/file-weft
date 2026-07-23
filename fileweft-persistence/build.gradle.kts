@@ -94,6 +94,7 @@ fun registerFlywayHostCompatibilityTest(
 ): org.gradle.api.tasks.TaskProvider<Test> = tasks.register<Test>(name) {
     group = "verification"
     description = descriptionText
+    notCompatibleWithConfigurationCache("Flyway host compatibility lanes resolve a versioned host runtime classpath that the configuration cache cannot serialize.")
     testClassesDirs = testSourceSet.get().output.classesDirs
     classpath = testSourceSet.get().output + sourceSets.main.get().output + runtime
     useJUnitPlatform()

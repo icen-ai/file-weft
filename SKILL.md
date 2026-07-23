@@ -86,7 +86,7 @@ Do not call a downstream from a controller or inside a database transaction. Pub
 
 ## Configure PostgreSQL migrations safely
 
-The 0.0.3 release contract validates PostgreSQL, native MySQL 8.x from 8.0.17, and KingbaseES V8 in independent real-database lanes; evidence for one dialect never substitutes for another. Its current inventory is V001–V029 for each dialect; V029 adds nullable workflow submitter evidence without rewriting the immutable 0.0.2 V001–V028 resources. FileWeft migrations use only `classpath:ai/icen/fw/db/migration` and the dedicated `fileweft_schema_history` table. Do not add that path to the host Flyway configuration.
+The 0.0.3 release contract validates PostgreSQL, native MySQL 8.x from 8.0.17, and KingbaseES V8 in independent real-database lanes; evidence for one dialect never substitutes for another. Its current inventory is 30 migrations, V001–V030, for each dialect; V029 adds nullable workflow submitter evidence and V030 appends a nullable idempotency result-subresource column, neither rewriting the immutable 0.0.2 V001–V028 resources. FileWeft migrations use only `classpath:ai/icen/fw/db/migration` and the dedicated `fileweft_schema_history` table. Do not add that path to the host Flyway configuration.
 
 Pre-create the production schema and make the JDBC current schema match the FileWeft assertion:
 

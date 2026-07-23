@@ -124,7 +124,7 @@ Before opening traffic, verify all of the following:
 
 - the JDBC driver is `cn.com.kingbase:kingbase8:8.6.1` and the driver class is `com.kingbase8.Driver`;
 - the schema already exists and `SELECT current_schema()` returns exactly `fileweft` for both migration and runtime accounts;
-- `fileweft_schema_history` contains the successful V001–V029 chain, then runtime startup succeeds in `validate` mode;
+- `fileweft_schema_history` contains the successful V001–V030 chain, then runtime startup succeeds in `validate` mode;
 - before V029, review writes and old nodes were stopped; rollback preserves the V029 column and any recorded submitter evidence;
 - migration and runtime privileges are separate; the runtime account has only the DML and validation reads it needs;
 - `KINGBASE_USERNAME` and `KINGBASE_PASSWORD` come from the deployment secret store. Never commit a database password to YAML, Gradle files, or the repository.

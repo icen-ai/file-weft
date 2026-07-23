@@ -124,7 +124,7 @@ fileweft:
 
 - JDBC 驱动是 `cn.com.kingbase:kingbase8:8.6.1`，驱动类是 `com.kingbase8.Driver`；
 - schema 已预建，迁移账号与运行账号执行 `SELECT current_schema()` 都精确返回 `fileweft`；
-- `fileweft_schema_history` 已记录成功的 V001–V029 链，随后运行节点能以 `validate` 启动；
+- `fileweft_schema_history` 已记录成功的 V001–V030 链，随后运行节点能以 `validate` 启动；
 - V029 前已经关闭审批写入并停止旧节点；回滚时保留 V029 列和已记录的提交者证据；
 - 迁移与运行权限分离，运行账号只获得业务 DML 和校验读取所需权限；
 - `KINGBASE_USERNAME`、`KINGBASE_PASSWORD` 来自部署密钥系统。禁止把数据库密码写入 YAML、Gradle 文件或版本库。

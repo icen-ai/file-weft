@@ -34,6 +34,8 @@
 | POM、metadata、SBOM、锁文件、发布 ZIP | 聚焦 Build Logic 测试 | `fastCheck` + `releaseArtifactCheck` |
 | 正式发布 | 先修复所有聚焦失败 | `releaseCheck`，随后是稳定标签、远端发布和冷缓存消费者回读 |
 
+凡改动正式 v1 公共契约形状——`fileweft-web-api`、`fileweft-web-runtime` 或相关 application 回执模型的 DTO、回执、错误码或路由——必须在同一 PR 同步 `fileweft-dev/web/e2e/**` 的精确键集与值断言，并在 PR 描述中列出受影响的公开契约。此类改动的 `devAcceptanceCheck` 是必需证据而非可选项；缺少同步断言或验收证据的契约变更不得合入。
+
 普通开发不得把无模块限定的 `test` 或 `check` 当作默认入口：前者缺少架构、迁移和凭据门禁，后者会因模块约定意外展开运行时测试。`compatibilityCheck`、`externalAcceptanceCheck`、`releaseVerification`、`releaseCheck` 与 `releaseBundle` 只用于 CNB、夜间或正式发布。日常不要运行 `clean`，也不要添加 `--rerun-tasks`、`--no-build-cache`、`--no-daemon`；这些选项会直接丢失本地增量、Build Cache 或 Gradle Daemon 的收益。
 
 失败后先重跑失败测试类或最窄命名任务；确认修复后只补一次该变更所需的最终门禁。不得因为一条 lane 失败而重复运行已经取得同一提交绿灯的无关外部套件。

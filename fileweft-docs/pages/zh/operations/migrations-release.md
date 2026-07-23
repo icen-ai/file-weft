@@ -45,7 +45,7 @@ fileweft:
 
 ## 当前迁移与 Flyway 矩阵
 
-当前 0.0.3 版本线为 PostgreSQL、MySQL 与 KingbaseES 各自提供完整的 29 个迁移，即 V001–V029。V029 只追加可空的工作流提交者证据，不改写任何既有资源或 checksum；`v0.0.2` 的三套 V001–V028 继续作为不可改写的发布资源。作为历史边界，`v0.0.1` 只包含 PostgreSQL V001–V025；MySQL、KingbaseES 与 V026–V028 首次进入 `v0.0.2` 发布合同。
+当前 0.0.3 版本线为 PostgreSQL、MySQL 与 KingbaseES 各自提供完整的 30 个迁移，即 V001–V030。V029 只追加可空的工作流提交者证据，V030 只追加可空的幂等结果子资源列，二者都不改写任何既有资源或 checksum；`v0.0.2` 的三套 V001–V028 继续作为不可改写的发布资源。作为历史边界，`v0.0.1` 只包含 PostgreSQL V001–V025；MySQL、KingbaseES 与 V026–V028 首次进入 `v0.0.2` 发布合同。
 
 `FlywayMigrationRunner` 已验证三套由宿主最终解析的运行时：
 

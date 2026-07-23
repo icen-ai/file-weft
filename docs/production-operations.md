@@ -47,7 +47,7 @@ MySQL 的 schema 就是 database，且无 database 的 JDBC URL 在 `CREATE DATA
 
 ### MySQL 8 与人大金仓（Kingbase ES）
 
-当前主工作树已为 PostgreSQL、MySQL 和 KingbaseES 提供各自完整的 29 个 V001–V029 迁移脚本与 `FlywayMigrationRunner` 方言路由：runner 根据 `DatabaseMetaData.getDatabaseProductName()` 自动选择 `classpath:ai/icen/fw/db/migration/postgres|mysql|kingbase`。MySQL 支持边界仅是原生 MySQL 8.x 中的 8.0.17+，`v0.0.2` 的真实证据固定为 MySQL 8.0.46；MariaDB 与 MySQL 9 均不在支持范围内。官方 KingbaseES V008R006C009B0014 同样已对 V001–V028 通过全新迁移和 JDBC repository 实库套件，`0.0.3` 的 V029 仍必须取得对应 CNB 方言 lane 的精确提交证据。MySQL 路径覆盖对应 DML 方言、JSON 访问、`FOR UPDATE SKIP LOCKED` 任务领取、V017 单 PENDING 数据库约束、V028 NO PAD 精确文本比较、V029 提交者证据列和重复文档号错误转换；KingbaseES 以 PostgreSQL 兼容模式验证迁移与 repository 行为。MySQL 连接示例：
+当前主工作树已为 PostgreSQL、MySQL 和 KingbaseES 提供各自完整的 30 个 V001–V030 迁移脚本与 `FlywayMigrationRunner` 方言路由：runner 根据 `DatabaseMetaData.getDatabaseProductName()` 自动选择 `classpath:ai/icen/fw/db/migration/postgres|mysql|kingbase`。MySQL 支持边界仅是原生 MySQL 8.x 中的 8.0.17+，`v0.0.2` 的真实证据固定为 MySQL 8.0.46；MariaDB 与 MySQL 9 均不在支持范围内。官方 KingbaseES V008R006C009B0014 同样已对 V001–V028 通过全新迁移和 JDBC repository 实库套件，`0.0.3` 的 V029 与当前迭代的 V030 仍必须取得对应 CNB 方言 lane 的精确提交证据。MySQL 路径覆盖对应 DML 方言、JSON 访问、`FOR UPDATE SKIP LOCKED` 任务领取、V017 单 PENDING 数据库约束、V028 NO PAD 精确文本比较、V029 提交者证据列、V030 幂等结果子资源列和重复文档号错误转换；KingbaseES 以 PostgreSQL 兼容模式验证迁移与 repository 行为。MySQL 连接示例：
 
 ```yaml
 spring:
@@ -147,7 +147,7 @@ fileweft:
 
 1. DBA 预建 `fileweft` schema，准备短期迁移账号与长期运行账号；两者都验证 URL、`currentSchema` 与 `fileweft.persistence.schema` 完全一致。
 2. 一次性 Migration Job 使用短期 DDL 账号和 `FILEWEFT_MIGRATION_MODE=migrate` 启动。成功后由宿主明确退出该进程；Starter 不会自动退出。
-3. 核对 `fileweft_schema_history` 的 V001–V029 全部成功且无 pending/checksum 差异，再回收 Migration Job 的 DDL 凭据。
+3. 核对 `fileweft_schema_history` 的 V001–V030 全部成功且无 pending/checksum 差异，再回收 Migration Job 的 DDL 凭据。
 4. API 与 Worker 使用独立运行账号和 `FILEWEFT_MIGRATION_MODE=validate` 启动；只有全部节点校验通过后才开放流量。不要让滚动节点各自执行 `migrate`。
 5. 若宿主自己使用 Spring Flyway，保留独立的宿主 location/history，不得追加 FileWeft location；Boot 2 的 `spring.flyway.locations` 不得使用 `{vendor}`。宿主不使用 Flyway 时才设置 `spring.flyway.enabled=false`。
 
@@ -155,7 +155,7 @@ fileweft:
 
 - [ ] 只引入与宿主匹配的 Boot 2 或 Boot 3 Starter，且 `cn.com.kingbase:kingbase8:8.6.1` 与 `com.kingbase8.Driver` 可解析。
 - [ ] schema 已由 DBA 预建；迁移账号和运行账号执行 `SELECT current_schema()` 都精确返回 `fileweft`。
-- [ ] `fileweft_schema_history` 的 V001–V029 已成功，运行节点随后以 `validate` 模式启动成功。
+- [ ] `fileweft_schema_history` 的 V001–V030 已成功，运行节点随后以 `validate` 模式启动成功。
 - [ ] 迁移账号只在发布窗口下发；运行账号只拥有业务 DML、schema `USAGE`、FileWeft 业务读取及 migration history 校验所需权限。
 - [ ] `KINGBASE_USERNAME` 与 `KINGBASE_PASSWORD` 由部署 Secret/密钥系统注入；禁止把密码写入 `application*.yml`、Gradle 文件、Git、镜像或日志。
 - [ ] 宿主 Flyway 与 FileWeft location/history 分离，多个 DataSource 的 runner 绑定明确。
@@ -301,7 +301,7 @@ fileweft:
 
 ## 并行审批与直接发布
 
-同一工作流的最终审批或驳回会通过 `WorkflowInstanceRepository.findForDecision` 串行化。默认 PostgreSQL 实现对工作流父行使用 `SELECT … FOR UPDATE`，因此双人会签的第二位审批者会在第一位提交后读取最新任务状态，而不会用旧聚合快照覆盖已批准的任务。所有文档读改写用例则必须通过 `DocumentRepository.findForMutation` 获取同一文档的串行化读取；默认 PostgreSQL 实现对文档行使用 `SELECT … FOR UPDATE`。审批决策统一按“文档、工作流”顺序加锁，避免与提交、直接发布或版本更新形成反向锁顺序。
+同一工作流的最终审批或驳回会通过 `WorkflowInstanceRepository.findForDecision` 串行化。默认 PostgreSQL 实现对工作流父行使用 `SELECT … FOR UPDATE`，因此双人会签的第二位审批者会在第一位提交后读取最新任务状态，而不会用旧聚合快照覆盖已批准的任务。所有文档读改写用例则必须通过 `DocumentMutationRepository.findForMutation` 获取同一文档的串行化读取；默认 PostgreSQL 实现对文档行使用 `SELECT … FOR UPDATE`。审批决策统一按“文档、工作流”顺序加锁，避免与提交、直接发布或版本更新形成反向锁顺序。
 
 `V017` 在数据库层保证同一 `(tenant_id, document_id)` 最多一条 `state='PENDING'` 的本地审批流。PostgreSQL 与 KingbaseES 使用部分唯一索引；MySQL 没有同等 partial unique 语法，因此使用两个仅在 `PENDING` 时非空的 stored generated columns，再对二者建立唯一索引。既有重复会让预检或唯一索引创建明确失败，迁移绝不静默删除、合并或关闭审批记录；运营人员必须核实并处理历史工作流后重试。自定义文档/工作流仓储仍须实现等价的行锁、CAS 或互斥语义，框架不会退化为普通读取。
 
@@ -311,7 +311,7 @@ fileweft:
 
 ## 数据库迁移与查询索引
 
-所有数据库变更只能新增版本化 Flyway 脚本。这里的“已发布迁移不可改写”边界必须准确：作为历史边界，`v0.0.1` 只发布了 PostgreSQL V001–V025；受保护 `v0.0.2` 标签成功发布后，PostgreSQL、MySQL 与 KingbaseES 三种方言的 V001–V028 全部成为不可改写的发布资源。`v0.0.3` 只在该序列后追加 V029；其受保护标签完成后，V001–V029 才共同成为该版本的不可改写资源。任何后续开发线都必须只前进并保持 checksum 可审计，不得用 `repair` 掩盖差异。`V016` 新增同步/任务索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021`/`V022` 增加工作流 keyset 查询索引；`V023` 建立交付事件围栏；`V026` 统一宿主用户标识宽度并新增决策证据；`V027` 稳定 Worker 领取顺序；`V028` 收紧 MySQL 文本比较安全边界；`V029` 持久化新工作流的可信提交者。普通升级保持单一前进版本。
+所有数据库变更只能新增版本化 Flyway 脚本。这里的“已发布迁移不可改写”边界必须准确：作为历史边界，`v0.0.1` 只发布了 PostgreSQL V001–V025；受保护 `v0.0.2` 标签成功发布后，PostgreSQL、MySQL 与 KingbaseES 三种方言的 V001–V028 全部成为不可改写的发布资源。`v0.0.3` 只在该序列后追加 V029；其受保护标签完成后，V001–V029 才共同成为该版本的不可改写资源。任何后续开发线都必须只前进并保持 checksum 可审计，不得用 `repair` 掩盖差异。`V016` 新增同步/任务索引；`V019` 新增 token 化任务租约和历史任务回收索引；`V020` 新建持久化请求幂等表；`V021`/`V022` 增加工作流 keyset 查询索引；`V023` 建立交付事件围栏；`V026` 统一宿主用户标识宽度并新增决策证据；`V027` 稳定 Worker 领取顺序；`V028` 收紧 MySQL 文本比较安全边界；`V029` 持久化新工作流的可信提交者；`V030` 持久化幂等结果子资源，使 submit 同 key 重放回执与首次完全一致。普通升级保持单一前进版本。
 
 对于已有大量同步、任务或工作流数据的生产库，DBA 应在升级前以自动提交会话逐条运行 [V016 并发预建脚本](sql/postgresql-v016-concurrent-indexes.sql)、[V019 并发预建脚本](sql/postgresql-v019-concurrent-indexes.sql)、[V021 审批查询并发预建脚本](sql/postgresql-v021-concurrent-workflow-query-indexes.sql) 和 [V022 受理人待办并发预建脚本](sql/postgresql-v022-concurrent-workflow-assignee-inbox-index.sql)，并监控 `pg_stat_progress_create_index` 与磁盘余量。完成后 Flyway 会发现同名索引并跳过创建。旧的同步索引不会由应用自动删除；只有在 DBA 已核对查询计划、回滚窗口和磁盘预算后，才可使用脚本中注明的并发删除语句。
 

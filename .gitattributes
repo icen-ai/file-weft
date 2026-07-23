@@ -1,3 +1,29 @@
-# Keep migration and immutable-release evidence byte-stable across platforms.
-fileweft-persistence/src/main/resources/ai/icen/fw/db/migration/**/*.sql text eol=lf
+# Lock line endings explicitly instead of unifying them: Flyway checksums are
+# line-ending sensitive, so published migration SQL must stay byte-identical on
+# every platform. Do not run `git add --renormalize` against these rules.
+
+# All SQL is handled byte-for-byte; git performs no line-ending conversion.
+*.sql -text
+
+# Remaining text files keep git's automatic detection without forced conversion.
+*.kt text=auto
+*.kts text=auto
+*.java text=auto
+*.md text=auto
+*.yml text=auto
+*.yaml text=auto
+*.xml text=auto
+*.json text=auto
+*.mjs text=auto
+*.js text=auto
+*.html text=auto
+*.css text=auto
+
+# Binary artifacts must never be converted.
+*.jar binary
+*.zip binary
+*.png binary
+*.ico binary
+
+# Immutable release evidence stays LF-only on every platform.
 .ci/fixtures/*.sha256 text eol=lf

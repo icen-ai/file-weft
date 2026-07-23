@@ -291,11 +291,14 @@ test("0.0.3 current release identity remains conditional on guarded-tag and prot
   }
 });
 
-test("migration documentation pins the released V001-V028 and current V001-V029 contracts", async () => {
+test("migration documentation pins the released V001-V028 and current V001-V030 contracts", async () => {
   for (const page of migrationBoundaryPages) {
     const source = await read(page);
-    if (/V001–V029/u.test(source)) {
-      assert.match(source, /29[^\n]{0,40}V001–V029|V001–V029[^\n]{0,40}29/u, `${page} current migration count`);
+    if (/V001–V030/u.test(source)) {
+      assert.match(source, /30[^\n]{0,40}V001–V030|V001–V030[^\n]{0,40}30/u, `${page} current migration count`);
+      assert.match(source, /V030/u, `${page} idempotency result-subresource migration`);
+    } else if (/V001–V029/u.test(source)) {
+      assert.match(source, /29[^\n]{0,40}V001–V029|V001–V029[^\n]{0,40}29/u, `${page} 0.0.3 migration count`);
       assert.match(source, /V029/u, `${page} workflow submitter migration`);
     } else {
       assert.match(source, /28[^\n]{0,40}V001–V028|V001–V028[^\n]{0,40}28/u, `${page} released migration count`);
@@ -387,7 +390,7 @@ test("KingbaseES onboarding is version-accurate, copyable and fail-closed", asyn
   const operations = await read("../docs/production-operations.md");
   assert.match(operations, /SET search_path TO fileweft/u);
   assert.match(operations, /V001–V028/u);
-  assert.match(operations, /V001–V029/u);
+  assert.match(operations, /V001–V030/u);
 });
 
 test("publish examples use the actual PublishDocumentRequest field", async () => {

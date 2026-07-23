@@ -45,7 +45,7 @@ fileweft:
 
 ## Current migration and Flyway matrix
 
-The current 0.0.3 line contains all 29 migrations, V001–V029, for PostgreSQL, MySQL and KingbaseES. V029 only appends nullable workflow submitter evidence; it does not rewrite an earlier resource or checksum. The `v0.0.2` V001–V028 sets remain immutable release resources. Historically, `v0.0.1` contained only PostgreSQL V001–V025; MySQL, KingbaseES and V026–V028 first entered the release contract in `v0.0.2`.
+The current 0.0.3 line contains all 30 migrations, V001–V030, for PostgreSQL, MySQL and KingbaseES. V029 only appends nullable workflow submitter evidence and V030 only appends a nullable idempotency result-subresource column; neither rewrites an earlier resource or checksum. The `v0.0.2` V001–V028 sets remain immutable release resources. Historically, `v0.0.1` contained only PostgreSQL V001–V025; MySQL, KingbaseES and V026–V028 first entered the release contract in `v0.0.2`.
 
 `FlywayMigrationRunner` is verified against three host-resolved runtime sets:
 

@@ -56,7 +56,7 @@ Boot 2.7 BOM 默认把 Kotlin 管理为 1.6.21，低于 FileWeft 使用的 2.1.2
 
 FileWeft 的 Flyway 脚本只存在于专属 `classpath:ai/icen/fw/db/migration`，迁移历史只写入 `fileweft_schema_history`；不会再把脚本放入宿主通常使用的 `classpath:db/migration`，也不会与宿主的 `flyway_schema_history` 共用版本号。Spring Boot 宿主自己的 `spring.flyway.*` 配置与 FileWeft 迁移相互独立，不要把 FileWeft 专属路径追加到宿主 Flyway locations。
 
-当前 `0.0.3` 版本线为 PostgreSQL、MySQL 与 KingbaseES 各自提供完整的 29 个迁移 V001–V029；V029 只追加可空的工作流提交者证据，不改写任何既有迁移或 checksum。历史边界保持不变：`v0.0.2` 的三套 V001–V028 是不可改写的发布资源，`v0.0.1` 只发布了 PostgreSQL V001–V025；MySQL、KingbaseES 和 V026–V028 首次进入 `v0.0.2` 发布合同。MySQL 支持范围仅是原生 MySQL 8.x 的 8.0.17+，当前实库证据为 8.0.46，不包含 MariaDB 或 MySQL 9。V029 上线前必须停止 submit/approve/reject/withdraw 写入和旧节点，完成迁移后再启动 `0.0.3` 节点；应用回滚保留 V029 列与已有提交者证据。
+当前 `0.0.3` 版本线为 PostgreSQL、MySQL 与 KingbaseES 各自提供完整的 30 个迁移 V001–V030；V029 只追加可空的工作流提交者证据，V030 只追加可空的幂等结果子资源列，二者都不改写任何既有迁移或 checksum。历史边界保持不变：`v0.0.2` 的三套 V001–V028 是不可改写的发布资源，`v0.0.1` 只发布了 PostgreSQL V001–V025；MySQL、KingbaseES 和 V026–V028 首次进入 `v0.0.2` 发布合同。MySQL 支持范围仅是原生 MySQL 8.x 的 8.0.17+，当前实库证据为 8.0.46，不包含 MariaDB 或 MySQL 9。V029 上线前必须停止 submit/approve/reject/withdraw 写入和旧节点，完成迁移后再启动 `0.0.3` 节点；应用回滚保留 V029 列与已有提交者证据。
 
 `FlywayMigrationRunner` 已验证 Spring Boot 2 管理的 Flyway 8.5.13、FileWeft 自身的 9.22.3，以及 Spring Boot 3 管理的 11.7.2。Boot 3 下 `flyway-core`、`flyway-mysql`、`flyway-database-postgresql` 必须同为 11.7.2。Kingbase Starter 默认只包装 Spring Boot 已选择给 Flyway 的 DataSource，应用主 DataSource 仍是真实 Kingbase；只有宿主具备并验证了等价集成时，才可关闭 `fileweft.persistence.kingbase-flyway-compatibility-enabled`。
 
