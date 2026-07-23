@@ -1,6 +1,7 @@
 package ai.icen.fw.adapter.s3
 
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails
 import software.amazon.awssdk.services.s3.model.S3Exception
 import java.net.URI
+import java.time.Duration
 
 class S3StorageConfigurationTest {
     @Test
@@ -45,6 +47,61 @@ class S3StorageConfigurationTest {
                 accessKey = "access",
                 secretKey = "secret",
                 bucket = "Invalid_Bucket",
+            )
+        }
+    }
+
+    @Test
+    fun `applies the documented default API call budgets`() {
+        val configuration = S3StorageConfiguration(
+            endpoint = URI("http://127.0.0.1:9000"),
+            region = "us-east-1",
+            accessKey = "access",
+            secretKey = "secret",
+            bucket = "fileweft-integration",
+        )
+
+        assertEquals(S3StorageConfiguration.DEFAULT_API_CALL_TIMEOUT, configuration.apiCallTimeout)
+        assertEquals(S3StorageConfiguration.DEFAULT_API_CALL_ATTEMPT_TIMEOUT, configuration.apiCallAttemptTimeout)
+        assertEquals(Duration.ofMinutes(2), configuration.apiCallTimeout)
+        assertEquals(Duration.ofSeconds(30), configuration.apiCallAttemptTimeout)
+    }
+
+    @Test
+    fun `rejects a non positive API call budget`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            S3StorageConfiguration(
+                endpoint = URI("http://127.0.0.1:9000"),
+                region = "us-east-1",
+                accessKey = "access",
+                secretKey = "secret",
+                bucket = "fileweft-integration",
+                apiCallTimeout = Duration.ZERO,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            S3StorageConfiguration(
+                endpoint = URI("http://127.0.0.1:9000"),
+                region = "us-east-1",
+                accessKey = "access",
+                secretKey = "secret",
+                bucket = "fileweft-integration",
+                apiCallAttemptTimeout = Duration.ofMillis(-1),
+            )
+        }
+    }
+
+    @Test
+    fun `rejects an attempt budget above the overall call budget`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            S3StorageConfiguration(
+                endpoint = URI("http://127.0.0.1:9000"),
+                region = "us-east-1",
+                accessKey = "access",
+                secretKey = "secret",
+                bucket = "fileweft-integration",
+                apiCallTimeout = Duration.ofSeconds(10),
+                apiCallAttemptTimeout = Duration.ofSeconds(11),
             )
         }
     }

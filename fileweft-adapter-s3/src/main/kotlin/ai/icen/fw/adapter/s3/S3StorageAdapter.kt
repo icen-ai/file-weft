@@ -12,6 +12,8 @@ import ai.icen.fw.spi.storage.StoredObject
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.core.ResponseInputStream
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration
+import software.amazon.awssdk.core.retry.RetryMode
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
@@ -58,6 +60,15 @@ class S3StorageAdapter(
         .region(Region.of(configuration.region))
         .credentialsProvider(credentials)
         .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(configuration.forcePathStyle).build())
+        .overrideConfiguration(
+            // Bound every storage call so a wedged connection can never block a
+            // storage operation forever; retries use the SDK standard mode.
+            ClientOverrideConfiguration.builder()
+                .apiCallTimeout(configuration.apiCallTimeout)
+                .apiCallAttemptTimeout(configuration.apiCallAttemptTimeout)
+                .retryStrategy(RetryMode.STANDARD)
+                .build(),
+        )
         .build()
     private val presigner: S3Presigner = S3Presigner.builder()
         .endpointOverride(configuration.endpoint)

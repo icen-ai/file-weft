@@ -1,5 +1,6 @@
 package ai.icen.fw.dev.api.config
 
+import ai.icen.fw.adapter.s3.S3StorageConfiguration
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 @ConfigurationProperties(prefix = "fileweft.dev")
@@ -19,6 +20,10 @@ class FileWeftDevProperties {
         var accessKey: String = "rustfsadmin"
         var secretKey: String = "ChangeMe123!"
         var bucket: String = "fileweft-dev"
+        /** Overall budget for one S3 API call including retries; mirrors the adapter default. */
+        var apiCallTimeoutMillis: Long = S3StorageConfiguration.DEFAULT_API_CALL_TIMEOUT.toMillis()
+        /** Budget for a single S3 API call attempt; mirrors the adapter default. */
+        var apiCallAttemptTimeoutMillis: Long = S3StorageConfiguration.DEFAULT_API_CALL_ATTEMPT_TIMEOUT.toMillis()
     }
 
     class Platform {

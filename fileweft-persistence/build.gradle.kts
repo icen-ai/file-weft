@@ -15,6 +15,8 @@ dependencies {
     // dependencies on their compile classpath as well as at runtime.
     api(project(":fileweft-application"))
     api(project(":fileweft-core"))
+    // The JDBC transaction API accepts a FileWeftLogger in its public constructor.
+    api(project(":fileweft-spi"))
     implementation(libs.flyway.core)
     api(libs.jackson.databind)
     runtimeOnly(libs.flyway.mysql)

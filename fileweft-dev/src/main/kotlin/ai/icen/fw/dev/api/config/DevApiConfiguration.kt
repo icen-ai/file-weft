@@ -47,6 +47,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.core.JdbcTemplate
 import java.net.URI
+import java.time.Duration
 
 @Configuration(proxyBeanMethods = false)
 class DevApiConfiguration {
@@ -106,6 +107,8 @@ class DevApiConfiguration {
             accessKey = properties.storage.accessKey,
             secretKey = properties.storage.secretKey,
             bucket = properties.storage.bucket,
+            apiCallTimeout = Duration.ofMillis(properties.storage.apiCallTimeoutMillis),
+            apiCallAttemptTimeout = Duration.ofMillis(properties.storage.apiCallAttemptTimeoutMillis),
         ),
     )
 

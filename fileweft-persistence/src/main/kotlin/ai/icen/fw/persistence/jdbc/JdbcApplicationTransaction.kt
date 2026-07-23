@@ -5,15 +5,17 @@ import ai.icen.fw.application.transaction.ApplicationTransactionOutcomeUnknownEx
 import ai.icen.fw.application.transaction.ApplicationTransactionState
 import ai.icen.fw.persistence.jdbc.dialect.SqlDialect
 import ai.icen.fw.persistence.jdbc.dialect.SqlDialects
+import ai.icen.fw.spi.observability.FileWeftLogger
 import java.sql.Connection
 import java.util.ArrayDeque
-import java.util.logging.Level
-import java.util.logging.Logger
 import javax.sql.DataSource
 
 class JdbcApplicationTransaction(
     private val dataSource: DataSource,
+    private val logger: FileWeftLogger?,
 ) : ApplicationTransaction, ApplicationTransactionState {
+    /** Compatibility constructor: a null logger keeps cleanup failures silent. */
+    constructor(dataSource: DataSource) : this(dataSource, null)
     override fun <T> execute(action: () -> T): T {
         val existingConnection = JdbcConnectionContext.current(dataSource)
         if (existingConnection != null) {
@@ -98,19 +100,16 @@ class JdbcApplicationTransaction(
     }
 
     private fun logCleanupFailure(operation: String, commitSucceeded: Boolean, failure: Throwable) {
+        val logger = logger ?: return
         try {
-            LOGGER.log(
-                Level.WARNING,
+            // The SPI carries throwables only at error level; the message text is unchanged.
+            logger.error(
                 "Failed to $operation after JDBC transaction completion (commitSucceeded=$commitSucceeded).",
                 failure,
             )
         } catch (_: Throwable) {
             // Logging must never replace the already determined transaction outcome.
         }
-    }
-
-    private companion object {
-        val LOGGER: Logger = Logger.getLogger(JdbcApplicationTransaction::class.java.name)
     }
 }
 

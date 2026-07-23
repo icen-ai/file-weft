@@ -36,6 +36,8 @@ internal class KingbaseFlywayDataSource(
 
     override fun getLoginTimeout(): Int = delegate.loginTimeout
 
+    // java.sql.DataSource mandates java.util.logging for this method; it is a
+    // pass-through to the driver, not a FileWeft logging path.
     override fun getParentLogger(): Logger = delegate.parentLogger
 
     override fun <T : Any?> unwrap(iface: Class<T>): T = delegate.unwrap(iface)
