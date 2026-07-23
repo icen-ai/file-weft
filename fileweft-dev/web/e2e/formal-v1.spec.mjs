@@ -669,6 +669,7 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
       "deliveryRetryable",
       "deliveryStatus",
       "displayName",
+      "lastErrorCategory",
       "removalRetryCount",
       "removalRetryable",
       "removalStatus",
@@ -676,6 +677,8 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
       "targetId",
       "updatedTime",
     ]);
+    // Succeeded targets carry no diagnostic, so the curated category stays null.
+    expect(target.lastErrorCategory).toBeNull();
   }
 
   await failure(
