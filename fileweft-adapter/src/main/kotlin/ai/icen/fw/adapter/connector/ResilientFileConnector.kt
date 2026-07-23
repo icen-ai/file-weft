@@ -7,6 +7,7 @@ import ai.icen.fw.spi.connector.ConnectorSyncRequest
 import ai.icen.fw.spi.connector.ConnectorSyncResult
 import ai.icen.fw.spi.connector.ConnectorSyncStatus
 import ai.icen.fw.spi.connector.FileConnector
+import ai.icen.fw.spi.observability.FileWeftLogger
 import java.time.Clock
 import java.time.Duration
 import java.util.concurrent.ArrayBlockingQueue
@@ -125,16 +126,33 @@ class ResilientFileConnector internal constructor(
     private var circuitState = CircuitState.CLOSED
     private var consecutiveFailures = 0
     private var reopenAfterMillis = 0L
+    private var logger: FileWeftLogger? = null
+
+    /**
+     * Creates a wrapper that also reports underlying failures and circuit
+     * transitions through [logger]. A null logger keeps the silent behavior
+     * of the primary constructor.
+     */
+    internal constructor(
+        connectorId: String,
+        delegate: FileConnector,
+        policy: ConnectorResiliencePolicy,
+        executor: ConnectorInvocationExecutor,
+        clock: Clock,
+        logger: FileWeftLogger?,
+    ) : this(connectorId, delegate, policy, executor, clock) {
+        this.logger = logger
+    }
 
     init {
         require(connectorId.isNotBlank()) { "Connector id must not be blank." }
     }
 
     override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult =
-        invoke(request.invocation.timeout) { delegate.sync(request) }
+        invoke("sync", request.invocation.timeout) { delegate.sync(request) }
 
     override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult =
-        invoke(request.invocation.timeout) { delegate.remove(request) }
+        invoke("remove", request.invocation.timeout) { delegate.remove(request) }
 
     override fun health(): ConnectorHealth {
         healthCircuitStatus()?.let { return it }
@@ -150,26 +168,37 @@ class ResilientFileConnector internal constructor(
                 "Connector '$connectorId' health check timed out after ${policy.timeout.toMillis()} ms.",
             )
 
-            InvocationAttempt.Kind.REJECTED -> ConnectorHealth(
-                ConnectorHealthStatus.DEGRADED,
-                "Connector '$connectorId' health check could not start because the connector invocation pool is saturated.",
-            )
+            InvocationAttempt.Kind.REJECTED -> {
+                logger?.warn("Connector '$connectorId' health check was rejected because the connector invocation pool is saturated.")
+                ConnectorHealth(
+                    ConnectorHealthStatus.DEGRADED,
+                    "Connector '$connectorId' health check could not start because the connector invocation pool is saturated.",
+                )
+            }
 
             InvocationAttempt.Kind.INTERRUPTED -> ConnectorHealth(
                 ConnectorHealthStatus.DEGRADED,
                 "Connector '$connectorId' health check was interrupted.",
             )
 
-            InvocationAttempt.Kind.FAILED -> ConnectorHealth(
-                ConnectorHealthStatus.UNHEALTHY,
-                "Connector '$connectorId' health check could not complete.",
-            )
+            InvocationAttempt.Kind.FAILED -> {
+                val cause = attempt.failure
+                logger?.error("Connector '$connectorId' health check failed.", cause)
+                ConnectorHealth(
+                    ConnectorHealthStatus.UNHEALTHY,
+                    "Connector '$connectorId' health check could not complete${exceptionLabel(cause)}.",
+                )
+            }
         }
     }
 
     internal fun wraps(candidate: FileConnector): Boolean = delegate === candidate
 
-    private fun invoke(requestTimeout: Duration, operation: () -> ConnectorSyncResult): ConnectorSyncResult {
+    private fun invoke(
+        operationName: String,
+        requestTimeout: Duration,
+        operation: () -> ConnectorSyncResult,
+    ): ConnectorSyncResult {
         activeCircuitStatus()?.let { status ->
             return ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = status.message)
         }
@@ -183,22 +212,34 @@ class ResilientFileConnector internal constructor(
                 ?: failure("Connector '$connectorId' returned no synchronization result.")
 
             InvocationAttempt.Kind.TIMED_OUT -> failure("Connector '$connectorId' timed out after ${timeout.toMillis()} ms.")
-            InvocationAttempt.Kind.REJECTED -> retryable(
-                "Connector '$connectorId' could not start because the connector invocation pool is saturated.",
-            )
+            InvocationAttempt.Kind.REJECTED -> {
+                logger?.warn(
+                    "Connector '$connectorId' $operationName invocation was rejected because the connector invocation pool is saturated.",
+                )
+                retryable(
+                    "Connector '$connectorId' could not start because the connector invocation pool is saturated.",
+                )
+            }
 
             InvocationAttempt.Kind.INTERRUPTED -> retryable("Connector '$connectorId' invocation was interrupted.")
-            InvocationAttempt.Kind.FAILED -> failure("Connector '$connectorId' invocation could not complete.")
+            InvocationAttempt.Kind.FAILED -> {
+                val cause = attempt.failure
+                logger?.error("Connector '$connectorId' $operationName invocation failed.", cause)
+                // Only the exception type reaches the caller: downstream messages can hold sensitive
+                // detail, and this text is persisted into receipts and last_error columns. The full
+                // failure stays in the log.
+                failure("Connector '$connectorId' invocation could not complete${exceptionLabel(cause)}.", cause)
+            }
         }
     }
 
     private fun handleResult(result: ConnectorSyncResult): ConnectorSyncResult {
-        if (result.status == ConnectorSyncStatus.RETRYABLE_FAILURE) recordFailure() else recordSuccess()
+        if (result.status == ConnectorSyncStatus.RETRYABLE_FAILURE) recordFailure(null) else recordSuccess()
         return result
     }
 
-    private fun failure(message: String): ConnectorSyncResult {
-        recordFailure()
+    private fun failure(message: String, cause: Throwable? = null): ConnectorSyncResult {
+        recordFailure(cause)
         return retryable(message)
     }
 
@@ -239,6 +280,7 @@ class ResilientFileConnector internal constructor(
                     false
                 } else {
                     circuitState = CircuitState.HALF_OPEN
+                    logger?.debug("Connector '$connectorId' circuit permits a recovery probe.")
                     true
                 }
             }
@@ -249,23 +291,38 @@ class ResilientFileConnector internal constructor(
 
     private fun recordSuccess() = synchronized(monitor) {
         when (circuitState) {
-            CircuitState.CLOSED, CircuitState.HALF_OPEN -> {
+            CircuitState.CLOSED -> {
+                consecutiveFailures = 0
+            }
+
+            CircuitState.HALF_OPEN -> {
                 circuitState = CircuitState.CLOSED
                 consecutiveFailures = 0
                 reopenAfterMillis = 0L
+                logger?.info("Connector '$connectorId' circuit closed after a successful recovery probe.")
             }
 
             CircuitState.OPEN -> Unit // A late result from an in-flight request must not close an open circuit.
         }
     }
 
-    private fun recordFailure() = synchronized(monitor) {
+    private fun recordFailure(cause: Throwable?) = synchronized(monitor) {
         when (circuitState) {
             CircuitState.OPEN -> Unit // A late result cannot extend or replace the active recovery window.
-            CircuitState.HALF_OPEN -> openCircuitLocked()
+            CircuitState.HALF_OPEN -> {
+                logger?.warn("Connector '$connectorId' circuit reopened after a failed recovery probe${exceptionLabel(cause)}.")
+                openCircuitLocked()
+            }
+
             CircuitState.CLOSED -> {
                 consecutiveFailures++
-                if (consecutiveFailures >= policy.failureThreshold) openCircuitLocked()
+                if (consecutiveFailures >= policy.failureThreshold) {
+                    logger?.warn(
+                        "Connector '$connectorId' circuit opened after $consecutiveFailures consecutive failures" +
+                            " (threshold ${policy.failureThreshold}).",
+                    )
+                    openCircuitLocked()
+                }
             }
         }
     }
@@ -277,6 +334,10 @@ class ResilientFileConnector internal constructor(
     }
 
     private fun openMessage(): String = synchronized(monitor) { openMessageLocked() }
+
+    /** Names the failure type without leaking a potentially sensitive downstream message. */
+    private fun exceptionLabel(cause: Throwable?): String =
+        if (cause == null) "" else " (${cause.javaClass.simpleName})"
 
     private fun openMessageLocked(): String {
         val remaining = (reopenAfterMillis - clock.millis()).coerceAtLeast(0L)
@@ -298,6 +359,20 @@ class ConnectorResilienceRegistry(
 ) {
     private val monitor = Any()
     private val protectedConnectors = linkedMapOf<String, ResilientFileConnector>()
+    private var logger: FileWeftLogger? = null
+
+    /**
+     * Creates a registry whose protected connectors report underlying failures
+     * and circuit transitions through [logger]. A null logger keeps them silent.
+     */
+    constructor(
+        policy: ConnectorResiliencePolicy,
+        executor: ConnectorInvocationExecutor,
+        clock: Clock,
+        logger: FileWeftLogger?,
+    ) : this(policy, executor, clock) {
+        this.logger = logger
+    }
 
     fun protect(connectorId: String, connector: FileConnector): FileConnector {
         require(connectorId.isNotBlank()) { "Connector id must not be blank." }
@@ -305,7 +380,7 @@ class ConnectorResilienceRegistry(
             val current = protectedConnectors[connectorId]
             if (current == null) {
                 protectedConnectors.values.firstOrNull { it.wraps(connector) }?.let { return it }
-                return ResilientFileConnector(connectorId, connector, policy, executor, clock).also {
+                return ResilientFileConnector(connectorId, connector, policy, executor, clock, logger).also {
                     protectedConnectors[connectorId] = it
                 }
             }

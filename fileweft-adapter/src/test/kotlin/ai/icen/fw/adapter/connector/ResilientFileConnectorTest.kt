@@ -10,6 +10,8 @@ import ai.icen.fw.spi.connector.ConnectorSyncRequest
 import ai.icen.fw.spi.connector.ConnectorSyncResult
 import ai.icen.fw.spi.connector.ConnectorSyncStatus
 import ai.icen.fw.spi.connector.FileConnector
+import ai.icen.fw.spi.observability.FileWeftLogger
+import ai.icen.fw.spi.observability.LogContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import java.net.URI
@@ -22,6 +24,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ResilientFileConnectorTest {
@@ -218,6 +221,200 @@ class ResilientFileConnectorTest {
             release.countDown()
             blockingInvocation.join(1_000)
             queuedInvocation.join(1_000)
+        }
+    }
+
+    @Test
+    fun `logs the underlying failure and returns only the exception type to the caller`() {
+        val logger = RecordingLogger()
+        val failure = ConnectorSpecificException("sensitive downstream secret detail")
+        val protected = ResilientFileConnector(
+            "failing-platform",
+            connector { throw failure },
+            policy(),
+            executor(),
+            Clock.systemUTC(),
+            logger,
+        )
+
+        val result = protected.sync(request())
+
+        assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, result.status)
+        assertTrue(result.message!!.contains("invocation could not complete (ConnectorSpecificException)"))
+        assertFalse(result.message!!.contains("sensitive downstream secret detail"))
+        assertEquals(1, logger.errors.size)
+        assertTrue(logger.errors[0].first.contains("failing-platform"))
+        assertTrue(logger.errors[0].first.contains("sync"))
+        assertTrue(logger.errors[0].second === failure)
+    }
+
+    @Test
+    fun `stays silent when constructed without a logger`() {
+        val protected = ResilientFileConnector(
+            "quiet-platform",
+            connector { throw ConnectorSpecificException("hidden detail") },
+            policy(),
+            executor(),
+            Clock.systemUTC(),
+        )
+
+        val result = protected.sync(request())
+
+        assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, result.status)
+        assertTrue(result.message!!.contains("invocation could not complete (ConnectorSpecificException)"))
+        assertFalse(result.message!!.contains("hidden detail"))
+    }
+
+    @Test
+    fun `logs circuit transitions while opening, probing, reopening, and closing`() {
+        val clock = MutableClock(1_000)
+        val logger = RecordingLogger()
+        val calls = AtomicInteger()
+        val protected = ResilientFileConnector(
+            "transition-platform",
+            connector {
+                when (calls.incrementAndGet()) {
+                    1, 2 -> ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "remote unavailable")
+                    3 -> throw ConnectorSpecificException("probe failure detail")
+                    else -> ConnectorSyncResult(ConnectorSyncStatus.SUCCESS, externalId = "external-1")
+                }
+            },
+            policy(failureThreshold = 2, circuitOpenDuration = Duration.ofMillis(100)),
+            executor(),
+            clock,
+            logger,
+        )
+
+        assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, protected.sync(request()).status)
+        assertTrue(logger.warns.isEmpty())
+        assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, protected.sync(request()).status)
+        assertEquals(1, logger.warns.count { it.contains("circuit opened") })
+        assertTrue(logger.warns.single().contains("after 2 consecutive failures"))
+
+        clock.advance(100)
+        assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, protected.sync(request()).status)
+        assertEquals(1, logger.debugs.count { it.contains("recovery probe") })
+        assertEquals(1, logger.errors.count { it.second is ConnectorSpecificException })
+        assertEquals(1, logger.warns.count { it.contains("reopened") })
+        assertTrue(logger.warns.last().contains("(ConnectorSpecificException)"))
+
+        clock.advance(100)
+        assertEquals(ConnectorSyncStatus.SUCCESS, protected.sync(request()).status)
+        assertEquals(2, logger.debugs.count { it.contains("recovery probe") })
+        assertEquals(1, logger.infos.count { it.contains("circuit closed") })
+    }
+
+    @Test
+    fun `warns when the invocation pool rejects work`() {
+        val sharedExecutor = executor(maxConcurrentInvocations = 1, queueCapacity = 1)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val blockingInvocation = Thread {
+            sharedExecutor.invoke(Duration.ofSeconds(5)) {
+                entered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+        }
+        val queuedInvocation = Thread {
+            sharedExecutor.invoke(Duration.ofSeconds(5)) { Unit }
+        }
+        blockingInvocation.start()
+        try {
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            queuedInvocation.start()
+            var waitAttempts = 0
+            while (sharedExecutor.queuedInvocationCount() != 1 && waitAttempts++ < 100) {
+                Thread.sleep(5)
+            }
+            assertEquals(1, sharedExecutor.queuedInvocationCount())
+
+            val logger = RecordingLogger()
+            val protected = ResilientFileConnector(
+                "saturated-platform",
+                connector { ConnectorSyncResult(ConnectorSyncStatus.SUCCESS) },
+                policy(failureThreshold = 1),
+                sharedExecutor,
+                Clock.systemUTC(),
+                logger,
+            )
+
+            val saturated = protected.sync(request())
+
+            assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, saturated.status)
+            assertTrue(saturated.message!!.contains("pool is saturated"))
+            assertEquals(1, logger.warns.count { it.contains("pool is saturated") })
+            assertTrue(logger.warns.single().contains("saturated-platform"))
+        } finally {
+            release.countDown()
+            blockingInvocation.join(1_000)
+            queuedInvocation.join(1_000)
+        }
+    }
+
+    @Test
+    fun `logs the underlying failure when a health check cannot complete`() {
+        val logger = RecordingLogger()
+        val failure = ConnectorSpecificException("health secret detail")
+        val protected = ResilientFileConnector(
+            "unhealthy-platform",
+            object : FileConnector {
+                override fun sync(request: ConnectorSyncRequest): ConnectorSyncResult =
+                    ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
+
+                override fun remove(request: ConnectorRemoveRequest): ConnectorSyncResult =
+                    ConnectorSyncResult(ConnectorSyncStatus.SUCCESS)
+
+                override fun health(): ConnectorHealth = throw failure
+            },
+            policy(),
+            executor(),
+            Clock.systemUTC(),
+            logger,
+        )
+
+        val health = protected.health()
+
+        assertEquals(ConnectorHealthStatus.UNHEALTHY, health.status)
+        assertTrue(health.message!!.contains("could not complete (ConnectorSpecificException)"))
+        assertFalse(health.message!!.contains("health secret detail"))
+        assertEquals(1, logger.errors.size)
+        assertTrue(logger.errors[0].second === failure)
+    }
+
+    @Test
+    fun `registry wires the configured logger into protected connectors`() {
+        val logger = RecordingLogger()
+        val registry = ConnectorResilienceRegistry(policy(), executor(), Clock.systemUTC(), logger)
+        val failure = ConnectorSpecificException("registry detail")
+        val protected = registry.protect("registry-platform", connector { throw failure })
+
+        assertEquals(ConnectorSyncStatus.RETRYABLE_FAILURE, protected.sync(request()).status)
+        assertEquals(1, logger.errors.size)
+        assertTrue(logger.errors[0].second === failure)
+    }
+
+    private class ConnectorSpecificException(message: String) : RuntimeException(message)
+
+    private class RecordingLogger : FileWeftLogger {
+        val infos = mutableListOf<String>()
+        val warns = mutableListOf<String>()
+        val debugs = mutableListOf<String>()
+        val errors = mutableListOf<Pair<String, Throwable?>>()
+
+        override fun info(message: String, context: LogContext) {
+            infos += message
+        }
+
+        override fun warn(message: String, context: LogContext) {
+            warns += message
+        }
+
+        override fun error(message: String, throwable: Throwable?, context: LogContext) {
+            errors += message to throwable
+        }
+
+        override fun debug(message: String, context: LogContext) {
+            debugs += message
         }
     }
 

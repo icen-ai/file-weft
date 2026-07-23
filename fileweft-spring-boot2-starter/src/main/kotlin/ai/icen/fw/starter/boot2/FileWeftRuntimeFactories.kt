@@ -514,7 +514,12 @@ internal class FileWeftRuntimeFactories {
 
     fun fileWeftConnectorResilienceRegistry(
         policy: ConnectorResiliencePolicy, executor: ConnectorInvocationExecutor, clock: Clock,
-    ): ConnectorResilienceRegistry = ConnectorResilienceRegistry(policy, executor, clock)
+    ): ConnectorResilienceRegistry = ConnectorResilienceRegistry(
+        policy,
+        executor,
+        clock,
+        Slf4jFileWeftLogger("ai.icen.fw.adapter.connector.ResilientFileConnector"),
+    )
 
     fun fileWeftDeliveryConnectorResolver(
         connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, properties: FileWeftProperties,
