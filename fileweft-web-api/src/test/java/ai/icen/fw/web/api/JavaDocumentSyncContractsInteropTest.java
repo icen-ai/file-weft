@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,6 +49,7 @@ class JavaDocumentSyncContractsInteropTest {
         assertEquals(0, target.getRemovalRetryCount());
         assertTrue(target.getDeliveryRetryable());
         assertEquals(200L, target.getUpdatedTime());
+        assertNull(target.getLastErrorCategory());
         assertEquals("document-1", recovery.getDocumentId());
         assertEquals("delivery-1", recovery.getDeliveryId());
         assertEquals("DELIVERY", recovery.getOperation());

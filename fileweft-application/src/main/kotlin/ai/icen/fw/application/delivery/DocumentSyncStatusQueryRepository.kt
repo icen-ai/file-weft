@@ -11,6 +11,10 @@ import ai.icen.fw.core.id.Identifier
  * target state is FAILED and the target's current fenced event, in the same
  * tenant and operation, is durably FAILED. Null means that the document is
  * absent, cross-tenant, or outside [folderReadScope].
+ *
+ * A persisted internal diagnostic may reach the view only as the fixed
+ * [DocumentDeliveryErrorCategory] produced by [DocumentDeliveryErrorCategory.classify];
+ * the raw error text must never be exposed through this port.
  */
 interface DocumentSyncStatusQueryRepository {
     fun findByDocument(

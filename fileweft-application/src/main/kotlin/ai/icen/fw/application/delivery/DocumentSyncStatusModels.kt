@@ -11,10 +11,14 @@ import java.util.Collections
  *
  * Connector identity, profile ownership, downstream external identifiers,
  * diagnostic messages and dispatch fencing data deliberately never cross this boundary.
+ * The only diagnostic-derived value is [lastErrorCategory]: a fixed
+ * [DocumentDeliveryErrorCategory] classified from the persisted internal
+ * diagnostic, so operators without database access can route a failure
+ * while the raw text stays inside the trust boundary.
  * The retryable flags describe durable state readiness only; callers must
  * still pass the separate retry authorization check before issuing a command.
  */
-class DocumentDeliveryStatusView(
+class DocumentDeliveryStatusView @JvmOverloads constructor(
     val deliveryId: Identifier,
     targetId: String,
     displayName: String,
@@ -26,6 +30,7 @@ class DocumentDeliveryStatusView(
     val deliveryRetryable: Boolean,
     val removalRetryable: Boolean,
     val updatedTime: Long,
+    val lastErrorCategory: DocumentDeliveryErrorCategory? = null,
 ) {
     val targetId: String = safeRequiredText(targetId, "Delivery target id", MAX_TARGET_ID_LENGTH)
     val displayName: String = safeRequiredText(displayName, "Delivery target display name", MAX_DISPLAY_NAME_LENGTH)
@@ -49,11 +54,18 @@ class DocumentDeliveryStatusView(
         require(!(deliveryRetryable && removalRetryable)) {
             "Delivery and downstream removal cannot both be ready for manual retry."
         }
+        require(lastErrorCategory == null || deliveryStatus in DIAGNOSTIC_DELIVERY_STATUSES) {
+            "Only a retrying or failed delivery can carry a delivery error category."
+        }
     }
 
     private companion object {
         const val MAX_TARGET_ID_LENGTH: Int = 128
         const val MAX_DISPLAY_NAME_LENGTH: Int = 256
+        val DIAGNOSTIC_DELIVERY_STATUSES = setOf(
+            DocumentDeliveryStatus.RETRYING,
+            DocumentDeliveryStatus.FAILED,
+        )
         val RECOVERABLE_DELIVERY_STATUSES = setOf(
             DocumentDeliveryStatus.PENDING,
             DocumentDeliveryStatus.RETRYING,

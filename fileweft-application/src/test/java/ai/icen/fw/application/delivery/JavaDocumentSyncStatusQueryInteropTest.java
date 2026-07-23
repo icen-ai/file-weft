@@ -94,6 +94,7 @@ class JavaDocumentSyncStatusQueryInteropTest {
         assertEquals(3, target.getDeliveryRetryCount());
         assertTrue(target.getDeliveryRetryable());
         assertFalse(target.getRemovalRetryable());
+        assertNull(target.getLastErrorCategory());
         assertTrue(new DocumentSyncStatusView(documentId).getDeliveryTargets().isEmpty());
     }
 }

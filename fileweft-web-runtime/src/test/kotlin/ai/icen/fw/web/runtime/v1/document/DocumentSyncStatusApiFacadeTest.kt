@@ -1,5 +1,6 @@
 package ai.icen.fw.web.runtime.v1.document
 
+import ai.icen.fw.application.delivery.DocumentDeliveryErrorCategory
 import ai.icen.fw.application.delivery.DocumentDeliveryRemovalStatus
 import ai.icen.fw.application.delivery.DocumentDeliveryStatus
 import ai.icen.fw.application.delivery.DocumentDeliveryStatusView
@@ -40,6 +41,7 @@ class DocumentSyncStatusApiFacadeTest {
                         deliveryRetryable = true,
                         removalRetryable = false,
                         updatedTime = 101,
+                        lastErrorCategory = DocumentDeliveryErrorCategory.CONNECTOR_FAILURE,
                     ),
                     DocumentDeliveryStatusView(
                         deliveryId = Identifier("delivery-search"),
@@ -67,11 +69,11 @@ class DocumentSyncStatusApiFacadeTest {
             listOf(
                 listOf(
                     "delivery-primary", "archive-primary", "Primary archive", "REQUIRED", "FAILED",
-                    3, "NOT_REQUESTED", 0, true, false, 101L,
+                    3, "NOT_REQUESTED", 0, true, false, 101L, "CONNECTOR_FAILURE",
                 ),
                 listOf(
                     "delivery-search", "search-index", "Search index", "OPTIONAL", "SUCCEEDED",
-                    1, "FAILED", 2, false, true, 202L,
+                    1, "FAILED", 2, false, true, 202L, null,
                 ),
             ),
             result.deliveryTargets.map { target ->
@@ -87,6 +89,7 @@ class DocumentSyncStatusApiFacadeTest {
                     target.deliveryRetryable,
                     target.removalRetryable,
                     target.updatedTime,
+                    target.lastErrorCategory,
                 )
             },
         )

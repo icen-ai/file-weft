@@ -449,6 +449,31 @@ class DocumentDeliveryServiceTest {
     }
 
     @Test
+    fun `diagnoses storage source access separately from connector invocation failures`() {
+        val fixture = fixture(
+            listOf(target("archive", DeliveryRequirement.REQUIRED)),
+            mapOf("archive" to ConnectorSyncStatus.SUCCESS),
+            storageAdapter = object : TestStorage() {
+                override fun accessUrl(location: StorageObjectLocation, expiresIn: Duration): URI =
+                    throw IllegalStateException("storage signing unavailable")
+            },
+        )
+
+        val result = fixture.sync.synchronize(fixture.events.events.single())
+        val delivery = fixture.deliveries.findByDocument(TENANT, fixture.document.id).single()
+
+        assertEquals(OutboxHandlingStatus.RETRYABLE_FAILURE, result.status)
+        assertEquals("Storage source access could not be prepared.", result.message)
+        assertEquals(DocumentDeliveryStatus.RETRYING, delivery.status)
+        assertEquals("Storage source access could not be prepared.", delivery.errorMessage)
+        assertEquals(
+            DocumentDeliveryErrorCategory.STORAGE_FAILURE,
+            DocumentDeliveryErrorCategory.classify(delivery.errorMessage),
+        )
+        assertTrue(fixture.connectors.getValue("archive").requests.isEmpty())
+    }
+
+    @Test
     fun `rejects non-positive or shorter source URL lifetimes`() {
         assertFailsWith<IllegalArgumentException> {
             fixture(

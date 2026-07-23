@@ -31,5 +31,6 @@ class DocumentSyncStatusApiFacade(
             deliveryRetryable = deliveryRetryable,
             removalRetryable = removalRetryable,
             updatedTime = updatedTime,
+            lastErrorCategory = lastErrorCategory?.name,
         )
 }

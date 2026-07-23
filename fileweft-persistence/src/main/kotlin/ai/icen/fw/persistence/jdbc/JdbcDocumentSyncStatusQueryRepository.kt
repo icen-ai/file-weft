@@ -1,5 +1,6 @@
 package ai.icen.fw.persistence.jdbc
 
+import ai.icen.fw.application.delivery.DocumentDeliveryErrorCategory
 import ai.icen.fw.application.delivery.DocumentDeliveryPlanner
 import ai.icen.fw.application.delivery.DocumentDeliveryRemovalPlanner
 import ai.icen.fw.application.delivery.DocumentDeliveryRemovalStatus
@@ -68,6 +69,7 @@ class JdbcDocumentSyncStatusQueryRepository : DocumentSyncStatusQueryRepository 
                 deliveryRetryable = result.getBoolean("delivery_retryable"),
                 removalRetryable = result.getBoolean("removal_retryable"),
                 updatedTime = result.getLong("delivery_updated_time"),
+                lastErrorCategory = DocumentDeliveryErrorCategory.classify(result.getString("delivery_error_message")),
             )
         } while (result.next())
         return DocumentSyncStatusView(documentId, targets)
@@ -118,6 +120,7 @@ class JdbcDocumentSyncStatusQueryRepository : DocumentSyncStatusQueryRepository 
                    target.retry_count AS delivery_retry_count,
                    target.removal_status,
                    target.removal_retry_count,
+                   target.error_message AS delivery_error_message,
                    target.updated_time AS delivery_updated_time,
                    COALESCE(
                        target.delivery_status IN ('PENDING', 'RETRYING', 'FAILED')

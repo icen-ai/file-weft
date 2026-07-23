@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DocumentSyncStatusModelsTest {
@@ -16,6 +17,7 @@ class DocumentSyncStatusModelsTest {
             targetId = "archive",
             deliveryStatus = DocumentDeliveryStatus.RETRYING,
             deliveryRetryable = true,
+            lastErrorCategory = DocumentDeliveryErrorCategory.CONNECTOR_FAILURE,
         )
         val removal = target(
             deliveryId = "delivery-b",
@@ -35,6 +37,8 @@ class DocumentSyncStatusModelsTest {
         assertTrue(delivery.deliveryRetryable)
         assertFalse(delivery.removalRetryable)
         assertTrue(removal.removalRetryable)
+        assertEquals(DocumentDeliveryErrorCategory.CONNECTOR_FAILURE, delivery.lastErrorCategory)
+        assertNull(removal.lastErrorCategory)
     }
 
     @Test
@@ -92,6 +96,15 @@ class DocumentSyncStatusModelsTest {
                 removalRetryable = true,
             )
         }
+        assertFailsWith<IllegalArgumentException> {
+            target(lastErrorCategory = DocumentDeliveryErrorCategory.UNKNOWN)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            target(
+                deliveryStatus = DocumentDeliveryStatus.SUCCEEDED,
+                lastErrorCategory = DocumentDeliveryErrorCategory.CONNECTOR_FAILURE,
+            )
+        }
     }
 
     @Test
@@ -123,6 +136,7 @@ class DocumentSyncStatusModelsTest {
         deliveryRetryable: Boolean = false,
         removalRetryable: Boolean = false,
         updatedTime: Long = 100,
+        lastErrorCategory: DocumentDeliveryErrorCategory? = null,
     ): DocumentDeliveryStatusView = DocumentDeliveryStatusView(
         deliveryId = Identifier(deliveryId),
         targetId = targetId,
@@ -135,5 +149,6 @@ class DocumentSyncStatusModelsTest {
         deliveryRetryable = deliveryRetryable,
         removalRetryable = removalRetryable,
         updatedTime = updatedTime,
+        lastErrorCategory = lastErrorCategory,
     )
 }

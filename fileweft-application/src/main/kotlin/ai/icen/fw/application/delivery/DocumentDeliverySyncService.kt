@@ -244,31 +244,40 @@ class DocumentDeliverySyncService @JvmOverloads constructor(
         else -> preparation
     }
 
-    private fun invokeConnector(preparation: Preparation.Ready): ConnectorSyncResult = try {
+    private fun invokeConnector(preparation: Preparation.Ready): ConnectorSyncResult {
         val fileObject = preparation.fileObject
         val delivery = preparation.expectation.target
-        preparation.connector.sync(
-            ConnectorSyncRequest(
-                tenantId = delivery.tenantId,
-                businessId = delivery.documentId,
-                source = ConnectorFileSource(
-                    downloadUri = storageAdapter.accessUrl(
-                        StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
-                        sourceAccessUrlTtl,
+        // Source URL preparation is diagnosed separately so operators can tell a
+        // storage failure apart from a downstream connector failure.
+        val downloadUri = try {
+            storageAdapter.accessUrl(
+                StorageObjectLocation(fileObject.storageType, fileObject.storagePath),
+                sourceAccessUrlTtl,
+            )
+        } catch (_: Exception) {
+            return ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Storage source access could not be prepared.")
+        }
+        return try {
+            preparation.connector.sync(
+                ConnectorSyncRequest(
+                    tenantId = delivery.tenantId,
+                    businessId = delivery.documentId,
+                    source = ConnectorFileSource(
+                        downloadUri = downloadUri,
+                        fileName = fileObject.fileName,
+                        contentType = fileObject.contentType,
+                        contentHash = fileObject.contentHash,
                     ),
-                    fileName = fileObject.fileName,
-                    contentType = fileObject.contentType,
-                    contentHash = fileObject.contentHash,
+                    invocation = ConnectorInvocation(delivery.id.value, connectorTimeout),
+                    attributes = mapOf(
+                        "deliveryProfileId" to delivery.profileId,
+                        "deliveryTargetId" to delivery.targetId,
+                    ),
                 ),
-                invocation = ConnectorInvocation(delivery.id.value, connectorTimeout),
-                attributes = mapOf(
-                    "deliveryProfileId" to delivery.profileId,
-                    "deliveryTargetId" to delivery.targetId,
-                ),
-            ),
-        )
-    } catch (_: Exception) {
-        ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Connector invocation could not complete.")
+            )
+        } catch (_: Exception) {
+            ConnectorSyncResult(ConnectorSyncStatus.RETRYABLE_FAILURE, message = "Connector invocation could not complete.")
+        }
     }
 
     private fun complete(

@@ -1,5 +1,6 @@
 package ai.icen.fw.persistence.jdbc
 
+import ai.icen.fw.application.delivery.DocumentDeliveryErrorCategory
 import ai.icen.fw.application.delivery.DocumentDeliveryRemovalPlanner
 import ai.icen.fw.application.delivery.DocumentDeliveryRemovalStatus
 import ai.icen.fw.application.delivery.DocumentDeliveryPlanner
@@ -106,6 +107,7 @@ class JdbcDocumentSyncStatusQueryRepositoryIntegrationTest {
         val running = status.deliveryTargets[0]
         assertEquals(DocumentDeliveryStatus.FAILED, running.deliveryStatus)
         assertFalse(running.deliveryRetryable)
+        assertNull(running.lastErrorCategory)
         val deliveryReady = status.deliveryTargets[1]
         assertEquals(DocumentDeliveryStatus.RETRYING, deliveryReady.deliveryStatus)
         assertEquals("archive", deliveryReady.targetId)
@@ -115,12 +117,14 @@ class JdbcDocumentSyncStatusQueryRepositoryIntegrationTest {
         assertEquals(210, deliveryReady.updatedTime)
         assertTrue(deliveryReady.deliveryRetryable)
         assertFalse(deliveryReady.removalRetryable)
+        assertEquals(DocumentDeliveryErrorCategory.UNKNOWN, deliveryReady.lastErrorCategory)
         val removalReady = status.deliveryTargets[2]
         assertEquals(DeliveryRequirement.OPTIONAL, removalReady.requirement)
         assertEquals(DocumentDeliveryRemovalStatus.RETRYING, removalReady.removalStatus)
         assertEquals(4, removalReady.removalRetryCount)
         assertFalse(removalReady.deliveryRetryable)
         assertTrue(removalReady.removalRetryable)
+        assertNull(removalReady.lastErrorCategory)
         assertFalse(status.deliveryTargets[3].deliveryRetryable)
     }
 

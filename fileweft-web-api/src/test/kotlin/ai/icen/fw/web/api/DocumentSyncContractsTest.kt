@@ -35,6 +35,16 @@ class DocumentSyncContractsTest {
         assertFailsWith<IllegalArgumentException> {
             delivery("delivery-1", "target-1", deliveryRetryable = true, removalRetryable = true)
         }
+        assertFailsWith<IllegalArgumentException> { delivery("delivery-1", "target-1", lastErrorCategory = " ") }
+    }
+
+    @Test
+    fun `delivery status carries only a fixed optional error category`() {
+        assertEquals(null, delivery("delivery-1", "target-1").lastErrorCategory)
+        assertEquals(
+            "CONNECTOR_FAILURE",
+            delivery("delivery-1", "target-1", lastErrorCategory = "CONNECTOR_FAILURE").lastErrorCategory,
+        )
     }
 
     @Test
@@ -52,6 +62,7 @@ class DocumentSyncContractsTest {
                 "getDeliveryRetryable",
                 "getRemovalRetryable",
                 "getUpdatedTime",
+                "getLastErrorCategory",
             ),
             publicGetters(DocumentDeliverySyncStatusDto::class.java),
         )
@@ -81,6 +92,7 @@ class DocumentSyncContractsTest {
         deliveryRetryable: Boolean = true,
         removalRetryable: Boolean = false,
         updatedTime: Long = 200,
+        lastErrorCategory: String? = null,
     ): DocumentDeliverySyncStatusDto = DocumentDeliverySyncStatusDto(
         deliveryId = deliveryId,
         targetId = targetId,
@@ -93,5 +105,6 @@ class DocumentSyncContractsTest {
         deliveryRetryable = deliveryRetryable,
         removalRetryable = removalRetryable,
         updatedTime = updatedTime,
+        lastErrorCategory = lastErrorCategory,
     )
 }

@@ -243,8 +243,15 @@ class DocumentPageQuery @JvmOverloads constructor(
     }
 }
 
-/** Redacted status of one current-generation downstream delivery target. */
-class DocumentDeliverySyncStatusDto(
+/**
+ * Redacted status of one current-generation downstream delivery target.
+ *
+ * [lastErrorCategory] is the only diagnostic-derived field: a fixed
+ * `DocumentDeliveryErrorCategory` name classified from the persisted
+ * internal diagnostic. Raw error text may contain host policy, storage, or
+ * database details and deliberately never becomes part of this contract.
+ */
+class DocumentDeliverySyncStatusDto @JvmOverloads constructor(
     deliveryId: String,
     targetId: String,
     displayName: String,
@@ -256,6 +263,7 @@ class DocumentDeliverySyncStatusDto(
     val deliveryRetryable: Boolean,
     val removalRetryable: Boolean,
     val updatedTime: Long,
+    lastErrorCategory: String? = null,
 ) {
     val deliveryId: String = requiredText(deliveryId, "Delivery id", 128)
     val targetId: String = requiredText(targetId, "Delivery target id", 128)
@@ -263,6 +271,7 @@ class DocumentDeliverySyncStatusDto(
     val requirement: String = requiredText(requirement, "Delivery requirement", 32)
     val deliveryStatus: String = requiredText(deliveryStatus, "Delivery status", 32)
     val removalStatus: String = requiredText(removalStatus, "Delivery removal status", 32)
+    val lastErrorCategory: String? = optionalText(lastErrorCategory, "Delivery error category", 64)
 
     init {
         require(deliveryRetryCount >= 0) { "Delivery retry count must not be negative." }

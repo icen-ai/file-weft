@@ -1,6 +1,7 @@
 package ai.icen.fw.web.spring.boot2
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import ai.icen.fw.application.delivery.DocumentDeliveryErrorCategory
 import ai.icen.fw.application.delivery.DocumentDeliveryRecoveryConflictException
 import ai.icen.fw.application.delivery.DocumentDeliveryRecoveryOperation
 import ai.icen.fw.application.delivery.DocumentDeliveryRecoveryReceipt
@@ -56,6 +57,7 @@ class DocumentV1SyncRecoveryControllerMockMvcTest {
             .andExpect(jsonPath("$.data.deliveryTargets[0].deliveryId").value("delivery-1"))
             .andExpect(jsonPath("$.data.deliveryTargets[0].deliveryStatus").value("FAILED"))
             .andExpect(jsonPath("$.data.deliveryTargets[0].deliveryRetryable").value(true))
+            .andExpect(jsonPath("$.data.deliveryTargets[0].lastErrorCategory").value("CONNECTOR_FAILURE"))
             .andExpect(jsonPath("$.data.deliveryTargets[0].connectorId").doesNotExist())
             .andExpect(jsonPath("$.data.deliveryTargets[0].externalId").doesNotExist())
             .andExpect(jsonPath("$.data.deliveryTargets[0].errorMessage").doesNotExist())
@@ -204,6 +206,7 @@ class DocumentV1SyncRecoveryControllerMockMvcTest {
                 Identifier("delivery-1"), "archive", "Archive", DeliveryRequirement.REQUIRED,
                 DocumentDeliveryStatus.FAILED, 2, DocumentDeliveryRemovalStatus.NOT_REQUESTED, 0,
                 deliveryRetryable = true, removalRetryable = false, updatedTime = 100,
+                lastErrorCategory = DocumentDeliveryErrorCategory.CONNECTOR_FAILURE,
             ),
         ),
     )

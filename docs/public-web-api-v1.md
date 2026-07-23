@@ -72,7 +72,7 @@ Web Starter 不隐式引入数据库或替代原有运行时 Starter。宿主应
 - `GET /fileweft/v1/workflows/tasks`：当前用户的待审批任务分页；只含分配给当前用户或未分配、且文档与工作流仍待审批的任务。
 - `GET /fileweft/v1/documents/{documentId}/workflows`：当前用户可见文档的审批历史分页；任务投影不含受理人、评论和操作者。
 - `GET /fileweft/v1/documents/{documentId}/workflow-decisions`：同时要求 `document:audit` 与 `document:read` 的受权决策证据分页；新决策返回不可变的操作者 ID/名称快照和 `decidedTime`，不返回受理人、评论、租户或任意 attributes；遗留任务以 `decisionEvidenceRecorded=false` 且操作者/时间为 `null` 表达未知。
-- `GET /fileweft/v1/documents/{documentId}/sync-status`：当前发布代次的脱敏交付状态；只返回目标名称、要求、状态、重试计数及两种安全重排就绪标志。
+- `GET /fileweft/v1/documents/{documentId}/sync-status`：当前发布代次的脱敏交付状态；只返回目标名称、要求、状态、重试计数及两种安全重排就绪标志；`FAILED`/`RETRYING` 目标附带固定错误类别 `lastErrorCategory`，不回传原始错误文本。
 - `GET /fileweft/v1/documents/{documentId}/logs`：同时要求 `document:audit` 与 `document:read`，并受当前目录可见范围约束的审计分页；只返回日志 ID、动作、字符串操作者 ID/名称快照、可选 Trace ID 与时间，不返回原始 details。
 - `GET /fileweft/v1/documents/{documentId}/doctor`：即时执行经过双重文档授权与目录可见性复核的脱敏诊断。
 - `POST /fileweft/v1/documents/{documentId}/doctor/tasks`：持久化排队异步诊断；要求恰好一个 `Idempotency-Key`，fresh/replay 均返回同一任务回执和 `202`。
@@ -112,7 +112,7 @@ Metadata schema 是不可变、带版本的公共契约。字段类型固定为 
 - `POST /fileweft/v1/documents/{documentId}/deliveries/{deliveryId}/retry`
 - `POST /fileweft/v1/documents/{documentId}/deliveries/{deliveryId}/removal/retry`
 
-状态中的 `deliveryRetryable` / `removalRetryable` 不是单纯由目标 `FAILED` 推断：只有当前事件围栏的操作、事件类型及同租户 Outbox 终态都精确匹配 `FAILED` 时才为 `true`。这也覆盖 Outbox 已提交失败、但进程在本地终态投影前退出而遗留的 `PENDING/RETRYING` 目标；正式恢复命令可安全接管该窗口。命令最终事务固定按 idempotency → document → asset（目录模式）→ delivery target → current Outbox 加锁，并原子推进派发序号、写新事件、审计和幂等回执。旧事件或失租 Worker 的迟到结果无法覆盖新重排状态。公共 DTO 不含 profile/connector/owner、下游外部 ID、错误文本、Outbox ID/payload、事件 ID、租约 token 或派发序号。
+状态中的 `deliveryRetryable` / `removalRetryable` 不是单纯由目标 `FAILED` 推断：只有当前事件围栏的操作、事件类型及同租户 Outbox 终态都精确匹配 `FAILED` 时才为 `true`。这也覆盖 Outbox 已提交失败、但进程在本地终态投影前退出而遗留的 `PENDING/RETRYING` 目标；正式恢复命令可安全接管该窗口。命令最终事务固定按 idempotency → document → asset（目录模式）→ delivery target → current Outbox 加锁，并原子推进派发序号、写新事件、审计和幂等回执。旧事件或失租 Worker 的迟到结果无法覆盖新重排状态。公共 DTO 不含 profile/connector/owner、下游外部 ID、错误文本、Outbox ID/payload、事件 ID、租约 token 或派发序号。失败诊断只以固定枚举 `lastErrorCategory`（`TARGET_NOT_FOUND` / `DOCUMENT_UNAVAILABLE` / `FENCE_INVALID` / `CONNECTOR_FAILURE` / `STORAGE_FAILURE` / `PERSISTENCE_FAILURE` / `UNKNOWN`）离开信任边界，无诊断或无失败时为 `null`；持久化的原始 `error_message` 可能含主机策略、存储或数据库细节，永不进入 HTTP 契约。
 
 审批待办同时要求 `document:audit` 和 `document:read`；普通文档审批历史作为文档详情的身份脱敏投影，只要求 `document:read`。受权决策证据入口 `/workflow-decisions` 则同时要求 `document:audit` 与 `document:read`。三者都在目录模式下将查询限制在当前用户可浏览的目录范围。待办项的 `assignedToCurrentUser` 与 `actionableByCurrentUser` 均由可信用户快照计算，客户端不能提交用户 ID；不可见或跨租户文档固定表现为 `404`，可见但没有记录则返回空页。
 

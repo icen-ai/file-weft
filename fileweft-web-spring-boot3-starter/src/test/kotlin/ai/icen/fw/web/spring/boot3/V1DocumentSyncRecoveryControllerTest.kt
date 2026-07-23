@@ -43,6 +43,7 @@ class V1DocumentSyncRecoveryControllerTest {
             .andExpect(jsonPath("$.data.documentId").value("document-1"))
             .andExpect(jsonPath("$.data.deliveryTargets[0].deliveryId").value("delivery-1"))
             .andExpect(jsonPath("$.data.deliveryTargets[0].deliveryRetryable").value(true))
+            .andExpect(jsonPath("$.data.deliveryTargets[0].lastErrorCategory").value("CONNECTOR_FAILURE"))
             .andExpect(jsonPath("$.data.deliveryTargets[0].connectorId").doesNotExist())
             .andExpect(jsonPath("$.data.deliveryTargets[0].externalId").doesNotExist())
             .andExpect(jsonPath("$.data.deliveryTargets[0].errorMessage").doesNotExist())
@@ -142,6 +143,7 @@ class V1DocumentSyncRecoveryControllerTest {
                         DocumentDeliverySyncStatusDto(
                             "delivery-1", "archive", "Archive", "REQUIRED", "FAILED", 2,
                             "NOT_REQUESTED", 0, true, false, 100,
+                            lastErrorCategory = "CONNECTOR_FAILURE",
                         ),
                     ),
                 )
