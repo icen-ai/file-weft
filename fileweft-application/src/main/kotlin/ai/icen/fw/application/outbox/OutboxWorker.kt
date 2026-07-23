@@ -4,6 +4,8 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TraceContext
 import ai.icen.fw.spi.event.OutboxEventHandler
 import ai.icen.fw.spi.event.OutboxHandlingStatus
+import ai.icen.fw.spi.observability.FileWeftLogger
+import ai.icen.fw.spi.observability.LogContext
 import ai.icen.fw.spi.observability.TraceContextScope
 import java.time.Clock
 import java.time.Duration
@@ -20,13 +22,15 @@ class OutboxWorker private constructor(
     private val transaction: ApplicationTransaction,
     handlers: List<OutboxEventHandler>,
     private val clock: Clock,
-    private val maxAttempts: Int,
+    val maxAttempts: Int,
     initialRetryDelay: Duration,
     maxRetryDelay: Duration,
     private val traceContextScope: TraceContextScope?,
     leaseSettings: OutboxLeaseSettings,
+    private val logger: FileWeftLogger?,
 ) {
-    private val workerId: String = leaseSettings.workerId
+    /** Persisted-lease identity, exposed so operators can correlate startup logs with claimed events. */
+    val workerId: String = leaseSettings.workerId
     /**
      * Retains the original Kotlin default-constructor ABI for existing
      * plugins. Do not append lease settings to this constructor: compiled
@@ -56,6 +60,7 @@ class OutboxWorker private constructor(
             leaseDuration = Duration.ofMinutes(5),
             legacyRunningGrace = Duration.ofMinutes(5),
         ),
+        logger = null,
     )
 
     /**
@@ -84,6 +89,38 @@ class OutboxWorker private constructor(
         maxRetryDelay = maxRetryDelay,
         traceContextScope = traceContextScope,
         leaseSettings = OutboxLeaseSettings(workerId, leaseDuration, legacyRunningGrace),
+        logger = null,
+    )
+
+    /**
+     * Adds optional structured logging without changing the constructors used
+     * by plugins compiled against the pre-logging API. A null logger keeps
+     * every logging branch silent.
+     */
+    constructor(
+        repository: OutboxProcessingRepository,
+        transaction: ApplicationTransaction,
+        handlers: List<OutboxEventHandler>,
+        clock: Clock,
+        maxAttempts: Int = 5,
+        initialRetryDelay: Duration = Duration.ofSeconds(10),
+        maxRetryDelay: Duration = Duration.ofMinutes(5),
+        traceContextScope: TraceContextScope? = null,
+        workerId: String,
+        leaseDuration: Duration,
+        legacyRunningGrace: Duration,
+        logger: FileWeftLogger?,
+    ) : this(
+        repository = repository,
+        transaction = transaction,
+        handlers = handlers,
+        clock = clock,
+        maxAttempts = maxAttempts,
+        initialRetryDelay = initialRetryDelay,
+        maxRetryDelay = maxRetryDelay,
+        traceContextScope = traceContextScope,
+        leaseSettings = OutboxLeaseSettings(workerId, leaseDuration, legacyRunningGrace),
+        logger = logger,
     )
 
     private val handlers: List<OutboxEventHandler> = ArrayList(handlers)
@@ -122,7 +159,25 @@ class OutboxWorker private constructor(
                 ProcessingOutcome.LOST -> lost++
             }
         }
-        return OutboxProcessingSummary(claimed, succeeded, retried, failed, lost)
+        val summary = OutboxProcessingSummary(claimed, succeeded, retried, failed, lost)
+        logBatchSummary(summary)
+        return summary
+    }
+
+    /**
+     * One line per non-empty batch. Empty one-second polls stay silent so an
+     * idle worker does not flood the host log.
+     */
+    private fun logBatchSummary(summary: OutboxProcessingSummary) {
+        val current = logger ?: return
+        if (summary.claimed == 0) return
+        val message = "Outbox worker $workerId processed ${summary.claimed} event(s): " +
+            "succeeded=${summary.succeeded} retried=${summary.retried} failed=${summary.failed} lost=${summary.lost}."
+        if (summary.failed > 0) {
+            current.warn(message)
+        } else {
+            current.info(message)
+        }
     }
 
     /**
@@ -165,7 +220,7 @@ class OutboxWorker private constructor(
         val matchingHandlers = try {
             handlers.filter { it.supports(lease.event) }
         } catch (failure: Exception) {
-            return retryOrFail(lease, "Outbox handler selection failed: ${failure.javaClass.name}")
+            return retryOrFail(lease, describeFailure("Outbox handler selection failed", failure))
         }
         if (matchingHandlers.isEmpty()) {
             val message = "No outbox handler supports event type ${lease.event.type}."
@@ -179,7 +234,9 @@ class OutboxWorker private constructor(
                     handler.handle(lease.event)
                 }
             } catch (failure: Exception) {
-                return retryOrFail(lease, "Outbox handler failed: ${failure.javaClass.name}", matchingHandlers)
+                val message = describeFailure("Outbox handler failed", failure)
+                logger?.error(message, failure, LogContext(tenantId = lease.event.tenantId, traceId = lease.event.traceId))
+                return retryOrFail(lease, message, matchingHandlers)
             }
             when (result.status) {
                 OutboxHandlingStatus.SUCCEEDED -> Unit
@@ -282,6 +339,17 @@ class OutboxWorker private constructor(
         if (value < decrement) 0 else value - decrement
 
     private fun truncateMessage(message: String): String = message.take(MAX_ERROR_MESSAGE_LENGTH)
+
+    /**
+     * Appends the exception message to the persisted error so operators see the
+     * cause, not only the exception type. CR/LF are flattened because
+     * downstream exception messages can span lines, and last_error stays a
+     * single-line column; [truncateMessage] still bounds the length.
+     */
+    private fun describeFailure(prefix: String, failure: Exception): String {
+        val detail = failure.message?.replace('\r', ' ')?.replace('\n', ' ')
+        return if (detail.isNullOrEmpty()) "$prefix: ${failure.javaClass.name}" else "$prefix: ${failure.javaClass.name}: $detail"
+    }
 
     private enum class ProcessingOutcome {
         SUCCEEDED,

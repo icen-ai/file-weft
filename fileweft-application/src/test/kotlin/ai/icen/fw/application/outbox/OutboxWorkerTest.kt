@@ -7,6 +7,8 @@ import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.spi.event.OutboxEventHandler
 import ai.icen.fw.spi.event.OutboxHandlingResult
 import ai.icen.fw.spi.event.OutboxHandlingStatus
+import ai.icen.fw.spi.observability.FileWeftLogger
+import ai.icen.fw.spi.observability.LogContext
 import ai.icen.fw.spi.observability.TraceContextScope
 import org.junit.jupiter.api.Test
 import java.time.Clock
@@ -16,6 +18,8 @@ import java.time.ZoneOffset
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class OutboxWorkerTest {
@@ -191,7 +195,115 @@ class OutboxWorkerTest {
         ).processAvailable(1)
 
         assertEquals(1, failedSummary.failed)
-        assertTrue(failedRepository.failed.single().message.startsWith("Outbox handler failed:"))
+        assertEquals("Outbox handler failed: java.lang.IllegalStateException: offline", failedRepository.failed.single().message)
+    }
+
+    @Test
+    fun `persists flattened exception messages and class names in last error`() {
+        val multiline = RecordingRepository(listOf(lease(retryCount = 0)))
+        worker(multiline, TrackingTransaction(), listOf(handler {
+            throw IllegalStateException("offline\nretry later")
+        })).processAvailable(1)
+
+        assertEquals(
+            "Outbox handler failed: java.lang.IllegalStateException: offline retry later",
+            multiline.retries.single().message,
+        )
+
+        val messageless = RecordingRepository(listOf(lease(retryCount = 0)))
+        worker(messageless, TrackingTransaction(), listOf(handler {
+            throw RuntimeException(null as String?)
+        })).processAvailable(1)
+
+        assertEquals("Outbox handler failed: java.lang.RuntimeException", messageless.retries.single().message)
+
+        val selection = RecordingRepository(listOf(lease(retryCount = 0)))
+        val brokenSelection = object : OutboxEventHandler {
+            override fun supports(event: OutboxEvent): Boolean = throw IllegalStateException("broken supports")
+            override fun handle(event: OutboxEvent): OutboxHandlingResult = OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED)
+        }
+        worker(selection, TrackingTransaction(), listOf(brokenSelection)).processAvailable(1)
+
+        assertEquals(
+            "Outbox handler selection failed: java.lang.IllegalStateException: broken supports",
+            selection.retries.single().message,
+        )
+    }
+
+    @Test
+    fun `logs a batch summary for non-empty polls and stays silent while idle`() {
+        val logger = RecordingLogger()
+        val repository = RecordingRepository(listOf(lease()))
+        val loggingWorker = worker(
+            repository,
+            TrackingTransaction(),
+            listOf(handler { OutboxHandlingResult(OutboxHandlingStatus.SUCCEEDED) }),
+            logger = logger,
+        )
+
+        loggingWorker.processAvailable(10)
+
+        assertEquals(
+            listOf("Outbox worker worker-a processed 1 event(s): succeeded=1 retried=0 failed=0 lost=0."),
+            logger.infos,
+        )
+        assertTrue(logger.warnings.isEmpty())
+
+        loggingWorker.processAvailable(10)
+
+        assertEquals(1, logger.infos.size, "Empty polls must not add log lines.")
+    }
+
+    @Test
+    fun `logs batch summaries containing failed events as warnings`() {
+        val logger = RecordingLogger()
+        val repository = RecordingRepository(listOf(lease(retryCount = 1)))
+        worker(
+            repository,
+            TrackingTransaction(),
+            listOf(handler { throw IllegalStateException("offline") }),
+            maxAttempts = 2,
+            logger = logger,
+        ).processAvailable(1)
+
+        assertEquals(
+            listOf("Outbox worker worker-a processed 1 event(s): succeeded=0 retried=0 failed=1 lost=0."),
+            logger.warnings,
+        )
+        assertTrue(logger.infos.isEmpty())
+    }
+
+    @Test
+    fun `logs handler exceptions with the throwable and the event log context`() {
+        val logger = RecordingLogger()
+        val failure = IllegalStateException("offline")
+        worker(
+            RecordingRepository(listOf(lease(traceId = "trace-event"))),
+            TrackingTransaction(),
+            listOf(handler { throw failure }),
+            logger = logger,
+        ).processAvailable(1)
+
+        val error = logger.errors.single()
+        assertEquals("Outbox handler failed: java.lang.IllegalStateException: offline", error.message)
+        assertSame(failure, error.throwable)
+        assertEquals(Identifier("tenant-1"), error.context.tenantId)
+        assertEquals(Identifier("trace-event"), error.context.traceId)
+        assertNull(error.context.documentId)
+    }
+
+    @Test
+    fun `stays silent without a logger while processing outcomes are unchanged`() {
+        val repository = RecordingRepository(listOf(lease(retryCount = 1)))
+        val summary = worker(
+            repository,
+            TrackingTransaction(),
+            listOf(handler { throw IllegalStateException("offline") }),
+            maxAttempts = 2,
+        ).processAvailable(1)
+
+        assertEquals(1, summary.failed)
+        assertEquals("Outbox handler failed: java.lang.IllegalStateException: offline", repository.failed.single().message)
     }
 
     @Test
@@ -389,19 +501,37 @@ class OutboxWorkerTest {
         leaseDuration: Duration = Duration.ofMillis(60),
         legacyRunningGrace: Duration = Duration.ofMinutes(5),
         clock: Clock = Clock.fixed(Instant.ofEpochMilli(100), ZoneOffset.UTC),
-    ): OutboxWorker = OutboxWorker(
-        repository,
-        transaction,
-        handlers,
-        clock,
-        maxAttempts,
-        Duration.ofMillis(10),
-        Duration.ofMillis(40),
-        traces,
-        workerId,
-        leaseDuration,
-        legacyRunningGrace,
-    )
+        logger: FileWeftLogger? = null,
+    ): OutboxWorker = if (logger == null) {
+        OutboxWorker(
+            repository,
+            transaction,
+            handlers,
+            clock,
+            maxAttempts,
+            Duration.ofMillis(10),
+            Duration.ofMillis(40),
+            traces,
+            workerId,
+            leaseDuration,
+            legacyRunningGrace,
+        )
+    } else {
+        OutboxWorker(
+            repository,
+            transaction,
+            handlers,
+            clock,
+            maxAttempts,
+            Duration.ofMillis(10),
+            Duration.ofMillis(40),
+            traces,
+            workerId,
+            leaseDuration,
+            legacyRunningGrace,
+            logger,
+        )
+    }
 
     private fun handler(handle: () -> OutboxHandlingResult): OutboxEventHandler = object : OutboxEventHandler {
         override fun supports(event: OutboxEvent): Boolean = true
@@ -461,6 +591,28 @@ class OutboxWorkerTest {
 
     private data class Retry(val nextAttemptAt: Long, val message: String)
     private data class Failure(val message: String)
+
+    private class RecordingLogger : FileWeftLogger {
+        data class ErrorEvent(val message: String, val throwable: Throwable?, val context: LogContext)
+
+        val infos = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        val errors = mutableListOf<ErrorEvent>()
+
+        override fun info(message: String, context: LogContext) {
+            infos += message
+        }
+
+        override fun warn(message: String, context: LogContext) {
+            warnings += message
+        }
+
+        override fun error(message: String, throwable: Throwable?, context: LogContext) {
+            errors += ErrorEvent(message, throwable, context)
+        }
+
+        override fun debug(message: String, context: LogContext) = Unit
+    }
 
     private class LeasedRecordingRepository(
         leases: List<OutboxEventLease>,

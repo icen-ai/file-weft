@@ -11,9 +11,12 @@ import ai.icen.fw.application.task.TaskWorker
 import ai.icen.fw.application.upload.ResumableUploadService
 import ai.icen.fw.spi.observability.FileWeftGauge
 import ai.icen.fw.spi.observability.FileWeftGaugeRecorder
+import ai.icen.fw.spi.observability.FileWeftLogger
+import ai.icen.fw.spi.observability.LogContext
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.support.StaticListableBeanFactory
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.concurrent.Executor
@@ -61,6 +64,55 @@ class OutboxBacklogWorkerSchedulingConfigurationTest {
         executor.runNext()
 
         assertEquals(1, readerCalls)
+    }
+
+    @Test
+    fun `logs the resolved outbox worker configuration when the scheduler starts`() {
+        val transaction = DirectTransaction
+        val outboxWorker = OutboxWorker(
+            EmptyOutboxRepository,
+            transaction,
+            emptyList(),
+            FIXED_CLOCK,
+            workerId = "worker-startup",
+            leaseDuration = Duration.ofSeconds(60),
+            legacyRunningGrace = Duration.ofMinutes(5),
+        )
+        val logger = RecordingLogger()
+        val factory = StaticListableBeanFactory().apply {
+            addBean("outboxWorker", outboxWorker)
+        }
+        val configuration = FileWeftWorkerSchedulingConfiguration()
+        configuration.workerLogger = logger
+        val properties = FileWeftProperties().apply { worker.enabled = true }
+
+        configuration.configuredFileWeftWorkerScheduler(
+            properties = properties,
+            outbox = factory.getBeanProvider(OutboxWorker::class.java),
+            tasks = factory.getBeanProvider(TaskWorker::class.java),
+            uploads = factory.getBeanProvider(ResumableUploadService::class.java),
+            outboxBacklogMetrics = factory.getBeanProvider(OutboxBacklogMetricsPublisher::class.java),
+            outboxBacklogMetricsExecutor = factory.getBeanProvider(Executor::class.java),
+        )
+
+        assertEquals(
+            listOf("Outbox worker started: workerId=worker-startup pollIntervalMillis=1000 batchSize=50 maxAttempts=5."),
+            logger.infos,
+        )
+    }
+
+    private class RecordingLogger : FileWeftLogger {
+        val infos = mutableListOf<String>()
+
+        override fun info(message: String, context: LogContext) {
+            infos += message
+        }
+
+        override fun warn(message: String, context: LogContext) = Unit
+
+        override fun error(message: String, throwable: Throwable?, context: LogContext) = Unit
+
+        override fun debug(message: String, context: LogContext) = Unit
     }
 
     private object DirectTransaction : ApplicationTransaction {

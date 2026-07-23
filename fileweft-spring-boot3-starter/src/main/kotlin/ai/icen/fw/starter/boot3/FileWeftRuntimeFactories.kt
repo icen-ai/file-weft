@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import ai.icen.fw.adapter.connector.ConnectorInvocationExecutor
 import ai.icen.fw.adapter.connector.ConnectorResiliencePolicy
 import ai.icen.fw.adapter.connector.ConnectorResilienceRegistry
+import ai.icen.fw.adapter.logging.Slf4jFileWeftLogger
 import ai.icen.fw.adapter.storage.LocalStorageAdapter
 import ai.icen.fw.adapter.tenant.FixedTenantProvider
 import ai.icen.fw.agent.AgentTaskHandler
@@ -906,6 +907,7 @@ internal class FileWeftRuntimeFactories {
         workerId = properties.outbox.workerId?.takeIf { it.isNotBlank() } ?: "fileweft-outbox-${UUID.randomUUID()}",
         leaseDuration = Duration.ofMillis(properties.outbox.leaseDurationMillis),
         legacyRunningGrace = Duration.ofMillis(properties.outbox.legacyRunningGraceMillis),
+        logger = Slf4jFileWeftLogger(OutboxWorker::class.java.name),
     )
 
     fun taskWorker(

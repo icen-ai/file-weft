@@ -1,9 +1,11 @@
 package ai.icen.fw.starter.boot3
 
+import ai.icen.fw.adapter.logging.Slf4jFileWeftLogger
 import ai.icen.fw.application.outbox.OutboxBacklogMetricsPublisher
 import ai.icen.fw.application.outbox.OutboxWorker
 import ai.icen.fw.application.task.TaskWorker
 import ai.icen.fw.application.upload.ResumableUploadService
+import ai.icen.fw.spi.observability.FileWeftLogger
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
@@ -18,14 +20,18 @@ import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
-import java.util.logging.Level
-import java.util.logging.Logger
 
 /** Opt-in polling role; deploy it separately from HTTP-serving application nodes. */
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
 @ConditionalOnProperty(prefix = "fileweft.worker", name = ["enabled"], havingValue = "true")
 class FileWeftWorkerSchedulingConfiguration {
+    /**
+     * Mutable only so tests can capture lifecycle emissions; production wiring
+     * always logs through SLF4J.
+     */
+    internal var workerLogger: FileWeftLogger = Slf4jFileWeftLogger(FileWeftWorkerSchedulingConfiguration::class.java.name)
+
     @Bean(name = ["fileWeftWorkerScheduler"])
     fun configuredFileWeftWorkerScheduler(
         properties: FileWeftProperties,
@@ -89,24 +95,33 @@ class FileWeftWorkerSchedulingConfiguration {
         uploads: ResumableUploadService?,
         outboxBacklogMetrics: OutboxBacklogMetricsPublisher?,
         outboxBacklogMetricsExecutor: Executor?,
-    ): FileWeftWorkerScheduler = FileWeftWorkerScheduler(
-        properties.worker,
+    ): FileWeftWorkerScheduler {
         outbox?.let { worker ->
-            {
-                try {
-                    worker.processAvailable(properties.worker.outboxBatchSize)
-                } finally {
-                    if (properties.outbox.backlogMetricsEnabled) {
-                        outboxBacklogMetrics?.let { publisher ->
-                            outboxBacklogMetricsExecutor?.let { executor -> publisher.publishIfDueAsync(executor) }
+            workerLogger.info(
+                "Outbox worker started: workerId=${worker.workerId} " +
+                    "pollIntervalMillis=${properties.worker.fixedDelayMillis} " +
+                    "batchSize=${properties.worker.outboxBatchSize} maxAttempts=${worker.maxAttempts}.",
+            )
+        }
+        return FileWeftWorkerScheduler(
+            properties.worker,
+            outbox?.let { worker ->
+                {
+                    try {
+                        worker.processAvailable(properties.worker.outboxBatchSize)
+                    } finally {
+                        if (properties.outbox.backlogMetricsEnabled) {
+                            outboxBacklogMetrics?.let { publisher ->
+                                outboxBacklogMetricsExecutor?.let { executor -> publisher.publishIfDueAsync(executor) }
+                            }
                         }
                     }
                 }
-            }
-        },
-        tasks?.let { worker -> { worker.processAvailable(properties.worker.taskBatchSize) } },
-        uploads?.let { service -> { service.cleanupExpired(properties.upload.resumableCleanupBatchSize) } },
-    )
+            },
+            tasks?.let { worker -> { worker.processAvailable(properties.worker.taskBatchSize) } },
+            uploads?.let { service -> { service.cleanupExpired(properties.upload.resumableCleanupBatchSize) } },
+        )
+    }
 
     private companion object {
         const val OUTBOX_BACKLOG_EXECUTOR_BEAN = "fileWeftOutboxBacklogMetricsExecutor"
@@ -140,11 +155,11 @@ class FileWeftWorkerScheduler(
         try {
             processor()
         } catch (failure: Exception) {
-            logger.log(Level.SEVERE, "FileWeft $role worker cycle failed; durable work remains available for a later retry.", failure)
+            logger.error("FileWeft $role worker cycle failed; durable work remains available for a later retry.", failure)
         }
     }
 
     private companion object {
-        val logger = Logger.getLogger(FileWeftWorkerScheduler::class.java.name)
+        val logger: FileWeftLogger = Slf4jFileWeftLogger(FileWeftWorkerScheduler::class.java.name)
     }
 }
