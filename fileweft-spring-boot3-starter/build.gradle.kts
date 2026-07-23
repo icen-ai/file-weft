@@ -80,6 +80,7 @@ dependencies.add(kingbaseFlyway11Runtime.name, "org.flywaydb:flyway-database-pos
 tasks.register<Test>("kingbaseFlywayAutoConfigurationIntegrationTest") {
     group = "verification"
     description = "Runs Spring Boot 3 Flyway auto-configuration against real KingbaseES with Flyway 11 and JDK 17."
+    notCompatibleWithConfigurationCache("Kingbase Flyway host lanes resolve a versioned host runtime classpath that the configuration cache cannot serialize.")
     testClassesDirs = testSourceSet.get().output.classesDirs
     classpath = testSourceSet.get().output + sourceSets.main.get().output + kingbaseFlyway11Runtime
     useJUnitPlatform()

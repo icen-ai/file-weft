@@ -69,6 +69,7 @@ dependencies.add(kingbaseFlyway8Runtime.name, "org.flywaydb:flyway-mysql:8.5.13"
 tasks.register<Test>("kingbaseFlywayAutoConfigurationIntegrationTest") {
     group = "verification"
     description = "Runs Spring Boot 2 Flyway auto-configuration against real KingbaseES with Flyway 8 and JDK 8."
+    notCompatibleWithConfigurationCache("Kingbase Flyway host lanes resolve a versioned host runtime classpath that the configuration cache cannot serialize.")
     testClassesDirs = testSourceSet.get().output.classesDirs
     classpath = testSourceSet.get().output + sourceSets.main.get().output + kingbaseFlyway8Runtime
     useJUnitPlatform()
