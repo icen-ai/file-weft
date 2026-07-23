@@ -27,8 +27,8 @@ class DefaultMetadataProcessor @JvmOverloads constructor(
     private fun resolveSchema(context: MetadataSchemaContext): MetadataSchema {
         val schema = try {
             resolver.resolve(context)
-        } catch (_: RuntimeException) {
-            throw MetadataSchemaConfigurationException()
+        } catch (exception: RuntimeException) {
+            throw MetadataSchemaConfigurationException(exception)
         } ?: throw MetadataSchemaNotFoundException()
 
         if (schema.id != context.schemaId) {

@@ -8,10 +8,15 @@ import ai.icen.fw.metadata.api.MetadataProcessor
 import ai.icen.fw.metadata.api.MetadataSchema
 import ai.icen.fw.metadata.api.MetadataSchemaContext
 import ai.icen.fw.metadata.api.MetadataSchemaResolver
+import ai.icen.fw.spi.observability.FileWeftLogger
+import ai.icen.fw.spi.observability.LogContext
 import ai.icen.fw.spi.tenant.TenantProvider
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class DocumentMetadataServiceTest {
     @Test
@@ -127,6 +132,180 @@ class DocumentMetadataServiceTest {
             )
         }
         assertEquals(false, processorCalled)
+    }
+
+    @Test
+    fun `logs schema resolution failures with the throwable and the tenant context`() {
+        val logger = RecordingLogger()
+        val failure = IllegalStateException("registry exploded")
+        val service = DocumentMetadataService(
+            tenantProvider(),
+            object : MetadataSchemaResolver {
+                override fun resolve(context: MetadataSchemaContext): MetadataSchema? = throw failure
+            },
+            passingProcessor(),
+            logger,
+        )
+
+        assertFailsWith<MetadataConfigurationException> {
+            service.process("invoice", emptyMap(), "create")
+        }
+
+        val error = logger.errors.single()
+        assertEquals("Metadata schema resolution failed.", error.message)
+        assertSame(failure, error.throwable)
+        assertEquals(Identifier("tenant-a"), error.context.tenantId)
+    }
+
+    @Test
+    fun `logs processor configuration failures and rethrows them unchanged`() {
+        val logger = RecordingLogger()
+        val failure = IllegalStateException("schema configuration is invalid")
+        val service = DocumentMetadataService(
+            tenantProvider(),
+            resolverReturning(invoiceSchema()),
+            object : MetadataProcessor {
+                override fun process(
+                    context: MetadataSchemaContext,
+                    metadata: Map<String, String>,
+                ): Map<String, String> = throw failure
+            },
+            logger,
+        )
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            service.process("invoice", emptyMap(), "create")
+        }
+
+        assertSame(failure, thrown, "Configuration failures from the processor must propagate unchanged.")
+        val error = logger.errors.single()
+        assertEquals("Metadata processing failed on schema configuration.", error.message)
+        assertSame(failure, error.throwable)
+        assertEquals(Identifier("tenant-a"), error.context.tenantId)
+    }
+
+    @Test
+    fun `logs and wraps schema disappearance during processing`() {
+        val logger = RecordingLogger()
+        val service = DocumentMetadataService(
+            tenantProvider(),
+            resolverReturning(invoiceSchema()),
+            object : MetadataProcessor {
+                override fun process(
+                    context: MetadataSchemaContext,
+                    metadata: Map<String, String>,
+                ): Map<String, String> = throw NoSuchElementException("schema is gone")
+            },
+            logger,
+        )
+
+        assertFailsWith<MetadataConfigurationException> {
+            service.process("invoice", emptyMap(), "create")
+        }
+        assertEquals(1, logger.errors.size)
+        assertEquals(Identifier("tenant-a"), logger.errors.single().context.tenantId)
+    }
+
+    @Test
+    fun `logs the resolved-schema configuration guard without a throwable`() {
+        val logger = RecordingLogger()
+        val service = DocumentMetadataService(
+            tenantProvider(),
+            resolverReturning(
+                MetadataSchema(
+                    "invoice",
+                    "2",
+                    listOf(MetadataField("metadata.forged", MetadataFieldType.STRING)),
+                ),
+            ),
+            passingProcessor(),
+            logger,
+        )
+
+        assertFailsWith<MetadataConfigurationException> {
+            service.process("invoice", emptyMap(), "create")
+        }
+
+        val error = logger.errors.single()
+        assertNull(error.throwable, "A guard rejection has no underlying failure.")
+        assertEquals(Identifier("tenant-a"), error.context.tenantId)
+    }
+
+    @Test
+    fun `does not log input validation failures`() {
+        val logger = RecordingLogger()
+        val service = DocumentMetadataService(
+            tenantProvider(),
+            resolverReturning(invoiceSchema()),
+            object : MetadataProcessor {
+                override fun process(
+                    context: MetadataSchemaContext,
+                    metadata: Map<String, String>,
+                ): Map<String, String> = throw IllegalArgumentException("Metadata validation failed.")
+            },
+            logger,
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            service.process("invoice", emptyMap(), "create")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            service.process(
+                "invoice",
+                mapOf(DocumentMetadataService.SCHEMA_ID_KEY to "forged"),
+                "create",
+            )
+        }
+        assertTrue(logger.errors.isEmpty(), "Input validation failures are normal business flow.")
+    }
+
+    @Test
+    fun `stays silent without a logger while failure behavior is unchanged`() {
+        val service = DocumentMetadataService(
+            tenantProvider(),
+            object : MetadataSchemaResolver {
+                override fun resolve(context: MetadataSchemaContext): MetadataSchema? =
+                    throw IllegalStateException("registry exploded")
+            },
+            passingProcessor(),
+        )
+
+        assertFailsWith<MetadataConfigurationException> {
+            service.process("invoice", emptyMap(), "create")
+        }
+    }
+
+    private fun invoiceSchema(): MetadataSchema = MetadataSchema(
+        "invoice",
+        "2",
+        listOf(MetadataField("amount", MetadataFieldType.NUMBER, required = true)),
+    )
+
+    private fun resolverReturning(schema: MetadataSchema): MetadataSchemaResolver = object : MetadataSchemaResolver {
+        override fun resolve(context: MetadataSchemaContext): MetadataSchema = schema
+    }
+
+    private fun passingProcessor(): MetadataProcessor = object : MetadataProcessor {
+        override fun process(
+            context: MetadataSchemaContext,
+            metadata: Map<String, String>,
+        ): Map<String, String> = metadata
+    }
+
+    private class RecordingLogger : FileWeftLogger {
+        data class ErrorEvent(val message: String, val throwable: Throwable?, val context: LogContext)
+
+        val errors = mutableListOf<ErrorEvent>()
+
+        override fun info(message: String, context: LogContext) = Unit
+
+        override fun warn(message: String, context: LogContext) = Unit
+
+        override fun error(message: String, throwable: Throwable?, context: LogContext) {
+            errors += ErrorEvent(message, throwable, context)
+        }
+
+        override fun debug(message: String, context: LogContext) = Unit
     }
 
     private fun tenantProvider(): TenantProvider = object : TenantProvider {

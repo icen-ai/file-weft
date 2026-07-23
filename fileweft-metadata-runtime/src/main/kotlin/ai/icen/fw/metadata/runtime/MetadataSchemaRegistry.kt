@@ -45,8 +45,8 @@ class MetadataSchemaRegistry @JvmOverloads constructor(
             }
         } catch (exception: MetadataSchemaConfigurationException) {
             throw exception
-        } catch (_: RuntimeException) {
-            throw MetadataSchemaConfigurationException()
+        } catch (exception: RuntimeException) {
+            throw MetadataSchemaConfigurationException(exception)
         }
         currentById = currentIndex.toMap()
         schemasByKey = exactIndex.toMap()

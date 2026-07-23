@@ -4,7 +4,6 @@ import ai.icen.fw.metadata.api.MetadataField
 import ai.icen.fw.metadata.api.MetadataFieldType
 import ai.icen.fw.metadata.api.MetadataSchema
 import ai.icen.fw.metadata.api.MetadataValidationIssueCode
-import com.google.re2j.Pattern as LinearPattern
 import com.google.re2j.PatternSyntaxException as LinearPatternSyntaxException
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -26,18 +25,28 @@ internal sealed class FieldNormalization {
 }
 
 internal object MetadataSchemaConfiguration {
+    /**
+     * Re-checks the immutable schema on every evaluation. This stays
+     * per-request on purpose: with format compilation behind
+     * [MetadataFormatPatterns], the remaining work is a cheap O(fields)
+     * reserved-prefix scan, and caching the verdict per schema identity would
+     * add invalidation complexity for no measurable win. The check is a pure
+     * function of the immutable schema, so repeating it is always safe.
+     */
     fun validate(schema: MetadataSchema) {
         try {
             schema.fields.forEach { field ->
                 if (isReservedFieldName(field.name)) {
                     throw MetadataSchemaConfigurationException()
                 }
-                field.format?.let { LinearPattern.compile(it) }
+                field.format?.let { MetadataFormatPatterns.compile(it) }
             }
-        } catch (_: LinearPatternSyntaxException) {
-            throw MetadataSchemaConfigurationException()
-        } catch (_: RuntimeException) {
-            throw MetadataSchemaConfigurationException()
+        } catch (exception: MetadataSchemaConfigurationException) {
+            throw exception
+        } catch (exception: LinearPatternSyntaxException) {
+            throw MetadataSchemaConfigurationException(exception)
+        } catch (exception: RuntimeException) {
+            throw MetadataSchemaConfigurationException(exception)
         }
     }
 
@@ -76,9 +85,9 @@ internal object MetadataFieldCodec {
         val format = field.format
         if (format != null) {
             val pattern = try {
-                LinearPattern.compile(format)
-            } catch (_: LinearPatternSyntaxException) {
-                throw MetadataSchemaConfigurationException()
+                MetadataFormatPatterns.compile(format)
+            } catch (exception: LinearPatternSyntaxException) {
+                throw MetadataSchemaConfigurationException(exception)
             }
             if (initial.logicalValues.any { !pattern.matcher(it).matches() }) {
                 return failure(MetadataValidationIssueCode.FORMAT_MISMATCH)
