@@ -11,3 +11,5 @@ out/
 .env
 .env.*
 !.env.example
+flowweft-console/.next/
+flowweft-console/tsconfig.tsbuildinfo
