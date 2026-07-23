@@ -25,7 +25,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.DocumentConflictException
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.identity.UserRealmProvider
@@ -49,7 +49,7 @@ class IdempotentDocumentDeliveryRecoveryService @JvmOverloads constructor(
     tenants: TenantProvider,
     users: UserRealmProvider,
     authorization: AuthorizationProvider,
-    documents: DocumentRepository,
+    documents: DocumentMutationRepository,
     deliveries: DocumentDeliveryTargetMutationRepository,
     outboxMutations: OutboxEventMutationRepository,
     outbox: OutboxEventRepository,
@@ -85,7 +85,7 @@ class IdempotentDocumentCatalogDeliveryRecoveryService @JvmOverloads constructor
     tenants: TenantProvider,
     users: UserRealmProvider,
     authorization: AuthorizationProvider,
-    documents: DocumentRepository,
+    documents: DocumentMutationRepository,
     assets: FileAssetRepository,
     deliveries: DocumentDeliveryTargetMutationRepository,
     outboxMutations: OutboxEventMutationRepository,
@@ -136,7 +136,7 @@ internal class IdempotentDocumentDeliveryRecoveryDelegate(
     private val tenants: TenantProvider,
     users: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
-    private val documents: DocumentRepository,
+    private val documents: DocumentMutationRepository,
     private val deliveries: DocumentDeliveryTargetMutationRepository,
     private val outboxMutations: OutboxEventMutationRepository,
     private val outbox: OutboxEventRepository,

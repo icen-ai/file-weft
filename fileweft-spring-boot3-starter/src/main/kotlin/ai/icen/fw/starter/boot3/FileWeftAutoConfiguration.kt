@@ -46,6 +46,7 @@ import io.micrometer.core.instrument.MeterRegistry
 private const val LEGACY_AGENT_AUTOCONFIGURATION_PROPERTY =
     "fileweft.compatibility.legacy-agent-autoconfiguration-enabled"
 
+@Suppress("DEPRECATION")
 @AutoConfiguration(after = [DataSourceAutoConfiguration::class, FlywayAutoConfiguration::class, JacksonAutoConfiguration::class])
 @EnableConfigurationProperties(FileWeftProperties::class)
 @Import(

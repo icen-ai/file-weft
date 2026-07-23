@@ -13,7 +13,7 @@ import ai.icen.fw.core.context.TraceContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileObject
@@ -515,7 +515,7 @@ internal class DocumentV1WriteControllerTestFixture(
         )
     }
 
-    class MemoryDocuments : DocumentRepository {
+    class MemoryDocuments : DocumentMutationRepository {
         val values = linkedMapOf<Identifier, Document>()
 
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =

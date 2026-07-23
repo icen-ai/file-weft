@@ -7,7 +7,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
@@ -820,7 +820,9 @@ class DocumentDeliveryServiceTest {
         it.transition(LifecycleCommand.APPROVE)
     }
 
-    private class MemoryDocuments(private var document: Document) : DocumentRepository {
+    private class MemoryDocuments(private var document: Document) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier) = document.takeIf { it.tenantId == tenantId && it.id == documentId }
         override fun findForMutation(tenantId: Identifier, documentId: Identifier) = findById(tenantId, documentId)
         override fun save(document: Document) { this.document = document }

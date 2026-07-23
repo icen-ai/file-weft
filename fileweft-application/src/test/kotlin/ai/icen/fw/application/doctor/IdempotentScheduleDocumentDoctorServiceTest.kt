@@ -18,7 +18,7 @@ import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -198,7 +198,9 @@ class IdempotentScheduleDocumentDoctorServiceTest {
             .take(limit)
     }
 
-    private class MemoryDocuments : DocumentRepository {
+    private class MemoryDocuments : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         private val documents = listOf(document(DOCUMENT_ID), document(OTHER_DOCUMENT_ID))
         var mutationReads: Int = 0
             private set

@@ -8,7 +8,7 @@ import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.domain.file.FileObject
@@ -316,7 +316,10 @@ class DocumentDownloadVisibilityTest {
 
     private class RecordingDocuments(
         private val transaction: TrackingTransaction,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var reads: Int = 0
 
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? {

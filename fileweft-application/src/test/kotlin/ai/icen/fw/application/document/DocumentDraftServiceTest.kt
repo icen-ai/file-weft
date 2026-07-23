@@ -16,7 +16,7 @@ import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
 import ai.icen.fw.domain.document.DocumentNotEditableException
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.DocumentVersionAlreadyExistsException
 import ai.icen.fw.domain.document.LifecycleCommand
@@ -855,7 +855,7 @@ class DocumentDraftServiceTest {
 
     private fun service(
         storage: RecordingStorage = RecordingStorage(),
-        documents: DocumentRepository = RecordingDocuments(),
+        documents: DocumentMutationRepository = RecordingDocuments(),
         fileObjects: FileObjectRepository = RecordingFileObjects(),
         assets: FileAssetRepository = RecordingAssets(),
         identifiers: List<String>,
@@ -921,7 +921,7 @@ class DocumentDraftServiceTest {
         }
     }
 
-    private class RecordingDocuments(initial: Document? = null) : DocumentRepository {
+    private class RecordingDocuments(initial: Document? = null) : DocumentMutationRepository {
         private var document: Document? = initial
         var accesses: Int = 0
             private set
@@ -947,13 +947,14 @@ class DocumentDraftServiceTest {
         }
     }
 
-    private object FailingDocuments : DocumentRepository {
+    private object FailingDocuments : DocumentMutationRepository {
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = null
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = null
         override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
         override fun save(document: Document): Nothing = throw IllegalStateException("database failed")
     }
 
-    private class FailingSaveDocuments(private val document: Document) : DocumentRepository {
+    private class FailingSaveDocuments(private val document: Document) : DocumentMutationRepository {
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document.takeIf { it.tenantId == tenantId && it.id == documentId }
         override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =

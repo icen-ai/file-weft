@@ -126,7 +126,7 @@ class WorkflowInstanceTest {
         workflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
 
         assertTrue(workflow.willCompleteAfterApproval(Identifier("task-2"), Identifier("reviewer-2")))
-        assertFailsWith<WorkflowTaskAssignmentDeniedException> {
+        assertFailsWith<WorkflowTaskDeniedException> {
             workflow.willCompleteAfterApproval(Identifier("task-2"), Identifier("other-reviewer"))
         }
     }
@@ -151,7 +151,7 @@ class WorkflowInstanceTest {
 
     @Test
     fun `classifies a task outside the workflow as not found`() {
-        val failure = assertFailsWith<WorkflowTaskNotFoundException> {
+        val failure = assertFailsWith<WorkflowTaskMissingException> {
             workflow().approve(Identifier("task-other"), Identifier("reviewer-1"))
         }
 
@@ -165,10 +165,10 @@ class WorkflowInstanceTest {
             workflow.approve(Identifier("task-1"), Identifier("reviewer-1"))
         }
 
-        assertFailsWith<WorkflowTaskNotFoundException> {
+        assertFailsWith<WorkflowTaskMissingException> {
             completed.approve(Identifier("task-other"), Identifier("reviewer-1"))
         }
-        assertFailsWith<WorkflowTaskAssignmentDeniedException> {
+        assertFailsWith<WorkflowTaskDeniedException> {
             completed.approve(Identifier("task-1"), Identifier("other-reviewer"))
         }
         assertFailsWith<WorkflowDecisionConflictException> {
@@ -184,7 +184,7 @@ class WorkflowInstanceTest {
                 tasks = listOf(WorkflowTask(Identifier("task-1"), Identifier("tenant-2"), Identifier("workflow-1"))),
             )
         }
-        val denied = assertFailsWith<WorkflowTaskAssignmentDeniedException> {
+        val denied = assertFailsWith<WorkflowTaskDeniedException> {
             workflow().approve(Identifier("task-1"), Identifier("other-reviewer"))
         }
         assertEquals(Identifier("task-1"), denied.taskId)

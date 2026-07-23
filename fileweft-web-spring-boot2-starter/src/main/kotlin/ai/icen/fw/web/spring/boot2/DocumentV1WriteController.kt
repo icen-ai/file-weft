@@ -41,6 +41,16 @@ class DocumentV1WriteController(
     private val responses: V1ApiResponseFactory,
     private val traceContextProvider: TraceContextProvider? = null,
 ) {
+    /**
+     * Not an HTTP endpoint: this method carries no route mapping and is never
+     * dispatched by Spring MVC. The mapped create route is [createWithMetadata].
+     * Retained only for binary compatibility with hosts compiled against the
+     * first v1 write controller; it will be removed in a future major release.
+     */
+    @Deprecated(
+        "Not an HTTP endpoint; retained for binary compatibility. " +
+            "The mapped create route is createWithMetadata.",
+    )
     fun create(
         @RequestParam(name = "documentNumber", required = false) documentNumbers: List<String>?,
         @RequestParam(name = "title", required = false) titles: List<String>?,
@@ -95,6 +105,16 @@ class DocumentV1WriteController(
         }
     }
 
+    /**
+     * Not an HTTP endpoint: this method carries no route mapping and is never
+     * dispatched by Spring MVC. The mapped version route is [addVersionWithMetadata].
+     * Retained only for binary compatibility with hosts compiled against the
+     * first v1 write controller; it will be removed in a future major release.
+     */
+    @Deprecated(
+        "Not an HTTP endpoint; retained for binary compatibility. " +
+            "The mapped version route is addVersionWithMetadata.",
+    )
     fun addVersion(
         @PathVariable("documentId") documentId: String,
         @RequestParam(name = "versionNumber", required = false) versionNumbers: List<String>?,

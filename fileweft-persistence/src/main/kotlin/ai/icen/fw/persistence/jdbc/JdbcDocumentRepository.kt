@@ -2,8 +2,8 @@ package ai.icen.fw.persistence.jdbc
 
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
-import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleState
 import java.sql.ResultSet
@@ -11,7 +11,7 @@ import java.time.Clock
 
 class JdbcDocumentRepository(
     private val clock: Clock,
-) : DocumentRepository {
+) : DocumentMutationRepository {
     override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
         find(
             tenantId,

@@ -5,7 +5,7 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
@@ -57,7 +57,11 @@ class JavaDocumentApiDownloadFixtures private constructor() {
                     authorizationProvider = object : AuthorizationProvider {
                         override fun authorize(request: AuthorizationRequest) = AuthorizationDecision(true)
                     },
-                    documentRepository = object : DocumentRepository {
+                    documentRepository = object : DocumentMutationRepository {
+                        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+
+                        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
                         override fun findById(requestTenantId: Identifier, requestDocumentId: Identifier): Document? =
                             document.takeIf { it.tenantId == requestTenantId && it.id == requestDocumentId }
 

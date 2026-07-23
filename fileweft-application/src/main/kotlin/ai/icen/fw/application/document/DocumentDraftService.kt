@@ -9,8 +9,8 @@ import ai.icen.fw.application.upload.StoredObjectIntegrity
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
-import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
@@ -43,7 +43,7 @@ class DocumentDraftService(
     private val userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
     private val storageAdapter: StorageAdapter,
-    private val documentRepository: DocumentRepository,
+    private val documentRepository: DocumentMutationRepository,
     private val fileObjectRepository: FileObjectRepository,
     private val fileAssetRepository: FileAssetRepository,
     private val identifierGenerator: IdentifierGenerator,

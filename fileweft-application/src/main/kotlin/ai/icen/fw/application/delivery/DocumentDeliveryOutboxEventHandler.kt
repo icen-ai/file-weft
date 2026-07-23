@@ -4,7 +4,7 @@ import ai.icen.fw.application.outbox.LeasedOutboxEventHandler
 import ai.icen.fw.application.outbox.OutboxEventLease
 import ai.icen.fw.application.outbox.OutboxEventMutationRepository
 import ai.icen.fw.core.event.OutboxEvent
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.spi.event.OutboxHandlingResult
 import ai.icen.fw.spi.event.OutboxHandlingStatus
 
@@ -13,7 +13,7 @@ class DocumentDeliveryOutboxEventHandler private constructor(
     private val deliverySyncService: DocumentDeliverySyncService,
     private val deliveryRemovalService: DocumentDeliveryRemovalService,
     private val outboxMutations: OutboxEventMutationRepository?,
-    private val documents: DocumentRepository?,
+    private val documents: DocumentMutationRepository?,
     private val fenced: Boolean,
 ) : LeasedOutboxEventHandler {
     constructor(
@@ -25,7 +25,7 @@ class DocumentDeliveryOutboxEventHandler private constructor(
         deliverySyncService: DocumentDeliverySyncService,
         deliveryRemovalService: DocumentDeliveryRemovalService,
         outboxMutations: OutboxEventMutationRepository,
-        documents: DocumentRepository,
+        documents: DocumentMutationRepository,
     ) : this(deliverySyncService, deliveryRemovalService, outboxMutations, documents, true)
 
     init {

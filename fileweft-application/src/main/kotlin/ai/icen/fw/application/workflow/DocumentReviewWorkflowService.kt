@@ -15,7 +15,7 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.workflow.WorkflowInstance
 import ai.icen.fw.domain.workflow.WorkflowInstanceRepository
@@ -31,7 +31,7 @@ class DocumentReviewWorkflowService(
     private val tenantProvider: TenantProvider,
     private val userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
-    private val documentRepository: DocumentRepository,
+    private val documentRepository: DocumentMutationRepository,
     private val workflowRepository: WorkflowInstanceRepository,
     private val deliveryPlanner: DocumentDeliveryPlanner,
     private val identifierGenerator: IdentifierGenerator,

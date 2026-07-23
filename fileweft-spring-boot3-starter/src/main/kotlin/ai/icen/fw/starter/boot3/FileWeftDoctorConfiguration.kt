@@ -16,6 +16,7 @@ import ai.icen.fw.application.idempotency.RequestIdempotencyService
 import ai.icen.fw.application.task.TaskRepository
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.IdentifierGenerator
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
@@ -59,7 +60,16 @@ import ai.icen.fw.spi.storage.StorageAdapter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate
 
-/** Formal Doctor application boundaries, kept separate from the legacy diagnostic bean surface. */
+/**
+ * Formal Doctor application boundaries, kept separate from the legacy diagnostic bean surface.
+ *
+ * Bean naming contract: primary names keep the `fileWeft*` prefix shared with the
+ * Boot 2 starter so by-name injection survives a Boot 2 to Boot 3 migration. The
+ * short names introduced in 0.0.3 stay registered as aliases (the second name in
+ * each `@Bean` declaration) so hosts already adapted to 0.0.3 keep resolving the
+ * same instances; those aliases are deprecated and will be removed in a future
+ * major release.
+ */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(DataSource::class)
 class FileWeftDoctorConfiguration {
@@ -139,7 +149,7 @@ class FileWeftDoctorConfiguration {
         tenants,
         users,
         authorization,
-        documents,
+        runtimeFactories.requireDocumentMutations(documents),
         tasks,
         identifiers,
         clock,
@@ -167,7 +177,7 @@ class FileWeftDoctorConfiguration {
         catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
     ): IdempotentScheduleDocumentCatalogDoctorService? {
         val catalogAccess = requiredSecurityCandidate(catalogAccesses, DocumentCatalogAccessService::class.java)
-        return if (assets is FileAssetMutationRepository) {
+        return if (assets is FileAssetMutationRepository && documents is DocumentMutationRepository) {
             IdempotentScheduleDocumentCatalogDoctorService(
                 tenants,
                 users,
@@ -188,11 +198,11 @@ class FileWeftDoctorConfiguration {
     }
 
 
-    @Bean
+    @Bean(name = ["fileWeftDoctorReportRepository", "doctorReports"])
     @ConditionalOnMissingBean(DoctorReportRepository::class)
     fun doctorReports(objectMapper: ObjectMapper, clock: Clock): DoctorReportRepository = runtimeFactories.doctorReports(objectMapper, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentResultRepository", "agentResults"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -201,7 +211,7 @@ class FileWeftDoctorConfiguration {
     @ConditionalOnMissingBean(AgentResultRepository::class)
     fun agentResults(objectMapper: ObjectMapper, clock: Clock): AgentResultRepository = runtimeFactories.agentResults(objectMapper, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftConfirmAgentSuggestionService", "confirmAgentSuggestionService"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -214,7 +224,7 @@ class FileWeftDoctorConfiguration {
         clock: Clock, auditTrail: AuditTrail, tasks: TaskRepository,
     ) = runtimeFactories.confirmAgentSuggestionService(tenants, users, authorization, results, identifiers, transaction, clock, auditTrail, tasks)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentTaskOrchestrator", "agentTaskOrchestrator"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -225,7 +235,7 @@ class FileWeftDoctorConfiguration {
         agents: List<ai.icen.fw.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry, clock: Clock,
     ) = runtimeFactories.agentTaskOrchestrator(agents, plugins, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentDoctorChecker", "agentDoctorChecker"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -236,7 +246,7 @@ class FileWeftDoctorConfiguration {
         agents: List<ai.icen.fw.spi.ai.FileWeftAgent>, plugins: FileWeftPluginRegistry,
     ) = runtimeFactories.agentDoctorChecker(agents, plugins)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentTaskScheduler", "agentTaskScheduler"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -245,7 +255,7 @@ class FileWeftDoctorConfiguration {
     @ConditionalOnMissingBean(AgentTaskScheduler::class)
     fun agentTaskScheduler(identifiers: IdentifierGenerator, clock: Clock) = runtimeFactories.agentTaskScheduler(identifiers, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentTaskHandler", "agentTaskHandler"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -258,7 +268,7 @@ class FileWeftDoctorConfiguration {
         taskMutations: ObjectProvider<TaskMutationRepository>,
     ): AgentTaskHandler = runtimeFactories.agentTaskHandler(orchestrator, results, transaction, clock, taskMutations)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentTaskOutboxEventHandler", "agentTaskOutboxEventHandler"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -270,7 +280,7 @@ class FileWeftDoctorConfiguration {
         tasks: TaskRepository, transaction: ApplicationTransaction,
     ) = runtimeFactories.agentTaskOutboxEventHandler(triggers, plugins, scheduler, tasks, transaction)
 
-    @Bean
+    @Bean(name = ["fileWeftAgentSuggestionConfirmations", "agentSuggestionConfirmations"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -282,34 +292,34 @@ class FileWeftDoctorConfiguration {
         identifiers: IdentifierGenerator, clock: Clock, tasks: TaskRepository,
     ) = runtimeFactories.agentSuggestionConfirmations(results, transaction, identifiers, clock, tasks)
 
-    @Bean
+    @Bean(name = ["fileWeftDeploymentSafetyDoctorChecker", "deploymentSafetyDoctor"])
     @ConditionalOnMissingBean(DeploymentSafetyDoctorChecker::class)
     fun deploymentSafetyDoctor(
         tenants: TenantProvider,
         storage: StorageAdapter,
     ) = runtimeFactories.deploymentSafetyDoctor(tenants, storage)
 
-    @Bean
+    @Bean(name = ["fileWeftPermissionDoctorChecker", "permissionDoctor"])
     @ConditionalOnMissingBean(PermissionDoctorChecker::class)
     fun permissionDoctor(users: UserRealmProvider, authorization: AuthorizationProvider) = runtimeFactories.permissionDoctor(users, authorization)
 
-    @Bean
+    @Bean(name = ["fileWeftLifecycleDoctorChecker", "lifecycleDoctor"])
     @ConditionalOnMissingBean(LifecycleDoctorChecker::class)
     fun lifecycleDoctor(documents: DocumentRepository) = runtimeFactories.lifecycleDoctor(documents)
 
-    @Bean
+    @Bean(name = ["fileWeftStorageDoctorChecker", "storageDoctor"])
     @ConditionalOnMissingBean(StorageDoctorChecker::class)
     fun storageDoctor(
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter, transaction: ApplicationTransaction,
     ) = runtimeFactories.storageDoctor(documents, fileObjects, storage, transaction)
 
-    @Bean
+    @Bean(name = ["fileWeftWorkflowDoctorChecker", "workflowDoctor"])
     @ConditionalOnMissingBean(WorkflowDoctorChecker::class)
     fun workflowDoctor(
         documents: DocumentRepository, workflows: WorkflowInstanceRepository,
     ) = runtimeFactories.workflowDoctor(documents, workflows)
 
-    @Bean
+    @Bean(name = ["fileWeftMetadataDoctorChecker", "metadataDoctor"])
     @ConditionalOnMissingBean(MetadataDoctorChecker::class)
     fun metadataDoctor(
         documents: DocumentRepository,
@@ -319,26 +329,26 @@ class FileWeftDoctorConfiguration {
         transaction: ApplicationTransaction,
     ) = runtimeFactories.metadataDoctor(documents, assets, schemas, processor, transaction)
 
-    @Bean
+    @Bean(name = ["fileWeftCatalogDoctorChecker", "catalogDoctor"])
     @ConditionalOnSingleCandidate(DocumentCatalogProvider::class)
     @ConditionalOnMissingBean(CatalogDoctorChecker::class)
     fun catalogDoctor(
         documents: DocumentRepository, assets: FileAssetRepository, catalog: DocumentCatalogProvider, transaction: ApplicationTransaction,
     ) = runtimeFactories.catalogDoctor(documents, assets, catalog, transaction)
 
-    @Bean
+    @Bean(name = ["fileWeftConnectorDoctorChecker", "connectorDoctor"])
     @ConditionalOnMissingBean(ConnectorDoctorChecker::class)
     fun connectorDoctor(
         connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, resilience: ConnectorResilienceRegistry,
     ) = runtimeFactories.connectorDoctor(connectors, plugins, resilience)
 
-    @Bean
+    @Bean(name = ["fileWeftDeliveryProfileDoctorChecker", "deliveryProfileDoctor"])
     @ConditionalOnMissingBean(DeliveryProfileDoctorChecker::class)
     fun deliveryProfileDoctor(
         profiles: DocumentDeliveryProfileProvider, connectors: DeliveryConnectorResolver,
     ) = runtimeFactories.deliveryProfileDoctor(profiles, connectors)
 
-    @Bean(name = ["doctorService"])
+    @Bean(name = ["fileWeftDoctorService", "doctorService"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -354,7 +364,7 @@ class FileWeftDoctorConfiguration {
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
     ): DoctorApplicationService = runtimeFactories.doctorServiceWithoutLegacyAgentWithMetadata(tenants, permission, deploymentSafety, lifecycle, storage, workflow, catalog, connector, deliveryProfile, metadata, transaction, clock, metrics, plugins)
 
-    @Bean
+    @Bean(name = ["fileWeftDoctorService", "doctorService"])
     @ConditionalOnProperty(
         prefix = FILEWEFT_COMPATIBILITY_PREFIX,
         name = [LEGACY_AGENT_AUTOCONFIGURATION_ENABLED],
@@ -370,7 +380,7 @@ class FileWeftDoctorConfiguration {
         clock: Clock, metrics: FileWeftMetrics, plugins: FileWeftPluginRegistry,
     ): DoctorApplicationService = runtimeFactories.doctorServiceWithMetadata(tenants, permission, deploymentSafety, lifecycle, storage, workflow, catalog, connector, deliveryProfile, metadata, agent, transaction, clock, metrics, plugins)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDoctorTaskHandler", "documentDoctorTaskHandler"])
     @ConditionalOnMissingBean(DocumentDoctorTaskHandler::class)
     fun documentDoctorTaskHandler(
         doctor: DoctorApplicationService, reports: DoctorReportRepository,
@@ -378,7 +388,7 @@ class FileWeftDoctorConfiguration {
         taskMutations: ObjectProvider<TaskMutationRepository>,
     ): DocumentDoctorTaskHandler = runtimeFactories.documentDoctorTaskHandler(doctor, reports, transaction, clock, taskMutations)
 
-    @Bean
+    @Bean(name = ["fileWeftScheduleDocumentDoctorService", "scheduleDocumentDoctorService"])
     @ConditionalOnMissingBean(ScheduleDocumentDoctorService::class)
     fun scheduleDocumentDoctorService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,

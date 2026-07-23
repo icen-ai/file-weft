@@ -7,7 +7,7 @@ import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.spi.authorization.AuthorizationDecision
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.authorization.AuthorizationRequest
@@ -60,8 +60,10 @@ class ScheduleDocumentDoctorServiceTest {
             override fun findUser(userId: Identifier): UserIdentity? = null
         },
         authorizationProvider = object : AuthorizationProvider { override fun authorize(request: AuthorizationRequest) = authorization(request) },
-        documents = object : DocumentRepository {
+        documents = object : DocumentMutationRepository {
             private val document = Document(Identifier("document-1"), Identifier("tenant-1"), Identifier("asset-1"), "DOC-001", "诊断文档")
+            override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+            override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
             override fun findById(tenantId: Identifier, documentId: Identifier) = document.takeIf { it.tenantId == tenantId && it.id == documentId }
             override fun save(document: Document) = Unit
         },

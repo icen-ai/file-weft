@@ -14,6 +14,8 @@ import ai.icen.fw.application.upload.ResumableUploadStateException
 import ai.icen.fw.application.upload.ResumableUploadUnavailableException
 import ai.icen.fw.domain.document.DocumentConflictException
 import ai.icen.fw.domain.workflow.WorkflowConflictException
+import ai.icen.fw.domain.workflow.WorkflowTaskDeniedException
+import ai.icen.fw.domain.workflow.WorkflowTaskMissingException
 import ai.icen.fw.web.api.ApiError
 import ai.icen.fw.web.api.ApiErrorCodes
 import ai.icen.fw.web.api.ApiResponse
@@ -57,9 +59,19 @@ class V1ApiResponseFactory {
                 ApiErrorCodes.UNAUTHENTICATED,
                 "Authentication is required.",
             )
+            is WorkflowTaskDeniedException -> MappedFailure(
+                ApiHttpStatus.FORBIDDEN,
+                ApiErrorCodes.FORBIDDEN,
+                "Access denied.",
+            )
             is ApplicationForbiddenException,
             is SecurityException,
             -> MappedFailure(ApiHttpStatus.FORBIDDEN, ApiErrorCodes.FORBIDDEN, "Access denied.")
+            is WorkflowTaskMissingException -> MappedFailure(
+                ApiHttpStatus.NOT_FOUND,
+                ApiErrorCodes.NOT_FOUND,
+                "Resource was not found.",
+            )
             is DocumentNotFoundException,
             is NoSuchElementException,
             -> MappedFailure(ApiHttpStatus.NOT_FOUND, ApiErrorCodes.NOT_FOUND, "Resource was not found.")

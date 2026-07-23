@@ -82,6 +82,21 @@ import org.springframework.context.annotation.Import
 internal const val FILEWEFT_COMPATIBILITY_PREFIX = "fileweft.compatibility"
 internal const val LEGACY_AGENT_AUTOCONFIGURATION_ENABLED = "legacy-agent-autoconfiguration-enabled"
 
+/**
+ * Compatibility facade from the monolithic runtime configuration era.
+ *
+ * Since 0.0.3 the runtime beans are assembled by the five split configurations
+ * ([FileWeftDocumentConfiguration], [FileWeftUploadConfiguration],
+ * [FileWeftWorkflowConfiguration], [FileWeftDeliveryConfiguration],
+ * [FileWeftDoctorConfiguration]) imported below. This class declares no bean
+ * definitions of its own; its plain methods only retain the original public
+ * factory ABI for hosts that construct runtime components directly. It will be
+ * removed in a future major release.
+ */
+@Deprecated(
+    "Since 0.0.3 the runtime is assembled by the five split FileWeft*Configuration classes; " +
+        "this facade declares no bean definitions and will be removed in a future major release.",
+)
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(DataSource::class)
 @Import(

@@ -36,23 +36,31 @@ import org.springframework.context.annotation.Configuration
 import java.time.Clock
 import javax.sql.DataSource
 
+/**
+ * Bean naming contract: primary names keep the `fileWeft*` prefix shared with the
+ * Boot 2 starter so by-name injection survives a Boot 2 to Boot 3 migration. The
+ * short names introduced in 0.0.3 stay registered as aliases (the second name in
+ * each `@Bean` declaration) so hosts already adapted to 0.0.3 keep resolving the
+ * same instances; those aliases are deprecated and will be removed in a future
+ * major release.
+ */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(DataSource::class)
 class FileWeftWorkflowConfiguration {
     private val factories = FileWeftRuntimeFactories()
-    @Bean
+    @Bean(name = ["fileWeftWorkflowQueryRepository", "workflowQueries"])
     @ConditionalOnMissingBean(WorkflowQueryRepository::class)
     fun workflowQueries(): WorkflowQueryRepository = factories.workflowQueries()
 
-    @Bean
+    @Bean(name = ["fileWeftWorkflowDecisionEvidenceQueryRepository", "workflowDecisionEvidenceQueries"])
     @ConditionalOnMissingBean(WorkflowDecisionEvidenceQueryRepository::class)
     fun workflowDecisionEvidenceQueries(): WorkflowDecisionEvidenceQueryRepository = factories.workflowDecisionEvidenceQueries()
 
-    @Bean
+    @Bean(name = ["fileWeftWorkflowRepository", "workflows"])
     @ConditionalOnMissingBean(WorkflowInstanceRepository::class)
     fun workflows(clock: Clock): WorkflowInstanceRepository = factories.workflows(clock)
 
-    @Bean
+    @Bean(name = ["fileWeftIdempotentDocumentReviewWorkflowService", "idempotentDocumentReviewWorkflowService"])
     @ConditionalOnMissingBean(
         value = [
             DocumentCatalogAccessService::class,
@@ -65,7 +73,7 @@ class FileWeftWorkflowConfiguration {
         idempotency: RequestIdempotencyService,
     ) = factories.idempotentDocumentReviewWorkflowService(reviews, idempotency)
 
-    @Bean
+    @Bean(name = ["fileWeftIdempotentDocumentCatalogReviewWorkflowService", "idempotentDocumentCatalogReviewWorkflowService"])
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(
         value = [
@@ -78,7 +86,7 @@ class FileWeftWorkflowConfiguration {
         idempotency: RequestIdempotencyService,
     ): IdempotentDocumentCatalogReviewWorkflowService? = factories.idempotentDocumentCatalogReviewWorkflowService(catalogLifecycles, idempotency)
 
-    @Bean
+    @Bean(name = ["fileWeftWorkflowQueryService", "workflowQueryService"])
     @ConditionalOnMissingBean(WorkflowQueryService::class)
     fun workflowQueryService(
         tenants: TenantProvider,
@@ -89,7 +97,7 @@ class FileWeftWorkflowConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = factories.workflowQueryService(tenants, users, authorization, queries, transaction, folderReadAccess)
 
-    @Bean
+    @Bean(name = ["fileWeftWorkflowDecisionEvidenceQueryService", "workflowDecisionEvidenceQueryService"])
     @ConditionalOnMissingBean(WorkflowDecisionEvidenceQueryService::class)
     fun workflowDecisionEvidenceQueryService(
         tenants: TenantProvider,
@@ -100,10 +108,10 @@ class FileWeftWorkflowConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = factories.workflowDecisionEvidenceQueryService(tenants, users, authorization, queries, transaction, folderReadAccess)
 
-    @Bean
+    @Bean(name = ["fileWeftDefaultDocumentReviewRouteProvider", "defaultDocumentReviewRouteProvider"])
     fun defaultDocumentReviewRouteProvider(): DocumentReviewRouteProvider = factories.defaultDocumentReviewRouteProvider()
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentReviewRouteResolver", "documentReviewRouteResolver"])
     @ConditionalOnMissingBean(DocumentReviewRouteResolver::class)
     fun documentReviewRouteResolver(
         providers: List<DocumentReviewRouteProvider>,
@@ -111,7 +119,7 @@ class FileWeftWorkflowConfiguration {
         properties: FileWeftProperties,
     ): DocumentReviewRouteResolver = factories.documentReviewRouteResolver(providers, plugins, properties)
 
-    @Bean
+    @Bean(name = ["fileWeftReviewWorkflowService", "reviewWorkflowService"])
     @ConditionalOnMissingBean(DocumentReviewWorkflowService::class)
     fun reviewWorkflowService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,

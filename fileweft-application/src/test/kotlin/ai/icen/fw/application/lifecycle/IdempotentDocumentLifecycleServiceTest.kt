@@ -31,7 +31,7 @@ import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
@@ -452,7 +452,9 @@ class IdempotentDocumentLifecycleServiceTest {
         private val document: Document,
         private val transaction: TrackingTransaction,
         private val events: MutableList<String>,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var mutationReads: Int = 0
         var saveCalls: Int = 0
 

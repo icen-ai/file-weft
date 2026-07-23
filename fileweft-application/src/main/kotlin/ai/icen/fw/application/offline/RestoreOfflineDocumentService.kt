@@ -13,7 +13,7 @@ import ai.icen.fw.application.security.ApplicationAuthorization
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.identity.UserRealmProvider
@@ -28,7 +28,7 @@ class RestoreOfflineDocumentService(
     private val tenantProvider: TenantProvider,
     userRealmProvider: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
-    private val documentRepository: DocumentRepository,
+    private val documentRepository: DocumentMutationRepository,
     private val deliveries: DocumentDeliveryTargetRepository,
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,

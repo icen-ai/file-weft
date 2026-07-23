@@ -8,7 +8,7 @@ import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
@@ -221,7 +221,10 @@ class DocumentDownloadServiceTest {
         ), currentVersionId = Identifier("version-1"),
     )
 
-    private class RecordingDocuments(private val documents: Map<Identifier, Document>) : DocumentRepository {
+    private class RecordingDocuments(private val documents: Map<Identifier, Document>) : DocumentMutationRepository {
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = documents[documentId]
             ?.takeIf { it.tenantId == tenantId }
         override fun save(document: Document) = Unit

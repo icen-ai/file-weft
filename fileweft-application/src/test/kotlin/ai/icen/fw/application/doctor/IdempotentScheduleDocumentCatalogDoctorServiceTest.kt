@@ -18,7 +18,7 @@ import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
@@ -169,7 +169,9 @@ class IdempotentScheduleDocumentCatalogDoctorServiceTest {
 
     private class RecordingDocuments(
         private val transaction: TrackingTransaction,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var mutationReads: Int = 0
             private set
         var beforeMutation: (() -> Unit)? = null

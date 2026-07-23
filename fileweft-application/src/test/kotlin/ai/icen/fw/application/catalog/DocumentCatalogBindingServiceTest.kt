@@ -10,7 +10,7 @@ import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
@@ -393,7 +393,9 @@ class DocumentCatalogBindingServiceTest {
         private val document: Document,
         private val transaction: TrackingTransaction,
         private val events: MutableList<String>,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var ordinaryReads: Int = 0
         var mutationReads: Int = 0
         var beforeFindForMutation: (() -> Unit)? = null

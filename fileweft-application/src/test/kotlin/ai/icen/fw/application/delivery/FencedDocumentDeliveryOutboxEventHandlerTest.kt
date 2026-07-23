@@ -9,7 +9,7 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.domain.file.FileObject
@@ -172,7 +172,9 @@ class FencedDocumentDeliveryOutboxEventHandlerTest {
         val connector: RecordingConnector,
     )
 
-    private class MemoryDocuments(private var document: Document) : DocumentRepository {
+    private class MemoryDocuments(private var document: Document) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document.takeIf { it.tenantId == tenantId && it.id == documentId }
 

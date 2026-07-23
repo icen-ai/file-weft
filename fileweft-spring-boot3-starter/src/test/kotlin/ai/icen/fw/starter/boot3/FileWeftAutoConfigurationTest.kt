@@ -113,6 +113,7 @@ import ai.icen.fw.spi.observability.FileWeftGaugeRecorder
 import ai.icen.fw.spi.observability.TraceContextProvider
 import ai.icen.fw.spi.observability.TraceContextScope
 import ai.icen.fw.domain.operation.OperationLogRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetMutationRepository
@@ -739,6 +740,7 @@ class FileWeftAutoConfigurationTest {
             }
     }
 
+    @Suppress("DEPRECATION")
     @Test
     fun `assembles one categorized runtime configuration with stable bean names`() {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java).run { context ->
@@ -750,18 +752,18 @@ class FileWeftAutoConfigurationTest {
             assertEquals(1, context.getBeansOfType(FileWeftDeliveryConfiguration::class.java).size)
 
             listOf(
-                "transaction",
-                "documents",
-                "metadataSchemaRegistry",
-                "metadataProcessor",
-                "metadataSchemaQueryService",
-                "documentMetadataService",
-                "documentMetadataWriteService",
-                "resumableUploadService",
-                "reviewWorkflowService",
-                "doctorService",
-                "metadataDoctor",
-                "documentDeliverySyncService",
+                "fileWeftTransaction",
+                "fileWeftDocumentRepository",
+                "fileWeftMetadataSchemaRegistry",
+                "fileWeftMetadataProcessor",
+                "fileWeftMetadataSchemaQueryService",
+                "fileWeftDocumentMetadataService",
+                "fileWeftDocumentMetadataWriteService",
+                "fileWeftResumableUploadService",
+                "fileWeftReviewWorkflowService",
+                "fileWeftDoctorService",
+                "fileWeftMetadataDoctorChecker",
+                "fileWeftDocumentDeliverySyncService",
             ).forEach { beanName -> assertTrue(context.containsBean(beanName), beanName) }
 
             assertEquals(1, context.getBeansOfType(ResumableUploadService::class.java).size)
@@ -1017,7 +1019,7 @@ class FileWeftAutoConfigurationTest {
         contextRunner().withUserConfiguration(DatabaseConfiguration::class.java, CustomerConfiguration::class.java, CatalogConfiguration::class.java)
             .run { context ->
                 assertTrue(context.getBean(DocumentCatalogAccessService::class.java) != null)
-                assertTrue(context.containsBean("documentCatalogAccessService"))
+                assertTrue(context.containsBean("fileWeftDocumentCatalogAccessService"))
                 assertTrue(context.getBean(DocumentCatalogBindingService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogDraftService::class.java) != null)
                 assertTrue(context.getBean(DocumentCatalogMutationService::class.java) != null)
@@ -1144,6 +1146,16 @@ class FileWeftAutoConfigurationTest {
         contextRunner().withUserConfiguration(DatabaseWithDocumentRepositoryConfiguration::class.java).run { context ->
             assertSame(context.getBean("customerDocumentRepository"), context.getBean(DocumentRepository::class.java))
         }
+    }
+
+    @Test
+    fun `fails startup clearly when a custom document repository lacks mutation capability`() {
+        contextRunner().withUserConfiguration(DatabaseWithReadOnlyDocumentRepositoryConfiguration::class.java)
+            .run { context ->
+                assertTrue(context.startupFailure.causeMessages().any { message ->
+                    message.contains("must also implement DocumentMutationRepository")
+                })
+            }
     }
 
     @Test
@@ -1731,7 +1743,21 @@ class FileWeftAutoConfigurationTest {
         fun dataSource(): DataSource = StubDataSource
 
         @Bean
-        fun customerDocumentRepository(): DocumentRepository = object : DocumentRepository {
+        fun customerDocumentRepository(): DocumentRepository = object : DocumentMutationRepository {
+            override fun findById(tenantId: Identifier, documentId: Identifier) = null
+            override fun findForMutation(tenantId: Identifier, documentId: Identifier) = null
+            override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String) = null
+            override fun save(document: ai.icen.fw.domain.document.Document) = Unit
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class DatabaseWithReadOnlyDocumentRepositoryConfiguration {
+        @Bean
+        fun dataSource(): DataSource = StubDataSource
+
+        @Bean
+        fun readOnlyDocumentRepository(): DocumentRepository = object : DocumentRepository {
             override fun findById(tenantId: Identifier, documentId: Identifier) = null
             override fun save(document: ai.icen.fw.domain.document.Document) = Unit
         }

@@ -4,7 +4,7 @@ import ai.icen.fw.core.context.DoctorCheckContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.result.DoctorStatus
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.workflow.WorkflowInstance
@@ -172,7 +172,10 @@ class WorkflowDoctorCheckerTest {
 
     private class RecordingDocumentRepository(
         private val document: Document?,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         val findTenantIds = mutableListOf<String>()
 
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? {

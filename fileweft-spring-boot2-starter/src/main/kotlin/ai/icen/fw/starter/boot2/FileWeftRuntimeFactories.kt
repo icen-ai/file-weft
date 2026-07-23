@@ -58,6 +58,7 @@ import ai.icen.fw.application.doctor.PermissionDoctorChecker
 import ai.icen.fw.application.doctor.StorageDoctorChecker
 import ai.icen.fw.application.doctor.ScheduleDocumentDoctorService
 import ai.icen.fw.application.doctor.TransactionalDoctorChecker
+import ai.icen.fw.application.doctor.TimeoutDoctorChecker
 import ai.icen.fw.application.doctor.WorkflowDoctorChecker
 import ai.icen.fw.application.idempotency.RequestIdempotencyRepository
 import ai.icen.fw.application.idempotency.RequestIdempotencyService
@@ -98,6 +99,7 @@ import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryRepository
 import ai.icen.fw.application.workflow.WorkflowDecisionEvidenceQueryService
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecordRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
@@ -159,8 +161,21 @@ import java.time.Duration
 import java.util.UUID
 import javax.sql.DataSource
 
+/**
+ * Hand-rolled construction surface shared by the split `FileWeft*Configuration`
+ * classes of this starter.
+ *
+ * Each configuration class instantiates its own copy instead of injecting a
+ * shared bean: the factories carry no runtime state, and keeping them outside
+ * the container avoids turning an internal wiring detail into replaceable
+ * public SPI surface. This is deliberately not a Spring configuration class —
+ * bean definitions, conditions, and bean names live in the starter
+ * configurations, while this class only centralizes constructor wiring so the
+ * Boot 2 and Boot 3 starters assemble identical runtime graphs.
+ */
 internal class FileWeftRuntimeFactories {
-    fun fileWeftTransaction(dataSource: DataSource): ApplicationTransaction = JdbcApplicationTransaction(dataSource)
+    fun fileWeftTransaction(dataSource: DataSource): ApplicationTransaction =
+        JdbcApplicationTransaction(dataSource, Slf4jFileWeftLogger(JdbcApplicationTransaction::class.java.name))
 
     fun fileWeftDocumentRepository(clock: Clock): DocumentRepository = JdbcDocumentRepository(clock)
 
@@ -237,6 +252,12 @@ internal class FileWeftRuntimeFactories {
         clock: Clock,
     ): RequestIdempotencyService = RequestIdempotencyService(repository, transaction, identifiers, clock)
 
+    /**
+     * Invalid host schemas fail here with MetadataSchemaConfigurationException
+     * (cause retained) while the bean factory is creating the registry, so the
+     * failure aborts startup with the full cause chain and needs no additional
+     * reporting on this path.
+     */
     fun fileWeftMetadataSchemaRegistry(schemas: ObjectProvider<MetadataSchema>): MetadataSchemaRegistry =
         MetadataSchemaRegistry(schemas.orderedStream().iterator().asSequence().toList())
 
@@ -262,7 +283,12 @@ internal class FileWeftRuntimeFactories {
         tenants: TenantProvider,
         schemas: MetadataSchemaResolver,
         processor: MetadataProcessor,
-    ): DocumentMetadataService = DocumentMetadataService(tenants, schemas, processor)
+    ): DocumentMetadataService = DocumentMetadataService(
+        tenants,
+        schemas,
+        processor,
+        Slf4jFileWeftLogger(DocumentMetadataService::class.java.name),
+    )
 
     fun fileWeftDocumentMetadataWriteService(
         drafts: DocumentDraftService,
@@ -303,7 +329,7 @@ internal class FileWeftRuntimeFactories {
         assets: FileAssetRepository,
         transaction: ApplicationTransaction,
         auditTrail: AuditTrail,
-    ): DocumentCatalogBindingService? = if (assets is FileAssetMutationRepository) {
+    ): DocumentCatalogBindingService? = if (assets is FileAssetMutationRepository && documents is DocumentMutationRepository) {
         DocumentCatalogBindingService(
             tenants,
             users,
@@ -402,7 +428,7 @@ internal class FileWeftRuntimeFactories {
         idempotency: RequestIdempotencyService,
         auditTrail: AuditTrail,
     ): IdempotentDocumentDeliveryRecoveryService = IdempotentDocumentDeliveryRecoveryService(
-        tenants, users, authorization, documents, deliveries, outboxMutations, outbox,
+        tenants, users, authorization, requireDocumentMutations(documents), deliveries, outboxMutations, outbox,
         identifiers, clock, idempotency, auditTrail,
     )
 
@@ -422,7 +448,7 @@ internal class FileWeftRuntimeFactories {
         auditTrail: AuditTrail,
         catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
     ): IdempotentDocumentCatalogDeliveryRecoveryService? =
-        if (assets is FileAssetMutationRepository) {
+        if (assets is FileAssetMutationRepository && documents is DocumentMutationRepository) {
             IdempotentDocumentCatalogDeliveryRecoveryService(
                 tenants, users, authorization, documents, assets, deliveries, outboxMutations, outbox,
                 identifiers, transaction, clock, idempotency, auditTrail,
@@ -588,7 +614,7 @@ internal class FileWeftRuntimeFactories {
         transaction: ApplicationTransaction, auditTrail: AuditTrail, properties: FileWeftProperties,
         removalPlanner: DocumentDeliveryRemovalPlanner, metrics: FileWeftMetrics,
     ): DocumentDeliverySyncService = DocumentDeliverySyncService(
-        documents, fileObjects, storage, connectors, deliveries, transaction,
+        requireDocumentMutations(documents), fileObjects, storage, connectors, deliveries, transaction,
         connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,
         removalPlanner = removalPlanner,
@@ -622,7 +648,7 @@ internal class FileWeftRuntimeFactories {
         val mutations = outboxMutations.getIfUnique() ?: throw IllegalStateException(
             "Exactly one OutboxEventMutationRepository is required for fenced delivery processing.",
         )
-        return DocumentDeliveryOutboxEventHandler(sync, removal, mutations, documents)
+        return DocumentDeliveryOutboxEventHandler(sync, removal, mutations, requireDocumentMutations(documents))
     }
 
     fun fileWeftRetryDocumentDeliveryService(
@@ -728,7 +754,7 @@ internal class FileWeftRuntimeFactories {
     fun fileWeftDocumentCommandService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, documents, transaction, auditTrail)
+    ): DocumentCommandService = DocumentCommandService(tenants, users, authorization, requireDocumentMutations(documents), transaction, auditTrail)
 
     fun fileWeftDocumentDownloadVisibility(
         folderReadAccesses: ObjectProvider<DocumentFolderReadAccess>,
@@ -813,34 +839,34 @@ internal class FileWeftRuntimeFactories {
         documents: DocumentRepository, fileObjects: FileObjectRepository, assets: FileAssetRepository,
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
     ): DocumentDraftService = DocumentDraftService(
-        tenants, users, authorization, storage, documents, fileObjects, assets, identifiers, transaction, auditTrail, metrics,
+        tenants, users, authorization, storage, requireDocumentMutations(documents), fileObjects, assets, identifiers, transaction, auditTrail, metrics,
     )
 
     fun fileWeftPublishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, workflows: WorkflowInstanceRepository, planner: DocumentDeliveryPlanner,
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
-    ): PublishDocumentService = PublishDocumentService(tenants, users, authorization, documents, planner, transaction, auditTrail, workflows)
+    ): PublishDocumentService = PublishDocumentService(tenants, users, authorization, requireDocumentMutations(documents), planner, transaction, auditTrail, workflows)
 
     fun fileWeftOfflineService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
         removalPlanner: DocumentDeliveryRemovalPlanner,
-    ): OfflineDocumentService = OfflineDocumentService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
+    ): OfflineDocumentService = OfflineDocumentService(tenants, users, authorization, requireDocumentMutations(documents), transaction, auditTrail, removalPlanner)
 
     fun fileWeftRestoreOfflineDocumentService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, deliveries: DocumentDeliveryTargetRepository,
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
     ): RestoreOfflineDocumentService = RestoreOfflineDocumentService(
-        tenants, users, authorization, documents, deliveries, transaction, auditTrail,
+        tenants, users, authorization, requireDocumentMutations(documents), deliveries, transaction, auditTrail,
     )
 
     fun fileWeftArchiveService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
         removalPlanner: DocumentDeliveryRemovalPlanner,
-    ): ArchiveDocumentService = ArchiveDocumentService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
+    ): ArchiveDocumentService = ArchiveDocumentService(tenants, users, authorization, requireDocumentMutations(documents), transaction, auditTrail, removalPlanner)
 
     fun fileWeftDefaultDocumentReviewRouteProvider(): DocumentReviewRouteProvider = DefaultDocumentReviewRouteProvider
 
@@ -859,7 +885,7 @@ internal class FileWeftRuntimeFactories {
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail,
         reviewRoutes: DocumentReviewRouteResolver,
     ): DocumentReviewWorkflowService = DocumentReviewWorkflowService(
-        tenants, users, authorization, documents, workflows, planner, identifiers, transaction, auditTrail, reviewRoutes,
+        tenants, users, authorization, requireDocumentMutations(documents), workflows, planner, identifiers, transaction, auditTrail, reviewRoutes,
     )
 
     fun fileWeftDeploymentSafetyDoctorChecker(
@@ -967,22 +993,39 @@ internal class FileWeftRuntimeFactories {
         plugins: FileWeftPluginRegistry,
     ): DoctorApplicationService {
         val catalogChecker = catalog.getIfAvailable()
+        // Every registered checker — built-in or plugin-contributed — runs with a
+        // bounded time budget so a stalled check cannot pin a diagnosis request.
+        // The permission gate stays on the caller thread because it guards access
+        // to the check list and performs no slow I/O.
+        val builtInCheckers = listOf<DoctorChecker>(
+            deploymentSafety,
+            TransactionalDoctorChecker(lifecycle, transaction),
+            TransactionalDoctorChecker(workflow, transaction),
+            storage,
+        ) + listOfNotNull(catalogChecker) + listOf(
+            deliveryProfile,
+            connector,
+        ) + listOfNotNull<DoctorChecker>(metadata, agent)
         return DoctorApplicationService(
             tenants,
             permission,
-            listOf<DoctorChecker>(
-                deploymentSafety,
-                TransactionalDoctorChecker(lifecycle, transaction),
-                TransactionalDoctorChecker(workflow, transaction),
-                storage,
-            ) + listOfNotNull(catalogChecker) + listOf(
-                deliveryProfile,
-                connector,
-            ) + listOfNotNull<DoctorChecker>(metadata, agent) + plugins.doctorCheckers(),
+            (builtInCheckers + plugins.doctorCheckers()).map { checker -> TimeoutDoctorChecker(checker) },
             clock,
             metrics,
         )
     }
+
+    /**
+     * Document write paths require the mutation capability at assembly time so a
+     * read-only DocumentRepository fails fast instead of silently disabling the
+     * document-number uniqueness check or throwing from a former default method
+     * at request time.
+     */
+    internal fun requireDocumentMutations(documents: DocumentRepository): DocumentMutationRepository =
+        documents as? DocumentMutationRepository
+            ?: throw IllegalStateException(
+                "DocumentRepository must also implement DocumentMutationRepository for safe document writes.",
+            )
 
     fun fileWeftDocumentDoctorTaskHandler(
         doctor: DoctorApplicationService, reports: DoctorReportRepository,
@@ -1008,7 +1051,7 @@ internal class FileWeftRuntimeFactories {
         connector: FileConnector, properties: FileWeftProperties, resilience: ConnectorResilienceRegistry, records: SyncRecordRepository,
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
     ): DocumentSyncService = DocumentSyncService(
-        documents, fileObjects, storage, resilience.protect(properties.sync.connectorName, connector),
+        requireDocumentMutations(documents), fileObjects, storage, resilience.protect(properties.sync.connectorName, connector),
         properties.sync.connectorName, records, identifiers, transaction,
         connectorTimeout = Duration.ofMillis(properties.sync.connectorTimeoutMillis),
         auditTrail = auditTrail,

@@ -10,7 +10,7 @@ import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.domain.file.FileObject
@@ -327,7 +327,9 @@ class DocumentCatalogDraftServiceTest {
         }
     }
 
-    private class RecordingDocuments : DocumentRepository {
+    private class RecordingDocuments : DocumentMutationRepository {
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = null
+
         val saved = mutableListOf<Document>()
 
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = null

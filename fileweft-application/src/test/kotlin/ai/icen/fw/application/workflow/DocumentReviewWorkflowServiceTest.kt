@@ -15,7 +15,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
@@ -25,7 +25,7 @@ import ai.icen.fw.domain.workflow.WorkflowInstanceRepository
 import ai.icen.fw.domain.workflow.WorkflowDecisionConflictException
 import ai.icen.fw.domain.workflow.WorkflowState
 import ai.icen.fw.domain.workflow.WorkflowTask
-import ai.icen.fw.domain.workflow.WorkflowTaskAssignmentDeniedException
+import ai.icen.fw.domain.workflow.WorkflowTaskDeniedException
 import ai.icen.fw.domain.workflow.WorkflowTaskState
 import ai.icen.fw.domain.workflow.WorkflowWithdrawalConflictException
 import ai.icen.fw.spi.authorization.AuthorizationDecision
@@ -691,7 +691,7 @@ class DocumentReviewWorkflowServiceTest {
             authorization = { AuthorizationDecision(true) },
         )
 
-        assertFailsWith<WorkflowTaskAssignmentDeniedException> {
+        assertFailsWith<WorkflowTaskDeniedException> {
             denied.approve(assignedWorkflow.id, assignedWorkflow.tasks.single().id)
         }
 
@@ -959,7 +959,9 @@ class DocumentReviewWorkflowServiceTest {
 
     private class IdentitySnapshotPermit(val operator: UserIdentity) : DocumentLifecycleMutationPermit
 
-    private class InMemoryDocuments(var document: Document?) : DocumentRepository {
+    private class InMemoryDocuments(var document: Document?) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var saveCalls: Int = 0
             private set
         var findForMutationOverride: ((Identifier, Identifier) -> Document?)? = null

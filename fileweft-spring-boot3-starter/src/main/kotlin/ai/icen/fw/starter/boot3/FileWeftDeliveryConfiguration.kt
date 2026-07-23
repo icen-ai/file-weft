@@ -39,23 +39,31 @@ import org.springframework.context.annotation.Configuration
 import java.time.Clock
 import javax.sql.DataSource
 
+/**
+ * Bean naming contract: primary names keep the `fileWeft*` prefix shared with the
+ * Boot 2 starter so by-name injection survives a Boot 2 to Boot 3 migration. The
+ * short names introduced in 0.0.3 stay registered as aliases (the second name in
+ * each `@Bean` declaration) so hosts already adapted to 0.0.3 keep resolving the
+ * same instances; those aliases are deprecated and will be removed in a future
+ * major release.
+ */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(DataSource::class)
 class FileWeftDeliveryConfiguration {
     private val factories = FileWeftRuntimeFactories()
-    @Bean
+    @Bean(name = ["fileWeftDocumentSyncStatusQueryRepository", "documentSyncStatusQueries"])
     @ConditionalOnMissingBean(DocumentSyncStatusQueryRepository::class)
     fun documentSyncStatusQueries(): DocumentSyncStatusQueryRepository = factories.documentSyncStatusQueries()
 
-    @Bean
+    @Bean(name = ["fileWeftSyncRecordRepository", "syncRecords"])
     @ConditionalOnMissingBean(SyncRecordRepository::class)
     fun syncRecords(clock: Clock): SyncRecordRepository = factories.syncRecords(clock)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliveryTargetRepository", "documentDeliveryTargets"])
     @ConditionalOnMissingBean(DocumentDeliveryTargetRepository::class)
     fun documentDeliveryTargets(clock: Clock): JdbcDocumentDeliveryTargetRepository = factories.documentDeliveryTargets(clock)
 
-    @Bean
+    @Bean(name = ["fileWeftIdempotentDocumentDeliveryRecoveryService", "idempotentDocumentDeliveryRecoveryService"])
     @ConditionalOnBean(value = [DocumentDeliveryTargetMutationRepository::class, OutboxEventMutationRepository::class])
     @ConditionalOnMissingBean(
         value = [
@@ -78,7 +86,7 @@ class FileWeftDeliveryConfiguration {
         auditTrail: AuditTrail,
     ) = factories.idempotentDocumentDeliveryRecoveryService(tenants, users, authorization, documents, deliveries, outboxMutations, outbox, identifiers, clock, idempotency, auditTrail)
 
-    @Bean
+    @Bean(name = ["fileWeftIdempotentDocumentCatalogDeliveryRecoveryService", "idempotentDocumentCatalogDeliveryRecoveryService"])
     @ConditionalOnBean(
         value = [
             DocumentCatalogAccessService::class,
@@ -106,32 +114,32 @@ class FileWeftDeliveryConfiguration {
         catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
     ): IdempotentDocumentCatalogDeliveryRecoveryService? = factories.idempotentDocumentCatalogDeliveryRecoveryService(tenants, users, authorization, documents, assets, deliveries, outboxMutations, outbox, identifiers, transaction, clock, idempotency, auditTrail, catalogAccesses)
 
-    @Bean(destroyMethod = "close")
+    @Bean(name = ["fileWeftConnectorInvocationExecutor", "connectorInvocationExecutor"], destroyMethod = "close")
     @ConditionalOnMissingBean(ConnectorInvocationExecutor::class)
     fun connectorInvocationExecutor(properties: FileWeftProperties) = factories.connectorInvocationExecutor(properties)
 
-    @Bean
+    @Bean(name = ["fileWeftConnectorResiliencePolicy", "connectorResiliencePolicy"])
     @ConditionalOnMissingBean(ConnectorResiliencePolicy::class)
     fun connectorResiliencePolicy(properties: FileWeftProperties) = factories.connectorResiliencePolicy(properties)
 
-    @Bean
+    @Bean(name = ["fileWeftConnectorResilienceRegistry", "connectorResilienceRegistry"])
     @ConditionalOnMissingBean(ConnectorResilienceRegistry::class)
     fun connectorResilienceRegistry(
         policy: ConnectorResiliencePolicy, executor: ConnectorInvocationExecutor, clock: Clock,
     ) = factories.connectorResilienceRegistry(policy, executor, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftDeliveryConnectorResolver", "deliveryConnectorResolver"])
     @ConditionalOnMissingBean(DeliveryConnectorResolver::class)
     fun deliveryConnectorResolver(
         connectors: Map<String, FileConnector>, plugins: FileWeftPluginRegistry, properties: FileWeftProperties,
         resilience: ConnectorResilienceRegistry,
     ): DeliveryConnectorResolver = factories.deliveryConnectorResolver(connectors, plugins, properties, resilience)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliveryProfiles", "documentDeliveryProfiles"])
     @ConditionalOnMissingBean(DocumentDeliveryProfileProvider::class)
     fun documentDeliveryProfiles(properties: FileWeftProperties): DocumentDeliveryProfileProvider = factories.documentDeliveryProfiles(properties)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliveryPlanner", "documentDeliveryPlanner"])
     @ConditionalOnMissingBean(DocumentDeliveryPlanner::class)
     fun documentDeliveryPlanner(
         profiles: DocumentDeliveryProfileProvider, connectors: DeliveryConnectorResolver,
@@ -139,14 +147,14 @@ class FileWeftDeliveryConfiguration {
         identifiers: IdentifierGenerator, clock: Clock,
     ) = factories.documentDeliveryPlanner(profiles, connectors, deliveries, outbox, identifiers, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliveryRemovalPlanner", "documentDeliveryRemovalPlanner"])
     @ConditionalOnMissingBean(DocumentDeliveryRemovalPlanner::class)
     fun documentDeliveryRemovalPlanner(
         deliveries: DocumentDeliveryTargetRepository, outbox: OutboxEventRepository,
         identifiers: IdentifierGenerator, clock: Clock,
     ) = factories.documentDeliveryRemovalPlanner(deliveries, outbox, identifiers, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliverySyncService", "documentDeliverySyncService"])
     @ConditionalOnMissingBean(DocumentDeliverySyncService::class)
     fun documentDeliverySyncService(
         documents: DocumentRepository, fileObjects: FileObjectRepository, storage: StorageAdapter,
@@ -155,7 +163,7 @@ class FileWeftDeliveryConfiguration {
         removalPlanner: DocumentDeliveryRemovalPlanner, metrics: FileWeftMetrics,
     ) = factories.documentDeliverySyncService(documents, fileObjects, storage, connectors, deliveries, transaction, auditTrail, properties, removalPlanner, metrics)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliveryRemovalService", "documentDeliveryRemovalService"])
     @ConditionalOnMissingBean(DocumentDeliveryRemovalService::class)
     fun documentDeliveryRemovalService(
         connectors: DeliveryConnectorResolver, deliveries: DocumentDeliveryTargetRepository,
@@ -163,7 +171,7 @@ class FileWeftDeliveryConfiguration {
         metrics: FileWeftMetrics,
     ) = factories.documentDeliveryRemovalService(connectors, deliveries, transaction, auditTrail, properties, metrics)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDeliveryOutboxEventHandler", "documentDeliveryHandler"])
     @ConditionalOnMissingBean(DocumentDeliveryOutboxEventHandler::class)
     fun documentDeliveryHandler(
         sync: DocumentDeliverySyncService,
@@ -173,7 +181,7 @@ class FileWeftDeliveryConfiguration {
         documents: DocumentRepository,
     ): DocumentDeliveryOutboxEventHandler = factories.documentDeliveryHandler(sync, removal, deliveries, outboxMutations, documents)
 
-    @Bean
+    @Bean(name = ["fileWeftRetryDocumentDeliveryService", "retryDocumentDeliveryService"])
     @ConditionalOnProperty(
         prefix = "fileweft.sync",
         name = ["legacy-delivery-retry-enabled"],
@@ -186,7 +194,7 @@ class FileWeftDeliveryConfiguration {
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, clock: Clock, auditTrail: AuditTrail,
     ) = factories.retryDocumentDeliveryService(tenants, users, authorization, documents, deliveries, outbox, identifiers, transaction, clock, auditTrail)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentSyncStatusQueryService", "documentSyncStatusQueryService"])
     @ConditionalOnMissingBean(DocumentSyncStatusQueryService::class)
     fun documentSyncStatusQueryService(
         tenants: TenantProvider,
@@ -197,7 +205,7 @@ class FileWeftDeliveryConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = factories.documentSyncStatusQueryService(tenants, users, authorization, queries, transaction, folderReadAccess)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentSyncService", "documentSyncService"])
     @ConditionalOnProperty(
         prefix = "fileweft.sync",
         name = ["legacy-publish-handler-enabled"],
@@ -211,7 +219,7 @@ class FileWeftDeliveryConfiguration {
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
     ) = factories.documentSyncService(documents, fileObjects, storage, connector, properties, resilience, records, identifiers, transaction, auditTrail, metrics)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentPublishOutboxEventHandler", "documentPublishHandler"])
     @ConditionalOnProperty(
         prefix = "fileweft.sync",
         name = ["legacy-publish-handler-enabled"],
@@ -221,7 +229,7 @@ class FileWeftDeliveryConfiguration {
     @ConditionalOnMissingBean(DocumentPublishOutboxEventHandler::class)
     fun documentPublishHandler(sync: DocumentSyncService) = factories.documentPublishHandler(sync)
 
-    @Bean
+    @Bean(name = ["fileWeftOutboxWorker", "outboxWorker"])
     @ConditionalOnMissingBean(OutboxWorker::class)
     fun outboxWorker(
         repository: OutboxProcessingRepository, transaction: ApplicationTransaction,

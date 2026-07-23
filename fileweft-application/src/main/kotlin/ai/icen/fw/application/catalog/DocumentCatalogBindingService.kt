@@ -6,7 +6,7 @@ import ai.icen.fw.application.document.DocumentNotFoundException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.spi.catalog.DocumentCatalogBinding
@@ -30,7 +30,7 @@ class DocumentCatalogBindingService(
     private val tenantProvider: TenantProvider,
     private val userRealmProvider: UserRealmProvider,
     private val catalogAccess: DocumentCatalogAccessService,
-    private val documents: DocumentRepository,
+    private val documents: DocumentMutationRepository,
     private val assets: FileAssetRepository,
     private val transaction: ApplicationTransaction,
     private val auditTrail: AuditTrail? = null,

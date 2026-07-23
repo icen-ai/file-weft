@@ -14,6 +14,7 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileObject
@@ -305,7 +306,7 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
         val authorization = object : AuthorizationProvider {
             override fun authorize(request: AuthorizationRequest): AuthorizationDecision = AuthorizationDecision(true)
         }
-        val documents = object : DocumentRepository {
+        val documents = object : DocumentMutationRepository {
             private val document = Document(
                 id = hiddenDocumentId,
                 tenantId = tenantId,
@@ -319,6 +320,10 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
             override fun findById(tenantId: Identifier, documentId: Identifier): Document? = document.takeIf { candidate ->
                 candidate.tenantId == tenantId && candidate.id == documentId
             }
+
+            override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+
+            override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
 
             override fun save(document: Document) = Unit
         }

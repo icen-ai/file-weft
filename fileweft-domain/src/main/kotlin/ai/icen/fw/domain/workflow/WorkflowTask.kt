@@ -82,7 +82,7 @@ class WorkflowTask(
 
     internal fun requireAssignedTo(operatorId: Identifier) {
         if (assigneeId != null && assigneeId != operatorId) {
-            throw WorkflowTaskAssignmentDeniedException(id)
+            throw WorkflowTaskDeniedException(id)
         }
     }
 

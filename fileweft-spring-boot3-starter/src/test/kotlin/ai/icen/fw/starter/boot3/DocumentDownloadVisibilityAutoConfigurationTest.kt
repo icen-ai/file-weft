@@ -15,6 +15,7 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileObject
@@ -359,7 +360,10 @@ class DocumentDownloadVisibilityAutoConfigurationTest {
         )
     }
 
-    class VisibleDocumentRepository : DocumentRepository {
+    class VisibleDocumentRepository : DocumentMutationRepository {
+        override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = findById(tenantId, documentId)
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             DOCUMENT.takeIf { document -> document.tenantId == tenantId && document.id == documentId }
 

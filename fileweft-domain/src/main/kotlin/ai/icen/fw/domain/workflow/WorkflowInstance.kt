@@ -104,7 +104,7 @@ class WorkflowInstance(
 
     private fun task(taskId: Identifier): WorkflowTask =
         mutableTasks.firstOrNull { it.id == taskId }
-            ?: throw WorkflowTaskNotFoundException(id, taskId)
+            ?: throw WorkflowTaskMissingException(id, taskId)
 
     private fun requirePendingWorkflow(operation: String) {
         if (state != WorkflowState.PENDING) {

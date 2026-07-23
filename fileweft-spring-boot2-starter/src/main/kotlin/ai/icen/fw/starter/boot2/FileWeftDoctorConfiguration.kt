@@ -16,6 +16,7 @@ import ai.icen.fw.application.idempotency.RequestIdempotencyService
 import ai.icen.fw.application.task.TaskRepository
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.IdentifierGenerator
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentRepository
 import ai.icen.fw.domain.file.FileAssetMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
@@ -146,7 +147,7 @@ class FileWeftDoctorConfiguration {
         tenants,
         users,
         authorization,
-        documents,
+        runtimeFactories.requireDocumentMutations(documents),
         tasks,
         identifiers,
         clock,
@@ -174,7 +175,7 @@ class FileWeftDoctorConfiguration {
         catalogAccesses: ObjectProvider<DocumentCatalogAccessService>,
     ): IdempotentScheduleDocumentCatalogDoctorService? {
         val catalogAccess = requiredSecurityCandidate(catalogAccesses, DocumentCatalogAccessService::class.java)
-        return if (assets is FileAssetMutationRepository) {
+        return if (assets is FileAssetMutationRepository && documents is DocumentMutationRepository) {
             IdempotentScheduleDocumentCatalogDoctorService(
                 tenants,
                 users,

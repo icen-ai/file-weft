@@ -19,6 +19,8 @@ import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.DocumentNumberAlreadyExistsException
 import ai.icen.fw.domain.workflow.WorkflowDecisionConflictException
 import ai.icen.fw.domain.workflow.WorkflowTaskAssignmentDeniedException
+import ai.icen.fw.domain.workflow.WorkflowTaskDeniedException
+import ai.icen.fw.domain.workflow.WorkflowTaskMissingException
 import ai.icen.fw.domain.workflow.WorkflowTaskNotFoundException
 import ai.icen.fw.web.api.ApiErrorCodes
 import org.junit.jupiter.api.Test
@@ -31,6 +33,7 @@ class V1ApiResponseFactoryTest {
     private val responses = V1ApiResponseFactory()
 
     @Test
+    @Suppress("DEPRECATION")
     fun `maps trusted authorization and document failures to stable statuses without exposing causes`() {
         val cases = listOf(
             V1MethodNotAllowedException() to Triple(405, ApiErrorCodes.METHOD_NOT_ALLOWED, "Method is not allowed."),
@@ -47,13 +50,21 @@ class V1ApiResponseFactoryTest {
             V1RangeNotSupportedException() to Triple(416, ApiErrorCodes.RANGE_NOT_SUPPORTED, "Range requests are not supported."),
             ApplicationUnauthenticatedException("host identity is unavailable") to Triple(401, ApiErrorCodes.UNAUTHENTICATED, "Authentication is required."),
             ApplicationForbiddenException("policy=restricted-folder") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
+            WorkflowTaskDeniedException(Identifier("private-task")) to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             WorkflowTaskAssignmentDeniedException(Identifier("private-task")) to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
+            SecurityException("private security signal") to Triple(403, ApiErrorCodes.FORBIDDEN, "Access denied."),
             DocumentNotFoundException(Identifier("private-document")) to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
+            WorkflowTaskMissingException(Identifier("private-workflow"), Identifier("private-task")) to Triple(
+                404,
+                ApiErrorCodes.NOT_FOUND,
+                "Resource was not found.",
+            ),
             WorkflowTaskNotFoundException(Identifier("private-workflow"), Identifier("private-task")) to Triple(
                 404,
                 ApiErrorCodes.NOT_FOUND,
                 "Resource was not found.",
             ),
+            NoSuchElementException("private collection signal") to Triple(404, ApiErrorCodes.NOT_FOUND, "Resource was not found."),
             DocumentFolderReadAccessUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             DocumentMetadataWriteUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),
             V1FeatureUnavailableException() to Triple(503, ApiErrorCodes.FEATURE_UNAVAILABLE, "The requested feature is unavailable."),

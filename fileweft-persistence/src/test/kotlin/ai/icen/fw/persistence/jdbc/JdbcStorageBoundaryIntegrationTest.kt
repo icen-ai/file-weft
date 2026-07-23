@@ -14,7 +14,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAsset
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.domain.file.FileObject
@@ -189,7 +189,7 @@ class JdbcStorageBoundaryIntegrationTest {
         override fun save(fileAsset: FileAsset): Unit = touched()
     }
 
-    private object UntouchedDocuments : DocumentRepository {
+    private object UntouchedDocuments : DocumentMutationRepository {
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = touched()
         override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? = touched()
         override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = touched()

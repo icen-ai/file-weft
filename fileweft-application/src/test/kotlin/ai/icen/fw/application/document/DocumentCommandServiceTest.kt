@@ -12,7 +12,7 @@ import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.audit.AuditRecord
 import ai.icen.fw.domain.audit.AuditRecordRepository
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
@@ -283,7 +283,7 @@ class DocumentCommandServiceTest {
     ) = pendingReviewDocument(documentId, tenantId).also { it.transition(LifecycleCommand.REJECT) }
 
     private fun service(
-        documents: DocumentRepository,
+        documents: DocumentMutationRepository,
         transaction: ApplicationTransaction,
         audits: RecordingAudits,
     ) = DocumentCommandService(
@@ -359,7 +359,9 @@ class DocumentCommandServiceTest {
         "tx:commit",
     )
 
-    private class InMemoryDocuments(private var document: Document) : DocumentRepository {
+    private class InMemoryDocuments(private var document: Document) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var mutationReads: Int = 0
             private set
         var saveCalls: Int = 0
@@ -381,7 +383,9 @@ class DocumentCommandServiceTest {
 
     private class MaliciousMutationDocuments(
         private val maliciousDocument: Document,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var saveCalls: Int = 0
 
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? = null
@@ -397,7 +401,9 @@ class DocumentCommandServiceTest {
         private var document: Document,
         private val transaction: RecordingTransaction,
         private val events: MutableList<String>,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document.takeIf { it.tenantId == tenantId && it.id == documentId }
 

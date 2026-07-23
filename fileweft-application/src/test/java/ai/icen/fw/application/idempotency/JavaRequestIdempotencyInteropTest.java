@@ -3,6 +3,7 @@ package ai.icen.fw.application.idempotency;
 import ai.icen.fw.core.id.Identifier;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -39,7 +40,15 @@ class JavaRequestIdempotencyInteropTest {
         assertEquals("replay:document-1", replay.map(receipt));
         assertEquals("workflow-1", receipt.getRelatedResourceId().getValue());
 
-        assertEquals(2, IdempotencyResult.class.getConstructors().length);
+        assertDoesNotThrow(
+            () -> IdempotencyResult.class.getConstructor(String.class, Identifier.class, String.class, Identifier.class, Identifier.class)
+        );
+        assertDoesNotThrow(
+            () -> IdempotencyResult.class.getConstructor(String.class, Identifier.class, String.class, Identifier.class)
+        );
+        assertDoesNotThrow(
+            () -> IdempotencyResult.class.getConstructor(String.class, Identifier.class)
+        );
         assertThrows(
             NoSuchMethodException.class,
             () -> IdempotencyResult.class.getConstructor(String.class, Identifier.class, String.class)

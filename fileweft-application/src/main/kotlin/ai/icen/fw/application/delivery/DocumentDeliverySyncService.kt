@@ -9,7 +9,7 @@ import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
@@ -36,7 +36,7 @@ import java.time.Duration
  * other successful destinations.
  */
 class DocumentDeliverySyncService @JvmOverloads constructor(
-    private val documentRepository: DocumentRepository,
+    private val documentRepository: DocumentMutationRepository,
     private val fileObjectRepository: FileObjectRepository,
     private val storageAdapter: StorageAdapter,
     private val connectors: DeliveryConnectorResolver,

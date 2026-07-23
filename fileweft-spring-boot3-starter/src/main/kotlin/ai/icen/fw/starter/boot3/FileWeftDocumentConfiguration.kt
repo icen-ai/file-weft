@@ -68,48 +68,56 @@ import org.springframework.context.annotation.Configuration
 import java.time.Clock
 import javax.sql.DataSource
 
+/**
+ * Bean naming contract: primary names keep the `fileWeft*` prefix shared with the
+ * Boot 2 starter so by-name injection survives a Boot 2 to Boot 3 migration. The
+ * short names introduced in 0.0.3 stay registered as aliases (the second name in
+ * each `@Bean` declaration) so hosts already adapted to 0.0.3 keep resolving the
+ * same instances; those aliases are deprecated and will be removed in a future
+ * major release.
+ */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(DataSource::class)
 class FileWeftDocumentConfiguration {
     private val factories = FileWeftRuntimeFactories()
 
-    @Bean
+    @Bean(name = ["fileWeftTransaction", "transaction"])
     @ConditionalOnMissingBean(ApplicationTransaction::class)
     fun transaction(dataSource: DataSource): ApplicationTransaction = factories.transaction(dataSource)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentRepository", "documents"])
     @ConditionalOnMissingBean(DocumentRepository::class)
     fun documents(clock: Clock): DocumentRepository = factories.documents(clock)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentQueryRepository", "documentQueries"])
     @ConditionalOnMissingBean(DocumentQueryRepository::class)
     fun documentQueries(): DocumentQueryRepository = factories.documentQueries()
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentAuditLogQueryRepository", "documentAuditLogQueries"])
     @ConditionalOnMissingBean(DocumentAuditLogQueryRepository::class)
     fun documentAuditLogQueries(): DocumentAuditLogQueryRepository = factories.documentAuditLogQueries()
 
-    @Bean
+    @Bean(name = ["fileWeftFileObjectRepository", "fileObjects"])
     @ConditionalOnMissingBean(FileObjectRepository::class)
     fun fileObjects(clock: Clock): FileObjectRepository = factories.fileObjects(clock)
 
-    @Bean
+    @Bean(name = ["fileWeftFileAssetRepository", "fileAssets"])
     @ConditionalOnMissingBean(FileAssetRepository::class)
     fun fileAssets(objectMapper: ObjectMapper, clock: Clock): FileAssetRepository = factories.fileAssets(objectMapper, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftAuditRepository", "audits"])
     @ConditionalOnMissingBean(AuditRecordRepository::class)
     fun audits(objectMapper: ObjectMapper): AuditRecordRepository = factories.audits(objectMapper)
 
-    @Bean
+    @Bean(name = ["fileWeftOperationLogRepository", "operationLogs"])
     @ConditionalOnMissingBean(OperationLogRepository::class)
     fun operationLogs(objectMapper: ObjectMapper): OperationLogRepository = factories.operationLogs(objectMapper)
 
-    @Bean
+    @Bean(name = ["fileWeftOutboxEventRepository", "outboxEvents"])
     @ConditionalOnMissingBean(OutboxEventRepository::class)
     fun outboxEvents(objectMapper: ObjectMapper, traces: TraceContextProvider): OutboxEventRepository = factories.outboxEvents(objectMapper, traces)
 
-    @Bean
+    @Bean(name = ["fileWeftOutboxProcessingRepository", "outboxProcessing"])
     @ConditionalOnMissingBean(OutboxProcessingRepository::class)
     fun outboxProcessing(objectMapper: ObjectMapper): JdbcOutboxProcessingRepository = factories.outboxProcessing(objectMapper)
 
@@ -117,7 +125,7 @@ class FileWeftDocumentConfiguration {
      * Global backlog inspection is deliberately separate from processing so customers can
      * replace the query with a partition-aware operational projection without changing workers.
      */
-    @Bean
+    @Bean(name = ["fileWeftOutboxBacklogReader", "outboxBacklogReader"])
     @ConditionalOnProperty(
         prefix = "fileweft.outbox",
         name = ["backlog-metrics-enabled"],
@@ -127,7 +135,7 @@ class FileWeftDocumentConfiguration {
     @ConditionalOnMissingBean(OutboxBacklogReader::class)
     fun outboxBacklogReader(properties: FileWeftProperties): OutboxBacklogReader = factories.outboxBacklogReader(properties)
 
-    @Bean
+    @Bean(name = ["fileWeftOutboxBacklogMetricsPublisher", "outboxBacklogMetricsPublisher"])
     @ConditionalOnProperty(
         prefix = "fileweft.outbox",
         name = ["backlog-metrics-enabled"],
@@ -143,15 +151,15 @@ class FileWeftDocumentConfiguration {
         properties: FileWeftProperties,
     ): OutboxBacklogMetricsPublisher = factories.outboxBacklogMetricsPublisher(transaction, reader, gauges, clock, properties)
 
-    @Bean
+    @Bean(name = ["fileWeftTaskRepository", "tasks"])
     @ConditionalOnMissingBean(value = [TaskRepository::class, TaskProcessingRepository::class])
     fun tasks(objectMapper: ObjectMapper, clock: Clock): JdbcTaskRepository = factories.tasks(objectMapper, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftRequestIdempotencyRepository", "requestIdempotencyRepository"])
     @ConditionalOnMissingBean(RequestIdempotencyRepository::class)
     fun requestIdempotencyRepository(): RequestIdempotencyRepository = factories.requestIdempotencyRepository()
 
-    @Bean
+    @Bean(name = ["fileWeftRequestIdempotencyService", "requestIdempotencyService"])
     @ConditionalOnMissingBean(RequestIdempotencyService::class)
     fun requestIdempotencyService(
         repository: RequestIdempotencyRepository,
@@ -160,18 +168,18 @@ class FileWeftDocumentConfiguration {
         clock: Clock,
     ): RequestIdempotencyService = factories.requestIdempotencyService(repository, transaction, identifiers, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftMetadataSchemaRegistry", "metadataSchemaRegistry"])
     @ConditionalOnMissingBean(MetadataSchemaResolver::class)
     fun metadataSchemaRegistry(
         schemas: ObjectProvider<MetadataSchema>,
         historicalSchemas: ObjectProvider<HistoricalMetadataSchema>,
     ): MetadataSchemaRegistry = factories.metadataSchemaRegistryWithHistory(schemas, historicalSchemas)
 
-    @Bean
+    @Bean(name = ["fileWeftMetadataProcessor", "metadataProcessor"])
     @ConditionalOnMissingBean(MetadataProcessor::class)
     fun metadataProcessor(schemas: MetadataSchemaResolver): MetadataProcessor = factories.metadataProcessor(schemas)
 
-    @Bean
+    @Bean(name = ["fileWeftMetadataSchemaQueryService", "metadataSchemaQueryService"])
     @ConditionalOnMissingBean(MetadataSchemaQueryService::class)
     fun metadataSchemaQueryService(
         tenants: TenantProvider,
@@ -180,7 +188,7 @@ class FileWeftDocumentConfiguration {
         schemas: MetadataSchemaResolver,
     ): MetadataSchemaQueryService = factories.metadataSchemaQueryService(tenants, users, authorization, schemas)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentMetadataService", "documentMetadataService"])
     @ConditionalOnMissingBean(DocumentMetadataService::class)
     fun documentMetadataService(
         tenants: TenantProvider,
@@ -188,7 +196,7 @@ class FileWeftDocumentConfiguration {
         processor: MetadataProcessor,
     ): DocumentMetadataService = factories.documentMetadataService(tenants, schemas, processor)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentMetadataWriteService", "documentMetadataWriteService"])
     @ConditionalOnMissingBean(DocumentMetadataWriteService::class)
     fun documentMetadataWriteService(
         drafts: DocumentDraftService,
@@ -198,7 +206,7 @@ class FileWeftDocumentConfiguration {
     ): DocumentMetadataWriteService =
         factories.documentMetadataWriteService(drafts, metadata, catalogDrafts, catalogMutations)
 
-    @Bean(name = ["documentCatalogAccessService"])
+    @Bean(name = ["fileWeftDocumentCatalogAccessService", "documentCatalogAccessService"])
     @ConditionalOnBean(DocumentCatalogProvider::class)
     @ConditionalOnMissingBean(DocumentCatalogAccessService::class)
     fun documentCatalogAccessServiceFromCandidates(
@@ -208,7 +216,7 @@ class FileWeftDocumentConfiguration {
         catalogs: ObjectProvider<DocumentCatalogProvider>,
     ) = factories.documentCatalogAccessServiceFromCandidates(tenants, users, authorization, catalogs)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentCatalogBindingService", "documentCatalogBindingService"])
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(DocumentCatalogBindingService::class)
     // Nullable by design: keep the existing FileAssetRepository factory ABI while
@@ -223,7 +231,7 @@ class FileWeftDocumentConfiguration {
         auditTrail: AuditTrail,
     ): DocumentCatalogBindingService? = factories.documentCatalogBindingService(tenants, users, catalogAccess, documents, assets, transaction, auditTrail)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentCatalogDraftService", "documentCatalogDraftService"])
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(DocumentCatalogDraftService::class)
     fun documentCatalogDraftService(
@@ -231,7 +239,7 @@ class FileWeftDocumentConfiguration {
         catalogAccess: DocumentCatalogAccessService,
     ) = factories.documentCatalogDraftService(drafts, catalogAccess)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentCatalogMutationService", "documentCatalogMutationService"])
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(DocumentCatalogMutationService::class)
     // See the binding service above: read/create remain available, mutations fail closed.
@@ -241,7 +249,7 @@ class FileWeftDocumentConfiguration {
         assets: FileAssetRepository,
     ): DocumentCatalogMutationService? = factories.documentCatalogMutationService(drafts, catalogAccess, assets)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentCatalogLifecycleService", "documentCatalogLifecycleService"])
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(DocumentCatalogLifecycleService::class)
     // Keep lifecycle changes behind the same catalog binding lock required by
@@ -259,7 +267,7 @@ class FileWeftDocumentConfiguration {
         transaction: ApplicationTransaction,
     ): DocumentCatalogLifecycleService? = factories.documentCatalogLifecycleService(commands, workflows, publish, offline, restore, archive, catalogAccesses, documents, assets, transaction)
 
-    @Bean
+    @Bean(name = ["fileWeftIdempotentDocumentLifecycleService", "idempotentDocumentLifecycleService"])
     @ConditionalOnMissingBean(
         value = [
             DocumentCatalogAccessService::class,
@@ -276,7 +284,7 @@ class FileWeftDocumentConfiguration {
         idempotency: RequestIdempotencyService,
     ) = factories.idempotentDocumentLifecycleService(commands, publish, offline, restore, archive, idempotency)
 
-    @Bean
+    @Bean(name = ["fileWeftIdempotentDocumentCatalogLifecycleService", "idempotentDocumentCatalogLifecycleService"])
     @ConditionalOnBean(DocumentCatalogAccessService::class)
     @ConditionalOnMissingBean(
         value = [IdempotentDocumentLifecycleService::class, IdempotentDocumentCatalogLifecycleService::class],
@@ -286,7 +294,7 @@ class FileWeftDocumentConfiguration {
         idempotency: RequestIdempotencyService,
     ): IdempotentDocumentCatalogLifecycleService? = factories.idempotentDocumentCatalogLifecycleService(catalogLifecycles, idempotency)
 
-    @Bean
+    @Bean(name = ["fileWeftAuditTrail", "auditTrail"])
     @ConditionalOnMissingBean(AuditTrail::class)
     fun auditTrail(
         repository: AuditRecordRepository,
@@ -296,7 +304,7 @@ class FileWeftDocumentConfiguration {
         clock: Clock,
     ) = factories.auditTrail(repository, operationLogs, traceContextProvider, identifiers, clock)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentQueryService", "documentQueryService"])
     @ConditionalOnMissingBean(DocumentQueryService::class)
     fun documentQueryService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -304,7 +312,7 @@ class FileWeftDocumentConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = factories.documentQueryService(tenants, users, authorization, queries, transaction, folderReadAccess)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentAuditLogQueryService", "documentAuditLogQueryService"])
     @ConditionalOnMissingBean(DocumentAuditLogQueryService::class)
     fun documentAuditLogQueryService(
         tenants: TenantProvider,
@@ -315,14 +323,14 @@ class FileWeftDocumentConfiguration {
         folderReadAccess: ObjectProvider<DocumentFolderReadAccess>,
     ) = factories.documentAuditLogQueryService(tenants, users, authorization, queries, transaction, folderReadAccess)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentCommandService", "documentCommands"])
     @ConditionalOnMissingBean(DocumentCommandService::class)
     fun documentCommands(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
         documents: DocumentRepository, transaction: ApplicationTransaction, auditTrail: AuditTrail,
     ) = factories.documentCommands(tenants, users, authorization, documents, transaction, auditTrail)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDownloadVisibility", "documentDownloadVisibility"])
     @ConditionalOnBean(DocumentFolderReadAccess::class)
     @ConditionalOnMissingBean(DocumentDownloadVisibility::class)
     fun documentDownloadVisibility(
@@ -330,7 +338,7 @@ class FileWeftDocumentConfiguration {
         queries: DocumentQueryRepository,
     ): DocumentDownloadVisibility = factories.documentDownloadVisibility(folderReadAccess, queries)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDownloadService", "documentDownloads"])
     @ConditionalOnMissingBean(DocumentDownloadService::class)
     fun documentDownloads(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -339,7 +347,7 @@ class FileWeftDocumentConfiguration {
         visibility: ObjectProvider<DocumentDownloadVisibility>,
     ): DocumentDownloadService = factories.documentDownloads(tenants, users, authorization, documents, fileObjects, storage, transaction, auditTrail, visibility)
 
-    @Bean
+    @Bean(name = ["fileWeftDocumentDraftService", "documentDraftService"])
     @ConditionalOnMissingBean(DocumentDraftService::class)
     fun documentDraftService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider, storage: StorageAdapter,
@@ -347,7 +355,7 @@ class FileWeftDocumentConfiguration {
         identifiers: IdentifierGenerator, transaction: ApplicationTransaction, auditTrail: AuditTrail, metrics: FileWeftMetrics,
     ) = factories.documentDraftService(tenants, users, authorization, storage, documents, fileObjects, assets, identifiers, transaction, auditTrail, metrics)
 
-    @Bean
+    @Bean(name = ["fileWeftPublishService", "publishService"])
     @ConditionalOnMissingBean(PublishDocumentService::class)
     fun publishService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -355,7 +363,7 @@ class FileWeftDocumentConfiguration {
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
     ) = factories.publishService(tenants, users, authorization, documents, workflows, planner, transaction, auditTrail)
 
-    @Bean
+    @Bean(name = ["fileWeftOfflineService", "offlineService"])
     @ConditionalOnMissingBean(OfflineDocumentService::class)
     fun offlineService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -363,7 +371,7 @@ class FileWeftDocumentConfiguration {
         removalPlanner: DocumentDeliveryRemovalPlanner,
     ) = factories.offlineService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
 
-    @Bean
+    @Bean(name = ["fileWeftRestoreOfflineDocumentService", "restoreOfflineService"])
     @ConditionalOnMissingBean(RestoreOfflineDocumentService::class)
     fun restoreOfflineService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -371,7 +379,7 @@ class FileWeftDocumentConfiguration {
         transaction: ApplicationTransaction, auditTrail: AuditTrail,
     ) = factories.restoreOfflineService(tenants, users, authorization, documents, deliveries, transaction, auditTrail)
 
-    @Bean
+    @Bean(name = ["fileWeftArchiveService", "archiveService"])
     @ConditionalOnMissingBean(ArchiveDocumentService::class)
     fun archiveService(
         tenants: TenantProvider, users: UserRealmProvider, authorization: AuthorizationProvider,
@@ -379,7 +387,7 @@ class FileWeftDocumentConfiguration {
         removalPlanner: DocumentDeliveryRemovalPlanner,
     ) = factories.archiveService(tenants, users, authorization, documents, transaction, auditTrail, removalPlanner)
 
-    @Bean
+    @Bean(name = ["fileWeftTaskWorker", "taskWorker"])
     @ConditionalOnBean(TaskProcessingRepository::class)
     @ConditionalOnMissingBean(TaskWorker::class)
     fun taskWorker(

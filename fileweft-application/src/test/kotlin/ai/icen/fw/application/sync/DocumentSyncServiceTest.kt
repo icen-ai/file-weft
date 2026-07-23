@@ -7,7 +7,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
@@ -317,7 +317,9 @@ class DocumentSyncServiceTest {
         override fun health(): ConnectorHealth = ConnectorHealth(ConnectorHealthStatus.HEALTHY)
     }
 
-    private class InMemoryDocuments(var document: Document?) : DocumentRepository {
+    private class InMemoryDocuments(var document: Document?) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
             document?.takeIf { it.tenantId == tenantId && it.id == documentId }
         override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =

@@ -20,7 +20,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleState
 import ai.icen.fw.spi.authorization.AuthorizationDecision
@@ -318,7 +318,9 @@ class IdempotentDocumentDeliveryRecoveryServiceTest {
     private class MemoryDocuments(
         private val transaction: SnapshotTransaction,
         document: Document,
-    ) : DocumentRepository, TransactionParticipant {
+    ) : DocumentMutationRepository, TransactionParticipant {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         private var stored = document.copyDocument()
         var mutationReads: Int = 0
             private set

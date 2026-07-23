@@ -8,7 +8,7 @@ import ai.icen.fw.application.outbox.OutboxLeaseLostException
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.spi.connector.ConnectorInvocation
 import ai.icen.fw.spi.connector.ConnectorRemoveRequest
 import ai.icen.fw.spi.connector.ConnectorSyncResult
@@ -40,14 +40,14 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
     internal fun remove(
         lease: OutboxEventLease,
         outboxMutations: OutboxEventMutationRepository,
-        documents: DocumentRepository,
+        documents: DocumentMutationRepository,
     ): OutboxHandlingResult = remove(lease.event, lease, outboxMutations, documents)
 
     private fun remove(
         sourceEvent: OutboxEvent,
         lease: OutboxEventLease?,
         outboxMutations: OutboxEventMutationRepository?,
-        documents: DocumentRepository?,
+        documents: DocumentMutationRepository?,
     ): OutboxHandlingResult {
         val deliveryId = sourceEvent.deliveryIdOrNull()
             ?: return OutboxHandlingResult(OutboxHandlingStatus.PERMANENT_FAILURE, "Delivery removal event does not contain deliveryId.")
@@ -86,7 +86,7 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
     internal fun exhaust(
         sourceEvent: OutboxEvent,
         message: String,
-        documents: DocumentRepository?,
+        documents: DocumentMutationRepository?,
         outboxMutations: OutboxEventMutationRepository?,
     ) {
         val deliveryId = sourceEvent.deliveryIdOrNull() ?: return
@@ -201,7 +201,7 @@ class DocumentDeliveryRemovalService @JvmOverloads constructor(
         result: ConnectorSyncResult,
         lease: OutboxEventLease?,
         outboxMutations: OutboxEventMutationRepository?,
-        documents: DocumentRepository?,
+        documents: DocumentMutationRepository?,
     ): OutboxHandlingResult = transaction.execute {
         val normalizedResult = result.copy(message = DeliveryDiagnosticMessage.normalize(result.message))
         if (expectation == null) {

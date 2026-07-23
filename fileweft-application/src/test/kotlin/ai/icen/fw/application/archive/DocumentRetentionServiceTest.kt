@@ -24,7 +24,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.InvalidLifecycleTransitionException
 import ai.icen.fw.domain.document.LifecycleCommand
@@ -683,7 +683,9 @@ class DocumentRetentionServiceTest {
 
     private class InMemoryDocumentRepository(
         private var document: Document?,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var saved: Document? = null
         var saveCalls: Int = 0
             private set

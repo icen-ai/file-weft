@@ -10,7 +10,7 @@ import ai.icen.fw.domain.document.Document
  * [prepare] must run outside the final mutation transaction. [revalidate]
  * repeats external policy checks after an upload and must also run outside a
  * transaction. [verifyLocked] runs only after the caller has loaded the
- * document through `DocumentRepository.findForMutation`; it must perform local
+ * document through `DocumentMutationRepository.findForMutation`; it must perform local
  * persistence checks only and must never invoke an external SPI.
  */
 internal interface DocumentMutationGuard {

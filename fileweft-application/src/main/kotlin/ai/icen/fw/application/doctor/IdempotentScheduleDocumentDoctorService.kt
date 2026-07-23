@@ -23,7 +23,7 @@ import ai.icen.fw.application.task.TaskRepository
 import ai.icen.fw.application.transaction.ApplicationTransaction
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.file.FileAssetRepository
 import ai.icen.fw.spi.authorization.AuthorizationProvider
 import ai.icen.fw.spi.identity.UserIdentity
@@ -49,7 +49,7 @@ class IdempotentScheduleDocumentDoctorService @JvmOverloads constructor(
     tenants: TenantProvider,
     users: UserRealmProvider,
     authorization: AuthorizationProvider,
-    documents: DocumentRepository,
+    documents: DocumentMutationRepository,
     tasks: TaskRepository,
     identifiers: IdentifierGenerator,
     clock: Clock,
@@ -78,7 +78,7 @@ class IdempotentScheduleDocumentCatalogDoctorService @JvmOverloads constructor(
     tenants: TenantProvider,
     users: UserRealmProvider,
     authorization: AuthorizationProvider,
-    documents: DocumentRepository,
+    documents: DocumentMutationRepository,
     assets: FileAssetRepository,
     tasks: TaskRepository,
     identifiers: IdentifierGenerator,
@@ -112,7 +112,7 @@ internal class IdempotentScheduleDocumentDoctorDelegate(
     private val tenants: TenantProvider,
     users: UserRealmProvider,
     authorizationProvider: AuthorizationProvider,
-    private val documents: DocumentRepository,
+    private val documents: DocumentMutationRepository,
     private val tasks: TaskRepository,
     private val identifiers: IdentifierGenerator,
     private val clock: Clock,

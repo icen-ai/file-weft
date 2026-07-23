@@ -12,7 +12,7 @@ import ai.icen.fw.core.event.OutboxEvent
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.core.id.IdentifierGenerator
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.document.LifecycleCommand
 import ai.icen.fw.domain.document.LifecycleState
@@ -224,7 +224,7 @@ class PublishDocumentServiceTest {
     }
 
     private fun publishService(
-        documents: DocumentRepository,
+        documents: DocumentMutationRepository,
         outbox: RecordingOutbox,
         audits: RecordingAudits,
     ): PublishDocumentService = PublishDocumentService(
@@ -249,7 +249,9 @@ class PublishDocumentServiceTest {
         workflows = EmptyWorkflows,
     )
 
-    private class InMemoryDocumentRepository(document: Document) : DocumentRepository {
+    private class InMemoryDocumentRepository(document: Document) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         private var document: Document? = document
         var savedDocument: Document? = null
 
@@ -268,7 +270,9 @@ class PublishDocumentServiceTest {
     private class AdversarialDocumentRepository(
         private val preflightDocument: Document?,
         private val mutationDocument: Document?,
-    ) : DocumentRepository {
+    ) : DocumentMutationRepository {
+        override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
         var mutationReads: Int = 0
         var saveCalls: Int = 0
 

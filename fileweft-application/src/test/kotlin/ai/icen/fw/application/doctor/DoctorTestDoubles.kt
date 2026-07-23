@@ -3,7 +3,7 @@ package ai.icen.fw.application.doctor
 import ai.icen.fw.core.context.TenantContext
 import ai.icen.fw.core.id.Identifier
 import ai.icen.fw.domain.document.Document
-import ai.icen.fw.domain.document.DocumentRepository
+import ai.icen.fw.domain.document.DocumentMutationRepository
 import ai.icen.fw.domain.document.DocumentVersion
 import ai.icen.fw.domain.file.FileObject
 import ai.icen.fw.domain.file.FileObjectRepository
@@ -31,7 +31,12 @@ import java.time.Duration
 
 internal class InMemoryDocumentRepository(
     var document: Document? = null,
-) : DocumentRepository {
+) : DocumentMutationRepository {
+    override fun findForMutation(tenantId: Identifier, documentId: Identifier): Document? =
+        findById(tenantId, documentId)
+
+    override fun findByDocumentNumber(tenantId: Identifier, documentNumber: String): Document? = null
+
     override fun findById(tenantId: Identifier, documentId: Identifier): Document? =
         document?.takeIf { it.tenantId == tenantId && it.id == documentId }
 
