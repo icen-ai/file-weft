@@ -465,13 +465,16 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     200,
   );
   expect(sortedKeys(submitted)).toEqual(["documentId", "taskId", "workflowId"]);
-  expect(submitted).toMatchObject({ documentId, taskId: null });
+  expect(submitted).toMatchObject({ documentId });
+  expect(submitted.taskId).toEqual(expect.any(String));
   expect(submitted.workflowId).toEqual(expect.any(String));
   const replayedSubmit = await success(
     await request.post(`/fileweft/v1/documents/${documentId}/submit`, submitOptions),
     200,
   );
-  expect(replayedSubmit).toEqual(submitted);
+  // A persisted replay stores only the document and workflow identifiers, so
+  // the replayed receipt is the fresh receipt with taskId degraded to null.
+  expect(replayedSubmit).toEqual({ ...submitted, taskId: null });
 
   const submitConflict = await request.post(`/fileweft/v1/documents/${documentId}/submit`, {
     headers: submitOptions.headers,
@@ -499,6 +502,7 @@ test("formal v1 shares one authorized, tenant-isolated document with the Dev pro
     },
     document: { id: documentId, title: renamedTitle, lifecycleState: "PENDING_REVIEW", folderId: "contracts" },
   });
+  expect(inboxItem.task.id).toBe(submitted.taskId);
 
   for (const identity of [editor, viewer]) {
     await failure(
