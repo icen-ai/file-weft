@@ -39,8 +39,8 @@ data class S3StorageConfiguration(
         require(secretKey.isNotBlank()) { "S3 secret key must not be blank." }
         require(BUCKET_NAME_PATTERN.matches(bucket)) { "S3 bucket name is invalid." }
         require(storageType.isNotBlank()) { "Storage type must not be blank." }
-        require(apiCallTimeout.isPositive()) { "S3 API call timeout must be positive." }
-        require(apiCallAttemptTimeout.isPositive()) { "S3 API call attempt timeout must be positive." }
+        require(apiCallTimeout.positiveDuration()) { "S3 API call timeout must be positive." }
+        require(apiCallAttemptTimeout.positiveDuration()) { "S3 API call attempt timeout must be positive." }
         require(apiCallAttemptTimeout <= apiCallTimeout) {
             "S3 API call attempt timeout must not exceed the overall API call timeout."
         }
@@ -56,6 +56,9 @@ data class S3StorageConfiguration(
         private val BUCKET_NAME_PATTERN = Regex("[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
     }
 
-    private fun Duration.isPositive(): Boolean = !isZero && !isNegative
+    // Named unlike java.time.Duration.isPositive() (Java 18+): a same-named
+    // member would shadow this extension on newer JDKs and break Java 8/11
+    // runtimes with NoSuchMethodError.
+    private fun Duration.positiveDuration(): Boolean = !isZero && !isNegative
 }
 
